@@ -46,7 +46,34 @@ if ".onrender.com" not in _allowed_hosts:
     _allowed_hosts.append(".onrender.com")
 ALLOWED_HOSTS = _allowed_hosts
 
-CSRF_TRUSTED_ORIGINS = _csv_env("CSRF_TRUSTED_ORIGINS", "")
+
+def _build_csrf_trusted_origins() -> list[str]:
+    """Trusted origins for session/ form POSTs (web UI login, reconcile, Plaid forms)."""
+    origins = _csv_env("CSRF_TRUSTED_ORIGINS", "")
+    seen = set(origins)
+
+    def add(origin: str) -> None:
+        o = origin.rstrip("/")
+        if o and o not in seen:
+            seen.add(o)
+            origins.append(o)
+
+    # Render sets this automatically on Web Services.
+    add(os.environ.get("RENDER_EXTERNAL_URL", ""))
+
+    for host in _allowed_hosts:
+        if host.startswith("."):
+            continue
+        if host in ("localhost", "127.0.0.1"):
+            add(f"http://{host}:8000")
+            add(f"http://{host}:5173")
+        else:
+            add(f"https://{host}")
+
+    return origins
+
+
+CSRF_TRUSTED_ORIGINS = _build_csrf_trusted_origins()
 
 INSTALLED_APPS = [
     "django.contrib.admin",
