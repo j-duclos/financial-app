@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.http import JsonResponse
 
 from rest_framework import status
 from rest_framework.decorators import action
@@ -18,6 +19,19 @@ from .serializers import (
     UserProfileSerializer,
 )
 from .utils import get_user_profile, get_households_for_user
+
+
+def home(request):
+    return JsonResponse({
+        "status": "ok",
+        "service": "financial-app-api",
+        "docs": "/api/docs/",
+        "admin": "/admin/",
+    })
+
+
+def health(request):
+    return JsonResponse({"status": "ok"})
 
 
 class DatabaseInfoView(APIView):

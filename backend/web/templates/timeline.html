@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Timeline{% endblock %}
+{% block content %}
+<h1>Forecast timeline</h1>
+<div class="panel">
+<form method="get"><div class="form-row"><label>Account</label>
+<select class="select" name="account" onchange="this.form.submit()">
+<option value="">All accounts</option>
+{% for a in accounts %}<option value="{{ a.pk }}" {% if selected_account == a.pk|stringformat:"s" %}selected{% endif %}>{{ a.effective_display_name }}</option>{% endfor %}
+</select></div></form>
+{% if lowest_balance != None %}<p>Lowest balance in window: <strong class="{{ lowest_balance|money_css }}">{{ lowest_balance|money }}</strong></p>{% endif %}
+</div>
+<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Account</th><th>Description</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
+{% for r in past_rows %}
+<tr class="{% if r.date == today %}timeline-today{% endif %}{% if lowest_row and r.date == lowest_row.date and r.account_id == lowest_row.account_id %} timeline-lowest{% endif %}">
+<td>{{ r.date }}{% if r.date == today %} (today){% endif %}</td>
+<td>{{ r.account_name }}</td><td>{{ r.payee|default:r.description }}</td>
+<td class="{{ r.amount|money_css }}">{{ r.amount|money }}</td>
+<td class="{{ r.running_balance|money_css }}">{{ r.running_balance|money }}</td></tr>
+{% endfor %}
+<tr class="timeline-today"><td colspan="5"><strong>— Today ({{ today }}) —</strong></td></tr>
+{% for r in future_rows %}
+<tr class="{% if lowest_row and r.date == lowest_row.date and r.account_id == lowest_row.account_id %}timeline-lowest{% endif %}">
+<td>{{ r.date }}</td><td>{{ r.account_name }}</td><td>{{ r.payee|default:r.description }}</td>
+<td class="{{ r.amount|money_css }}">{{ r.amount|money }}</td>
+<td class="{{ r.running_balance|money_css }}">{{ r.running_balance|money }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% if not past_rows and not future_rows %}<div class="empty">No timeline rows in this range.</div>{% endif %}
+{% endblock %}

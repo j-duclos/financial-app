@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+<h1>Accounts</h1>
+<div class="panel">
+  <h2 style="margin-top:0">Add account</h2>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="create">
+  {% for field in form %}<div class="form-row"><label>{{ field.label }}</label>{{ field }}{% if field.errors %}<div class="negative">{{ field.errors }}</div>{% endif %}</div>{% endfor %}
+  <button class="btn btn-primary" type="submit">Create</button></form>
+</div>
+{% if rows %}
+<div class="table-wrap"><table class="data"><thead><tr>
+<th>Name</th><th>Type</th><th>Balance</th><th>Available</th><th>Forecast</th><th>Health</th><th></th>
+</tr></thead><tbody>
+{% for row in rows %}
+<tr>
+<td><a href="{% url 'web:account_detail' row.account.pk %}">{{ row.account.effective_display_name }}</a></td>
+<td>{{ row.account.get_account_type_display }}</td>
+<td class="{{ row.balance|money_css }}">{{ row.balance|money }}</td>
+<td>{% if row.available != None %}{{ row.available|money }}{% else %}—{% endif %}</td>
+<td>{% if row.account.include_in_forecast %}<span class="badge badge-ok">On</span>{% else %}<span class="badge badge-muted">Off</span>{% endif %}</td>
+<td>{% if row.health_status %}<span class="badge badge-warning">{{ row.health_status }}</span>{% else %}—{% endif %}</td>
+<td><a href="{% url 'web:account_detail' row.account.pk %}">Detail</a></td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty">No accounts yet. Create one above.</div>{% endif %}
+{% endblock %}

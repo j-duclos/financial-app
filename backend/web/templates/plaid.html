@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Plaid{% endblock %}
+{% block extra_head %}<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>{% endblock %}
+{% block content %}
+<h1>Plaid bank connections</h1>
+{% if not plaid_configured %}
+<div class="panel"><p class="negative">Plaid is not configured. Set PLAID_CLIENT_ID and PLAID_SECRET on the server.</p></div>
+{% elif not household %}
+<div class="panel"><p>Set a <strong>default household</strong> on your user profile (Django admin) before linking a bank.</p></div>
+{% else %}
+<div class="panel">
+<p>Environment: <strong>{{ plaid_env }}</strong> · Redirect URI: <code>{{ redirect_uri }}</code></p>
+<p id="plaid-status"></p>
+<p id="plaid-error" class="negative" hidden></p>
+<button type="button" class="btn btn-primary" id="plaid-connect-btn">Connect bank</button>
+<form style="display:none">{% csrf_token %}</form>
+</div>
+{% if items %}
+<div class="panel"><h2 style="margin-top:0">Connected institutions</h2>
+{% for item in items %}
+<div style="border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:0.75rem;">
+<strong>{{ item.institution_name|default:"Bank" }}</strong>
+<ul>{% for la in item.linked_accounts.all %}<li>{{ la.account.effective_display_name }} {% if la.mask %}·{{ la.mask }}{% endif %}</li>{% endfor %}</ul>
+<form method="post" action="{% url 'web:plaid_sync' item.pk %}" style="display:inline">{% csrf_token %}<button class="btn" type="submit">Import transactions</button></form>
+<form method="post" action="{% url 'web:plaid_disconnect' item.pk %}" style="display:inline" onsubmit="return confirm('Disconnect this bank?')">{% csrf_token %}<button class="btn btn-danger" type="submit">Disconnect</button></form>
+</div>
+{% endfor %}</div>
+{% else %}<div class="empty">No banks linked yet.</div>{% endif %}
+{% endif %}
+{% endblock %}
+{% block extra_js %}
+{% if household and plaid_configured %}
+<script>
+BudgetWeb.initPlaidLink({
+  linkTokenUrl: "{% url 'web:plaid_link_token' %}",
+  exchangeUrl: "{% url 'web:plaid_exchange' %}",
+  redirectUri: "{{ redirect_uri }}",
+  householdId: {{ household.pk }},
+  plaidConfigured: true,
+  oauthReturn: false
+});
+</script>
+{% endif %}
+{% endblock %}

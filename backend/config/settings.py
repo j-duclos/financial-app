@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     "insights",
     "timeline",
     "plaid_link",
+    "web",
 ]
 
 MIDDLEWARE = [
@@ -99,6 +100,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
             ],
+            "builtins": ["web.templatetags.web_extras"],
         },
     },
 ]
@@ -136,6 +138,10 @@ if not DEBUG:
         },
     }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/login/"
 
 # Render / reverse-proxy HTTPS
 if not DEBUG:

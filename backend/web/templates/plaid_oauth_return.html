@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Plaid OAuth return{% endblock %}
+{% block extra_head %}<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>{% endblock %}
+{% block content %}
+<h1>Finishing bank sign-in</h1>
+<div class="panel">
+<p>Complete the steps in the Plaid window if it opened. When done, you will return to Plaid connections.</p>
+<p id="plaid-status">Resuming bank sign-in…</p>
+<p id="plaid-error" class="negative" hidden></p>
+<form style="display:none">{% csrf_token %}</form>
+<p><a href="{% url 'web:plaid' %}">Back to Plaid</a></p>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+BudgetWeb.initPlaidLink({
+  linkTokenUrl: "{% url 'web:plaid_link_token' %}",
+  exchangeUrl: "{% url 'web:plaid_exchange' %}",
+  redirectUri: "{{ redirect_uri }}",
+  householdId: {% if household %}{{ household.pk }}{% else %}null{% endif %},
+  plaidConfigured: {{ plaid_configured|yesno:"true,false" }},
+  oauthReturn: true,
+  redirectAfter: "{% url 'web:plaid' %}"
+});
+</script>
+{% endblock %}

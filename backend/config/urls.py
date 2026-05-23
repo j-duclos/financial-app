@@ -18,10 +18,11 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from core.views import DatabaseInfoView
+from core.views import DatabaseInfoView, health
 from timeline.views import TimelineView
 
 urlpatterns = [
+    path("health/", health, name="health"),
     path("admin/", admin.site.urls),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
@@ -35,4 +36,5 @@ urlpatterns = [
     path("api/budgets/", include("budgets.urls")),
     path("api/insights/", include("insights.urls")),
     path("api/", include("plaid_link.urls")),
+    path("", include("web.urls")),
 ]
