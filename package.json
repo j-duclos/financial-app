@@ -1,0 +1,14 @@
+{
+  "name": "budget-app",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/patch-react-plaid-link.mjs",
+    "dev:web": "npm run dev -w @budget-app/web",
+    "dev:mobile": "npm run start -w @budget-app/mobile",
+    "generate:api": "npm run generate -w @budget-app/api-client"
+  }
+}

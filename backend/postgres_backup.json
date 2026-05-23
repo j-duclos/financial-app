@@ -1,0 +1,2992 @@
+[
+{
+  "model": "auth.user",
+  "fields": {
+    "password": "pbkdf2_sha256$1000000$b0zHQY7WTikNQ0cU66xmMH$TbIBXFYFmNlQ/VBY+75mf1q7rj2oprgIw33OLe+8koI=",
+    "last_login": null,
+    "is_superuser": false,
+    "username": "cazcapone",
+    "first_name": "",
+    "last_name": "",
+    "email": "",
+    "is_staff": false,
+    "is_active": true,
+    "date_joined": "2026-02-19T00:12:28.330Z",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "core.household",
+  "pk": 1,
+  "fields": {
+    "name": "Duclos",
+    "created_at": "2026-02-19T00:12:40.682Z",
+    "updated_at": "2026-02-19T00:12:40.682Z"
+  }
+},
+{
+  "model": "core.householdmembership",
+  "pk": 1,
+  "fields": {
+    "household": 1,
+    "user": [
+      "cazcapone"
+    ],
+    "role": "OWNER",
+    "joined_at": "2026-02-19T00:12:40.708Z"
+  }
+},
+{
+  "model": "core.userprofile",
+  "pk": 1,
+  "fields": {
+    "user": [
+      "cazcapone"
+    ],
+    "display_name": "",
+    "default_household": null,
+    "default_account": 1,
+    "created_at": "2026-02-19T00:12:28.540Z",
+    "updated_at": "2026-02-19T01:07:22.688Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 1,
+  "fields": {
+    "household": 1,
+    "account_type": "CHECKING",
+    "name": "Chase",
+    "institution": "Chase",
+    "currency": "USD",
+    "starting_balance": "2112.20",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:12:47.057Z",
+    "updated_at": "2026-02-19T00:48:46.875Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 4,
+  "fields": {
+    "household": 1,
+    "account_type": "SAVINGS",
+    "name": "Chase Savings",
+    "institution": "Chase",
+    "currency": "USD",
+    "starting_balance": "680.07",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:35:44.727Z",
+    "updated_at": "2026-02-19T00:48:58.379Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 5,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "Venture",
+    "institution": "Capital One",
+    "currency": "USD",
+    "starting_balance": "0.00",
+    "apr": "28.24",
+    "credit_limit": "1000.00",
+    "billing_cycle_end_day": 2,
+    "is_active": true,
+    "created_at": "2026-02-19T00:36:41.698Z",
+    "updated_at": "2026-03-01T22:18:16.303Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 6,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "Savor",
+    "institution": "Capital One",
+    "currency": "USD",
+    "starting_balance": "0.00",
+    "apr": "28.24",
+    "credit_limit": "2000.00",
+    "billing_cycle_end_day": 2,
+    "is_active": true,
+    "created_at": "2026-02-19T00:36:58.702Z",
+    "updated_at": "2026-03-01T21:59:46.242Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 7,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "Platinium",
+    "institution": "Capital One",
+    "currency": "USD",
+    "starting_balance": "504.98",
+    "apr": "28.99",
+    "credit_limit": "500.00",
+    "billing_cycle_end_day": 2,
+    "is_active": true,
+    "created_at": "2026-02-19T00:38:59.545Z",
+    "updated_at": "2026-03-01T22:15:36.192Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 8,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "Care Credit",
+    "institution": "Synchrony Bank",
+    "currency": "USD",
+    "starting_balance": "2149.64",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:39:25.848Z",
+    "updated_at": "2026-02-19T00:49:41.840Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 9,
+  "fields": {
+    "household": 1,
+    "account_type": "SAVINGS",
+    "name": "Capital One 360 Savings",
+    "institution": "Capital One",
+    "currency": "USD",
+    "starting_balance": "9.26",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:39:50.425Z",
+    "updated_at": "2026-03-01T20:38:32.262Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 10,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "TJ Max",
+    "institution": "Synchrony Bank",
+    "currency": "USD",
+    "starting_balance": "95.61",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:40:19.760Z",
+    "updated_at": "2026-02-19T00:49:58.337Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 11,
+  "fields": {
+    "household": 1,
+    "account_type": "CREDIT",
+    "name": "Amazon",
+    "institution": "Synchrony Bank",
+    "currency": "USD",
+    "starting_balance": "354.82",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-02-19T00:40:40.578Z",
+    "updated_at": "2026-02-19T00:50:06.983Z"
+  }
+},
+{
+  "model": "accounts.account",
+  "pk": 12,
+  "fields": {
+    "household": 1,
+    "account_type": "CHECKING",
+    "name": "360 Checking",
+    "institution": "Capital One",
+    "currency": "USD",
+    "starting_balance": "0.12",
+    "apr": null,
+    "credit_limit": null,
+    "billing_cycle_end_day": null,
+    "is_active": true,
+    "created_at": "2026-03-01T22:21:26.663Z",
+    "updated_at": "2026-03-01T22:23:08.608Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 3,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-12",
+    "payee": "Chewy",
+    "memo": "",
+    "amount": "-128.15",
+    "category": 81,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T03:32:54.355Z",
+    "updated_at": "2026-02-26T22:19:13.677Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 4,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-13",
+    "payee": "Care",
+    "memo": "",
+    "amount": "-30.00",
+    "category": 70,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:14:39.800Z",
+    "updated_at": "2026-02-26T22:19:24.145Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 6,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Henry meds",
+    "memo": "",
+    "amount": "-99.00",
+    "category": 46,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:15:38.939Z",
+    "updated_at": "2026-02-19T04:15:38.939Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 7,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Zelle",
+    "memo": "",
+    "amount": "25.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:15:54.308Z",
+    "updated_at": "2026-02-19T04:15:54.308Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 8,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Netflix",
+    "memo": "",
+    "amount": "-19.09",
+    "category": 58,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:16:03.978Z",
+    "updated_at": "2026-02-26T22:23:19.097Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 9,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Cash App",
+    "memo": "",
+    "amount": "-40.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:16:20.962Z",
+    "updated_at": "2026-02-19T04:16:20.962Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 10,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Burger king",
+    "memo": "",
+    "amount": "-47.01",
+    "category": 44,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:28:46.007Z",
+    "updated_at": "2026-02-26T22:23:32.327Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 11,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Chewy",
+    "memo": "",
+    "amount": "-28.85",
+    "category": 81,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:29:02.313Z",
+    "updated_at": "2026-02-26T22:23:41.478Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 12,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Pizza",
+    "memo": "",
+    "amount": "-30.00",
+    "category": 44,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:29:10.151Z",
+    "updated_at": "2026-02-26T22:23:50.317Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 13,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Credit Karma",
+    "memo": "",
+    "amount": "-10.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:29:23.297Z",
+    "updated_at": "2026-02-19T04:29:23.297Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 15,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Venture",
+    "memo": "",
+    "amount": "-1000.00",
+    "category": 55,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:30:11.735Z",
+    "updated_at": "2026-02-19T05:04:54.130Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 16,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-20",
+    "payee": "Paycheck",
+    "memo": "",
+    "amount": "1835.52",
+    "category": 15,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-19T04:30:37.406Z",
+    "updated_at": "2026-02-26T23:26:36.086Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 21,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-19",
+    "payee": "Transfer",
+    "memo": "Savings",
+    "amount": "25.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-26T23:20:35.537Z",
+    "updated_at": "2026-02-26T23:20:35.537Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 24,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-13",
+    "payee": "Transfer",
+    "memo": "Saving",
+    "amount": "-25.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-26T23:24:15.930Z",
+    "updated_at": "2026-02-26T23:24:15.930Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 26,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-19",
+    "payee": "Transfer",
+    "memo": "Savings",
+    "amount": "-680.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-26T23:25:06.597Z",
+    "updated_at": "2026-02-26T23:25:06.597Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 27,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-19",
+    "payee": "Transfer",
+    "memo": "Savings",
+    "amount": "680.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-02-26T23:25:06.599Z",
+    "updated_at": "2026-02-26T23:25:06.599Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 28,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Affirm",
+    "memo": "",
+    "amount": "-48.17",
+    "category": 12,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:31:25.361Z",
+    "updated_at": "2026-03-01T19:31:25.361Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 29,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Pizza",
+    "memo": "",
+    "amount": "-54.59",
+    "category": 44,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:32:54.958Z",
+    "updated_at": "2026-03-01T19:32:54.958Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 30,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Fry",
+    "memo": "",
+    "amount": "-199.54",
+    "category": 43,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:33:23.930Z",
+    "updated_at": "2026-03-01T19:33:23.930Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 31,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Frys",
+    "memo": "",
+    "amount": "-50.07",
+    "category": 48,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:34:00.809Z",
+    "updated_at": "2026-03-01T19:34:00.809Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 32,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "ATM",
+    "memo": "",
+    "amount": "-23.50",
+    "category": 12,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:34:37.515Z",
+    "updated_at": "2026-03-01T19:34:37.515Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 33,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Chase Fee",
+    "memo": "",
+    "amount": "-3.00",
+    "category": 78,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:35:21.601Z",
+    "updated_at": "2026-03-01T19:35:21.601Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 34,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Transfer",
+    "memo": "Amazon",
+    "amount": "-100.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:35:36.211Z",
+    "updated_at": "2026-03-01T19:35:36.211Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 35,
+  "fields": {
+    "account": 11,
+    "date": "2026-02-23",
+    "payee": "Transfer",
+    "memo": "Amazon",
+    "amount": "100.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:35:36.212Z",
+    "updated_at": "2026-03-01T19:35:36.212Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 36,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-23",
+    "payee": "Transfer",
+    "memo": "Tj max",
+    "amount": "-99.05",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:35:51.581Z",
+    "updated_at": "2026-03-01T19:35:51.581Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 37,
+  "fields": {
+    "account": 10,
+    "date": "2026-02-23",
+    "payee": "Transfer",
+    "memo": "Tj max",
+    "amount": "99.05",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:35:51.582Z",
+    "updated_at": "2026-03-01T19:35:51.582Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 38,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-26",
+    "payee": "Frys",
+    "memo": "",
+    "amount": "-47.16",
+    "category": 48,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:37:00.160Z",
+    "updated_at": "2026-03-01T19:37:00.160Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 39,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-26",
+    "payee": "Transfer",
+    "memo": "Capital One",
+    "amount": "-25.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:38:12.679Z",
+    "updated_at": "2026-03-01T19:38:12.679Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 40,
+  "fields": {
+    "account": 7,
+    "date": "2026-02-26",
+    "payee": "Transfer",
+    "memo": "Capital One",
+    "amount": "25.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:38:12.680Z",
+    "updated_at": "2026-03-01T19:38:12.680Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 41,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-26",
+    "payee": "Paycheck",
+    "memo": "",
+    "amount": "1835.52",
+    "category": 15,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:38:58.853Z",
+    "updated_at": "2026-03-01T19:38:58.853Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 42,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-27",
+    "payee": "Frys",
+    "memo": "",
+    "amount": "-18.82",
+    "category": 43,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:39:32.332Z",
+    "updated_at": "2026-03-01T19:39:32.332Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 43,
+  "fields": {
+    "account": 1,
+    "date": "2026-02-27",
+    "payee": "Frys",
+    "memo": "",
+    "amount": "-143.88",
+    "category": 43,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:39:55.102Z",
+    "updated_at": "2026-03-01T19:39:55.102Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 44,
+  "fields": {
+    "account": 1,
+    "date": "2026-03-01",
+    "payee": "Freetaxusa",
+    "memo": "",
+    "amount": "-17.46",
+    "category": 59,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:40:39.692Z",
+    "updated_at": "2026-03-01T20:18:53.132Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 45,
+  "fields": {
+    "account": 1,
+    "date": "2026-03-01",
+    "payee": "Zelle - Gen",
+    "memo": "",
+    "amount": "1500.00",
+    "category": 1,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:41:14.548Z",
+    "updated_at": "2026-03-01T20:18:57.226Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 46,
+  "fields": {
+    "account": 1,
+    "date": "2026-03-01",
+    "payee": "Transfer",
+    "memo": "Care Credit",
+    "amount": "-400.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:41:35.207Z",
+    "updated_at": "2026-03-01T20:19:01.281Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 47,
+  "fields": {
+    "account": 8,
+    "date": "2026-03-02",
+    "payee": "Transfer",
+    "memo": "Care Credit",
+    "amount": "400.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:41:35.209Z",
+    "updated_at": "2026-03-01T19:41:35.209Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 48,
+  "fields": {
+    "account": 1,
+    "date": "2026-03-01",
+    "payee": "Movies",
+    "memo": "",
+    "amount": "-64.17",
+    "category": 64,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:42:05.773Z",
+    "updated_at": "2026-03-01T20:18:48.470Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 50,
+  "fields": {
+    "account": 1,
+    "date": "2026-03-02",
+    "payee": "Rent",
+    "memo": "",
+    "amount": "-3100.00",
+    "category": 6,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T19:59:16.434Z",
+    "updated_at": "2026-03-01T20:28:48.192Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 51,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-18",
+    "payee": "Interest",
+    "memo": "",
+    "amount": "0.01",
+    "category": 21,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:16:11.271Z",
+    "updated_at": "2026-03-01T20:16:11.271Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 52,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-23",
+    "payee": "Deposit",
+    "memo": "",
+    "amount": "518.49",
+    "category": 26,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:17:26.394Z",
+    "updated_at": "2026-03-01T20:17:26.394Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 53,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-23",
+    "payee": "Deposit",
+    "memo": "",
+    "amount": "327.93",
+    "category": 26,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:17:40.917Z",
+    "updated_at": "2026-03-01T20:17:40.917Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 54,
+  "fields": {
+    "account": 4,
+    "date": "2026-02-23",
+    "payee": "Deposit",
+    "memo": "",
+    "amount": "250.02",
+    "category": 26,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:17:53.471Z",
+    "updated_at": "2026-03-01T20:17:53.471Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 55,
+  "fields": {
+    "account": 9,
+    "date": "2026-02-28",
+    "payee": "Interest",
+    "memo": "",
+    "amount": "0.02",
+    "category": 21,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:39:38.193Z",
+    "updated_at": "2026-03-01T20:39:38.193Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 56,
+  "fields": {
+    "account": 9,
+    "date": "2026-01-31",
+    "payee": "Interest",
+    "memo": "",
+    "amount": "0.03",
+    "category": 21,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T20:40:06.809Z",
+    "updated_at": "2026-03-01T20:40:06.809Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 73,
+  "fields": {
+    "account": 6,
+    "date": "2026-01-27",
+    "payee": "Previous Balance",
+    "memo": "",
+    "amount": "-1731.92",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T21:29:16.976Z",
+    "updated_at": "2026-03-01T21:29:16.976Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 74,
+  "fields": {
+    "account": 6,
+    "date": "2026-01-27",
+    "payee": "Payments",
+    "memo": "",
+    "amount": "1460.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T21:29:54.572Z",
+    "updated_at": "2026-03-01T21:29:54.572Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 75,
+  "fields": {
+    "account": 6,
+    "date": "2026-02-01",
+    "payee": "Purchases",
+    "memo": "",
+    "amount": "-1108.87",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T21:30:37.071Z",
+    "updated_at": "2026-03-01T21:30:37.071Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 76,
+  "fields": {
+    "account": 6,
+    "date": "2026-02-02",
+    "payee": "Interest",
+    "memo": "",
+    "amount": "-38.86",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T21:31:47.007Z",
+    "updated_at": "2026-03-01T21:31:47.007Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 77,
+  "fields": {
+    "account": 6,
+    "date": "2026-02-27",
+    "payee": "Purchases",
+    "memo": "",
+    "amount": "-485.79",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T21:33:13.239Z",
+    "updated_at": "2026-03-01T21:33:13.239Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 80,
+  "fields": {
+    "account": 5,
+    "date": "2026-02-27",
+    "payee": "Balance",
+    "memo": "",
+    "amount": "-411.31",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T22:19:04.264Z",
+    "updated_at": "2026-03-01T22:19:04.264Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 81,
+  "fields": {
+    "account": 5,
+    "date": "2026-02-27",
+    "payee": "Purchases",
+    "memo": "",
+    "amount": "-300.78",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T22:20:06.821Z",
+    "updated_at": "2026-03-01T22:20:06.821Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 82,
+  "fields": {
+    "account": 12,
+    "date": "2026-02-06",
+    "payee": "Adriana",
+    "memo": "",
+    "amount": "30.00",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T22:21:57.517Z",
+    "updated_at": "2026-03-01T22:22:35.226Z"
+  }
+},
+{
+  "model": "transactions.transaction",
+  "pk": 83,
+  "fields": {
+    "account": 12,
+    "date": "2026-02-17",
+    "payee": "Apple",
+    "memo": "",
+    "amount": "-1.07",
+    "category": null,
+    "cleared": false,
+    "reconciled": false,
+    "tags": [],
+    "status": "CLEARED",
+    "source": "ACTUAL",
+    "rule": null,
+    "scenario": null,
+    "created_at": "2026-03-01T22:22:18.195Z",
+    "updated_at": "2026-03-01T22:22:18.195Z"
+  }
+},
+{
+  "model": "transactions.transfer",
+  "pk": 4,
+  "fields": {
+    "transfer_id": "c049a59d-e6ea-4b93-b8b4-00b04d4f58ab",
+    "from_transaction": 26,
+    "to_transaction": 27,
+    "amount": "680.00",
+    "date": "2026-02-19",
+    "memo": "Savings",
+    "created_at": "2026-02-26T23:25:06.599Z"
+  }
+},
+{
+  "model": "transactions.transfer",
+  "pk": 5,
+  "fields": {
+    "transfer_id": "26bf6753-c6d6-4884-b0c8-c4ede5024424",
+    "from_transaction": 34,
+    "to_transaction": 35,
+    "amount": "100.00",
+    "date": "2026-02-23",
+    "memo": "Amazon",
+    "created_at": "2026-03-01T19:35:36.213Z"
+  }
+},
+{
+  "model": "transactions.transfer",
+  "pk": 6,
+  "fields": {
+    "transfer_id": "df29b997-770b-408d-8345-cd219c4a765f",
+    "from_transaction": 36,
+    "to_transaction": 37,
+    "amount": "99.05",
+    "date": "2026-02-23",
+    "memo": "Tj max",
+    "created_at": "2026-03-01T19:35:51.583Z"
+  }
+},
+{
+  "model": "transactions.transfer",
+  "pk": 7,
+  "fields": {
+    "transfer_id": "c10d0e7c-6e70-40a0-b611-d5ad903a88e5",
+    "from_transaction": 39,
+    "to_transaction": 40,
+    "amount": "25.00",
+    "date": "2026-02-26",
+    "memo": "Capital One",
+    "created_at": "2026-03-01T19:38:12.681Z"
+  }
+},
+{
+  "model": "transactions.transfer",
+  "pk": 8,
+  "fields": {
+    "transfer_id": "b0199163-e30e-4a36-95cf-cc2e72499f20",
+    "from_transaction": 46,
+    "to_transaction": 47,
+    "amount": "400.00",
+    "date": "2026-03-02",
+    "memo": "Care Credit",
+    "created_at": "2026-03-01T19:41:35.209Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 1,
+  "fields": {
+    "household": 1,
+    "name": "Income",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 0,
+    "created_at": "2026-02-19T00:12:40.686Z",
+    "updated_at": "2026-02-19T00:12:40.686Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 2,
+  "fields": {
+    "household": 1,
+    "name": "Paycheck",
+    "category_type": "INCOME",
+    "parent": 1,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 1,
+    "created_at": "2026-02-19T00:12:40.689Z",
+    "updated_at": "2026-02-19T00:12:40.689Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 3,
+  "fields": {
+    "household": 1,
+    "name": "Other Income",
+    "category_type": "INCOME",
+    "parent": 1,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 2,
+    "created_at": "2026-02-19T00:12:40.692Z",
+    "updated_at": "2026-02-19T00:12:40.692Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 4,
+  "fields": {
+    "household": 1,
+    "name": "Expenses",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 10,
+    "created_at": "2026-02-19T00:12:40.694Z",
+    "updated_at": "2026-02-19T00:12:40.694Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 5,
+  "fields": {
+    "household": 1,
+    "name": "Groceries",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 11,
+    "created_at": "2026-02-19T00:12:40.695Z",
+    "updated_at": "2026-02-19T00:12:40.695Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 6,
+  "fields": {
+    "household": 1,
+    "name": "Rent",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 12,
+    "created_at": "2026-02-19T00:12:40.697Z",
+    "updated_at": "2026-02-19T00:12:40.697Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 7,
+  "fields": {
+    "household": 1,
+    "name": "Utilities",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 13,
+    "created_at": "2026-02-19T00:12:40.698Z",
+    "updated_at": "2026-02-19T00:12:40.698Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 8,
+  "fields": {
+    "household": 1,
+    "name": "Gas",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 14,
+    "created_at": "2026-02-19T00:12:40.700Z",
+    "updated_at": "2026-02-19T00:12:40.700Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 9,
+  "fields": {
+    "household": 1,
+    "name": "Dining",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 15,
+    "created_at": "2026-02-19T00:12:40.701Z",
+    "updated_at": "2026-02-19T00:12:40.701Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 10,
+  "fields": {
+    "household": 1,
+    "name": "Subscriptions",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 16,
+    "created_at": "2026-02-19T00:12:40.702Z",
+    "updated_at": "2026-02-19T00:12:40.702Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 11,
+  "fields": {
+    "household": 1,
+    "name": "Entertainment",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 17,
+    "created_at": "2026-02-19T00:12:40.704Z",
+    "updated_at": "2026-02-19T00:12:40.704Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 12,
+  "fields": {
+    "household": 1,
+    "name": "Shopping",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 18,
+    "created_at": "2026-02-19T00:12:40.705Z",
+    "updated_at": "2026-02-19T00:12:40.705Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 13,
+  "fields": {
+    "household": 1,
+    "name": "Healthcare",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 19,
+    "created_at": "2026-02-19T00:12:40.706Z",
+    "updated_at": "2026-02-19T00:12:40.706Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 14,
+  "fields": {
+    "household": 1,
+    "name": "Other",
+    "category_type": "EXPENSE",
+    "parent": 4,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 20,
+    "created_at": "2026-02-19T00:12:40.708Z",
+    "updated_at": "2026-02-19T00:12:40.708Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 15,
+  "fields": {
+    "household": 1,
+    "name": "Paycheck / Salary",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 0,
+    "created_at": "2026-02-19T02:58:31.802Z",
+    "updated_at": "2026-02-19T02:58:31.802Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 16,
+  "fields": {
+    "household": 1,
+    "name": "Bonus",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 1,
+    "created_at": "2026-02-19T02:58:31.806Z",
+    "updated_at": "2026-02-19T02:58:31.806Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 17,
+  "fields": {
+    "household": 1,
+    "name": "Commission",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 2,
+    "created_at": "2026-02-19T02:58:31.808Z",
+    "updated_at": "2026-02-19T02:58:31.808Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 18,
+  "fields": {
+    "household": 1,
+    "name": "Tips",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 3,
+    "created_at": "2026-02-19T02:58:31.809Z",
+    "updated_at": "2026-02-19T02:58:31.809Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 19,
+  "fields": {
+    "household": 1,
+    "name": "Side Hustle",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 4,
+    "created_at": "2026-02-19T02:58:31.811Z",
+    "updated_at": "2026-02-19T02:58:31.811Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 20,
+  "fields": {
+    "household": 1,
+    "name": "Business Income",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 5,
+    "created_at": "2026-02-19T02:58:31.812Z",
+    "updated_at": "2026-02-19T02:58:31.812Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 21,
+  "fields": {
+    "household": 1,
+    "name": "Interest Income",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 6,
+    "created_at": "2026-02-19T02:58:31.814Z",
+    "updated_at": "2026-02-19T02:58:31.814Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 22,
+  "fields": {
+    "household": 1,
+    "name": "Dividends",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 7,
+    "created_at": "2026-02-19T02:58:31.816Z",
+    "updated_at": "2026-02-19T02:58:31.816Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 23,
+  "fields": {
+    "household": 1,
+    "name": "Rental Income",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 8,
+    "created_at": "2026-02-19T02:58:31.817Z",
+    "updated_at": "2026-02-19T02:58:31.817Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 24,
+  "fields": {
+    "household": 1,
+    "name": "Refunds / Reimbursements",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 9,
+    "created_at": "2026-02-19T02:58:31.818Z",
+    "updated_at": "2026-02-19T02:58:31.818Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 25,
+  "fields": {
+    "household": 1,
+    "name": "Gifts",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 10,
+    "created_at": "2026-02-19T02:58:31.820Z",
+    "updated_at": "2026-02-19T02:58:31.820Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 26,
+  "fields": {
+    "household": 1,
+    "name": "Other Income",
+    "category_type": "INCOME",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 11,
+    "created_at": "2026-02-19T02:58:31.821Z",
+    "updated_at": "2026-02-19T02:58:31.821Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 27,
+  "fields": {
+    "household": 1,
+    "name": "Rent / Mortgage",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 100,
+    "created_at": "2026-02-19T02:58:31.823Z",
+    "updated_at": "2026-02-19T02:58:31.823Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 28,
+  "fields": {
+    "household": 1,
+    "name": "Property Tax",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 101,
+    "created_at": "2026-02-19T02:58:31.824Z",
+    "updated_at": "2026-02-19T02:58:31.824Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 29,
+  "fields": {
+    "household": 1,
+    "name": "HOA",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 102,
+    "created_at": "2026-02-19T02:58:31.825Z",
+    "updated_at": "2026-02-19T02:58:31.825Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 30,
+  "fields": {
+    "household": 1,
+    "name": "Home Insurance",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 103,
+    "created_at": "2026-02-19T02:58:31.827Z",
+    "updated_at": "2026-02-19T02:58:31.827Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 31,
+  "fields": {
+    "household": 1,
+    "name": "Maintenance / Repairs",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 104,
+    "created_at": "2026-02-19T02:58:31.828Z",
+    "updated_at": "2026-02-19T02:58:31.828Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 32,
+  "fields": {
+    "household": 1,
+    "name": "Electricity",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 110,
+    "created_at": "2026-02-19T02:58:31.829Z",
+    "updated_at": "2026-02-19T02:58:31.829Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 33,
+  "fields": {
+    "household": 1,
+    "name": "Water / Sewer",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 111,
+    "created_at": "2026-02-19T02:58:31.831Z",
+    "updated_at": "2026-02-19T02:58:31.831Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 34,
+  "fields": {
+    "household": 1,
+    "name": "Gas",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 112,
+    "created_at": "2026-02-19T02:58:31.832Z",
+    "updated_at": "2026-02-19T02:58:31.832Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 35,
+  "fields": {
+    "household": 1,
+    "name": "Trash",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 113,
+    "created_at": "2026-02-19T02:58:31.833Z",
+    "updated_at": "2026-02-19T02:58:31.833Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 36,
+  "fields": {
+    "household": 1,
+    "name": "Internet",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 114,
+    "created_at": "2026-02-19T02:58:31.835Z",
+    "updated_at": "2026-02-19T02:58:31.835Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 37,
+  "fields": {
+    "household": 1,
+    "name": "Mobile Phone",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 115,
+    "created_at": "2026-02-19T02:58:31.836Z",
+    "updated_at": "2026-02-19T02:58:31.836Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 38,
+  "fields": {
+    "household": 1,
+    "name": "Gas / Fuel",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 120,
+    "created_at": "2026-02-19T02:58:31.837Z",
+    "updated_at": "2026-02-19T02:58:31.837Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 39,
+  "fields": {
+    "household": 1,
+    "name": "Car Payment",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 121,
+    "created_at": "2026-02-19T02:58:31.839Z",
+    "updated_at": "2026-02-19T02:58:31.839Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 40,
+  "fields": {
+    "household": 1,
+    "name": "Auto Insurance",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 122,
+    "created_at": "2026-02-19T02:58:31.840Z",
+    "updated_at": "2026-02-19T02:58:31.840Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 41,
+  "fields": {
+    "household": 1,
+    "name": "Maintenance",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 123,
+    "created_at": "2026-02-19T02:58:31.841Z",
+    "updated_at": "2026-02-19T02:58:31.841Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 42,
+  "fields": {
+    "household": 1,
+    "name": "Parking / Tolls",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 124,
+    "created_at": "2026-02-19T02:58:31.843Z",
+    "updated_at": "2026-02-19T02:58:31.843Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 43,
+  "fields": {
+    "household": 1,
+    "name": "Groceries",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 130,
+    "created_at": "2026-02-19T02:58:31.844Z",
+    "updated_at": "2026-02-19T02:58:31.844Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 44,
+  "fields": {
+    "household": 1,
+    "name": "Dining Out",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 131,
+    "created_at": "2026-02-19T02:58:31.845Z",
+    "updated_at": "2026-02-19T02:58:31.845Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 45,
+  "fields": {
+    "household": 1,
+    "name": "Coffee / Snacks",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 132,
+    "created_at": "2026-02-19T02:58:31.847Z",
+    "updated_at": "2026-02-19T02:58:31.847Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 46,
+  "fields": {
+    "household": 1,
+    "name": "Health Insurance",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 140,
+    "created_at": "2026-02-19T02:58:31.848Z",
+    "updated_at": "2026-02-19T02:58:31.848Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 47,
+  "fields": {
+    "household": 1,
+    "name": "Doctor / Dentist",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 141,
+    "created_at": "2026-02-19T02:58:31.849Z",
+    "updated_at": "2026-02-19T02:58:31.849Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 48,
+  "fields": {
+    "household": 1,
+    "name": "Pharmacy",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 142,
+    "created_at": "2026-02-19T02:58:31.851Z",
+    "updated_at": "2026-02-19T02:58:31.851Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 49,
+  "fields": {
+    "household": 1,
+    "name": "Gym / Fitness",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 143,
+    "created_at": "2026-02-19T02:58:31.852Z",
+    "updated_at": "2026-02-19T02:58:31.852Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 50,
+  "fields": {
+    "household": 1,
+    "name": "Clothing",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 150,
+    "created_at": "2026-02-19T02:58:31.853Z",
+    "updated_at": "2026-02-19T02:58:31.853Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 51,
+  "fields": {
+    "household": 1,
+    "name": "Hair / Beauty",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 151,
+    "created_at": "2026-02-19T02:58:31.855Z",
+    "updated_at": "2026-02-19T02:58:31.855Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 52,
+  "fields": {
+    "household": 1,
+    "name": "Personal Care",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 152,
+    "created_at": "2026-02-19T02:58:31.856Z",
+    "updated_at": "2026-02-19T02:58:31.856Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 53,
+  "fields": {
+    "household": 1,
+    "name": "Childcare",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 160,
+    "created_at": "2026-02-19T02:58:31.857Z",
+    "updated_at": "2026-02-19T02:58:31.857Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 54,
+  "fields": {
+    "household": 1,
+    "name": "School / Activities",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 161,
+    "created_at": "2026-02-19T02:58:31.858Z",
+    "updated_at": "2026-02-19T02:58:31.858Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 55,
+  "fields": {
+    "household": 1,
+    "name": "Credit Card Payment",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 170,
+    "created_at": "2026-02-19T02:58:31.860Z",
+    "updated_at": "2026-02-19T02:58:31.860Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 56,
+  "fields": {
+    "household": 1,
+    "name": "Student Loan",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 171,
+    "created_at": "2026-02-19T02:58:31.861Z",
+    "updated_at": "2026-02-19T02:58:31.861Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 57,
+  "fields": {
+    "household": 1,
+    "name": "Personal Loan",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 172,
+    "created_at": "2026-02-19T02:58:31.862Z",
+    "updated_at": "2026-02-19T02:58:31.862Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 58,
+  "fields": {
+    "household": 1,
+    "name": "Streaming",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 180,
+    "created_at": "2026-02-19T02:58:31.863Z",
+    "updated_at": "2026-02-19T02:58:31.863Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 59,
+  "fields": {
+    "household": 1,
+    "name": "Software / Apps",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 181,
+    "created_at": "2026-02-19T02:58:31.865Z",
+    "updated_at": "2026-02-19T02:58:31.865Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 60,
+  "fields": {
+    "household": 1,
+    "name": "Memberships",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 182,
+    "created_at": "2026-02-19T02:58:31.866Z",
+    "updated_at": "2026-02-19T02:58:31.866Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 61,
+  "fields": {
+    "household": 1,
+    "name": "Emergency Fund",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 190,
+    "created_at": "2026-02-19T02:58:31.867Z",
+    "updated_at": "2026-02-19T02:58:31.867Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 62,
+  "fields": {
+    "household": 1,
+    "name": "Retirement Contributions",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 191,
+    "created_at": "2026-02-19T02:58:31.869Z",
+    "updated_at": "2026-02-19T02:58:31.869Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 63,
+  "fields": {
+    "household": 1,
+    "name": "Brokerage Contributions",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 192,
+    "created_at": "2026-02-19T02:58:31.870Z",
+    "updated_at": "2026-02-19T02:58:31.870Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 64,
+  "fields": {
+    "household": 1,
+    "name": "Movies / Games",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 200,
+    "created_at": "2026-02-19T02:58:31.871Z",
+    "updated_at": "2026-02-19T02:58:31.871Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 65,
+  "fields": {
+    "household": 1,
+    "name": "Hobbies",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 201,
+    "created_at": "2026-02-19T02:58:31.873Z",
+    "updated_at": "2026-02-19T02:58:31.873Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 66,
+  "fields": {
+    "household": 1,
+    "name": "Flights",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 210,
+    "created_at": "2026-02-19T02:58:31.874Z",
+    "updated_at": "2026-02-19T02:58:31.874Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 67,
+  "fields": {
+    "household": 1,
+    "name": "Lodging",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 211,
+    "created_at": "2026-02-19T02:58:31.875Z",
+    "updated_at": "2026-02-19T02:58:31.875Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 68,
+  "fields": {
+    "household": 1,
+    "name": "Transportation (Travel)",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 212,
+    "created_at": "2026-02-19T02:58:31.877Z",
+    "updated_at": "2026-02-19T02:58:31.877Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 69,
+  "fields": {
+    "household": 1,
+    "name": "Food (Travel)",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 213,
+    "created_at": "2026-02-19T02:58:31.878Z",
+    "updated_at": "2026-02-19T02:58:31.878Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 70,
+  "fields": {
+    "household": 1,
+    "name": "Donations / Charity",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 220,
+    "created_at": "2026-02-19T02:58:31.880Z",
+    "updated_at": "2026-02-19T02:58:31.880Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 71,
+  "fields": {
+    "household": 1,
+    "name": "Gifts Given",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 221,
+    "created_at": "2026-02-19T02:58:31.882Z",
+    "updated_at": "2026-02-19T02:58:31.882Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 72,
+  "fields": {
+    "household": 1,
+    "name": "Federal Tax",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 230,
+    "created_at": "2026-02-19T02:58:31.884Z",
+    "updated_at": "2026-02-19T02:58:31.884Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 73,
+  "fields": {
+    "household": 1,
+    "name": "State Tax",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 231,
+    "created_at": "2026-02-19T02:58:31.886Z",
+    "updated_at": "2026-02-19T02:58:31.886Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 74,
+  "fields": {
+    "household": 1,
+    "name": "Other Tax",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 232,
+    "created_at": "2026-02-19T02:58:31.888Z",
+    "updated_at": "2026-02-19T02:58:31.888Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 75,
+  "fields": {
+    "household": 1,
+    "name": "Pet Food",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 240,
+    "created_at": "2026-02-19T02:58:31.890Z",
+    "updated_at": "2026-02-19T02:58:31.890Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 76,
+  "fields": {
+    "household": 1,
+    "name": "Vet",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 241,
+    "created_at": "2026-02-19T02:58:31.891Z",
+    "updated_at": "2026-02-19T02:58:31.891Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 77,
+  "fields": {
+    "household": 1,
+    "name": "Supplies",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 242,
+    "created_at": "2026-02-19T02:58:31.893Z",
+    "updated_at": "2026-02-19T02:58:31.893Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 78,
+  "fields": {
+    "household": 1,
+    "name": "Bank Fees",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 250,
+    "created_at": "2026-02-19T02:58:31.895Z",
+    "updated_at": "2026-02-19T02:58:31.895Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 79,
+  "fields": {
+    "household": 1,
+    "name": "ATM / Cash Fees",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 251,
+    "created_at": "2026-02-19T02:58:31.896Z",
+    "updated_at": "2026-02-19T02:58:31.896Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 80,
+  "fields": {
+    "household": 1,
+    "name": "Other Expenses",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": true,
+    "is_archived": false,
+    "sort_order": 252,
+    "created_at": "2026-02-19T02:58:31.897Z",
+    "updated_at": "2026-02-19T02:58:31.897Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 81,
+  "fields": {
+    "household": 1,
+    "name": "Dog Food",
+    "category_type": "EXPENSE",
+    "parent": 43,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 0,
+    "created_at": "2026-02-19T03:14:43.591Z",
+    "updated_at": "2026-02-19T03:14:43.591Z"
+  }
+},
+{
+  "model": "categories.category",
+  "pk": 82,
+  "fields": {
+    "household": 1,
+    "name": "Bank Transfer",
+    "category_type": "EXPENSE",
+    "parent": null,
+    "is_system": false,
+    "is_archived": false,
+    "sort_order": 0,
+    "created_at": "2026-02-26T22:21:16.931Z",
+    "updated_at": "2026-02-26T23:12:24.403Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 1,
+  "fields": {
+    "household": 1,
+    "name": "Paycheck",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 15,
+    "direction": "INCOME",
+    "amount": "1835.52",
+    "currency": "USD",
+    "frequency": "WEEKLY",
+    "interval": 1,
+    "day_of_week": 4,
+    "day_of_month": null,
+    "nth_week": null,
+    "start_date": "2026-02-26",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:33:35.236Z",
+    "updated_at": "2026-02-26T21:54:50.935Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 2,
+  "fields": {
+    "household": 1,
+    "name": "Henry Medical",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 13,
+    "direction": "EXPENSE",
+    "amount": "99.00",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 13,
+    "nth_week": null,
+    "start_date": "2026-03-13",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:55:37.164Z",
+    "updated_at": "2026-02-26T21:55:37.164Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 3,
+  "fields": {
+    "household": 1,
+    "name": "Att",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 7,
+    "direction": "EXPENSE",
+    "amount": "240.50",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 17,
+    "nth_week": null,
+    "start_date": "2026-03-17",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:56:36.668Z",
+    "updated_at": "2026-02-26T21:56:36.668Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 4,
+  "fields": {
+    "household": 1,
+    "name": "Netflix",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 58,
+    "direction": "EXPENSE",
+    "amount": "19.09",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 17,
+    "nth_week": null,
+    "start_date": "2026-02-17",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:57:26.900Z",
+    "updated_at": "2026-02-26T22:03:04.250Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 5,
+  "fields": {
+    "household": 1,
+    "name": "Electric",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 7,
+    "direction": "EXPENSE",
+    "amount": "450.00",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 10,
+    "nth_week": null,
+    "start_date": "2026-03-10",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:58:08.669Z",
+    "updated_at": "2026-02-26T21:58:08.669Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 6,
+  "fields": {
+    "household": 1,
+    "name": "Cox",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 7,
+    "direction": "EXPENSE",
+    "amount": "70.00",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 11,
+    "nth_week": null,
+    "start_date": "2026-03-11",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T21:58:34.506Z",
+    "updated_at": "2026-02-26T21:58:34.506Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 7,
+  "fields": {
+    "household": 1,
+    "name": "Affirm",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 12,
+    "direction": "EXPENSE",
+    "amount": "48.17",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 21,
+    "nth_week": null,
+    "start_date": "2026-02-21",
+    "end_date": "2027-10-21",
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:02:49.856Z",
+    "updated_at": "2026-02-26T22:26:28.066Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 8,
+  "fields": {
+    "household": 1,
+    "name": "Water",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 7,
+    "direction": "EXPENSE",
+    "amount": "164.30",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 21,
+    "nth_week": null,
+    "start_date": "2026-03-21",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:03:37.435Z",
+    "updated_at": "2026-02-26T22:03:37.435Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 9,
+  "fields": {
+    "household": 1,
+    "name": "Rent",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 6,
+    "direction": "EXPENSE",
+    "amount": "3100.00",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 1,
+    "nth_week": null,
+    "start_date": "2026-03-01",
+    "end_date": "2027-12-01",
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:13:50.348Z",
+    "updated_at": "2026-02-26T22:13:50.348Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 10,
+  "fields": {
+    "household": 1,
+    "name": "Car Payment",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 39,
+    "direction": "EXPENSE",
+    "amount": "393.79",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 2,
+    "nth_week": null,
+    "start_date": "2026-03-02",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:14:22.817Z",
+    "updated_at": "2026-02-26T22:14:22.817Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 11,
+  "fields": {
+    "household": 1,
+    "name": "Care Credit",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 55,
+    "direction": "EXPENSE",
+    "amount": "393.79",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 28,
+    "nth_week": null,
+    "start_date": "2026-03-28",
+    "end_date": "2027-03-28",
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:15:23.883Z",
+    "updated_at": "2026-02-26T22:16:45.387Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 12,
+  "fields": {
+    "household": 1,
+    "name": "Medical Insurance",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 13,
+    "direction": "EXPENSE",
+    "amount": "620.00",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 1,
+    "nth_week": null,
+    "start_date": "2026-03-01",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:16:15.413Z",
+    "updated_at": "2026-03-01T20:36:45.333Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 13,
+  "fields": {
+    "household": 1,
+    "name": "Hulu",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 58,
+    "direction": "EXPENSE",
+    "amount": "29.18",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 4,
+    "nth_week": null,
+    "start_date": "2026-03-04",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:17:13.592Z",
+    "updated_at": "2026-03-01T20:36:29.021Z"
+  }
+},
+{
+  "model": "timeline.recurringrule",
+  "pk": 14,
+  "fields": {
+    "household": 1,
+    "name": "Progressive",
+    "account": 1,
+    "transfer_to_account": null,
+    "category": 40,
+    "direction": "EXPENSE",
+    "amount": "306.66",
+    "currency": "USD",
+    "frequency": "MONTHLY_DAY",
+    "interval": 1,
+    "day_of_week": null,
+    "day_of_month": 2,
+    "nth_week": null,
+    "start_date": "2026-03-02",
+    "end_date": null,
+    "active": true,
+    "notes": null,
+    "created_at": "2026-02-26T22:17:52.421Z",
+    "updated_at": "2026-02-26T22:17:52.421Z"
+  }
+}
+]
