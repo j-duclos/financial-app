@@ -1,6 +1,10 @@
 # Deploy budget-app on Render (HTTPS + Plaid OAuth)
 
-This guide deploys the **Django API** as a Render **Web Service**, the **Vite/React** app as a **Static Site**, and Postgres as a **managed database**. Use HTTPS URLs everywhere for Plaid (Chase OAuth).
+This guide deploys **one Render Web Service** (`backend/`) that serves both the **Django API** and the **Vite/React** UI on the same hostname (e.g. `https://financial-app-1-tu0l.onrender.com`). `build.sh` runs `npm run build -w @budget-app/web` and copies `apps/web/dist` into `backend/frontend_dist/` so `/accounts` matches local `localhost:5173`.
+
+An optional separate **Static Site** is still supported if you prefer a split deploy; see section 3.
+
+Use HTTPS URLs everywhere for Plaid (Chase OAuth).
 
 ## Project layout
 
@@ -28,9 +32,11 @@ This guide deploys the **Django API** as a Render **Web Service**, the **Vite/Re
 1. **New** → **Web Service** → connect your repo.
 2. **Root Directory**: `backend`
 3. **Runtime**: Python 3
-4. **Build Command**: `chmod +x build.sh && ./build.sh`
+4. **Build Command**: `chmod +x build.sh && ./build.sh` (builds React + `collectstatic` + `migrate`)
 5. **Start Command**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
 6. Link the Postgres instance (Render sets `DATABASE_URL` automatically) or paste `DATABASE_URL` manually.
+
+The Web Service must have **Node/npm** available during build (Render’s default Python images include it). Set `BUILD_FRONTEND=false` only if you deploy the UI elsewhere.
 
 ### Backend environment variables
 
@@ -43,11 +49,11 @@ Set these in the Web Service → **Environment**:
 | `DEBUG` | `False` | Optional on Render: defaults to **False** when `RENDER=true` (set explicitly if needed) |
 | `ALLOWED_HOSTS` | `budget-app-api.onrender.com` | `.onrender.com` is always allowed by settings |
 | `CSRF_TRUSTED_ORIGINS` | `https://budget-app-api.onrender.com,https://budget-app-web.onrender.com` | HTTPS, no trailing slash |
-| `CORS_ALLOWED_ORIGINS` | `https://budget-app-web.onrender.com` | Frontend static site URL only |
+| `CORS_ALLOWED_ORIGINS` | *(optional)* | Defaults to `RENDER_EXTERNAL_URL` when React is served from this service |
 | `PLAID_CLIENT_ID` | `…` | From Plaid Dashboard |
 | `PLAID_SECRET` or `PLAID_PRODUCTION_SECRET` | `…` | Must match `PLAID_ENV` |
 | `PLAID_ENV` | `production` | Use `sandbox` only for fake institutions |
-| `PLAID_REDIRECT_URI` | `https://budget-app-web.onrender.com/plaid/oauth-return` | Server default; should match allowlist |
+| `PLAID_REDIRECT_URI` | `https://<your-app>.onrender.com/plaid/oauth-return` | Same host as the Web Service |
 | `PLAID_TOKEN_FERNET_KEY` | *(optional)* | Fernet key for token encryption at rest |
 
 Example block (replace placeholders):
@@ -57,19 +63,18 @@ DATABASE_URL=postgres://user:pass@host/dbname
 DJANGO_SECRET_KEY=replace-with-50+-char-random-string
 DEBUG=False
 ALLOWED_HOSTS=budget-app-api.onrender.com
-CSRF_TRUSTED_ORIGINS=https://budget-app-api.onrender.com,https://budget-app-web.onrender.com
-CORS_ALLOWED_ORIGINS=https://budget-app-web.onrender.com
+CSRF_TRUSTED_ORIGINS=https://budget-app-api.onrender.com
 PLAID_CLIENT_ID=your_plaid_client_id
 PLAID_PRODUCTION_SECRET=your_production_secret
 PLAID_ENV=production
-PLAID_REDIRECT_URI=https://budget-app-web.onrender.com/plaid/oauth-return
+PLAID_REDIRECT_URI=https://budget-app-api.onrender.com/plaid/oauth-return
 ```
 
-After the first deploy, note the backend URL: `https://budget-app-api.onrender.com` (your name will differ).
+After the first deploy, open your Web Service URL (e.g. `https://budget-app-api.onrender.com`) — that is the app UI and API.
 
 ---
 
-## 3. Create frontend Static Site
+## 3. (Optional) Separate frontend Static Site
 
 1. **New** → **Static Site** → same repo.
 2. **Root Directory**: leave empty (repo root `budget-app`) **or** set to repo root containing `package.json`.
@@ -100,15 +105,10 @@ Note the static site URL: `https://budget-app-web.onrender.com`.
 
 ---
 
-## 4. Align env vars after both URLs exist
+## 4. Align env vars after deploy
 
-Update backend if you used placeholders:
-
-- `CSRF_TRUSTED_ORIGINS` — include both backend and frontend `https://…` URLs
-- `CORS_ALLOWED_ORIGINS` — frontend URL only
-- `PLAID_REDIRECT_URI` — `https://<frontend>/plaid/oauth-return`
-
-Redeploy backend and **rebuild** the static site when changing `VITE_*` vars.
+- `PLAID_REDIRECT_URI` — `https://<your-web-service>/plaid/oauth-return`
+- If you use a **separate** static site: set `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` to that origin, set `SERVE_REACT_APP=false` on the Web Service, and set `VITE_API_URL` on the static site build.
 
 ---
 
@@ -129,7 +129,7 @@ Redeploy backend and **rebuild** the static site when changing `VITE_*` vars.
 
 ## 6. Test Chase OAuth flow
 
-1. Open `https://budget-app-web.onrender.com`, log in.
+1. Open your Web Service URL (or static site if split), log in.
 2. **Accounts** → **Link a bank** → choose Chase (or your institution).
 3. Complete bank OAuth; browser should land on `/plaid/oauth-return?oauth_state_id=…`.
 4. Plaid Link should reopen automatically; after success you are sent to **Accounts**.
@@ -203,14 +203,14 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 - [ ] `DEBUG=False` (or rely on Render’s `RENDER=true` default)
 - [ ] `ALLOWED_HOSTS` — your `*.onrender.com` API hostname (`.onrender.com` is always permitted)
 - [ ] `CSRF_TRUSTED_ORIGINS` — `https://<api-host>,https://<static-site-host>` (no trailing slashes)
-- [ ] `CORS_ALLOWED_ORIGINS` — `https://<static-site-host>` only (required on Render; build fails if missing)
-- [ ] Plaid: `PLAID_CLIENT_ID`, `PLAID_ENV`, matching secret, `PLAID_REDIRECT_URI=https://<static-site>/plaid/oauth-return`
+- [ ] Plaid: `PLAID_CLIENT_ID`, `PLAID_ENV`, matching secret, `PLAID_REDIRECT_URI=https://<web-service>/plaid/oauth-return`
+- [ ] Build logs show `Frontend copied to backend/frontend_dist`
 
-### Frontend Static Site (repo root)
+### Frontend Static Site (optional split deploy)
 - [ ] **Build**: `npm install && npm run build -w @budget-app/web`
 - [ ] **Publish**: `apps/web/dist`
 - [ ] `VITE_API_URL=https://<api-host>` (no trailing slash)
-- [ ] `VITE_PLAID_REDIRECT_URI=https://<static-site>/plaid/oauth-return` (must match Plaid allowlist and backend env)
+- [ ] `SERVE_REACT_APP=false` on the Web Service
 
 ### Plaid Dashboard
 - [ ] Allowed redirect URI: `https://<static-site>/plaid/oauth-return` (exact match, no query string)

@@ -158,6 +158,21 @@ USE_I18N = True
 USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Vite build output (populated by build.sh on Render). Same host as API → empty VITE_API_URL at build.
+FRONTEND_DIST = BASE_DIR / "frontend_dist"
+
+
+def _serve_react_app() -> bool:
+    explicit = os.environ.get("SERVE_REACT_APP", "").strip().lower()
+    if explicit in ("true", "1", "yes"):
+        return True
+    if explicit in ("false", "0", "no"):
+        return False
+    return _ON_RENDER
+
+
+SERVE_REACT_APP = _serve_react_app()
 if not DEBUG:
     STORAGES = {
         "staticfiles": {
@@ -207,12 +222,23 @@ def _is_management_command() -> bool:
     return argv0 in ("manage.py", "django-admin")
 
 # Enforce at gunicorn runtime only — not during build.sh (migrate/collectstatic also set RENDER=true).
-if _ON_RENDER and "CORS_ALLOWED_ORIGINS" not in os.environ and not _is_management_command():
+_render_origin = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+_cors_on_render_default = _render_origin if (_ON_RENDER and SERVE_REACT_APP and _render_origin) else ""
+
+if (
+    _ON_RENDER
+    and "CORS_ALLOWED_ORIGINS" not in os.environ
+    and not _is_management_command()
+    and not _cors_on_render_default
+):
     raise ImproperlyConfigured(
-        "Set CORS_ALLOWED_ORIGINS to your Render static site origin "
-        "(e.g. https://your-app.onrender.com)."
+        "Set CORS_ALLOWED_ORIGINS to your app origin (e.g. https://your-app.onrender.com), "
+        "or deploy with SERVE_REACT_APP on the same host so RENDER_EXTERNAL_URL applies."
     )
-CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS", _CORS_DEV_DEFAULT)
+CORS_ALLOWED_ORIGINS = _csv_env(
+    "CORS_ALLOWED_ORIGINS",
+    _cors_on_render_default if _cors_on_render_default else _CORS_DEV_DEFAULT,
+)
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["content-type", "authorization", "accept"]
 

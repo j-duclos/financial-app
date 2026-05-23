@@ -14,10 +14,12 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from core.spa import serve_frontend
 from core.views import DatabaseInfoView, health
 from timeline.views import TimelineView
 
@@ -36,5 +38,15 @@ urlpatterns = [
     path("api/budgets/", include("budgets.urls")),
     path("api/insights/", include("insights.urls")),
     path("api/", include("plaid_link.urls")),
-    path("", include("web.urls")),
 ]
+
+if settings.SERVE_REACT_APP:
+    urlpatterns += [
+        re_path(
+            r"^(?!api/|admin/|static/|health/).*$",
+            serve_frontend,
+            name="frontend",
+        ),
+    ]
+else:
+    urlpatterns += [path("", include("web.urls"))]
