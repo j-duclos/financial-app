@@ -1,0 +1,16 @@
+# Optional Blueprint — or mirror these settings in the Render Dashboard.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: financial-app
+    runtime: python
+    rootDir: backend
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: DEBUG
+        value: "false"

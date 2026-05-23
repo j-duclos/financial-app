@@ -159,8 +159,18 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Vite build output (populated by build.sh on Render). Same host as API → empty VITE_API_URL at build.
-FRONTEND_DIST = BASE_DIR / "frontend_dist"
+# Vite build output (build.sh copies apps/web/dist → frontend_dist on deploy).
+def _resolve_frontend_dist() -> Path:
+    for candidate in (
+        BASE_DIR / "frontend_dist",
+        BASE_DIR.parent / "apps" / "web" / "dist",
+    ):
+        if (candidate / "index.html").is_file():
+            return candidate
+    return BASE_DIR / "frontend_dist"
+
+
+FRONTEND_DIST = _resolve_frontend_dist()
 
 
 def _serve_react_app() -> bool:

@@ -36,7 +36,9 @@ Use HTTPS URLs everywhere for Plaid (Chase OAuth).
 5. **Start Command**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
 6. Link the Postgres instance (Render sets `DATABASE_URL` automatically) or paste `DATABASE_URL` manually.
 
-The Web Service must have **Node/npm** available during build (Render’s default Python images include it). Set `BUILD_FRONTEND=false` only if you deploy the UI elsewhere.
+**Required:** add environment variable **`NODE_VERSION`** = `20` (or `22`) on the Web Service. Render only auto-installs Node when this is set; with Root Directory `backend/`, the repo-root `package.json` is not detected automatically.
+
+Set `BUILD_FRONTEND=false` only if you deploy the UI elsewhere.
 
 ### Backend environment variables
 
@@ -53,6 +55,7 @@ Set these in the Web Service → **Environment**:
 | `PLAID_CLIENT_ID` | `…` | From Plaid Dashboard |
 | `PLAID_SECRET` or `PLAID_PRODUCTION_SECRET` | `…` | Must match `PLAID_ENV` |
 | `PLAID_ENV` | `production` | Use `sandbox` only for fake institutions |
+| `NODE_VERSION` | `20` | **Required** so `build.sh` can run `npm` (Render Python services) |
 | `PLAID_REDIRECT_URI` | `https://<your-app>.onrender.com/plaid/oauth-return` | Same host as the Web Service |
 | `PLAID_TOKEN_FERNET_KEY` | *(optional)* | Fernet key for token encryption at rest |
 
@@ -162,6 +165,13 @@ Local dev is unchanged: omit `VITE_API_URL`, use `http://localhost:5173`, Plaid 
 - Confirm `build.sh` ran `collectstatic` (check build logs).
 - `DEBUG=False` enables WhiteNoise; ensure `whitenoise` is installed from `requirements.txt`.
 
+### “React app not built” / empty UI after deploy
+
+- Add **`NODE_VERSION=20`** (or `22`) under Environment → redeploy.
+- Build logs must show `Building React frontend` and `Frontend copied to …/frontend_dist`.
+- Build Command must be `chmod +x build.sh && ./build.sh` with Root Directory `backend`.
+- If the build succeeds but the message persists, check that `apps/web/dist/index.html` exists in build logs (copy step).
+
 ### 502 from Gunicorn
 
 - Check **Logs** for import errors or missing env vars.
@@ -197,6 +207,7 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 
 ### Backend Web Service (`backend/`)
 - [ ] **Root Directory**: `backend`
+- [ ] **`NODE_VERSION`** = `20` (or `22`)
 - [ ] **Build**: `chmod +x build.sh && ./build.sh`
 - [ ] **Start**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
 - [ ] `DJANGO_SECRET_KEY` — unique, not the dev default

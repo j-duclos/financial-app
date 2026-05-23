@@ -28,11 +28,12 @@ def serve_frontend(request):
     root: Path = settings.FRONTEND_DIST
     index = root / "index.html"
     if not index.is_file():
-        return HttpResponse(
-            "React app not built. Run npm run build -w @budget-app/web and copy dist to backend/frontend_dist.",
-            status=503,
-            content_type="text/plain",
+        hint = (
+            "React app not built. On Render: set NODE_VERSION=20 in Environment, "
+            "ensure Build Command is 'chmod +x build.sh && ./build.sh', then redeploy. "
+            "Locally: npm run build:deploy -w @budget-app/web && cp -r apps/web/dist/* backend/frontend_dist/"
         )
+        return HttpResponse(hint, status=503, content_type="text/plain")
 
     rel = request.path.lstrip("/")
     asset = _safe_path(root, rel) if rel else None

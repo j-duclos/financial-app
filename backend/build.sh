@@ -2,29 +2,80 @@
 # Render build script — run from backend/ (Root Directory on Render Web Service).
 set -o errexit
 
+BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$BACKEND_DIR"
+REPO_ROOT="$(cd "$BACKEND_DIR/.." && pwd)"
+
 pip install -r requirements.txt
 
 PYTHON="${PYTHON:-python3}"
 command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
 
-# Build React app into frontend_dist/ (same origin as API on Render).
-BUILD_FRONTEND="${BUILD_FRONTEND:-true}"
-if [ "$BUILD_FRONTEND" = "true" ] && [ -f "../package.json" ]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "ERROR: npm is required to build the React UI. Use a Render stack with Node, or set BUILD_FRONTEND=false."
-    exit 1
+_on_render() {
+  case "${RENDER:-}" in true|1|yes|TRUE) return 0 ;; esac
+  return 1
+}
+
+# Render installs Node when NODE_VERSION is set on the service (Dashboard → Environment).
+_prepend_render_node() {
+  if [ ! -d /opt/render/project/nodes ]; then
+    return 1
   fi
+  local node_dir
+  node_dir="$(find /opt/render/project/nodes -maxdepth 1 -type d -name 'node-*' 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$node_dir" ] && [ -x "$node_dir/bin/npm" ]; then
+    export PATH="$node_dir/bin:$PATH"
+    echo "Using Render Node at $node_dir"
+    return 0
+  fi
+  return 1
+}
+
+_build_frontend() {
+  if [ ! -f "$REPO_ROOT/package.json" ]; then
+    echo "ERROR: Monorepo package.json not found at $REPO_ROOT/package.json"
+    echo "       Render Root Directory should be 'backend' with the full repo cloned."
+    return 1
+  fi
+
+  _prepend_render_node || true
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm not found."
+    echo "       On Render: add environment variable NODE_VERSION=20 (or 22) and redeploy."
+    return 1
+  fi
+
   echo "Building React frontend (@budget-app/web)..."
   (
-    cd ..
+    cd "$REPO_ROOT"
     npm install
-    # Same-origin API: do not set VITE_API_URL (AuthContext uses "").
     npm run build:deploy -w @budget-app/web
   )
-  rm -rf frontend_dist
-  mkdir -p frontend_dist
-  cp -r ../apps/web/dist/* frontend_dist/
-  echo "Frontend copied to backend/frontend_dist ($(find frontend_dist -type f | wc -l | tr -d ' ') files)."
+
+  local dist="$REPO_ROOT/apps/web/dist"
+  if [ ! -f "$dist/index.html" ]; then
+    echo "ERROR: Vite build did not produce $dist/index.html"
+    return 1
+  fi
+
+  rm -rf "$BACKEND_DIR/frontend_dist"
+  mkdir -p "$BACKEND_DIR/frontend_dist"
+  cp -r "$dist/"* "$BACKEND_DIR/frontend_dist/"
+  echo "Frontend copied to $BACKEND_DIR/frontend_dist ($(find "$BACKEND_DIR/frontend_dist" -type f | wc -l | tr -d ' ') files)."
+}
+
+BUILD_FRONTEND="${BUILD_FRONTEND:-true}"
+if [ "$BUILD_FRONTEND" = "true" ]; then
+  _build_frontend
+elif _on_render; then
+  echo "ERROR: BUILD_FRONTEND=false on Render but React UI is required (SERVE_REACT_APP)."
+  exit 1
+fi
+
+if _on_render && [ ! -f "$BACKEND_DIR/frontend_dist/index.html" ]; then
+  echo "ERROR: frontend_dist/index.html missing after build."
+  exit 1
 fi
 
 "$PYTHON" manage.py collectstatic --no-input
