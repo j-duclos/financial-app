@@ -134,9 +134,18 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # Database: PostgreSQL when DATABASE_URL set, else SQLite
-if os.environ.get("DATABASE_URL"):
+_DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if _DATABASE_URL:
+    if _ON_RENDER and ("localhost" in _DATABASE_URL or "127.0.0.1" in _DATABASE_URL):
+        raise ImproperlyConfigured(
+            "DATABASE_URL points to localhost, which does not exist on Render. "
+            "In the Render Dashboard: create a Postgres database, link it to this Web Service "
+            "(Environment → Link Database), or paste Render's Internal Database URL — "
+            "do not copy the localhost placeholder from .env.example."
+        )
     import dj_database_url
-    DATABASES = {"default": dj_database_url.config(conn_max_age=600)}
+
+    DATABASES = {"default": dj_database_url.config(conn_max_age=600, default=_DATABASE_URL)}
 else:
     DATABASES = {
         "default": {

@@ -96,6 +96,8 @@ Render **Root Directory = `backend`** is correct. The monorepo root is still clo
 
 When you push changes to `apps/web/src/**/*.tsx`, Render rebuilds the React app automatically. No separate static site is required unless you want a split deploy (see `RENDER_DEPLOYMENT.md`).
 
+**Database on Render:** Create a Postgres instance and **link it** to the Web Service. Render injects `DATABASE_URL` automatically. Do **not** set `DATABASE_URL` to `localhost` in Render env vars — that causes `Connection refused` during `migrate` in `build.sh`.
+
 Full env var checklist: `RENDER_DEPLOYMENT.md`.
 
 ## Mobile app
