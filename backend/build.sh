@@ -67,13 +67,13 @@ _build_frontend() {
 
 BUILD_FRONTEND="${BUILD_FRONTEND:-true}"
 if [ "$BUILD_FRONTEND" = "true" ]; then
-  _build_frontend
-elif _on_render; then
-  echo "ERROR: BUILD_FRONTEND=false on Render but React UI is required (SERVE_REACT_APP)."
-  exit 1
+  _build_frontend || {
+    echo "ERROR: React frontend build failed."
+    exit 1
+  }
 fi
 
-if _on_render && [ ! -f "$BACKEND_DIR/frontend_dist/index.html" ]; then
+if [ "$BUILD_FRONTEND" = "true" ] && [ ! -f "$BACKEND_DIR/frontend_dist/index.html" ]; then
   echo "ERROR: frontend_dist/index.html missing after build."
   exit 1
 fi
