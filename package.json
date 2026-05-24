@@ -8,6 +8,8 @@
   "scripts": {
     "postinstall": "node scripts/patch-react-plaid-link.mjs",
     "dev:web": "npm run dev -w @budget-app/web",
+    "build:web": "npm run build:deploy -w @budget-app/web",
+    "serve:web": "npm run build:web && npm run preview -w @budget-app/web",
     "dev:mobile": "npm run start -w @budget-app/mobile",
     "generate:api": "npm run generate -w @budget-app/api-client"
   }

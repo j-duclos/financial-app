@@ -2,83 +2,103 @@
 
 Production-ready MVP budgeting app with a Django REST backend, React web app, and Expo mobile app. Supports households, accounts (checking, savings, credit, etc.), transactions, transfers, categories, monthly budgets, and insights.
 
+**Architecture:** Business logic lives in Django services and is exposed as REST APIs (`/api/`). The **web UI is React** (`apps/web/`). Render builds that React app and serves it from the same Django host as the API. Mobile uses the same APIs via `@budget-app/api-client`.
+
 ## Tech stack
 
-- **Backend:** Django 5, Django REST Framework, PostgreSQL, JWT (djangorestframework-simplejwt), drf-spectacular (OpenAPI)
-- **Web:** React 19, Vite, TypeScript, Tailwind CSS, React Query
+- **Backend + API:** Django 5, Django REST Framework, PostgreSQL (Render) / SQLite (local), JWT, drf-spectacular (OpenAPI)
+- **Web UI:** React 19, Vite, TypeScript, Tailwind CSS, React Query — `apps/web/src/pages/*.tsx`
 - **Mobile:** Expo (React Native), TypeScript, React Query
-- **Shared:** OpenAPI-derived API contract; `packages/api-client` (typed client), `packages/shared` (types/utils)
+- **Shared:** `packages/api-client`, `packages/shared`
 
 ## Monorepo layout
 
 ```
 budget-app/
-├── backend/          # Django project (config/, core, accounts, transactions, budgets, categories, insights)
+├── backend/          # Django API (+ build.sh copies React build to frontend_dist/ for Render)
 ├── apps/
-│   ├── web/          # React + Vite + Tailwind
+│   ├── web/          # React web UI — edit these .tsx files
 │   └── mobile/       # Expo + React Native
 ├── packages/
-│   ├── api-client/   # Typed API client (shared by web + mobile)
+│   ├── api-client/   # Typed API client (web + mobile)
 │   └── shared/       # Types and utils
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
 ```
 
-## Commands to run everything locally
+## Web UI — local development (React)
 
-### Backend (Django)
+Edit files under **`apps/web/src/`** (pages, components, hooks). This is the same code Render deploys.
 
-```bash
-cd backend
-pip install -r requirements.txt
-cp ../.env.example .env   # or set DATABASE_URL, SECRET_KEY, etc.
-python manage.py migrate
-python manage.py runserver
+### Day-to-day (hot reload)
 
-docker compose exec backend python manage.py makemigrations
-docker compose exec backend python manage.py migrate
-```
-
-- API: http://localhost:8000/api/
-- Swagger UI: http://localhost:8000/api/docs/
-- OpenAPI schema: http://localhost:8000/api/schema/
-
-### With Docker
+Two terminals:
 
 ```bash
-docker-compose up -d postgres
+# Terminal 1 — API + SQLite (from repo root)
 docker-compose up backend
 ```
 
-**After changing backend code** you must rebuild the image (code is copied at build time, not mounted):
-
 ```bash
-docker-compose up -d --build backend
+# Terminal 2 — React dev server (from repo root, npm install once at repo root)
+npm run dev:web
 ```
 
-**Check that the API is running new code:** In browser DevTools → Network, when the timeline is requested, the response should have header `X-Timeline-Skip-Logic: 1`. If that header is missing, the container is still running old code — rebuild again.
+| URL | Role |
+|-----|------|
+| **http://localhost:5173** | **Web UI** — open this while developing |
+| http://localhost:8000/api/ | REST API only |
+| http://localhost:8000/api/docs/ | Swagger |
 
-To run the timeline skip debug command **inside the same container that serves the API** (and with the same account filter as the Transactions page):
+Vite proxies `/api` → `http://localhost:8000`, so leave `VITE_API_URL` unset in local dev. Docker uses your existing **`backend/db.sqlite3`** (`DATABASE_URL=""` in compose overrides the Postgres placeholder in `.env`).
+
+> **Note:** http://localhost:8000/ without a React build shows Django template pages (`backend/web/`). That is a separate, minimal UI — **not** what you use for web development. Use **:5173** for the React app.
+
+### Without Docker
 
 ```bash
-docker-compose exec backend python manage.py debug_timeline_skip
-docker-compose exec backend python manage.py debug_timeline_skip --account_id=1
+cd backend
+pip3 install -r requirements.txt
+cp ../.env.example .env
+# Comment out DATABASE_URL in .env to use backend/db.sqlite3
+python3 manage.py migrate
+python3 manage.py runserver
 ```
-Use `--account_id=1` when you're viewing the Chase account so the debug uses the same "single account" path as the API.
 
-### Web app
+Then `npm run dev:web` from repo root → http://localhost:5173
+
+### Test locally like Render (optional)
+
+Before pushing, verify the production bundle on one host (same as Render):
 
 ```bash
-cd apps/web
-npm install
-npm run dev
+npm run build:deploy -w @budget-app/web
+rm -rf backend/frontend_dist && mkdir -p backend/frontend_dist
+cp -r apps/web/dist/* backend/frontend_dist/
+cd backend && SERVE_REACT_APP=true python3 manage.py runserver
 ```
 
-- App: http://localhost:5173  
-- Set `VITE_API_URL=http://localhost:8000` if needed (default in .env.example).
+Open http://localhost:8000 — React UI + API on one port, no Vite.
 
-### Mobile app
+## Deploy to Render (React + API, root dir `backend/`)
+
+Render **Root Directory = `backend`** is correct. The monorepo root is still cloned; `backend/build.sh` goes up one level, runs `npm install` + `npm run build:deploy -w @budget-app/web`, and copies `apps/web/dist/` → `backend/frontend_dist/`. On Render, `SERVE_REACT_APP` defaults to **true**, so your app URL serves the React build and `/api/` on the same hostname.
+
+**Web Service settings:**
+
+| Setting | Value |
+|---------|--------|
+| Root Directory | `backend` |
+| Build Command | `chmod +x build.sh && ./build.sh` |
+| Start Command | `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT` |
+| `NODE_VERSION` | `20` (required — Render won't run npm without this) |
+
+When you push changes to `apps/web/src/**/*.tsx`, Render rebuilds the React app automatically. No separate static site is required unless you want a split deploy (see `RENDER_DEPLOYMENT.md`).
+
+Full env var checklist: `RENDER_DEPLOYMENT.md`.
+
+## Mobile app
 
 ```bash
 cd apps/mobile
@@ -87,6 +107,8 @@ npx expo start
 ```
 
 - Set `EXPO_PUBLIC_API_URL=http://localhost:8000` (e.g. in `.env` or app config) so the device/emulator can reach the API.
+
+## Other commands
 
 ### Generate API client (optional)
 
@@ -103,7 +125,7 @@ npm run generate
 
 ```bash
 cd backend
-pytest
+python3 -m pytest
 ```
 
 ### Upcoming charge notifications (daily job)
@@ -112,7 +134,7 @@ Notifications remind users 1 day before a recurring rule charge is due. Run dail
 
 ```bash
 cd backend
-python manage.py create_upcoming_charge_notifications
+python3 manage.py create_upcoming_charge_notifications
 ```
 
 Optional: limit to one household: `--household_id=1`
@@ -131,10 +153,12 @@ Optional: limit to one household: `--household_id=1`
 | Permissions | `backend/core/permissions.py` |
 | Auth (JWT + register) | `backend/core/views.py`, `backend/core/urls.py` |
 | Insights | `backend/insights/views.py` |
+| **React web UI** | `apps/web/src/pages/`, `apps/web/src/components/`, `apps/web/src/App.tsx` |
 | API client | `packages/api-client/src/api.ts`, `packages/api-client/src/config.ts` |
+| Render build | `backend/build.sh` → copies `apps/web/dist/` to `backend/frontend_dist/` |
+| Django template UI (legacy) | `backend/web/` — not used for React web development |
 | Shared types/utils | `packages/shared/src/` |
-| Web auth + layout | `apps/web/src/context/AuthContext.tsx`, `apps/web/src/App.tsx` |
-| Mobile auth + tabs | `apps/mobile/context/AuthContext.tsx`, `apps/mobile/app/(auth)/`, `apps/mobile/app/(tabs)/` |
+| Mobile | `apps/mobile/context/AuthContext.tsx`, `apps/mobile/app/(tabs)/` |
 
 ## Features (MVP)
 
