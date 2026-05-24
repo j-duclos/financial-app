@@ -84,10 +84,15 @@ _build_frontend() {
 
 BUILD_FRONTEND="${BUILD_FRONTEND:-true}"
 if [ "$BUILD_FRONTEND" = "true" ]; then
-  _build_frontend || {
-    echo "ERROR: React frontend build failed."
+  if _build_frontend; then
+    :
+  elif [ -f "$BACKEND_DIR/frontend_dist/index.html" ]; then
+    echo "WARN: npm build failed; using frontend_dist already in the repo."
+    echo "      Set NODE_VERSION=20 on Render to rebuild React on each deploy."
+  else
+    echo "ERROR: React frontend build failed and backend/frontend_dist/index.html is missing."
     exit 1
-  }
+  fi
 fi
 
 if [ "$BUILD_FRONTEND" = "true" ] && [ ! -f "$BACKEND_DIR/frontend_dist/index.html" ]; then
