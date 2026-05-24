@@ -6,6 +6,23 @@ BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$BACKEND_DIR"
 REPO_ROOT="$(cd "$BACKEND_DIR/.." && pwd)"
 
+echo "=== budget-app build.sh ==="
+echo "BACKEND_DIR=$BACKEND_DIR"
+echo "REPO_ROOT=$REPO_ROOT"
+echo "RENDER=${RENDER:-unset}"
+echo "NODE_VERSION=${NODE_VERSION:-unset}"
+echo "BUILD_FRONTEND=${BUILD_FRONTEND:-true}"
+if [ -f "$REPO_ROOT/package.json" ]; then
+  echo "Found monorepo package.json"
+else
+  echo "MISSING $REPO_ROOT/package.json — is Root Directory set to backend with full repo cloned?"
+fi
+if command -v npm >/dev/null 2>&1; then
+  echo "npm: $(command -v npm) ($(npm --version))"
+else
+  echo "npm: NOT FOUND — set NODE_VERSION=20 in Render Environment and redeploy"
+fi
+
 pip install -r requirements.txt
 
 PYTHON="${PYTHON:-python3}"
