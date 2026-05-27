@@ -50,7 +50,20 @@ class RecurringRule(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     active = models.BooleanField(default=True)
+    paused_at = models.DateField(
+        null=True,
+        blank=True,
+        help_text="When set with active=False, no occurrences on or after this date are projected or materialized.",
+    )
     notes = models.TextField(blank=True, null=True)
+    is_bill = models.BooleanField(
+        default=False,
+        help_text="Include this rule on the monthly bill checklist (also inferred from direction/category).",
+    )
+    payment_flexibility_days = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Max days this bill may be delayed without penalty (0 = not flexible).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -96,8 +109,28 @@ class InterestCycleSkip(models.Model):
 
 
 class Scenario(models.Model):
+    class Template(models.TextChoices):
+        BLANK = "blank", "Blank"
+        BUY_HOUSE = "buy_house", "Buy house"
+        LOSE_JOB = "lose_job", "Lose job"
+        MOVE = "move", "Move"
+        RAISE_INCOME = "raise_income", "Raise income"
+        PAY_OFF_DEBT = "pay_off_debt", "Pay off debt"
+        NEW_CAR = "new_car", "New car"
+        CUSTOM = "custom", "Custom"
+
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name="scenarios")
     name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    template = models.CharField(
+        max_length=32,
+        choices=Template.choices,
+        default=Template.BLANK,
+    )
+    horizon_months = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Default comparison horizon in months for this scenario.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -121,6 +154,7 @@ class ScenarioRuleOverride(models.Model):
     override_category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
+    notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -129,6 +163,60 @@ class ScenarioRuleOverride(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["scenario", "rule"], name="uniq_scenario_rule"),
         ]
+
+
+class ScenarioOneTimeEvent(models.Model):
+    """Scenario-only one-time cash event; never creates a real Transaction row."""
+
+    class Direction(models.TextChoices):
+        INCOME = "INCOME", "Income"
+        EXPENSE = "EXPENSE", "Expense"
+        TRANSFER = "TRANSFER", "Transfer"
+
+    scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="one_time_events")
+    date = models.DateField()
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="scenario_one_time_events")
+    description = models.CharField(max_length=512)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="scenario_one_time_events"
+    )
+    direction = models.CharField(max_length=20, choices=Direction.choices)
+    amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        help_text="Positive magnitude; sign derived from direction when projecting.",
+    )
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timeline_scenario_one_time_event"
+        ordering = ["date", "id"]
+        indexes = [models.Index(fields=["scenario", "date"])]
+
+
+class ScenarioCategoryShock(models.Model):
+    """
+    Future-ready category expense shock for what-if projections.
+    Applied as a percent multiplier on projected rows in the category during the window.
+    """
+
+    scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="category_shocks")
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="scenario_category_shocks")
+    percent_change = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        help_text="Percent change applied to projected expenses (e.g. 40 = +40%).",
+    )
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timeline_scenario_category_shock"
+        ordering = ["start_date", "id"]
 
 
 class StatementTransaction(models.Model):

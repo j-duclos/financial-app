@@ -10,10 +10,14 @@ from accounts.models import Account
 from core.permissions import IsHouseholdMember
 from core.utils import get_households_for_user
 
-from .models import Transaction
+from .models import Reconciliation, Transaction
 from .services.reconciliation import (
     complete_reconciliation,
     get_setup_data,
+    list_reconciliation_sessions,
+    serialize_session_detail,
+    serialize_session_summary,
+    undo_reconciliation,
 )
 
 
@@ -93,6 +97,7 @@ class ReconcileSetupView(APIView):
                 "period_end_date": data["period_end_date"].isoformat(),
                 "last_reconcile_period_end": last_end.isoformat() if last_end else None,
                 "max_end_date": data["max_end_date"].isoformat(),
+                "latest_session_id": data.get("latest_session_id"),
                 "unreconciled_transactions": txns_payload,
             }
         )
@@ -181,7 +186,90 @@ class ReconcileCompleteView(APIView):
                 "period_end_date": rec.period_end_date.isoformat() if rec.period_end_date else None,
                 "status": rec.status,
                 "completed_at": rec.completed_at.isoformat() if rec.completed_at else None,
+                "transaction_count": rec.transaction_count,
                 "checked_transaction_ids": checked_pks,
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ReconcileSessionListView(APIView):
+    """List reconciliation sessions for an account."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def get(self, request):
+        account_id = request.query_params.get("account_id")
+        if not account_id:
+            return Response(
+                {"detail": "account_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        households = get_households_for_user(request.user)
+        account = Account.objects.filter(pk=account_id, household__in=households).first()
+        if not account:
+            return Response({"detail": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        sessions = list_reconciliation_sessions(account)
+        latest_active_id = (
+            sessions.filter(is_active=True).order_by("-completed_at", "-id").values_list("pk", flat=True).first()
+        )
+        payload = []
+        for rec in sessions:
+            item = serialize_session_summary(rec)
+            item["can_undo"] = rec.pk == latest_active_id and rec.is_active
+            payload.append(item)
+        return Response({"results": payload})
+
+
+class ReconcileSessionDetailView(APIView):
+    """Retrieve a single reconciliation session with included transactions."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def get(self, request, session_id: int):
+        households = get_households_for_user(request.user)
+        rec = (
+            Reconciliation.objects.filter(
+                pk=session_id,
+                account__household__in=households,
+                status=Reconciliation.Status.COMPLETED,
+            )
+            .select_related("account", "user", "undone_by")
+            .first()
+        )
+        if not rec:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+        latest_active = (
+            list_reconciliation_sessions(rec.account)
+            .filter(is_active=True)
+            .order_by("-completed_at", "-id")
+            .first()
+        )
+        detail = serialize_session_detail(rec)
+        detail["can_undo"] = latest_active is not None and latest_active.pk == rec.pk and rec.is_active
+        return Response(detail)
+
+
+class ReconcileSessionUndoView(APIView):
+    """Undo the latest active reconciliation session."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request, session_id: int):
+        households = get_households_for_user(request.user)
+        rec = (
+            Reconciliation.objects.filter(
+                pk=session_id,
+                account__household__in=households,
+            )
+            .select_related("account")
+            .first()
+        )
+        if not rec:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            result = undo_reconciliation(session=rec, user=request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)

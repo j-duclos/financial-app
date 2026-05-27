@@ -104,6 +104,15 @@ class Account(models.Model):
         max_digits=15, decimal_places=2, null=True, blank=True,
         help_text="Credit limit for credit cards; used to show available credit.",
     )
+    target_utilization_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("10"),
+        help_text=(
+            "Target credit utilization percent for health scoring (e.g. 10). "
+            "At or below this is healthy; higher utilization escalates watch/risk/critical."
+        ),
+    )
     billing_cycle_end_day = models.PositiveSmallIntegerField(
         null=True, blank=True,
         help_text="Legacy alias for statement_closing_day; kept in sync for older clients.",

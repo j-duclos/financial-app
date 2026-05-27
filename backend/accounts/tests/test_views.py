@@ -175,3 +175,94 @@ def test_infer_role_from_account_type():
     assert Account.infer_role_from_account_type(Account.AccountType.SAVINGS) == Account.AccountRole.SAVINGS
     assert Account.infer_role_from_account_type(Account.AccountType.CREDIT) == Account.AccountRole.CREDIT_CARD
     assert Account.infer_role_from_account_type(Account.AccountType.CASH) == Account.AccountRole.OTHER
+
+
+def test_retrieve_account_includes_balance_when_requested(auth_client, household):
+    from decimal import Decimal
+    from transactions.models import Transaction
+
+    acc = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+        starting_balance=Decimal("1000.00"),
+    )
+    Transaction.objects.create(
+        account=acc,
+        date="2026-01-15",
+        payee="Deposit",
+        amount=Decimal("250.50"),
+    )
+    r = auth_client.get(f"/api/accounts/{acc.id}/?balance=true")
+    assert r.status_code == 200, r.data
+    data = r.json()
+    assert float(data["balance"]) == 1250.50
+    assert float(data["available_balance"]) == 1250.50
+
+
+def test_balance_excludes_superseded_planned_duplicate(auth_client, household):
+    """Planned row hidden when same-day cleared posting exists — matches ledger UI."""
+    from decimal import Decimal
+    from datetime import date
+    from transactions.models import Transaction
+
+    acc = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Main",
+        currency="USD",
+        starting_balance=Decimal("500.00"),
+    )
+    pay_date = date.today().isoformat()
+    Transaction.objects.create(
+        account=acc,
+        date=pay_date,
+        payee="Amazon",
+        amount=Decimal("-100.00"),
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=acc,
+        date=pay_date,
+        payee="Amazon (Amazon)",
+        amount=Decimal("-100.00"),
+        status=Transaction.Status.PLANNED,
+    )
+    r = auth_client.get(f"/api/accounts/{acc.id}/?balance=true")
+    assert r.status_code == 200, r.data
+    assert float(r.json()["balance"]) == 400.00
+
+
+def test_credit_balance_owed_uses_ledger_when_db_stale(auth_client, household, user):
+    """Accounts list owed/utilization must match transaction ledger, not stale current_balance."""
+    from decimal import Decimal
+    from datetime import date
+
+    from transactions.services.posting import post_transaction
+
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Test Card",
+        credit_limit=Decimal("1000.00"),
+        current_balance=Decimal("0"),
+    )
+    post_transaction(
+        user,
+        card.id,
+        date.today(),
+        "Purchase",
+        Decimal("-200.00"),
+    )
+    card.refresh_from_db()
+    assert card.current_balance == Decimal("200.00")
+
+    Account.objects.filter(pk=card.pk).update(current_balance=Decimal("800.00"))
+
+    r = auth_client.get(f"/api/accounts/{card.id}/?balance=true")
+    assert r.status_code == 200, r.data
+    data = r.json()
+    assert float(data["balance_owed"]) == 200.00
+    assert float(data["utilization_percent"]) == 20.00
+    assert float(data["available_credit"]) == 800.00

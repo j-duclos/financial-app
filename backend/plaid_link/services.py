@@ -27,7 +27,11 @@ from accounts.services.credit_card import classify_plaid_credit_card_type
 from core.phone_e164 import normalize_to_e164
 from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
-from transactions.services.matching import match_imported_transaction, normalize_description
+from transactions.services.matching import (
+    match_imported_transaction,
+    normalize_description,
+    reconcile_orphan_matched_plaid_imports,
+)
 
 from .crypto import decrypt_secret, encrypt_secret
 from .models import PlaidItem, PlaidLinkedAccount
@@ -527,6 +531,13 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         _rematch_unmatched_imports_for_plaid_item(plaid_item)
     except Exception:
         logger.exception("_rematch_unmatched_imports_for_plaid_item failed for plaid_item pk=%s", plaid_item.pk)
+
+    try:
+        account_pks = list(plaid_item.linked_accounts.values_list("account_id", flat=True))
+        for aid in account_pks:
+            reconcile_orphan_matched_plaid_imports(account_id=aid)
+    except Exception:
+        logger.exception("reconcile_orphan_matched_plaid_imports failed for plaid_item pk=%s", plaid_item.pk)
 
     totals["skipped_sync_disabled_accounts"] = skipped_accounts
     return totals

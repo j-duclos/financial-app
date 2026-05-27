@@ -120,6 +120,13 @@ def _project_balances(
     return lowest, balance, lowest_date, balance
 
 
+def _row_superseded_by_cleared_posting(row: dict, account_rows: list[dict]) -> bool:
+    """Skip PLANNED timeline rows when a matching CLEARED posting exists same day (same as web ledger)."""
+    from timeline.services.ledger import is_superseded_planned_row
+
+    return is_superseded_planned_row(row, account_rows)
+
+
 def _summarize_future_rows(
     rows: list[dict],
     account_id: int,
@@ -132,13 +139,15 @@ def _summarize_future_rows(
     outflows = Decimal("0")
     committed_outflows = Decimal("0")
 
-    for r in rows:
-        if r.get("account_id") != account_id:
-            continue
+    account_rows = [r for r in rows if r.get("account_id") == account_id]
+
+    for r in account_rows:
         row_date = r["date"]
         if hasattr(row_date, "isoformat") and not isinstance(row_date, date):
             row_date = date.fromisoformat(str(row_date)[:10])
         if row_date <= today or row_date > window_end:
+            continue
+        if _row_superseded_by_cleared_posting(r, account_rows):
             continue
         amt = _decimal(r["amount"])
         by_date[row_date].append(amt)
@@ -206,7 +215,15 @@ def calculate_account_forecast_summary(
     lowest, ending, lowest_date, _ = _project_balances(
         current_balance, by_date, window_start, window_end
     )
-    available = lowest - minimum_buffer
+    bucket_allocation = Decimal("0")
+    try:
+        from goals.bucket_services import bucket_reserve_for_account
+
+        bucket_allocation = bucket_reserve_for_account(account.pk, today=today)
+    except Exception:
+        bucket_allocation = Decimal("0")
+
+    available = lowest - minimum_buffer - bucket_allocation
     status = _risk_status(lowest, available, minimum_buffer, current_balance)
     reason = _risk_reason(status, lowest, minimum_buffer, lowest_date)
 
@@ -214,6 +231,7 @@ def calculate_account_forecast_summary(
         "account_id": account.id,
         "supports_available_to_spend": True,
         "current_balance": str(current_balance),
+        "bucket_allocation": str(bucket_allocation),
         "minimum_buffer": str(minimum_buffer),
         "forecast_window_start": window_start.isoformat(),
         "forecast_window_end": window_end.isoformat(),
@@ -320,6 +338,7 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
     suffix = f"_{days}_days" if days != 30 else "_30_days"
     return {
         "available_to_spend": summary.get("available_to_spend"),
+        "bucket_allocation": summary.get("bucket_allocation"),
         "projected_balance_30_days": summary.get("projected_balance_at_window_end"),
         "lowest_projected_balance_30_days": summary.get("lowest_projected_balance"),
         "upcoming_inflows_30_days": summary.get("upcoming_inflows"),

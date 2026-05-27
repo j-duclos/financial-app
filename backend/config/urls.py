@@ -21,7 +21,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from core.spa import serve_frontend
 from core.views import DatabaseInfoView, health
-from timeline.views import TimelineView
+from timeline.views import TimelineView, TimelineCalendarView
 
 urlpatterns = [
     path("health/", health, name="health"),
@@ -30,13 +30,19 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/db-info/", DatabaseInfoView.as_view(), name="db_info"),
     path("api/timeline/", TimelineView.as_view(), name="timeline"),
+    path("api/timeline/calendar/", TimelineCalendarView.as_view(), name="timeline-calendar"),
     path("api/", include("timeline.urls")),
     path("api/", include("core.urls")),
     path("api/accounts/", include("accounts.urls")),
     path("api/categories/", include("categories.urls")),
     path("api/transactions/", include("transactions.urls")),
     path("api/budgets/", include("budgets.urls")),
+    path("api/spending-targets/", include("budgets.spending_urls")),
     path("api/insights/", include("insights.urls")),
+    path("api/recommendations/", include("recommendations.urls")),
+    path("api/credit-cards/", include("credit_cards.urls")),
+    path("api/bills/", include("bills.urls")),
+    path("api/", include("goals.urls")),
     path("api/", include("plaid_link.urls")),
 ]
 
@@ -48,5 +54,3 @@ if settings.SERVE_REACT_APP:
             name="frontend",
         ),
     ]
-else:
-    urlpatterns += [path("", include("web.urls"))]

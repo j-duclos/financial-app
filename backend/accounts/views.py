@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import close_old_connections, transaction
-from django.db.models import DecimalField, F, Q, Subquery, Sum, Value
+from django.db.models import DecimalField, F, Max, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from rest_framework import status
 from rest_framework.decorators import action
@@ -21,13 +21,18 @@ from transactions.services import (
     delete_manual_transactions_for_plaid_reset,
     eligible_manual_transactions_queryset,
 )
+from transactions.services.matching import ledger_visible_account_transactions_q
 from timeline.models import (
     ReconciliationMatch,
     RecurringRule,
     ScenarioRuleOverride,
     StatementTransaction,
 )
-from timeline.services.ledger import payoff_projection
+from credit_cards.services.payoff import (
+    PAYOFF_STRATEGIES,
+    compare_payment_strategies,
+    project_credit_card_payoff,
+)
 from .models import Account
 from .relationship_models import AccountRelationship
 from .relationship_serializers import AccountRelationshipSummarySerializer
@@ -45,6 +50,7 @@ from .services.account_health import (
     dashboard_account_health_aggregate,
     serialize_account_health,
 )
+from .services.projected_statement import calculate_projected_statements_for_accounts
 from .services.available_to_spend import (
     ALLOWED_FORECAST_DAYS,
     DEFAULT_FORECAST_DAYS,
@@ -158,7 +164,7 @@ def _purge_account_and_delete(account_pk: int) -> None:
 
             RecurringRule.objects.filter(account_id=account_pk).delete()
 
-            Account.objects.filter(pk=account_pk).delete()
+            Account.all_objects.filter(pk=account_pk).delete()
     finally:
         close_old_connections()
 
@@ -203,6 +209,19 @@ class AccountViewSet(ModelViewSet):
                         accounts,
                         days=days,
                     )
+                credit_cards = [a for a in accounts if a.is_credit_card()]
+                if credit_cards:
+                    ctx["projected_statement_by_id"] = calculate_projected_statements_for_accounts(
+                        self.request.user,
+                        accounts,
+                    )
+        if self.request.query_params.get("balance") == "true":
+            qs = self.filter_queryset(self.get_queryset())
+            credit_cards = [a for a in qs if a.is_credit_card()]
+            if credit_cards:
+                from credit_cards.services.payoff import payoff_estimates_for_accounts
+
+                ctx["payoff_estimates_by_id"] = payoff_estimates_for_accounts(credit_cards)
         return ctx
 
     def finalize_response(self, request, response, *args, **kwargs):
@@ -249,27 +268,19 @@ class AccountViewSet(ModelViewSet):
 
     def get_queryset(self):
         qs = self._account_queryset_base()
+        visible_txn_q = ledger_visible_account_transactions_q()
+        qs = qs.annotate(
+            last_activity_date=Max("transactions__date", filter=visible_txn_q),
+        )
         if self.request.query_params.get("balance") == "true":
             # Balance as of today: only transactions with date <= today (matches timeline/ledger).
-            # Exclude matched Plaid import legs and user-ignored/duplicate imports (same as ledger_visible_transactions).
             today = date.today()
             zero = Value(0, output_field=DecimalField())
-            matched_imports = TransactionMatch.objects.values("imported_transaction_id")
             qs = qs.annotate(
                 tx_sum=Coalesce(
                     Sum(
                         "transactions__amount",
-                        filter=Q(transactions__date__lte=today)
-                        & ~Q(transactions__pk__in=Subquery(matched_imports))
-                        & ~(
-                            Q(transactions__source=Transaction.Source.PLAID)
-                            & Q(
-                                transactions__import_match_status__in=[
-                                    Transaction.ImportMatchStatus.IGNORED,
-                                    Transaction.ImportMatchStatus.DUPLICATE,
-                                ]
-                            )
-                        ),
+                        filter=Q(transactions__date__lte=today) & visible_txn_q,
                     ),
                     zero,
                 ),
@@ -279,24 +290,25 @@ class AccountViewSet(ModelViewSet):
         return qs.order_by("position", "name")
 
     def perform_destroy(self, instance: Account):
-        """Soft-delete: preserve transaction history."""
-        soft_delete_account(instance)
+        """Permanently remove account and all related data."""
+        pk_val = instance.pk
+        if _event_loop_is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(_purge_account_and_delete, pk_val).result()
+        else:
+            _purge_account_and_delete(pk_val)
 
     def _lifecycle_account(self, pk: int) -> Account:
         households = get_households_for_user(self.request.user)
         return Account.all_objects.filter(household__in=households).get(pk=pk)
 
     def get_object(self):
-        """Allow retrieve/update on non-deleted accounts; include deleted when requested."""
+        """Use get_queryset() so retrieve/detail actions honor ?balance=true and list filters."""
+        queryset = self.filter_queryset(self.get_queryset())
         pk = self.kwargs.get(self.lookup_field or "pk")
-        households = get_households_for_user(self.request.user)
-        include_deleted = self.request.query_params.get("include_deleted", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        manager = Account.all_objects if include_deleted else Account.objects
-        return manager.filter(household__in=households).get(pk=pk)
+        obj = queryset.get(pk=pk)
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     @action(detail=True, methods=["get"], url_path="lifecycle-preflight")
     def lifecycle_preflight_action(self, request, pk=None):
@@ -555,11 +567,44 @@ class AccountViewSet(ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="payoff/compare")
+    def payoff_compare(self, request, pk=None):
+        """Compare payoff projections across payment strategies."""
+        account = self.get_object()
+        if account.account_type != Account.AccountType.CREDIT:
+            return Response(
+                {"detail": "Payoff projection is only available for credit card accounts."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        fixed_raw = request.query_params.get("fixed_amount")
+        custom_raw = request.query_params.get("custom_amount")
+        fixed_amount = None
+        custom_amount = None
+        try:
+            if fixed_raw:
+                fixed_amount = Decimal(str(fixed_raw))
+            if custom_raw:
+                custom_amount = Decimal(str(custom_raw))
+        except Exception:
+            return Response(
+                {"detail": "fixed_amount and custom_amount must be numbers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            compare_payment_strategies(
+                account,
+                fixed_amount=fixed_amount,
+                custom_amount=custom_amount,
+            )
+        )
+
     @action(detail=True, methods=["get"], url_path="payoff")
     def payoff(self, request, pk=None):
         """
-        For CREDIT accounts: project how many months of fixed monthly payments to pay off the balance.
-        GET ?monthly_payment=100 (required). Returns months_to_payoff, total_interest, payoff_date.
+        For CREDIT accounts: project payoff timeline and interest.
+        GET ?strategy=minimum_payment|statement_balance|current_balance|fixed_amount|custom_amount
+        Legacy: ?monthly_payment=100 implies strategy=custom_amount.
+        Optional: ?fixed_amount= for fixed_amount strategy.
         """
         account = self.get_object()
         if account.account_type != Account.AccountType.CREDIT:
@@ -567,30 +612,63 @@ class AccountViewSet(ModelViewSet):
                 {"detail": "Payoff projection is only available for credit card accounts."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        raw = request.query_params.get("monthly_payment")
-        if raw is None or raw == "":
+
+        strategy = request.query_params.get("strategy", "").strip()
+        monthly_raw = request.query_params.get("monthly_payment")
+        fixed_raw = request.query_params.get("fixed_amount")
+        custom_amount = None
+        fixed_amount = None
+
+        if monthly_raw not in (None, ""):
+            strategy = "custom_amount"
+            try:
+                custom_amount = Decimal(str(monthly_raw))
+            except Exception:
+                return Response(
+                    {"detail": "monthly_payment must be a number."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif strategy == "fixed_amount" and fixed_raw:
+            try:
+                fixed_amount = Decimal(str(fixed_raw))
+                custom_amount = fixed_amount
+            except Exception:
+                return Response(
+                    {"detail": "fixed_amount must be a number."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif not strategy:
+            strategy = "minimum_payment"
+
+        if strategy not in PAYOFF_STRATEGIES:
             return Response(
-                {"detail": "Query parameter 'monthly_payment' is required (e.g. ?monthly_payment=100)."},
+                {
+                    "detail": f"strategy must be one of: {', '.join(sorted(PAYOFF_STRATEGIES))}.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            monthly_payment = Decimal(str(raw))
-        except Exception:
+
+        custom_raw = request.query_params.get("custom_amount")
+        if custom_raw and custom_amount is None:
+            try:
+                custom_amount = Decimal(str(custom_raw))
+            except Exception:
+                return Response(
+                    {"detail": "custom_amount must be a number."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if strategy in ("custom_amount", "fixed_amount") and (custom_amount is None or custom_amount <= 0):
             return Response(
-                {"detail": "monthly_payment must be a number."},
+                {"detail": "A positive payment amount is required for this strategy."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if monthly_payment <= 0:
-            return Response(
-                {"detail": "monthly_payment must be positive."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        result = payoff_projection(account.pk, monthly_payment)
-        if result is None:
-            return Response(
-                {"detail": "Account must have APR and billing cycle end day set."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+
+        result = project_credit_card_payoff(
+            account,
+            strategy,
+            custom_amount=custom_amount,
+        )
         return Response(result)
 
     @action(detail=True, methods=["get"], url_path="available-to-spend")
@@ -608,6 +686,14 @@ class AccountViewSet(ModelViewSet):
             request.user, account, days=days
         )
         return Response(serialize_forecast_summary(summary))
+
+    @action(detail=True, methods=["get"], url_path="bucket-allocations")
+    def bucket_allocations(self, request, pk=None):
+        """Bucket reserves on this account (allocated vs available unallocated)."""
+        from goals.bucket_services import account_bucket_summary
+
+        account = self.get_object()
+        return Response(account_bucket_summary(account.pk))
 
     @action(detail=False, methods=["get"], url_path="forecast-summary")
     def forecast_summary(self, request):

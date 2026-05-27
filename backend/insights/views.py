@@ -1,13 +1,17 @@
+from datetime import date
 from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, Q
+from django.db.models import Sum
 from django.db.models.functions import Coalesce
 
 from core.utils import get_households_for_user
 from accounts.models import Account
+from accounts.services.available_to_spend import normalize_forecast_days
+from accounts.services.balances import signed_ledger_balance
 from transactions.models import Transaction
+from .services.dashboard_summary import build_dashboard_summary
 
 
 class MonthlySummaryView(APIView):
@@ -77,19 +81,29 @@ class AccountBalancesView(APIView):
 
     def get(self, request):
         households = get_households_for_user(request.user)
-        accounts = Account.objects.for_net_worth().filter(household__in=households)
+        today = date.today()
+        accounts = Account.objects.for_net_worth().filter(
+            household__in=households,
+            is_hidden=False,
+        )
         result = []
         for acc in accounts:
-            tx_sum = (
-                Transaction.objects.filter(account=acc).aggregate(bal=Coalesce(Sum("amount"), Decimal("0")))
-            )["bal"] or Decimal("0")
-            start = (acc.starting_balance or Decimal("0"))
-            balance = start + tx_sum
-            if acc.account_type == Account.AccountType.CREDIT:
-                balance = -balance  # Credit cards are liabilities for net worth
             result.append({
                 "account_id": acc.id,
                 "account_name": acc.effective_display_name,
-                "balance": balance,
+                "balance": signed_ledger_balance(acc, today),
             })
         return Response({"balances": result})
+
+
+class DashboardSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        days_param = request.query_params.get("days")
+        try:
+            days = normalize_forecast_days(int(days_param)) if days_param else 30
+        except (TypeError, ValueError) as exc:
+            return Response({"detail": str(exc)}, status=400)
+        data = build_dashboard_summary(request.user, days=days)
+        return Response(data)

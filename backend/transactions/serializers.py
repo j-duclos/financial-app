@@ -36,7 +36,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "status", "source", "rule_id", "rule_name", "linked_transaction_id",
             "interest_cycle_end_date", "plaid_transaction_id",
             "transfer_group_id", "posted_date", "planned_date", "imported_description",
-            "normalized_payee", "import_match_status",
+            "normalized_payee", "import_match_status", "is_bill",
             "created_at", "updated_at",
         ]
         read_only_fields = [

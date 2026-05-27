@@ -15,6 +15,7 @@ from transactions.services.matching import (
     ledger_visible_transactions,
     manual_match_transactions,
     match_imported_transaction,
+    reconcile_orphan_matched_plaid_imports,
     try_match_rule_to_pending_imports,
 )
 
@@ -329,6 +330,140 @@ class TestPlaidMatching(TestCase):
         self.assertTrue(
             TransactionMatch.objects.filter(planned_transaction=planned, imported_transaction=imp).exists()
         )
+
+    def test_second_plaid_import_marked_duplicate_when_planned_already_matched(self):
+        card = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            institution="Capital One",
+            currency="USD",
+        )
+        d = date(2026, 5, 13)
+        amt = Decimal("-550.00")
+        create_transfer(
+            user=self.user,
+            from_account_id=self.acc.id,
+            to_account_id=card.id,
+            amount=Decimal("550.00"),
+            transfer_date=d.isoformat(),
+            payee="Credit Card Pmt (Savor)",
+        )
+        out_leg = Transaction.objects.get(account=self.acc, amount=amt)
+        first = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE ONLINE PMT CA0AEF56A9B3CBE",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-savor-1",
+            imported_description="CAPITAL ONE ONLINE PMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        m = match_imported_transaction(first)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.planned_transaction_id, out_leg.pk)
+
+        second = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE ONLINE PMT CA005B47444F1E0",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-savor-2",
+            imported_description="CAPITAL ONE ONLINE PMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        self.assertIsNone(match_imported_transaction(second))
+        second.refresh_from_db()
+        self.assertEqual(second.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertIn(out_leg.pk, visible)
+        self.assertNotIn(first.pk, visible)
+        self.assertNotIn(second.pk, visible)
+
+    def test_reconcile_orphan_matched_plaid_import(self):
+        d = date(2026, 5, 13)
+        amt = Decimal("-99.00")
+        planned = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Test",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        anchor = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="BANK",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-anchor",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(anchor)
+        orphan = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="BANK 2",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-orphan",
+            import_match_status=Transaction.ImportMatchStatus.MATCHED,
+        )
+        n = reconcile_orphan_matched_plaid_imports(account_id=self.acc.id)
+        self.assertGreaterEqual(n, 1)
+        orphan.refresh_from_db()
+        self.assertEqual(orphan.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+    def test_three_capital_one_payments_same_day_match_correct_card(self):
+        savor = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+        )
+        venture = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            currency="USD",
+        )
+        d = date(2026, 5, 13)
+        create_transfer(
+            user=self.user,
+            from_account_id=self.acc.id,
+            to_account_id=venture.id,
+            amount=Decimal("250.00"),
+            transfer_date=d.isoformat(),
+            payee="Credit Card Pmt (Venture)",
+        )
+        create_transfer(
+            user=self.user,
+            from_account_id=self.acc.id,
+            to_account_id=savor.id,
+            amount=Decimal("550.00"),
+            transfer_date=d.isoformat(),
+            payee="Credit Card Pmt (Savor)",
+        )
+        savor_out = Transaction.objects.get(account=self.acc, amount=Decimal("-550.00"))
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE ONLINE PMT",
+            amount=Decimal("-550.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-550",
+            imported_description="CAPITAL ONE ONLINE PMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        m = match_imported_transaction(imp)
+        self.assertEqual(m.planned_transaction_id, savor_out.pk)
 
     def test_manual_cross_account_match_creates_checking_leg(self):
         card = Account.objects.create(

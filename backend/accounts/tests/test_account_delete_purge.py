@@ -1,4 +1,4 @@
-"""DELETE /api/accounts/:id/ soft-deletes; permanent-delete purges (staff)."""
+"""DELETE /api/accounts/:id/ permanently purges; soft-delete endpoint preserves history."""
 from datetime import date
 from decimal import Decimal
 
@@ -45,7 +45,7 @@ def auth_client(api_client, user):
 
 
 @pytest.mark.django_db
-def test_delete_account_soft_deletes_preserves_transactions_and_clears_profile_default(
+def test_delete_account_permanently_purges_and_clears_references(
     auth_client, household, user
 ):
     checking = Account.objects.create(
@@ -80,6 +80,12 @@ def test_delete_account_soft_deletes_preserves_transactions_and_clears_profile_d
     )
 
     create_transfer(user, checking.id, savings.id, Decimal("25.00"), date(2024, 2, 5))
+    Transaction.objects.create(
+        account=savings,
+        date=date(2024, 3, 1),
+        payee="Savings-only",
+        amount=Decimal("-1.00"),
+    )
 
     st = StatementTransaction.objects.create(
         household=household,
@@ -137,11 +143,10 @@ def test_delete_account_soft_deletes_preserves_transactions_and_clears_profile_d
     r = auth_client.delete(f"/api/accounts/{checking.id}/")
     assert r.status_code == 204, r.content
 
-    assert not Account.objects.filter(pk=checking.id).exists()
-    assert Account.all_objects.filter(pk=checking.id).exists()
-    assert Transaction.objects.filter(account_id=checking.id).exists()
-    assert RecurringRule.objects.filter(pk=rule.id).exists()
-    assert StatementTransaction.objects.filter(account_id=checking.id).exists()
+    assert not Account.all_objects.filter(pk=checking.id).exists()
+    assert not Transaction.objects.filter(account_id=checking.id).exists()
+    assert not RecurringRule.objects.filter(pk=rule.id).exists()
+    assert not StatementTransaction.objects.filter(account_id=checking.id).exists()
     other.refresh_from_db()
     assert other.transfer_to_account_id is None
 

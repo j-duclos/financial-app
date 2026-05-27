@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from accounts.models import Account
@@ -9,7 +10,7 @@ from categories.models import Category
 
 
 class Reconciliation(models.Model):
-    """Completed bank reconciliation session for an account."""
+    """Completed bank reconciliation session for an account (audit record)."""
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -27,15 +28,27 @@ class Reconciliation(models.Model):
     app_current_balance = models.DecimalField(max_digits=15, decimal_places=2)
     last_reconciled_balance = models.DecimalField(max_digits=15, decimal_places=2)
     final_reconciled_balance = models.DecimalField(max_digits=15, decimal_places=2)
-    difference = models.DecimalField(max_digits=15, decimal_places=2)
+    difference = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0"))
     period_start_date = models.DateField(null=True, blank=True)
     period_end_date = models.DateField(null=True, blank=True)
+    transaction_count = models.PositiveIntegerField(default=0)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
         default=Status.DRAFT,
     )
+    notes = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    undone_at = models.DateTimeField(null=True, blank=True)
+    undone_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reconciliations_undone",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -43,7 +56,58 @@ class Reconciliation(models.Model):
         ordering = ["-completed_at", "-created_at"]
         indexes = [
             models.Index(fields=["account", "-completed_at"]),
+            models.Index(fields=["account", "is_active", "-completed_at"]),
         ]
+
+    def clean(self):
+        super().clean()
+        if not self.period_start_date or not self.period_end_date:
+            return
+        if self.period_start_date > self.period_end_date:
+            raise ValidationError("Period start must be on or before period end.")
+        if not self.is_active or self.status != self.Status.COMPLETED:
+            return
+        overlapping = (
+            Reconciliation.objects.filter(
+                account=self.account,
+                is_active=True,
+                status=self.Status.COMPLETED,
+                period_start_date__lte=self.period_end_date,
+                period_end_date__gte=self.period_start_date,
+            )
+            .exclude(pk=self.pk)
+        )
+        if overlapping.exists():
+            raise ValidationError(
+                "An active reconciliation session already exists for an overlapping period."
+            )
+
+
+class ReconciliationEntry(models.Model):
+    """Ledger row included in a completed reconciliation session."""
+
+    session = models.ForeignKey(
+        Reconciliation,
+        on_delete=models.CASCADE,
+        related_name="entries",
+    )
+    transaction = models.ForeignKey(
+        "transactions.Transaction",
+        on_delete=models.CASCADE,
+        related_name="reconciliation_entries",
+    )
+    reconciled_balance = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "transactions_reconciliation_entry"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "transaction"],
+                name="uniq_reconciliation_entry_session_txn",
+            ),
+        ]
+        ordering = ["transaction__date", "transaction__id"]
 
 
 class TransferGroup(models.Model):
@@ -207,6 +271,10 @@ class Transaction(models.Model):
         choices=ImportMatchStatus.choices,
         default=ImportMatchStatus.NONE,
         db_index=True,
+    )
+    is_bill = models.BooleanField(
+        default=False,
+        help_text="Treat this transaction as a bill on the monthly checklist.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -224,7 +224,9 @@ class TestBuildTimeline:
             assert "amount" in r
             assert "running_balance" in r
             assert "source" in r
-            assert r["source"] in ("actual", "rule", "interest")
+            assert r["source"] in ("actual", "rule", "interest", "scenario_event")
+            assert "reconciled" in r
+            assert "txn_source" in r
 
     def test_credit_card_interest_appears_on_cycle_end(self, user, household, db):
         """With billing_cycle_end_day and APR set, next cycle end gets one Projected Interest row."""

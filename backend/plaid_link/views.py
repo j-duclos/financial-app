@@ -9,7 +9,7 @@ from core.permissions import IsHouseholdMember
 from core.utils import get_households_for_user, get_user_profile
 
 from .models import PlaidItem
-from .plaid_api_client import plaid_api_env, plaid_configured
+from .plaid_api_client import plaid_api_env, plaid_configured, plaid_credential_diagnostics
 from .plaid_errors import format_plaid_api_exception
 from .serializers import (
     PlaidExchangeRequestSerializer,
@@ -145,7 +145,15 @@ class PlaidItemViewSet(
         item = self.get_object()
         if not plaid_configured():
             return Response(
-                {"detail": "Plaid is not configured.", "plaid_env": plaid_api_env()},
+                {
+                    "detail": (
+                        "Plaid is not configured on this server. Set PLAID_CLIENT_ID and a secret for "
+                        f"PLAID_ENV={plaid_api_env()!r} in backend/.env, then restart the backend. "
+                        "Existing bank logins in the database still need live API credentials to sync."
+                    ),
+                    "plaid_env": plaid_api_env(),
+                    "plaid_diagnostics": plaid_credential_diagnostics(),
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         try:

@@ -48,7 +48,7 @@ ALLOWED_HOSTS = _allowed_hosts
 
 
 def _build_csrf_trusted_origins() -> list[str]:
-    """Trusted origins for session/ form POSTs (web UI login, reconcile, Plaid forms)."""
+    """Trusted origins for CSRF (React dev server + Render)."""
     origins = _csv_env("CSRF_TRUSTED_ORIGINS", "")
     seen = set(origins)
 
@@ -93,9 +93,12 @@ INSTALLED_APPS = [
     "budgets",
     "categories",
     "insights",
+    "goals",
     "timeline",
     "plaid_link",
-    "web",
+    "bills",
+    "credit_cards",
+    "recommendations",
 ]
 
 MIDDLEWARE = [
@@ -127,7 +130,6 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
             ],
-            "builtins": ["web.templatetags.web_extras"],
         },
     },
 ]
@@ -188,7 +190,10 @@ def _serve_react_app() -> bool:
         return True
     if explicit in ("false", "0", "no"):
         return False
-    return _ON_RENDER
+    if _ON_RENDER:
+        return True
+    # Local/Docker: serve committed or built React on :8000 when frontend_dist exists.
+    return (FRONTEND_DIST / "index.html").is_file()
 
 
 SERVE_REACT_APP = _serve_react_app()

@@ -103,7 +103,7 @@ def lifecycle_preflight(account: Account, user, *, action: str) -> dict[str, Any
         warnings.append("Archiving hides this account from active views and stops forecasting.")
     elif action == "delete":
         warnings.append(
-            "Deleting soft-hides this account. Transaction history is preserved."
+            "Deleting permanently removes this account, its transactions, recurring rules, and statement lines."
         )
 
     future_payments = 0

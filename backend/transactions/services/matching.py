@@ -68,6 +68,29 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
     )
 
 
+def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
+    """
+    Q filter for Account → Transaction relations (annotations, aggregates).
+
+    Mirrors :func:`ledger_visible_transactions` exclusion rules.
+    """
+    matched_imports = TransactionMatch.objects.values("imported_transaction_id")
+    return (
+        ~Q(**{f"{prefix}__pk__in": Subquery(matched_imports)})
+        & ~(
+            Q(**{f"{prefix}__source": Transaction.Source.PLAID})
+            & Q(
+                **{
+                    f"{prefix}__import_match_status__in": [
+                        Transaction.ImportMatchStatus.IGNORED,
+                        Transaction.ImportMatchStatus.DUPLICATE,
+                    ]
+                }
+            )
+        )
+    )
+
+
 def _active_relationship_for_planned_leg(planned: Transaction) -> AccountRelationship | None:
     tg = getattr(planned, "transfer_group", None)
     if tg is None and planned.transfer_group_id:
@@ -220,7 +243,9 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
 
     # Transfer-group coherence: planned leg aligns with scheduled payment/transfer plan.
     if planned.transfer_group_id:
-        tg = TransferGroup.objects.filter(pk=planned.transfer_group_id).first()
+        tg = TransferGroup.objects.filter(pk=planned.transfer_group_id).select_related(
+            "to_account", "from_account"
+        ).first()
         if tg:
             if tg.from_account_id == imported.account_id and planned.amount < 0:
                 if abs(planned.amount) == tg.amount:
@@ -229,6 +254,18 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
                     if low <= imported.date <= high:
                         score += 20
                         parts["transfer_pattern_from"] = 20
+                dest = tg.to_account
+                payee_l = (planned.payee or "").lower()
+                for raw in (
+                    dest.name,
+                    (dest.display_name or "").strip(),
+                    (dest.nickname or "").strip(),
+                ):
+                    token = (raw or "").strip().lower()
+                    if len(token) >= 3 and token in payee_l:
+                        score += 15
+                        parts["payee_names_transfer_dest"] = 15
+                        break
             if tg.to_account_id == imported.account_id and planned.amount > 0:
                 if planned.amount == tg.amount:
                     low = tg.scheduled_date - timedelta(days=TRANSFER_GROUP_DATE_WINDOW_DAYS)
@@ -440,6 +477,109 @@ def find_candidate_matches(
     return out
 
 
+def _plaid_sibling_imports_qs(anchor: Transaction) -> QuerySet[Transaction]:
+    """Other Plaid rows on the same account with the same amount in the match date window."""
+    if anchor.amount is None:
+        return Transaction.objects.none()
+    low = anchor.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = anchor.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    return (
+        Transaction.objects.filter(
+            account_id=anchor.account_id,
+            source=Transaction.Source.PLAID,
+            date__gte=low,
+            date__lte=high,
+            scenario__isnull=True,
+        )
+        .exclude(pk=anchor.pk)
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .filter(import_match_status__in=[
+            Transaction.ImportMatchStatus.UNMATCHED,
+            Transaction.ImportMatchStatus.SUGGESTED,
+            Transaction.ImportMatchStatus.MATCHED,
+        ])
+    ).filter(amount=anchor.amount)
+
+
+def mark_redundant_plaid_imports_after_match(anchor_import: Transaction) -> int:
+    """
+    Plaid sometimes sends a second ``transaction_id`` for the same bank movement after refresh.
+    Once one import is linked to the canonical planned row, mark siblings as DUPLICATE imports.
+    """
+    if anchor_import.source != Transaction.Source.PLAID:
+        return 0
+    if not TransactionMatch.objects.filter(imported_transaction_id=anchor_import.pk).exists():
+        return 0
+    marked = 0
+    for sibling in _plaid_sibling_imports_qs(anchor_import):
+        if TransactionMatch.objects.filter(imported_transaction_id=sibling.pk).exists():
+            continue
+        if abs(sibling.amount - anchor_import.amount) > AMOUNT_TOLERANCE:
+            continue
+        mark_import_duplicate(sibling)
+        marked += 1
+    return marked
+
+
+def try_mark_plaid_import_as_duplicate_of_existing_match(imported: Transaction) -> bool:
+    """
+  When the manual / planned row is already matched to another Plaid import, later sync rows for
+    the same payment should not appear as a second ledger line.
+    """
+    if imported.source != Transaction.Source.PLAID:
+        return False
+    if not (imported.plaid_transaction_id or "").strip():
+        return False
+    if TransactionMatch.objects.filter(imported_transaction_id=imported.pk).exists():
+        return False
+    if imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+        return True
+    low = imported.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = imported.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    matched_peer = (
+        TransactionMatch.objects.filter(
+            imported_transaction__account_id=imported.account_id,
+            imported_transaction__date__gte=low,
+            imported_transaction__date__lte=high,
+            imported_transaction__source=Transaction.Source.PLAID,
+            planned_transaction__amount=imported.amount,
+        )
+        .exclude(imported_transaction_id=imported.pk)
+        .first()
+    )
+    if matched_peer is None:
+        return False
+    if imported.amount is None or matched_peer.planned_transaction.amount is None:
+        return False
+    if abs(imported.amount - matched_peer.planned_transaction.amount) > AMOUNT_TOLERANCE:
+        return False
+    mark_import_duplicate(imported)
+    return True
+
+
+def reconcile_orphan_matched_plaid_imports(*, account_id: int | None = None) -> int:
+    """
+    Repair rows marked MATCHED without a TransactionMatch (stale metadata), then dedupe siblings.
+    """
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.MATCHED,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    fixed = 0
+    for imp in qs:
+        if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
+            mark_redundant_plaid_imports_after_match(imp)
+            continue
+        imp.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+        imp.save(update_fields=["import_match_status", "updated_at"])
+        if try_mark_plaid_import_as_duplicate_of_existing_match(imp):
+            fixed += 1
+    return fixed
+
+
 def _refresh_transfer_group_status(tg: TransferGroup) -> None:
     txs = list(tg.transactions.all())
     matched_legs = sum(1 for t in txs if t.import_match_status == Transaction.ImportMatchStatus.MATCHED)
@@ -491,6 +631,7 @@ def _create_match_record(
             tg = TransferGroup.objects.filter(pk=planned.transfer_group_id).first()
             if tg:
                 _refresh_transfer_group_status(tg)
+        mark_redundant_plaid_imports_after_match(imported)
         return tm
 
 
@@ -594,15 +735,21 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
         return None
     existing = TransactionMatch.objects.filter(imported_transaction=imported).first()
     if existing:
+        if not dry_run:
+            mark_redundant_plaid_imports_after_match(imported)
         return existing
+
+    if not dry_run and try_mark_plaid_import_as_duplicate_of_existing_match(imported):
+        return None
 
     MatchSuggestion.objects.filter(imported_transaction=imported).delete()
 
     ranked = find_candidate_matches(imported, allow_orphan_repair=not dry_run)
     if not ranked:
         if not dry_run:
-            imported.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
-            imported.save(update_fields=["import_match_status", "updated_at"])
+            if not try_mark_plaid_import_as_duplicate_of_existing_match(imported):
+                imported.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+                imported.save(update_fields=["import_match_status", "updated_at"])
         return None
 
     best_planned, best_score, _parts = ranked[0]

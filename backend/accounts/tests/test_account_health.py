@@ -23,6 +23,7 @@ from accounts.services.account_health_constants import (
 from categories.models import Category
 from core.models import Household, HouseholdMembership
 from transactions.models import Transaction
+from transactions.services.posting import post_transaction
 
 User = get_user_model()
 
@@ -108,6 +109,24 @@ def _health(user, account, **kwargs):
     return calculate_account_health(user, account, as_of_date=AS_OF, **kwargs)
 
 
+def _set_credit_owed(user, card, owed: Decimal, as_of=AS_OF):
+    """Set ledger owed via a purchase so health matches transaction balance."""
+    from accounts.services.credit_card import ledger_owed_balance
+
+    current = ledger_owed_balance(card, as_of)
+    delta = Decimal(str(owed)) - current
+    if delta == 0:
+        return
+    post_transaction(
+        user,
+        card.id,
+        as_of,
+        "Test balance",
+        -delta if delta > 0 else abs(delta),
+    )
+    card.refresh_from_db()
+
+
 def test_cash_healthy_above_buffer(user, checking):
     h = _health(user, checking, days=30)
     assert h["status"] == HEALTH_STATUS_HEALTHY
@@ -161,30 +180,59 @@ def test_safe_to_spend_negative_spending_critical(user, checking, expense_catego
     assert h["details"]["available_to_spend"] is not None
 
 
-def test_credit_utilization_watch(user, credit_card):
-    credit_card.current_balance = Decimal("2500")
-    credit_card.save()
+def test_credit_healthy_at_or_below_target_utilization(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("400"))
+    h = _health(user, credit_card, days=30)
+    assert h["status"] == HEALTH_STATUS_HEALTHY
+    assert h["reason"] is None
+
+
+def test_credit_custom_target_utilization(user, credit_card):
+    credit_card.target_utilization_percent = Decimal("20")
+    credit_card.save(update_fields=["target_utilization_percent"])
+    _set_credit_owed(user, credit_card, Decimal("1000"))
+    assert _health(user, credit_card, days=30)["status"] == HEALTH_STATUS_HEALTHY
+    _set_credit_owed(user, credit_card, Decimal("1100"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_WATCH
-    assert str(int(CREDIT_UTILIZATION_WATCH)) in (h["reason"] or "")
+    assert "target 20" in (h["reason"] or "").lower()
+
+
+def test_credit_utilization_watch(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("2500"))
+    h = _health(user, credit_card, days=30)
+    assert h["status"] == HEALTH_STATUS_WATCH
+    assert "Utilization" in (h["reason"] or "")
+    assert "50" in (h["reason"] or "")
+    assert "target 10" in (h["reason"] or "").lower()
 
 
 def test_credit_utilization_risk(user, credit_card):
-    credit_card.current_balance = Decimal("3600")
-    credit_card.save()
+    _set_credit_owed(user, credit_card, Decimal("3600"))
     h = _health(user, credit_card, days=30)
     assert h["status"] in (HEALTH_STATUS_RISK, HEALTH_STATUS_CRITICAL)
-    assert "78" in (h["reason"] or "") or "72" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
+    assert "72" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
 
 
 def test_credit_utilization_critical(user, credit_card):
-    credit_card.current_balance = Decimal("4600")
-    credit_card.save()
+    _set_credit_owed(user, credit_card, Decimal("4600"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_CRITICAL
 
 
+def test_credit_health_uses_ledger_not_stale_db_balance(user, credit_card):
+    """Health reason utilization must match ledger when current_balance is stale."""
+    _set_credit_owed(user, credit_card, Decimal("2500"))
+    Account.objects.filter(pk=credit_card.pk).update(current_balance=Decimal("4600"))
+    credit_card.refresh_from_db()
+    h = _health(user, credit_card, days=30)
+    assert "50" in (h["reason"] or "")
+    assert "92" not in (h["reason"] or "")
+    assert h["details"]["utilization_percent"] == "50.00"
+
+
 def test_credit_due_within_7_days_watch(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("100"))
     Account.objects.filter(pk=credit_card.pk).update(
         current_balance=Decimal("100"),
         statement_balance=Decimal("100"),
@@ -200,6 +248,7 @@ def test_credit_due_within_7_days_watch(user, credit_card):
 
 
 def test_credit_due_within_3_days_risk(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("500"))
     Account.objects.filter(pk=credit_card.pk).update(
         current_balance=Decimal("500"),
         statement_balance=Decimal("500"),
@@ -215,6 +264,7 @@ def test_credit_due_within_3_days_risk(user, credit_card):
 
 
 def test_credit_past_due_critical(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("300"))
     Account.objects.filter(pk=credit_card.pk).update(
         current_balance=Decimal("300"),
         statement_balance=Decimal("300"),

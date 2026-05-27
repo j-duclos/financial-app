@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 
 from rest_framework import serializers
 from core.models import Household
@@ -43,6 +44,13 @@ class AccountSerializer(serializers.ModelSerializer):
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     minimum_buffer = serializers.DecimalField(
         max_digits=12, decimal_places=2, required=False, min_value=Decimal("0"),
+    )
+    target_utilization_percent = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0"),
+        max_value=Decimal("100"),
     )
     current_balance = serializers.DecimalField(
         max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0"),
@@ -113,6 +121,8 @@ class AccountSerializer(serializers.ModelSerializer):
     notes = serializers.CharField(allow_blank=True, required=False)
     effective_display_name = serializers.CharField(read_only=True)
     short_description = serializers.CharField(read_only=True)
+    last_activity_date = serializers.SerializerMethodField()
+    payoff_estimate = serializers.JSONField(read_only=True, required=False)
 
     class Meta:
         model = Account
@@ -121,7 +131,7 @@ class AccountSerializer(serializers.ModelSerializer):
             "name", "display_name", "purpose", "notes", "effective_display_name",
             "short_description", "nickname", "institution", "last_four", "currency",
             "starting_balance", "apr", "promotional_apr", "promotional_end_date",
-            "interest_rate", "interest_cycle_end_day", "credit_limit",
+            "interest_rate", "interest_cycle_end_day", "credit_limit", "target_utilization_percent",
             "billing_cycle_end_day", "statement_closing_day", "payment_due_day",
             "current_balance", "statement_balance", "minimum_payment_amount",
             "last_statement_date", "next_statement_date", "next_payment_due_date",
@@ -139,6 +149,8 @@ class AccountSerializer(serializers.ModelSerializer):
             "health_status", "health_score", "health_reason", "health_risk_date",
             "health_details", "health_recommended_action",
             "outgoing_relationships", "incoming_relationships",
+            "last_activity_date",
+            "payoff_estimate",
         ]
         read_only_fields = [
             "id", "status", "archived_at", "closed_at", "deleted_at",
@@ -154,7 +166,14 @@ class AccountSerializer(serializers.ModelSerializer):
             "health_status", "health_score", "health_reason", "health_risk_date",
             "health_details", "health_recommended_action",
             "outgoing_relationships", "incoming_relationships",
+            "last_activity_date",
         ]
+
+    def get_last_activity_date(self, instance):
+        val = getattr(instance, "last_activity_date", None)
+        if val is None:
+            return None
+        return val.isoformat() if hasattr(val, "isoformat") else val
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -307,24 +326,40 @@ class AccountSerializer(serializers.ModelSerializer):
         minimum_buffer = getattr(instance, "minimum_buffer", None)
         data["minimum_buffer"] = str(minimum_buffer) if minimum_buffer is not None else "0"
 
+        request = self.context.get("request")
+        if request and request.query_params.get("balance") == "true":
+            from timeline.services.ledger import _balance_at_end_of_date
+
+            data["balance"] = str(_balance_at_end_of_date(instance.pk, date.today()))
+
         if instance.is_credit_card():
+            if "balance" in data and data["balance"] is not None:
+                from accounts.services.credit_card import sync_current_balance_from_ledger
+
+                sync_current_balance_from_ledger(instance, date.today())
             owed = Decimal(str(instance.current_balance or 0))
             if "balance" in data and data["balance"] is not None:
                 ledger_bal = Decimal(str(data["balance"]))
                 if ledger_bal > 0:
                     ledger_bal = -ledger_bal
-                if owed == 0 and ledger_bal < 0:
-                    owed = abs(ledger_bal)
+                owed = abs(ledger_bal) if ledger_bal < 0 else Decimal("0")
             data["balance_owed"] = str(owed)
             data["balance"] = str(-owed)
             cl = getattr(instance, "credit_limit", None)
             if cl is not None:
-                data["available_balance"] = str(instance.available_credit)
+                limit = Decimal(str(cl))
+                available = max(Decimal("0"), limit - owed)
+                data["available_balance"] = str(available)
+                data["available_credit"] = str(available)
+                if limit > 0:
+                    util = (owed / limit * Decimal("100")).quantize(Decimal("0.01"))
+                    data["utilization_percent"] = str(util)
+                else:
+                    data["utilization_percent"] = None
             else:
                 data["available_balance"] = None
-            data["available_credit"] = str(instance.available_credit)
-            util = instance.utilization_percent
-            data["utilization_percent"] = str(util) if util is not None else None
+                data["available_credit"] = None
+                data["utilization_percent"] = None
             data["payoff_to_avoid_interest"] = str(instance.payoff_to_avoid_interest)
             data["estimated_monthly_interest"] = str(instance.estimated_monthly_interest)
             data["projected_interest_if_unpaid"] = str(instance.projected_interest_if_unpaid)
@@ -360,6 +395,18 @@ class AccountSerializer(serializers.ModelSerializer):
             from .services.account_health import serialize_account_health
 
             data.update(serialize_account_health(health))
+
+        projected_by_id = self.context.get("projected_statement_by_id") or {}
+        projected = projected_by_id.get(instance.pk)
+        if projected:
+            from .services.projected_statement import serialize_projected_statement
+
+            data.update(serialize_projected_statement(projected))
+
+        payoff_by_id = self.context.get("payoff_estimates_by_id") or {}
+        payoff_est = payoff_by_id.get(instance.pk)
+        if payoff_est is not None:
+            data["payoff_estimate"] = payoff_est
 
         rels_by_account = self.context.get("relationships_by_account_id") or {}
         rel_bundle = rels_by_account.get(instance.pk)

@@ -14,6 +14,8 @@ from .models import (
     RecurringRule,
     Scenario,
     ScenarioRuleOverride,
+    ScenarioOneTimeEvent,
+    ScenarioCategoryShock,
     StatementTransaction,
     ReconciliationMatch,
     UpcomingChargeNotification,
@@ -45,9 +47,15 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "id", "household", "name", "account", "account_id", "transfer_to_account", "transfer_to_account_id",
             "category", "category_id", "direction", "amount", "currency", "frequency", "interval",
             "day_of_week", "day_of_month", "nth_week", "start_date", "end_date",
-            "active", "notes", "created_at", "updated_at",
+            "active",
+            "paused_at",
+            "notes",
+            "is_bill",
+            "payment_flexibility_days",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "paused_at", "created_at", "updated_at"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,7 +94,10 @@ class ScenarioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Scenario
-        fields = ["id", "household", "name", "created_at", "updated_at"]
+        fields = [
+            "id", "household", "name", "description", "template", "horizon_months",
+            "created_at", "updated_at",
+        ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def __init__(self, *args, **kwargs):
@@ -117,6 +128,7 @@ class ScenarioRuleOverrideSerializer(serializers.ModelSerializer):
             "id", "scenario", "rule", "rule_id",
             "override_amount", "override_active", "override_start_date", "override_end_date",
             "override_account", "override_account_id", "override_category", "override_category_id",
+            "notes",
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
@@ -130,6 +142,61 @@ class ScenarioRuleOverrideSerializer(serializers.ModelSerializer):
             self.fields["rule_id"].queryset = RecurringRule.objects.filter(household__in=households)
             self.fields["override_account_id"].queryset = Account.objects.filter(household__in=households)
             self.fields["override_category_id"].queryset = Category.objects.filter(household__in=households)
+
+
+class ScenarioOneTimeEventSerializer(serializers.ModelSerializer):
+    scenario = serializers.PrimaryKeyRelatedField(queryset=Scenario.objects.none(), required=False)
+    account = AccountSerializer(read_only=True)
+    account_id = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.none(), source="account", write_only=True
+    )
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.none(), source="category", required=False, allow_null=True
+    )
+
+    class Meta:
+        model = ScenarioOneTimeEvent
+        fields = [
+            "id", "scenario", "date", "account", "account_id", "description",
+            "category", "category_id", "direction", "amount", "notes",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        req = self.context.get("request")
+        if req and req.user.is_authenticated:
+            households = get_households_for_user(req.user)
+            self.fields["scenario"].queryset = Scenario.objects.filter(household__in=households)
+            self.fields["account_id"].queryset = Account.objects.filter(household__in=households)
+            self.fields["category_id"].queryset = Category.objects.filter(household__in=households)
+
+
+class ScenarioCategoryShockSerializer(serializers.ModelSerializer):
+    scenario = serializers.PrimaryKeyRelatedField(queryset=Scenario.objects.none(), required=False)
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.none(), source="category", write_only=True
+    )
+
+    class Meta:
+        model = ScenarioCategoryShock
+        fields = [
+            "id", "scenario", "category", "category_id",
+            "percent_change", "start_date", "end_date",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        req = self.context.get("request")
+        if req and req.user.is_authenticated:
+            households = get_households_for_user(req.user)
+            self.fields["scenario"].queryset = Scenario.objects.filter(household__in=households)
+            self.fields["category_id"].queryset = Category.objects.filter(household__in=households)
 
 
 class StatementTransactionSerializer(serializers.ModelSerializer):

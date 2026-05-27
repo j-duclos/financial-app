@@ -17,14 +17,28 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         d = plaid_credential_diagnostics()
-        self.stdout.write(f"Resolved PLAID_ENV: {d.get('plaid_env')!r}")
+        env = str(d.get("plaid_env") or "sandbox")
+        self.stdout.write(f"Resolved PLAID_ENV: {env!r}  (from backend/.env — not from your bank)")
         self.stdout.write(f"API host: {d.get('api_host')}")
         self.stdout.write(f"PLAID_CLIENT_ID length: {d.get('client_id_length')}  (typical ~24)")
         self.stdout.write(f"Secret loaded from: {d.get('secret_loaded_from_env_var') or '(missing)'}")
         self.stdout.write(f"Secret length: {d.get('secret_length')}  (if 0, no secret matched current PLAID_ENV)")
 
+        if env == "sandbox":
+            self.stdout.write(
+                self.style.WARNING(
+                    "PLAID_ENV=sandbox → only fake Plaid test banks. "
+                    "For Chase / real accounts set PLAID_ENV=production and Production keys in backend/.env."
+                )
+            )
+
         if not plaid_configured():
-            self.stdout.write(self.style.ERROR("Not configured: need PLAID_CLIENT_ID and a secret for this environment."))
+            self.stdout.write(
+                self.style.ERROR(
+                    "Not configured: edit budget-app/backend/.env — set PLAID_CLIENT_ID and "
+                    "PLAID_PRODUCTION_SECRET (when PLAID_ENV=production), then: docker compose restart backend"
+                )
+            )
             return
 
         self.stdout.write("Calling Plaid link/token/create …")

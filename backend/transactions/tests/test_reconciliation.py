@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Account
 from core.models import Household, HouseholdMembership
-from transactions.models import Reconciliation, Transaction
+from transactions.models import Reconciliation, ReconciliationEntry, Transaction
 from transactions.services.reconciliation import (
     BALANCE_TOLERANCE,
     app_current_balance,
@@ -15,8 +15,13 @@ from transactions.services.reconciliation import (
     calculating_balance,
     complete_reconciliation,
     difference_remaining,
+    last_completed_reconciliation,
+    last_reconcile_period_end,
     last_reconciled_balance,
+    min_reconcile_start_date,
     sum_checked_amounts,
+    undo_reconciliation,
+    validate_no_overlapping_active_session,
 )
 from transactions.services.posting import post_transaction
 
@@ -116,9 +121,13 @@ class TestReconciliationCalculations:
         t1.refresh_from_db()
         assert rec.status == Reconciliation.Status.COMPLETED
         assert rec.final_reconciled_balance == bank
+        assert rec.difference == Decimal("0")
+        assert rec.transaction_count == 1
+        assert rec.is_active is True
         assert t1.reconciled is True
         assert t1.reconciliation_id == rec.pk
         assert t1.reconciled_at is not None
+        assert ReconciliationEntry.objects.filter(session=rec, transaction=t1).exists()
 
     def test_transaction_running_balances_are_cumulative_per_row(self, account, user):
         post_transaction(
@@ -307,3 +316,190 @@ def test_reconcile_complete_api_rejects_bad_balance(auth_client, account, user):
         format="json",
     )
     assert r.status_code == 400
+
+
+def test_overlapping_active_sessions_rejected(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="A",
+        amount=Decimal("10.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1010.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    with pytest.raises(ValueError, match="overlapping"):
+        validate_no_overlapping_active_session(
+            account,
+            date(2026, 5, 12),
+            date(2026, 5, 20),
+        )
+
+
+def test_latest_session_and_next_period_start(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="Seed",
+        amount=Decimal("1.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1001.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    latest = last_completed_reconciliation(account)
+    assert latest is not None
+    assert latest.period_end_date == date(2026, 5, 13)
+    assert last_reconcile_period_end(account) == date(2026, 5, 13)
+    assert min_reconcile_start_date(account) == date(2026, 5, 14)
+
+
+def test_undo_latest_session_clears_transaction_flags(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="Deposit",
+        amount=Decimal("25.00"),
+    )
+    rec = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1025.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    result = undo_reconciliation(session=rec, user=user)
+    t1.refresh_from_db()
+    rec.refresh_from_db()
+    assert result["success"] is True
+    assert result["transactions_unreconciled_count"] == 1
+    assert t1.reconciled is False
+    assert t1.reconciled_at is None
+    assert t1.reconciliation_id is None
+    assert rec.is_active is False
+    assert rec.undone_at is not None
+    assert ReconciliationEntry.objects.filter(session=rec).exists()
+    assert Transaction.objects.filter(pk=t1.pk).exists()
+
+
+def test_cannot_undo_non_latest_session(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="First",
+        amount=Decimal("1.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1001.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    t2 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 20),
+        payee="Later",
+        amount=Decimal("10.00"),
+    )
+    rec2 = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1011.00"),
+        checked_transaction_ids=[t2.pk],
+        period_start=date(2026, 5, 14),
+        period_end=date(2026, 5, 26),
+    )
+    older = Reconciliation.objects.filter(account=account).order_by("completed_at").first()
+    with pytest.raises(ValueError, match="latest"):
+        undo_reconciliation(session=older, user=user)
+    assert rec2.is_active is True
+
+
+def test_reconcile_sessions_list_api(auth_client, account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="List",
+        amount=Decimal("1.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1001.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    r = auth_client.get("/api/reconcile/sessions/", {"account_id": account.pk})
+    assert r.status_code == 200, r.data
+    body = r.json()
+    assert len(body["results"]) == 1
+    assert body["results"][0]["can_undo"] is True
+    assert body["results"][0]["bank_balance"] == "1001.00"
+
+
+def test_reconcile_session_detail_api(auth_client, account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 5, 10),
+        payee="Coffee",
+        amount=Decimal("-4.00"),
+    )
+    rec = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("996.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 5, 10),
+        period_end=date(2026, 5, 13),
+    )
+    r = auth_client.get(f"/api/reconcile/sessions/{rec.pk}/")
+    assert r.status_code == 200, r.data
+    body = r.json()
+    assert body["transaction_count"] == 1
+    assert len(body["transactions"]) == 1
+    assert body["transactions"][0]["payee"] == "Coffee"
+
+
+def test_reconcile_session_undo_api(auth_client, account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="Refund",
+        amount=Decimal("12.00"),
+    )
+    rec = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1012.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date.today(),
+        period_end=date.today(),
+    )
+    r = auth_client.post(f"/api/reconcile/sessions/{rec.pk}/undo/", {}, format="json")
+    assert r.status_code == 200, r.data
+    body = r.json()
+    assert body["success"] is True
+    assert body["transactions_unreconciled_count"] == 1
+    t1.refresh_from_db()
+    assert t1.reconciled is False

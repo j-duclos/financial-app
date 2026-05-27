@@ -14,6 +14,7 @@ from accounts.services.account_health_constants import (
     CREDIT_UTILIZATION_CRITICAL,
     CREDIT_UTILIZATION_RISK,
     CREDIT_UTILIZATION_WATCH,
+    DEFAULT_TARGET_UTILIZATION_PERCENT,
     HEALTH_STATUS_CRITICAL,
     HEALTH_STATUS_HEALTHY,
     HEALTH_STATUS_RISK,
@@ -34,6 +35,7 @@ from accounts.services.available_to_spend import (
     calculate_forecast_summaries_for_accounts,
     normalize_forecast_days,
 )
+from accounts.services.credit_card import ledger_owed_balance, sync_current_balance_from_ledger
 from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 from transactions.models import Transaction
 
@@ -71,6 +73,37 @@ def _serialize_decimal(val: Decimal | None) -> str | None:
     if val is None:
         return None
     return str(val)
+
+
+def _target_utilization_percent(account: Account) -> Decimal:
+    raw = account.target_utilization_percent
+    if raw is None:
+        return DEFAULT_TARGET_UTILIZATION_PERCENT
+    target = _decimal(raw)
+    if target < Decimal("0"):
+        return DEFAULT_TARGET_UTILIZATION_PERCENT
+    return min(target, Decimal("100"))
+
+
+def _credit_utilization_thresholds(target: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """
+    Watch / risk / critical lower bounds from target utilization.
+    Default target 10% → 50% / 70% / 90% (same as legacy fixed thresholds).
+    """
+    watch_at = max(target + Decimal("40"), CREDIT_UTILIZATION_WATCH)
+    risk_at = max(target + Decimal("60"), CREDIT_UTILIZATION_RISK)
+    critical_at = max(target + Decimal("80"), CREDIT_UTILIZATION_CRITICAL)
+    return watch_at, risk_at, critical_at
+
+
+def _utilization_reason(util_dec: Decimal, target: Decimal) -> str:
+    return f"Utilization is {util_dec:.0f}% (target {target:.0f}%)"
+
+
+def _credit_utilization_percent(owed: Decimal, limit: Decimal) -> Decimal | None:
+    if limit <= 0:
+        return None
+    return (owed / limit * Decimal("100")).quantize(Decimal("0.01"))
 
 
 def _count_unmatched_imports(account: Account) -> int:
@@ -176,10 +209,9 @@ def _cash_health(
 
 
 def _credit_card_health(account: Account, today: date) -> tuple[str, str | None, date | None, dict[str, Any]]:
-    owed = _decimal(account.current_balance or 0)
+    owed = ledger_owed_balance(account, today)
     limit = _decimal(account.credit_limit or 0)
-    util = account.utilization_percent
-    util_dec = _decimal(util) if util is not None else None
+    util_dec = _credit_utilization_percent(owed, limit)
     due = account.next_payment_due_date
     days_until = (due - today).days if due else None
     payoff = account.payoff_to_avoid_interest
@@ -188,11 +220,15 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
     if days_until is not None and days_until < 0 and (payoff > 0 or owed > 0):
         past_due_amount = payoff if payoff > 0 else owed
 
+    target_util = _target_utilization_percent(account)
+    watch_at, risk_at, critical_at = _credit_utilization_thresholds(target_util)
+
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
         "available_to_spend": None,
         "minimum_buffer": str(account.minimum_buffer or 0),
         "utilization_percent": _serialize_decimal(util_dec),
+        "target_utilization_percent": _serialize_decimal(target_util),
         "days_until_due": days_until,
         "past_due_amount": _serialize_decimal(past_due_amount) if past_due_amount > 0 else None,
         "unmatched_import_count": _count_unmatched_imports(account),
@@ -206,9 +242,9 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
         statuses.append(HEALTH_STATUS_CRITICAL)
         reasons.append("Payment is past due")
 
-    if util_dec is not None and util_dec >= CREDIT_UTILIZATION_CRITICAL:
+    if util_dec is not None and util_dec >= critical_at:
         statuses.append(HEALTH_STATUS_CRITICAL)
-        reasons.append(f"Utilization is {util_dec:.0f}%")
+        reasons.append(_utilization_reason(util_dec, target_util))
 
     if limit > 0 and owed > limit:
         statuses.append(HEALTH_STATUS_CRITICAL)
@@ -232,10 +268,10 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
             statuses.append(HEALTH_STATUS_WATCH)
             reasons.append(f"Payment due in {days_until} day{'s' if days_until != 1 else ''}")
 
-    if util_dec is not None and util_dec >= CREDIT_UTILIZATION_RISK:
+    if util_dec is not None and util_dec >= risk_at:
         statuses.append(HEALTH_STATUS_RISK)
         if not any("Utilization" in r for r in reasons):
-            reasons.append(f"Utilization is {util_dec:.0f}%")
+            reasons.append(_utilization_reason(util_dec, target_util))
 
     projected_interest = account.projected_interest_if_unpaid
     if (
@@ -247,10 +283,20 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
         statuses.append(HEALTH_STATUS_RISK)
         reasons.append("Projected interest if statement balance remains unpaid")
 
-    if util_dec is not None and util_dec >= CREDIT_UTILIZATION_WATCH:
+    if util_dec is not None and util_dec > target_util and util_dec < risk_at:
         if not any("Utilization" in r for r in reasons):
             statuses.append(HEALTH_STATUS_WATCH)
-            reasons.append(f"Utilization is {util_dec:.0f}%")
+            reasons.append(_utilization_reason(util_dec, target_util))
+
+    min_pay = _decimal(account.minimum_payment_amount or 0)
+    if owed > 0 and min_pay > 0 and _decimal(account.apr or 0) > 0:
+        from credit_cards.services.payoff import IMPOSSIBLE_MESSAGE, project_credit_card_payoff
+
+        min_proj = project_credit_card_payoff(account, "minimum_payment")
+        if not min_proj.get("payoff_possible"):
+            statuses.append(HEALTH_STATUS_CRITICAL)
+            reasons.append(min_proj.get("message") or IMPOSSIBLE_MESSAGE)
+            details["payoff_impossible"] = True
 
     apr = _decimal(account.apr or 0)
     if apr >= HIGH_APR_THRESHOLD and owed > 0 and payoff > 0:
@@ -274,7 +320,7 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
     if account.autopay_enabled and payoff <= 0:
         return HEALTH_STATUS_HEALTHY, None, None, details
 
-    if util_dec is not None and util_dec < CREDIT_UTILIZATION_WATCH and payoff <= 0:
+    if util_dec is not None and util_dec <= target_util and payoff <= 0:
         return HEALTH_STATUS_HEALTHY, None, None, details
 
     if not statuses:
@@ -409,8 +455,10 @@ def _recommended_action(
         util = details.get("utilization_percent")
         if status == HEALTH_STATUS_CRITICAL and details.get("past_due_amount"):
             return "Schedule a payment immediately to avoid late fees."
-        if util and _decimal(util) >= CREDIT_UTILIZATION_RISK:
-            return "Reduce card utilization below 70%."
+        target = _target_utilization_percent(account)
+        _, risk_at, _ = _credit_utilization_thresholds(target)
+        if util and _decimal(util) >= risk_at:
+            return f"Reduce card utilization toward your {target:.0f}% target."
         days = details.get("days_until_due")
         if days is not None and days >= 0:
             return "Schedule a payment before the due date."
@@ -565,6 +613,10 @@ def calculate_account_health_for_accounts(
             end_date=window_end,
             as_of_date=today,
         )
+
+    for account in accounts:
+        if account.is_credit_card():
+            sync_current_balance_from_ledger(account, today)
 
     result: dict[int, dict[str, Any]] = {}
     for account in accounts:

@@ -64,6 +64,20 @@ def test_default_manager_excludes_deleted(household):
 
 
 @pytest.mark.django_db
+def test_closed_hidden_from_active_only_query(auth_client, household):
+    acct = _checking(household, name="Closed")
+    from accounts.services.lifecycle import close_account
+
+    close_account(acct, reason="done")
+    r = auth_client.get("/api/accounts/", {"active_only": "true"})
+    ids = [a["id"] for a in r.data["results"]]
+    assert acct.id not in ids
+
+    r_closed = auth_client.get("/api/accounts/", {"status": "closed"})
+    assert acct.id in [a["id"] for a in r_closed.data["results"]]
+
+
+@pytest.mark.django_db
 def test_archive_hides_from_active_only_query(auth_client, household):
     acct = _checking(household)
     r = auth_client.post(f"/api/accounts/{acct.id}/archive/", {"reason": "unused"}, format="json")
@@ -91,8 +105,8 @@ def test_soft_delete_preserves_transactions(auth_client, household):
         payee="Coffee",
         amount=Decimal("-5.00"),
     )
-    r = auth_client.delete(f"/api/accounts/{acct.id}/")
-    assert r.status_code == 204
+    r = auth_client.post(f"/api/accounts/{acct.id}/soft-delete/")
+    assert r.status_code == 200
     assert Transaction.objects.filter(account_id=acct.id).count() == 1
     acct = Account.all_objects.get(pk=acct.id)
     assert acct.status == Account.Status.DELETED
