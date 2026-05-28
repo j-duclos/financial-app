@@ -1284,3 +1284,54 @@ class TestBalanceAtEndOfDate:
         ledger_bal = _balance_at_end_of_date(credit.id, as_of)
         assert ledger_bal == timeline_bal
         assert ledger_bal == Decimal("-850.00")
+
+
+def test_timeline_running_balance_excludes_superseded_planned_duplicate(user, household):
+    """Superseded PLANNED duplicates must not change running_balance (matches calendar / ledger sum)."""
+    from timeline.services.ledger import _balance_at_end_of_date
+
+    acc = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Main",
+        currency="USD",
+        starting_balance=Decimal("3730.38"),
+    )
+    dup_date = date(2026, 5, 30)
+    jun1 = date(2026, 6, 1)
+    Transaction.objects.create(
+        account=acc,
+        date=dup_date,
+        payee="Credit Card Pmt",
+        amount=Decimal("-100.00"),
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=acc,
+        date=dup_date,
+        payee="Credit Card Pmt (planned)",
+        amount=Decimal("-100.00"),
+        status=Transaction.Status.PLANNED,
+    )
+    Transaction.objects.create(
+        account=acc,
+        date=jun1,
+        payee="Rent",
+        amount=Decimal("-3100.00"),
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=acc,
+        date=jun1,
+        payee="Credit Card Pmt",
+        amount=Decimal("-650.00"),
+        status=Transaction.Status.CLEARED,
+    )
+    rows = build_timeline(user, date(2026, 5, 28), date(2026, 6, 30), account_id=acc.id)
+    dup_cleared = next(r for r in rows if r["date"] == dup_date and r["status"] == Transaction.Status.CLEARED)
+    dup_planned = next(r for r in rows if r["date"] == dup_date and r["status"] == Transaction.Status.PLANNED)
+    cc_row = next(r for r in rows if r["date"] == jun1 and r["description"] == "Credit Card Pmt")
+    assert dup_cleared["running_balance"] == Decimal("3630.38")
+    assert dup_planned["running_balance"] == Decimal("3630.38")
+    assert cc_row["running_balance"] == Decimal("-119.62")
+    assert cc_row["running_balance"] == _balance_at_end_of_date(acc.id, jun1)

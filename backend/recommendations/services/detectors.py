@@ -170,7 +170,13 @@ def _daily_balances_for_account(
         if row_date <= today or row_date > window_end:
             continue
         by_date[row_date].append(_decimal(row["amount"]))
-    lowest, _, lowest_date, _ = _project_balances(current, by_date, today, window_end)
+    lowest, _, lowest_date, _, _, _, _, _ = _project_balances(
+        current,
+        by_date,
+        today,
+        window_end,
+        Decimal("0"),
+    )
     return {"lowest": lowest, "lowest_date": lowest_date, "by_date": by_date}
 
 

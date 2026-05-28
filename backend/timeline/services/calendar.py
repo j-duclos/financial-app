@@ -35,10 +35,15 @@ from insights.services.day_heat import (
     calculate_day_heat,
     heat_to_risk_level,
 )
+from insights.services.day_credit_warnings import scan_credit_day_warnings
+from insights.services.day_biggest_drivers import compute_biggest_drivers
 from insights.services.day_lowest_balance import (
     account_balance_rows_from_transactions,
     calculate_day_lowest_marker,
+    calculate_day_lowest_marker_from_snapshots,
+    carry_forward_lowest_markers,
 )
+from insights.services.day_recovery import attach_recovery_to_days
 from timeline.services.ledger import (
     _balance_at_end_of_date,
     build_timeline,
@@ -140,6 +145,7 @@ def build_timeline_calendar(
     account_id: Optional[int] = None,
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
+    ephemeral_events: Optional[list] = None,
 ) -> dict[str, Any]:
     today = as_of_date or date.today()
     # Full household timeline so transfer legs materialize; scope per account below.
@@ -151,6 +157,7 @@ def build_timeline_calendar(
         account_id=None,
         household_id=household_id,
         as_of_date=as_of_date,
+        ephemeral_events=ephemeral_events,
     )
     if account_id is not None:
         rows = [r for r in rows if r.get("account_id") == account_id]
@@ -343,6 +350,9 @@ def build_timeline_calendar(
             account_balances=heat_balances,
             health_alert_names=health_names,
         )
+        credit_balance_warnings = scan_credit_day_warnings(
+            marker_txns, accounts_by_id
+        )
         lowest_marker = calculate_day_lowest_marker(
             marker_txns,
             accounts_by_id,
@@ -350,6 +360,19 @@ def build_timeline_calendar(
             heat_level=heat["heat_level"],
             scope_account_id=account_id,
         )
+        if not lowest_marker["show_lowest_balance_marker"] and heat["heat_level"] in (
+            "tight",
+            "dangerous",
+        ):
+            snapshot_marker = calculate_day_lowest_marker_from_snapshots(
+                account_snapshots,
+                accounts_by_id,
+                date_iso=date_iso,
+                heat_level=heat["heat_level"],
+                scope_account_id=account_id,
+            )
+            if snapshot_marker["show_lowest_balance_marker"]:
+                lowest_marker = snapshot_marker
         risk_level = heat_to_risk_level(heat["heat_level"])
         risk_reason = heat.get("heat_reason")
         if not risk_reason and day_rows:
@@ -370,6 +393,13 @@ def build_timeline_calendar(
             best_balance = ending
             best_date = date_iso
 
+        account_balance_map = {
+            str(aid): str(
+                running.get(aid, opening.get(aid, Decimal("0"))).quantize(Decimal("0.01"))
+            )
+            for aid in scope_ids
+        }
+
         days_out.append(
             {
                 "date": date_iso,
@@ -378,6 +408,7 @@ def build_timeline_calendar(
                 "transfer_total": str(transfer.quantize(Decimal("0.01"))),
                 "net_total": str(net.quantize(Decimal("0.01"))),
                 "ending_balance": str(ending.quantize(Decimal("0.01"))),
+                "account_balances": account_balance_map,
                 "lowest_balance": str((lowest if lowest is not None else ending).quantize(Decimal("0.01"))),
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
@@ -409,10 +440,17 @@ def build_timeline_calendar(
                 "amount_needed_to_zero": lowest_marker["amount_needed_to_zero"],
                 "amount_needed_to_buffer": lowest_marker["amount_needed_to_buffer"],
                 "show_lowest_balance_marker": lowest_marker["show_lowest_balance_marker"],
+                "credit_balance_warnings": credit_balance_warnings,
+                "biggest_drivers": compute_biggest_drivers(events),
                 "transactions": events,
             }
         )
         d += timedelta(days=1)
+
+    carry_forward_lowest_markers(days_out)
+    attach_recovery_to_days(days_out, accounts_by_id=accounts_by_id)
+    for day_payload in days_out:
+        day_payload.pop("account_balances", None)
 
     scenario_name = None
     if scenario_id:

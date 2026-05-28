@@ -1854,10 +1854,20 @@ def build_timeline(
                 sb = -sb
             opening[aid] = sb
 
-    # Running balance: use opening (already has account_ids + any accounts we added for CC legs).
+    # Running balance: skip superseded PLANNED duplicates (same rule as calendar / ledger UI).
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        aid = r.get("account_id")
+        if aid is not None:
+            rows_by_account[aid].append(r)
+
     running = dict(opening)
     for r in rows:
         aid = r["account_id"]
+        acct_rows = rows_by_account.get(aid, [])
+        if is_superseded_planned_row(r, acct_rows):
+            r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
+            continue
         amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
         running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
         r["running_balance"] = running[aid]

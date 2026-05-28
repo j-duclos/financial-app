@@ -130,6 +130,32 @@ def test_future_bill_reduces_available(user, checking, expense_category):
     assert s["risk_status"] == RISK_STATUS_CRITICAL
 
 
+def test_risk_date_uses_first_negative_not_lowest_date(user, checking, expense_category):
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=3),
+        payee="First drop",
+        amount=Decimal("-1100"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=10),
+        payee="Deeper drop",
+        amount=Decimal("-500"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    s = _summary(user, checking, days=30)
+    assert s["risk_status"] == RISK_STATUS_CRITICAL
+    assert s["risk_date"] == (AS_OF + timedelta(days=3)).isoformat()
+    assert s["lowest_projected_balance_date"] == (AS_OF + timedelta(days=10)).isoformat()
+    assert Decimal(s["first_negative_balance"]) == Decimal("-100")
+
+
 def test_paycheck_later_still_catches_mid_month_risk(user, checking, expense_category):
     Transaction.objects.create(
         account=checking,
@@ -259,6 +285,33 @@ def test_risk_when_below_buffer_not_zero(user, checking, expense_category):
     s = _summary(user, checking, days=30)
     assert Decimal(s["lowest_projected_balance"]) == Decimal("150")
     assert s["risk_status"] == RISK_STATUS_RISK
+    assert s["risk_date"] == (AS_OF + timedelta(days=10)).isoformat()
+
+
+def test_risk_date_uses_first_buffer_breach_not_lowest_date(user, checking, expense_category):
+    checking.minimum_buffer = Decimal("300")
+    checking.save(update_fields=["minimum_buffer"])
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=2),
+        payee="Early dip",
+        amount=Decimal("-750"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=8),
+        payee="Lower later dip",
+        amount=Decimal("-200"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    s = _summary(user, checking, days=30)
+    assert s["risk_status"] == RISK_STATUS_RISK
+    assert s["risk_date"] == (AS_OF + timedelta(days=2)).isoformat()
 
 
 def test_credit_card_no_available_to_spend(user, credit_card):

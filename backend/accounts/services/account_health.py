@@ -166,6 +166,8 @@ def _cash_health(
 
     details["lowest_projected_balance"] = forecast.get("lowest_projected_balance")
     details["available_to_spend"] = forecast.get("available_to_spend")
+    details["first_negative_balance"] = forecast.get("first_negative_balance")
+    details["first_below_buffer_balance"] = forecast.get("first_below_buffer_balance")
 
     statuses: list[str] = []
     reasons: list[str] = []
@@ -474,7 +476,10 @@ def _recommended_action(
     shortfall = None
     if forecast and forecast.get("supports_available_to_spend"):
         available = _decimal(forecast.get("available_to_spend") or 0)
-        if available < 0:
+        first_negative = forecast.get("first_negative_balance")
+        if first_negative is not None and _decimal(first_negative) < 0:
+            shortfall = abs(_decimal(first_negative))
+        elif available < 0:
             shortfall = abs(available)
         else:
             lowest = _decimal(forecast.get("lowest_projected_balance") or 0)

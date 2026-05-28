@@ -112,6 +112,13 @@ def calculate_day_heat(
     }
 
 
+def _format_account_projected(account_name: str, balance: Decimal) -> str:
+    bal = balance.quantize(Decimal("0.01"))
+    if bal < Decimal("0"):
+        return f"{account_name} projected -${(-bal)}"
+    return f"{account_name} projected ${bal}"
+
+
 def _build_heat_reason(
     *,
     heat_level: str,
@@ -129,9 +136,8 @@ def _build_heat_reason(
         return f"{health_alert_names[0]} and others projected at risk"
     if worst is None:
         return None
-    prefix = "Worst: " if multi_account and heat_level == HEAT_DANGEROUS else ""
     if is_negative:
-        return f"{prefix}{worst.account_name} projected negative"
+        return _format_account_projected(worst.account_name, worst.balance)
     if below_buffer_amount > 0:
         amt = below_buffer_amount.quantize(Decimal("0.01"))
         return f"Below buffer: {worst.account_name} ${amt}"
@@ -140,14 +146,23 @@ def _build_heat_reason(
     return f"{worst.account_name} needs attention"
 
 
+def _is_cash_account_name(name: str, accounts_by_id: dict[int, Any]) -> bool:
+    for acc in accounts_by_id.values():
+        if acc.effective_display_name == name:
+            return not acc.is_credit_card()
+    return True
+
+
 def account_balances_from_txn_lows(
     lowest_rows: list[dict[str, Any]],
     accounts_by_id: dict[int, Any],
 ) -> list[AccountDayBalance]:
-    """Build account snapshots from serialized txn balance_after rows."""
+    """Build cash-account snapshots from serialized txn balance_after rows."""
     by_name: dict[str, Decimal] = {}
     for row in lowest_rows:
         name = (row.get("account_name") or "Account").strip()
+        if not _is_cash_account_name(name, accounts_by_id):
+            continue
         bal = _decimal(row.get("balance") or row.get("balance_after") or 0)
         if name not in by_name or bal < by_name[name]:
             by_name[name] = bal

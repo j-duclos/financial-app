@@ -36,6 +36,8 @@ from .serializers import (
 from .services.scenario_comparison import build_scenario_comparison, evaluate_affordability
 from .services.calendar import build_timeline_calendar
 from .services.ledger import build_timeline
+from .services.resolve_risk import build_resolve_risk_plan
+from .services.transfer_simulation import simulate_transfer_impact
 from .services.rule_cleanup import (
     delete_future_materialized_transactions_for_rule,
     pause_recurring_rule,
@@ -567,6 +569,94 @@ def _timeline_date_range(request):
     else:
         start = dt.strptime(start, "%Y-%m-%d").date() if isinstance(start, str) else start
     return start, end, as_of_date
+
+
+class TransferSimulationView(APIView):
+    """What-if transfer simulation for calendar day drawer (no persistence)."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request):
+        from datetime import datetime as dt
+
+        from_account_id = request.data.get("from_account_id")
+        to_account_id = request.data.get("to_account_id")
+        amount = request.data.get("amount")
+        transfer_date = request.data.get("transfer_date")
+        focus_date = request.data.get("focus_date")
+        horizon = request.data.get("horizon", "6m")
+        household_id = request.data.get("household_id")
+        scenario_id = request.data.get("scenario_id")
+
+        if not from_account_id or not to_account_id or amount is None or not transfer_date:
+            return Response(
+                {"detail": "from_account_id, to_account_id, amount, and transfer_date are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            parsed_transfer = dt.strptime(str(transfer_date)[:10], "%Y-%m-%d").date()
+            parsed_focus = (
+                dt.strptime(str(focus_date)[:10], "%Y-%m-%d").date()
+                if focus_date
+                else parsed_transfer
+            )
+        except ValueError:
+            return Response({"detail": "Invalid date."}, status=status.HTTP_400_BAD_REQUEST)
+
+        households = get_households_for_user(request.user)
+        from accounts.models import Account
+
+        from_acc = Account.objects.filter(
+            pk=int(from_account_id), household__in=households
+        ).first()
+        if not from_acc:
+            return Response({"detail": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            result = simulate_transfer_impact(
+                request.user,
+                from_account_id=int(from_account_id),
+                to_account_id=int(to_account_id),
+                amount=Decimal(str(amount)),
+                transfer_date=parsed_transfer,
+                focus_date=parsed_focus,
+                household_id=int(household_id) if household_id else from_acc.household_id,
+                scenario_id=int(scenario_id) if scenario_id else None,
+                horizon=str(horizon),
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result)
+
+
+class ResolveRiskView(APIView):
+    """Deterministic resolve-risk plan for a cash account (simulation-based)."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def get(self, request):
+        from accounts.models import Account
+
+        account_id = request.query_params.get("account_id")
+        days = request.query_params.get("days", "30")
+        if not account_id:
+            return Response(
+                {"detail": "account_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        households = get_households_for_user(request.user)
+        if not Account.objects.filter(pk=int(account_id), household__in=households).exists():
+            return Response({"detail": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            plan = build_resolve_risk_plan(
+                request.user,
+                int(account_id),
+                days=int(days),
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(plan)
 
 
 class TimelineCalendarView(APIView):

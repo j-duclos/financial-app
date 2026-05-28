@@ -19,9 +19,14 @@ from insights.services.day_heat import (
     account_balances_from_txn_lows,
     calculate_day_heat,
 )
+from insights.services.day_credit_warnings import scan_credit_day_warnings
+from insights.services.day_biggest_drivers import compute_biggest_drivers
+from insights.services.day_recovery import attach_recovery_to_days
 from insights.services.day_lowest_balance import (
     account_balance_rows_from_transactions,
     calculate_day_lowest_marker,
+    calculate_day_lowest_marker_from_snapshots,
+    carry_forward_lowest_markers,
 )
 
 BANK_TRANSFER_CATEGORY_NAMES = frozenset({"Bank Transfer", "Transfer"})
@@ -426,11 +431,18 @@ def _day_lowest_projected_balances(
     transactions: list[dict[str, Any]],
     accounts_by_id: dict[int, Account],
 ) -> list[dict[str, Any]]:
-    """Accounts at or below zero for display emphasis."""
+    """Cash accounts at or below zero / below buffer for display emphasis."""
     rows = _day_account_balance_rows(transactions)
     buffers = {a.effective_display_name: _decimal(a.minimum_buffer or 0) for a in accounts_by_id.values()}
+    credit_names = {
+        a.effective_display_name
+        for a in accounts_by_id.values()
+        if a.is_credit_card()
+    }
     out: list[dict[str, Any]] = []
     for row in rows:
+        if row.get("account_name") in credit_names:
+            continue
         bal = _decimal(row["balance"])
         if bal < Decimal("0"):
             out.append(row)
@@ -575,12 +587,25 @@ def build_upcoming_groups(
             account_balances=account_balances,
             health_alert_names=health_names,
         )
+        credit_balance_warnings = scan_credit_day_warnings(serialized, accounts_by_id)
         lowest_marker = calculate_day_lowest_marker(
             serialized,
             accounts_by_id,
             date_iso=date_iso,
             heat_level=heat["heat_level"],
         )
+        if not lowest_marker["show_lowest_balance_marker"] and heat["heat_level"] in (
+            "tight",
+            "dangerous",
+        ):
+            snapshot_marker = calculate_day_lowest_marker_from_snapshots(
+                account_balances,
+                accounts_by_id,
+                date_iso=date_iso,
+                heat_level=heat["heat_level"],
+            )
+            if snapshot_marker["show_lowest_balance_marker"]:
+                lowest_marker = snapshot_marker
         hidden_count = max(0, len(serialized) - per_day_visible)
 
         groups.append(
@@ -625,12 +650,33 @@ def build_upcoming_groups(
                 "amount_needed_to_buffer": lowest_marker["amount_needed_to_buffer"],
                 "show_lowest_balance_marker": lowest_marker["show_lowest_balance_marker"],
                 "lowest_projected_balances": lowest_balances,
+                "credit_balance_warnings": credit_balance_warnings,
                 "transactions": serialized,
                 "hidden_transaction_count": hidden_count,
                 "total_transaction_count": len(serialized),
                 "visible_transaction_limit": per_day_visible,
+                "biggest_drivers": compute_biggest_drivers(serialized),
             }
         )
+
+    for group in groups:
+        balances: dict[str, str] = {}
+        for txn in group.get("transactions") or []:
+            aid = txn.get("account_id")
+            bal = txn.get("balance_after")
+            if aid is not None and bal is not None:
+                balances[str(aid)] = str(bal)
+        group["account_balances"] = balances
+        if balances:
+            group["ending_balance"] = str(
+                sum(_decimal(v) for v in balances.values()).quantize(Decimal("0.01"))
+            )
+        else:
+            group["ending_balance"] = group.get("net_total") or "0"
+    carry_forward_lowest_markers(groups)
+    attach_recovery_to_days(groups, accounts_by_id=accounts_by_id)
+    for group in groups:
+        group.pop("account_balances", None)
 
     return {
         "groups": groups,

@@ -99,15 +99,38 @@ def _project_balances(
     future_amounts_by_date: dict[date, list[Decimal]],
     window_start: date,
     window_end: date,
-) -> tuple[Decimal, Decimal, date, Decimal]:
+    minimum_buffer: Decimal,
+) -> tuple[
+    Decimal,
+    Decimal,
+    date,
+    Decimal,
+    date | None,
+    Decimal | None,
+    date | None,
+    Decimal | None,
+]:
     """
     Walk day-by-day from window_start through window_end.
     future_amounts_by_date only includes dates strictly after window_start (today).
-    Returns (lowest_balance, ending_balance, lowest_date, projected_at_window_end).
+    Returns (
+        lowest_balance,
+        ending_balance,
+        lowest_date,
+        projected_at_window_end,
+        first_negative_date,
+        first_negative_balance,
+        first_below_buffer_date,
+        first_below_buffer_balance,
+    ).
     """
     balance = current_balance
     lowest = balance
     lowest_date = window_start
+    first_negative_date: date | None = None
+    first_negative_balance: Decimal | None = None
+    first_below_buffer_date: date | None = None
+    first_below_buffer_balance: Decimal | None = None
     d = window_start
     while d <= window_end:
         if d > window_start:
@@ -116,8 +139,23 @@ def _project_balances(
         if balance < lowest:
             lowest = balance
             lowest_date = d
+        if first_negative_date is None and balance < Decimal("0"):
+            first_negative_date = d
+            first_negative_balance = balance
+        if first_below_buffer_date is None and balance < minimum_buffer:
+            first_below_buffer_date = d
+            first_below_buffer_balance = balance
         d += timedelta(days=1)
-    return lowest, balance, lowest_date, balance
+    return (
+        lowest,
+        balance,
+        lowest_date,
+        balance,
+        first_negative_date,
+        first_negative_balance,
+        first_below_buffer_date,
+        first_below_buffer_balance,
+    )
 
 
 def _row_superseded_by_cleared_posting(row: dict, account_rows: list[dict]) -> bool:
@@ -212,8 +250,21 @@ def calculate_account_forecast_summary(
     by_date, inflows, outflows, committed_outflows = _summarize_future_rows(
         timeline_rows, account.pk, today, window_end
     )
-    lowest, ending, lowest_date, _ = _project_balances(
-        current_balance, by_date, window_start, window_end
+    (
+        lowest,
+        ending,
+        lowest_date,
+        _,
+        first_negative_date,
+        first_negative_balance,
+        first_below_buffer_date,
+        first_below_buffer_balance,
+    ) = _project_balances(
+        current_balance,
+        by_date,
+        window_start,
+        window_end,
+        minimum_buffer,
     )
     bucket_allocation = Decimal("0")
     try:
@@ -225,7 +276,13 @@ def calculate_account_forecast_summary(
 
     available = lowest - minimum_buffer - bucket_allocation
     status = _risk_status(lowest, available, minimum_buffer, current_balance)
-    reason = _risk_reason(status, lowest, minimum_buffer, lowest_date)
+    if status == RISK_STATUS_CRITICAL:
+        risk_date = first_negative_date or lowest_date
+    elif status == RISK_STATUS_RISK:
+        risk_date = first_below_buffer_date or lowest_date
+    else:
+        risk_date = lowest_date
+    reason = _risk_reason(status, lowest, minimum_buffer, risk_date)
 
     return {
         "account_id": account.id,
@@ -241,9 +298,16 @@ def calculate_account_forecast_summary(
         "upcoming_committed_outflows": str(committed_outflows),
         "projected_balance_at_window_end": str(ending),
         "lowest_projected_balance": str(lowest),
+        "lowest_projected_balance_date": lowest_date.isoformat(),
+        "first_negative_balance": (
+            str(first_negative_balance) if first_negative_balance is not None else None
+        ),
+        "first_below_buffer_balance": (
+            str(first_below_buffer_balance) if first_below_buffer_balance is not None else None
+        ),
         "available_to_spend": str(available),
         "risk_status": status,
-        "risk_date": lowest_date.isoformat() if status != RISK_STATUS_HEALTHY else None,
+        "risk_date": risk_date.isoformat() if status != RISK_STATUS_HEALTHY else None,
         "risk_reason": reason,
     }
 
@@ -341,6 +405,9 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "bucket_allocation": summary.get("bucket_allocation"),
         "projected_balance_30_days": summary.get("projected_balance_at_window_end"),
         "lowest_projected_balance_30_days": summary.get("lowest_projected_balance"),
+        "lowest_projected_balance_date_30_days": summary.get("lowest_projected_balance_date"),
+        "first_negative_balance": summary.get("first_negative_balance"),
+        "first_below_buffer_balance": summary.get("first_below_buffer_balance"),
         "upcoming_inflows_30_days": summary.get("upcoming_inflows"),
         "upcoming_outflows_30_days": summary.get("upcoming_outflows"),
         "risk_status": summary.get("risk_status"),
@@ -348,6 +415,7 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "risk_reason": summary.get("risk_reason"),
         f"projected_balance{suffix}": summary.get("projected_balance_at_window_end"),
         f"lowest_projected_balance{suffix}": summary.get("lowest_projected_balance"),
+        f"lowest_projected_balance_date{suffix}": summary.get("lowest_projected_balance_date"),
         f"upcoming_inflows{suffix}": summary.get("upcoming_inflows"),
         f"upcoming_outflows{suffix}": summary.get("upcoming_outflows"),
         "forecast_summary": summary,

@@ -143,3 +143,68 @@ def test_should_show_for_negative_without_heat_flag():
         balance=Decimal("-1"),
         minimum_buffer=Decimal("0"),
     )
+
+
+def test_carry_forward_marker_on_quiet_negative_days():
+    from insights.services.day_lowest_balance import carry_forward_lowest_markers
+
+    days = [
+        {
+            "date": "2025-06-17",
+            "show_lowest_balance_marker": True,
+            "lowest_projected_balance": "-562.88",
+            "lowest_projected_balance_account_id": 1,
+            "lowest_projected_balance_account_name": "Main",
+            "lowest_projected_balance_after_description": "Netflix",
+            "amount_needed_to_zero": "562.88",
+            "amount_needed_to_buffer": "762.88",
+            "is_negative": True,
+            "account_balances": {"1": "-562.88"},
+        },
+        {
+            "date": "2025-06-18",
+            "show_lowest_balance_marker": False,
+            "lowest_projected_balance": "-562.88",
+            "is_negative": True,
+            "heat_level": HEAT_DANGEROUS,
+            "account_balances": {"1": "-562.88"},
+        },
+        {
+            "date": "2025-06-19",
+            "show_lowest_balance_marker": False,
+            "lowest_projected_balance": "500.00",
+            "is_negative": False,
+            "heat_level": HEAT_HEALTHY,
+            "account_balances": {"1": "500.00"},
+        },
+    ]
+    carry_forward_lowest_markers(days)
+    assert days[1]["show_lowest_balance_marker"] is True
+    assert days[1]["lowest_projected_balance_account_name"] == "Main"
+    assert days[1]["lowest_projected_balance_after_description"] == "Netflix"
+    assert days[1]["amount_needed_to_zero"] == "562.88"
+    assert days[2]["show_lowest_balance_marker"] is False
+
+
+def test_marker_from_snapshots_when_no_transactions(accounts_by_id):
+    from insights.services.day_heat import AccountDayBalance
+    from insights.services.day_lowest_balance import (
+        calculate_day_lowest_marker_from_snapshots,
+    )
+
+    snapshots = [
+        AccountDayBalance(
+            account_name="Main",
+            balance=Decimal("-562.88"),
+            minimum_buffer=Decimal("200"),
+        )
+    ]
+    marker = calculate_day_lowest_marker_from_snapshots(
+        snapshots,
+        accounts_by_id,
+        date_iso="2025-06-18",
+        heat_level=HEAT_DANGEROUS,
+    )
+    assert marker["show_lowest_balance_marker"] is True
+    assert marker["lowest_projected_balance_account_name"] == "Main"
+    assert marker["amount_needed_to_zero"] == "562.88"

@@ -54,6 +54,41 @@ def test_worst_account_selected_for_multi_account():
     assert heat["heat_level"] == HEAT_DANGEROUS
     assert heat["affected_account_name"] == "Main"
     assert heat["is_negative"] is True
+    assert heat["heat_reason"] == "Main projected -$200.00"
+
+
+def test_credit_card_excluded_from_cash_heat():
+    from insights.services.day_heat import account_balances_from_txn_lows
+
+    class _Acc:
+        def __init__(self, name: str, credit: bool):
+            self._name = name
+            self._credit = credit
+            self.minimum_buffer = Decimal("0")
+
+        @property
+        def effective_display_name(self):
+            return self._name
+
+        def is_credit_card(self):
+            return self._credit
+
+    accounts = {1: _Acc("Venture", True), 2: _Acc("Main", False)}
+    rows = [
+        {"account_name": "Venture", "balance": "-5000.00"},
+        {"account_name": "Main", "balance": "-100.00"},
+    ]
+    balances = account_balances_from_txn_lows(rows, accounts)
+    assert len(balances) == 1
+    assert balances[0].account_name == "Main"
+
+
+def test_negative_heat_reason_includes_amount():
+    heat = calculate_day_heat(
+        has_activity=True,
+        account_balances=[AccountDayBalance("Savor", Decimal("-50.25"), Decimal("0"))],
+    )
+    assert heat["heat_reason"] == "Savor projected -$50.25"
 
 
 def test_below_buffer_amount_on_tight_day():
