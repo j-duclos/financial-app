@@ -109,12 +109,9 @@ def _monthly_budget(
     mode: str,
     *,
     extra_monthly: Decimal,
-    income_reduction_pct: Decimal = Decimal("0"),
 ) -> Decimal:
     mins = sum((s.minimum for s in states if s.balance > 0), Decimal("0"))
     extra = extra_monthly
-    if income_reduction_pct > 0:
-        extra = _quantize(extra * (Decimal("1") - income_reduction_pct / Decimal("100")))
 
     if mode == "survival":
         return _quantize(mins)
@@ -197,6 +194,7 @@ def simulate_household_debt(
     debt_free_date: date | None = None
     payoff_order: list[int] = []
     cards_paid_off: set[int] = set()
+    first_month_planned: dict[int, Decimal] = {}
 
     while any(s.balance > 0 for s in states) and months < max_months:
         months += 1
@@ -224,6 +222,10 @@ def simulate_household_debt(
             add = min(remaining, st.balance)
             payments[st.account.pk] = _quantize(payments[st.account.pk] + add)
             remaining -= add
+
+        if months == 1:
+            for st in active:
+                first_month_planned[st.account.pk] = payments[st.account.pk]
 
         month_balances: dict[str, str] = {}
         for st in active:
@@ -267,7 +269,15 @@ def simulate_household_debt(
         interest_saved = Decimal("0")
 
     card_summaries = _build_card_summaries(
-        cards, states, payoff_order, timeline, today, months, debt_free_date, total_interest
+        cards,
+        states,
+        payoff_order,
+        timeline,
+        today,
+        months,
+        debt_free_date,
+        total_interest,
+        planned_monthly_payments=first_month_planned,
     )
     milestones = _build_milestones(states, cards, timeline, payoff_order, today)
     recommendations = _build_recommendations(
@@ -319,6 +329,8 @@ def _build_card_summaries(
     total_months: int,
     debt_free_date: date | None,
     total_interest: Decimal,
+    *,
+    planned_monthly_payments: dict[int, Decimal] | None = None,
 ) -> list[dict[str, Any]]:
     state_by_id = {s.account.pk: s for s in final_states}
     order_rank = {aid: i + 1 for i, aid in enumerate(payoff_order)}
@@ -336,9 +348,8 @@ def _build_card_summaries(
         limit = Decimal(str(card.credit_limit or 0))
         util = _quantize(owed / limit * Decimal("100")) if limit > 0 else None
         min_pay = _minimum_payment(card, owed)
-        pay_amt = max(min_pay, Decimal("150"))
-        if order_rank.get(card.pk) == 1:
-            pay_amt = _quantize(min_pay + Decimal("100"))
+        planned = (planned_monthly_payments or {}).get(card.pk)
+        pay_amt = _quantize(planned) if planned is not None and planned > 0 else min_pay
         suggested = pay_amt
         single = project_credit_card_payoff(
             card,

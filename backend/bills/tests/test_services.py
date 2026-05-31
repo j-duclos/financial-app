@@ -14,6 +14,7 @@ from transactions.models import Transaction
 from bills.models import BillOccurrence
 from bills.services import (
     get_monthly_bill_checklist,
+    link_bill_transaction,
     rule_counts_as_bill,
     skip_bill_occurrence,
     transaction_counts_as_bill,
@@ -288,3 +289,118 @@ def test_manual_is_bill_transaction(user, checking, expense_category):
     )
     data = get_monthly_bill_checklist(user, month=6, year=2026, as_of_date=AS_OF)
     assert any(i["name"] == "One-off HOA" for i in data["items"])
+
+
+def test_link_bill_rejects_rule_forecast_row(user, checking, expense_category):
+    rule = _monthly_rule(checking.household, checking, expense_category, "Netflix", 19, day=17)
+    data = get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=date(2026, 5, 28))
+    occ = BillOccurrence.objects.get(rule=rule, due_date=date(2026, 5, 17))
+    forecast = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 6, 17),
+        payee="Netflix",
+        amount=Decimal("-19.09"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+    with pytest.raises(ValueError, match="forecast"):
+        link_bill_transaction(occ, forecast.id)
+
+
+def test_link_bill_marks_cleared_charge_paid(user, checking, expense_category):
+    rule = _monthly_rule(checking.household, checking, expense_category, "Netflix", 19, day=17)
+    get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=date(2026, 5, 28))
+    occ = BillOccurrence.objects.get(rule=rule, due_date=date(2026, 5, 17))
+    charge = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 17),
+        payee="NETFLIX.COM",
+        amount=Decimal("-19.09"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        cleared=True,
+    )
+    link_bill_transaction(occ, charge.id)
+    occ.refresh_from_db()
+    assert occ.transaction_id == charge.id
+    assert occ.status == BillOccurrence.Status.PAID
+
+    data = get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=date(2026, 5, 28))
+    item = next(i for i in data["items"] if i["rule_id"] == rule.id and i["due_date"] == "2026-05-17")
+    assert item["matched_transaction_id"] == charge.id
+    assert item["status"] == "paid"
+
+
+def test_manual_link_survives_checklist_rebuild_when_amount_differs(user, checking, expense_category):
+    """User-linked charges outside auto-match tolerance must not be cleared on refresh."""
+    rule = _monthly_rule(checking.household, checking, expense_category, "Netflix", 19, day=17)
+    get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=date(2026, 5, 28))
+    occ = BillOccurrence.objects.get(rule=rule, due_date=date(2026, 5, 17))
+    charge = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 14),
+        payee="Netflix",
+        amount=Decimal("-21.21"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        cleared=True,
+    )
+    link_bill_transaction(occ, charge.id)
+    data = get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=date(2026, 5, 28))
+    item = next(i for i in data["items"] if i["rule_id"] == rule.id and i["due_date"] == "2026-05-17")
+    assert item["matched_transaction_id"] == charge.id
+    assert item["status"] == "paid"
+    occ.refresh_from_db()
+    assert occ.transaction_id == charge.id
+    assert occ.status == BillOccurrence.Status.PAID
+
+
+def test_payment_history_splits_actual_and_planned(user, checking, expense_category):
+    """Past cleared charges appear before future planned rule rows, ascending."""
+    from bills.services import get_occurrence_detail
+
+    rule = _monthly_rule(checking.household, checking, expense_category, "LoanCo", Decimal("393.79"), day=2)
+    today = date(2026, 5, 28)
+    get_monthly_bill_checklist(user, month=5, year=2026, as_of_date=today)
+    occ = BillOccurrence.objects.get(rule=rule, due_date=date(2026, 5, 2))
+
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 4, 2),
+        payee="LoanCo",
+        amount=Decimal("-393.79"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        cleared=True,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 6, 2),
+        payee="LoanCo",
+        amount=Decimal("-393.79"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 7, 2),
+        payee="LoanCo",
+        amount=Decimal("-393.79"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+
+    detail = get_occurrence_detail(occ, today=today)
+    dates = [row["date"] for row in detail["payment_history"]]
+    assert dates == ["2026-04-02", "2026-06-02", "2026-07-02"]
+    assert detail["payment_history"][0]["status"] == Transaction.Status.CLEARED
+    assert detail["payment_history"][1]["status"] == Transaction.Status.PLANNED

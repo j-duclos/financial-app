@@ -70,3 +70,32 @@ def test_empty_when_no_debt(user, card_a):
     plan = simulate_household_debt([card_a], strategy="avalanche", mode="survival")
     assert plan["total_debt"] == "0.00"
     assert plan["debt_free_possible"] is True
+
+
+def _card_suggested(plan, account_id: int) -> Decimal:
+    for row in plan["cards"]:
+        if row["account_id"] == account_id:
+            return Decimal(row["suggested_payment"])
+    raise AssertionError(f"card {account_id} not in plan")
+
+
+@pytest.mark.django_db
+def test_extra_monthly_raises_focus_card_suggested_payment(user, card_a, card_b):
+    _debt(card_a, user, Decimal("2000"))
+    _debt(card_b, user, Decimal("500"))
+    low_extra = simulate_household_debt(
+        [card_a, card_b],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("50"),
+    )
+    high_extra = simulate_household_debt(
+        [card_a, card_b],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("500"),
+    )
+    assert _card_suggested(high_extra, card_a.id) > _card_suggested(low_extra, card_a.id)
+    assert Decimal(high_extra["monthly_payment_budget"]) > Decimal(
+        low_extra["monthly_payment_budget"]
+    )

@@ -18,11 +18,13 @@ from categories.models import Category
 from core.models import Household
 from core.utils import get_households_for_user
 from timeline.models import RecurringRule, RecurringRuleSkip
-from timeline.services.ledger import generate_rule_occurrences, _materialize_rule_occurrence
+from timeline.services.ledger import _materialize_rule_occurrence
+from timeline.services.rule_schedule import generate_rule_occurrence_dates, resolve_rule_params, signed_amount_from_params
 from transactions.models import Transaction, TransactionMatch
 from transactions.services.matching import AMOUNT_TOLERANCE, ledger_visible_transactions
 
 from .bill_insights import (
+    count_late_occurrences,
     DISPLAY_DUE_SOON,
     DISPLAY_LATE,
     DISPLAY_LIKELY_FORGOTTEN,
@@ -36,6 +38,10 @@ from .bill_insights import (
     detect_likely_forgotten,
     payment_confidence,
     _match_score_for_txn,
+)
+from .recurring_payment_status import (
+    compute_recurring_payment_counts,
+    recurring_missed_message,
 )
 from .models import BillOccurrence
 
@@ -110,7 +116,9 @@ def transaction_counts_as_bill(txn: Transaction) -> bool:
     return False
 
 
-def _signed_rule_amount(rule: RecurringRule) -> Decimal:
+def _signed_rule_amount(rule: RecurringRule, *, as_of_date: date | None = None) -> Decimal:
+    if as_of_date is not None:
+        return signed_amount_from_params(resolve_rule_params(rule, as_of_date))
     amt = _decimal(rule.amount)
     if rule.direction == RecurringRule.Direction.INCOME:
         return amt
@@ -222,6 +230,16 @@ def find_matching_transaction(
     return best
 
 
+def _persisted_occurrence_transaction(occ: BillOccurrence) -> Optional[Transaction]:
+    """Return a user-linked or previously matched transaction stored on the occurrence."""
+    if not occ.transaction_id:
+        return None
+    try:
+        return Transaction.objects.select_related("category", "account").get(pk=occ.transaction_id)
+    except Transaction.DoesNotExist:
+        return None
+
+
 def _sync_occurrence_from_transaction(
     occurrence: BillOccurrence,
     txn: Optional[Transaction],
@@ -270,12 +288,12 @@ def _rule_occurrence_candidates(
     for rule in rules:
         if not rule_counts_as_bill(rule):
             continue
-        for due_date in generate_rule_occurrences(rule, month_start, month_end):
+        for due_date in generate_rule_occurrence_dates(rule, month_start, month_end):
             if (rule.id, due_date) in skipped:
                 continue
             cat = rule.category
             account = rule.account
-            amount = _signed_rule_amount(rule)
+            amount = _signed_rule_amount(rule, as_of_date=due_date)
             if rule.transfer_to_account_id and rule.category:
                 cat_name = (rule.category.name or "").strip()
                 if cat_name in ("Credit Card Payment", "Bank Transfer"):
@@ -408,15 +426,19 @@ def get_monthly_bill_checklist(
             occ.category = cand.get("category")
             occ.expected_amount = abs(_decimal(cand["expected_amount"]))
 
-        txn = cand.get("transaction") or find_matching_transaction(
-            household_id=cand["household_id"],
-            account_id=cand["account"].id,
-            expected_amount=cand["expected_amount"],
-            due_date=cand["due_date"],
-            rule=rule,
-            category_id=cand["category"].id if cand.get("category") else None,
-            month_start=month_start,
-            month_end=month_end,
+        txn = (
+            cand.get("transaction")
+            or _persisted_occurrence_transaction(occ)
+            or find_matching_transaction(
+                household_id=cand["household_id"],
+                account_id=cand["account"].id,
+                expected_amount=cand["expected_amount"],
+                due_date=cand["due_date"],
+                rule=rule,
+                category_id=cand["category"].id if cand.get("category") else None,
+                month_start=month_start,
+                month_end=month_end,
+            )
         )
         _sync_occurrence_from_transaction(occ, txn, today=today)
         occ.save()
@@ -439,8 +461,6 @@ def get_monthly_bill_checklist(
 
     total_projected = Decimal("0")
     total_paid = Decimal("0")
-    late_count = 0
-    due_soon_count = 0
     forgotten_count = 0
     for it in items:
         amt = _decimal(it["amount"])
@@ -449,16 +469,20 @@ def get_monthly_bill_checklist(
             total_paid += amt
         elif st in ("projected", DISPLAY_DUE_SOON, DISPLAY_LIKELY_FORGOTTEN):
             total_projected += amt
-        if st == DISPLAY_LATE:
-            late_count += 1
-        if st == DISPLAY_DUE_SOON:
-            due_soon_count += 1
         if st == DISPLAY_LIKELY_FORGOTTEN:
             forgotten_count += 1
 
+    late_occurrence_count = count_late_occurrences(items)
+    rules = RecurringRule.objects.filter(household__in=households).select_related(
+        "account", "category", "transfer_to_account"
+    )
+    late_count, due_soon_count = compute_recurring_payment_counts(rules, items, today=today)
+
     total_bills = sum(_decimal(it["amount"]) for it in items if it["status"] != DISPLAY_SKIPPED)
     total_remaining = total_bills - total_paid
-    warnings = build_checklist_warnings(items, today=today)
+    warnings = build_checklist_warnings(
+        items, today=today, missed_bill_count=late_count
+    )
 
     return {
         "month": month_key,
@@ -467,6 +491,7 @@ def get_monthly_bill_checklist(
         "total_remaining": str(max(Decimal("0"), total_remaining)),
         "missed_count": late_count,
         "late_count": late_count,
+        "late_occurrence_count": late_occurrence_count,
         "due_soon_count": due_soon_count,
         "forgotten_count": forgotten_count,
         "overdue_count": late_count,
@@ -606,17 +631,12 @@ def build_dashboard_bill_summary(user, *, as_of_date: Optional[date] = None) -> 
     remaining = data.get("remaining_count") or max(0, total - paid)
     month_label = today.strftime("%B")
     label = f"{paid} of {total} bills paid this month" if total else f"{month_label}: no bills scheduled"
-    missed_message = None
-    if late == 1:
-        missed_message = "1 bill overdue"
-    elif late > 1:
-        missed_message = f"{late} bills overdue"
-    elif forgotten == 1:
-        missed_message = "1 bill may be forgotten"
-    elif forgotten > 1:
-        missed_message = f"{forgotten} bills may be forgotten"
-    elif due_soon > 0:
-        missed_message = f"{due_soon} bill{'s' if due_soon != 1 else ''} due soon"
+    missed_message = recurring_missed_message(late, due_soon)
+    if missed_message is None:
+        if forgotten == 1:
+            missed_message = "1 bill may be forgotten"
+        elif forgotten > 1:
+            missed_message = f"{forgotten} bills may be forgotten"
     return {
         "month": data["month"],
         "paid_count": paid,
@@ -629,7 +649,7 @@ def build_dashboard_bill_summary(user, *, as_of_date: Optional[date] = None) -> 
         "total_remaining": data.get("total_remaining", "0.00"),
         "label": label,
         "missed_message": missed_message,
-        "checklist_url": f"/bills?month={data['month']}",
+        "checklist_url": f"/recurring?month={data['month']}",
         "warnings": data.get("warnings", [])[:5],
     }
 
@@ -670,6 +690,148 @@ def get_bills_overview(
     }
 
 
+def _payment_history_row(txn: Transaction) -> dict[str, Any]:
+    return {
+        "id": txn.id,
+        "date": txn.date.isoformat(),
+        "amount": str(abs(_decimal(txn.amount))),
+        "payee": txn.payee,
+        "status": txn.status,
+        "source": txn.source,
+        "reconciled": txn.reconciled,
+    }
+
+
+def _ledger_payment_matches_rule(
+    txn: Transaction,
+    *,
+    rule: RecurringRule,
+    category_id: Optional[int],
+    expected_amounts: list[Decimal],
+) -> bool:
+    txn_amt = abs(_decimal(txn.amount))
+    if not any(abs(txn_amt - amt) <= AMOUNT_TOLERANCE for amt in expected_amounts):
+        return False
+    if category_id and txn.category_id == category_id:
+        return True
+    rule_name = (rule.name or "").lower()
+    payee = (txn.payee or "").lower()
+    if rule_name and (rule_name in payee or payee in rule_name):
+        return True
+    return False
+
+
+def build_rule_payment_history(
+    *,
+    rule: RecurringRule,
+    occurrence: BillOccurrence,
+    today: date,
+    limit: int = 24,
+) -> list[dict[str, Any]]:
+    """
+    Past cleared/reconciled payments plus upcoming planned rows, ascending by date.
+
+    Includes ledger charges matched to the rule even when rule_id was never set
+    (e.g. Plaid imports linked via bill occurrences).
+    """
+    seen_ids: set[int] = set()
+    dated_rows: list[tuple[date, dict[str, Any]]] = []
+    expected_amounts = list(
+        dict.fromkeys(
+            abs(_decimal(v))
+            for v in (occurrence.expected_amount, rule.amount)
+            if v is not None
+        )
+    )
+
+    def add_txn(txn: Transaction) -> None:
+        if txn.id in seen_ids:
+            return
+        seen_ids.add(txn.id)
+        dated_rows.append((txn.date, _payment_history_row(txn)))
+
+    actual_past = ledger_visible_transactions(
+        Transaction.objects.filter(
+            rule_id=rule.id,
+            account_id=occurrence.account_id,
+            date__lte=today,
+            amount__lt=0,
+        ).exclude(status=Transaction.Status.PLANNED)
+    ).order_by("date")
+    for txn in actual_past:
+        if _transaction_is_paid(txn) or txn.reconciled:
+            add_txn(txn)
+
+    past_occs = (
+        BillOccurrence.objects.filter(rule_id=rule.id, due_date__lte=today)
+        .select_related("transaction", "category")
+        .order_by("-due_date")[:limit]
+    )
+    for occ in past_occs:
+        txn = occ.transaction
+        if not txn:
+            oy, om = occ.due_date.year, occ.due_date.month
+            occ_start = date(oy, om, 1)
+            occ_end = date(oy, om, monthrange(oy, om)[1])
+            txn = find_matching_transaction(
+                household_id=occ.household_id,
+                account_id=occ.account_id,
+                expected_amount=-abs(_decimal(occ.expected_amount)),
+                due_date=occ.due_date,
+                rule=rule,
+                category_id=occ.category_id,
+                month_start=occ_start,
+                month_end=occ_end,
+            )
+        if not txn:
+            continue
+        if _transaction_is_paid(txn) or occ.status in (
+            BillOccurrence.Status.PAID,
+            BillOccurrence.Status.RECONCILED,
+        ):
+            add_txn(txn)
+
+    past_unlinked = ledger_visible_transactions(
+        Transaction.objects.filter(
+            account_id=occurrence.account_id,
+            date__gte=today - timedelta(days=730),
+            date__lte=today,
+            amount__lt=0,
+            rule_id__isnull=True,
+        )
+    ).order_by("-date")
+    past_actual_count = sum(1 for d, _ in dated_rows if d <= today)
+    for txn in past_unlinked:
+        if past_actual_count >= limit:
+            break
+        if not _transaction_is_paid(txn):
+            continue
+        if _ledger_payment_matches_rule(
+            txn,
+            rule=rule,
+            category_id=occurrence.category_id,
+            expected_amounts=expected_amounts,
+        ):
+            add_txn(txn)
+            past_actual_count += 1
+
+    future_planned = ledger_visible_transactions(
+        Transaction.objects.filter(
+            rule_id=rule.id,
+            account_id=occurrence.account_id,
+            date__gt=today,
+            amount__lt=0,
+        ).filter(
+            Q(status=Transaction.Status.PLANNED) | Q(cleared=False, reconciled=False)
+        )
+    ).order_by("date")
+    for txn in future_planned:
+        add_txn(txn)
+
+    dated_rows.sort(key=lambda row: row[0])
+    return [row for _, row in dated_rows[:limit]]
+
+
 def get_occurrence_detail(occurrence: BillOccurrence, *, today: Optional[date] = None) -> dict[str, Any]:
     today = today or date.today()
     month_y, month_m = map(int, occurrence.month.split("-"))
@@ -696,25 +858,17 @@ def get_occurrence_detail(occurrence: BillOccurrence, *, today: Optional[date] =
     item = _serialize_checklist_item(occurrence, cand, txn, today=today)
 
     history: list[dict[str, Any]] = []
-    if occurrence.rule_id:
-        txns = ledger_visible_transactions(
-            Transaction.objects.filter(rule_id=occurrence.rule_id, amount__lt=0)
-        ).order_by("-date")[:24]
-        for t in txns:
-            history.append(
-                {
-                    "id": t.id,
-                    "date": t.date.isoformat(),
-                    "amount": str(abs(_decimal(t.amount))),
-                    "payee": t.payee,
-                    "status": t.status,
-                    "source": t.source,
-                    "reconciled": t.reconciled,
-                }
-            )
+    if occurrence.rule_id and occurrence.rule:
+        history = build_rule_payment_history(
+            rule=occurrence.rule,
+            occurrence=occurrence,
+            today=today,
+        )
         amount_trend = bill_amount_history(occurrence.rule_id)
     else:
         amount_trend = []
+        if txn and txn.date <= today and (_transaction_is_paid(txn) or txn.reconciled):
+            history = [_payment_history_row(txn)]
 
     linked = []
     if txn:
@@ -801,6 +955,15 @@ def link_bill_transaction(occurrence: BillOccurrence, transaction_id: int) -> Bi
     txn = Transaction.objects.select_related("account").get(pk=transaction_id)
     if txn.account.household_id != occurrence.household_id:
         raise ValueError("Transaction must belong to the same household.")
+    if (
+        occurrence.rule_id
+        and txn.rule_id == occurrence.rule_id
+        and txn.status == Transaction.Status.PLANNED
+    ):
+        raise ValueError(
+            "That row is a forecast, not a bank charge. "
+            "Choose the transaction from your account feed."
+        )
     occurrence.transaction = txn
     _sync_occurrence_from_transaction(occurrence, txn, today=date.today())
     occurrence.save()

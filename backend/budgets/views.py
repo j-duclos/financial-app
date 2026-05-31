@@ -14,7 +14,9 @@ from .serializers import (
     SpendingTargetSerializer,
     SpendingTargetWriteSerializer,
 )
-from .services.spending_targets import spending_targets_summary
+from categories.models import Category
+
+from .services.spending_targets import spending_targets_summary, suggest_target_type
 
 
 class BudgetViewSet(ModelViewSet):
@@ -53,8 +55,9 @@ class SpendingTargetViewSet(ModelViewSet):
     def summary(self, request):
         anchor_str = request.query_params.get("anchor")
         household_id = request.query_params.get("household")
-        include_forecast = (
-            request.query_params.get("include_forecast", "true").lower() != "false"
+        include_scheduled = (
+            request.query_params.get("include_scheduled", "true").lower() != "false"
+            and request.query_params.get("include_forecast", "true").lower() != "false"
         )
         anchor = None
         if anchor_str:
@@ -70,6 +73,31 @@ class SpendingTargetViewSet(ModelViewSet):
             request.user,
             anchor=anchor,
             household_id=hid,
-            include_forecast=include_forecast,
+            include_scheduled=include_scheduled,
         )
         return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="suggest-type")
+    def suggest_type(self, request):
+        category_id = request.query_params.get("category")
+        if not category_id:
+            return Response(
+                {"detail": "category query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        households = get_households_for_user(request.user)
+        try:
+            category = Category.objects.get(
+                pk=int(category_id), household__in=households
+            )
+        except (Category.DoesNotExist, ValueError):
+            return Response(
+                {"detail": "Category not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if category.category_type != Category.CategoryType.EXPENSE:
+            return Response(
+                {"detail": "Category must be an expense category."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(suggest_target_type(category))

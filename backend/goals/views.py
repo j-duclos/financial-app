@@ -160,6 +160,7 @@ class FinancialGoalViewSet(ModelViewSet):
 from goals.bucket_contribute import execute_bucket_contribution, preview_bucket_contribution
 from goals.bucket_serializers import (
     AssignContributionSerializer,
+    BucketFundingConfigSerializer,
     ContributePreviewSerializer as BucketContributePreviewSerializer,
     ContributeSerializer as BucketContributeSerializer,
     GoalBucketSerializer,
@@ -208,7 +209,15 @@ class GoalBucketViewSet(ModelViewSet):
         households = get_households_for_user(request.user)
         months = int(request.query_params.get("months", "12"))
         months = max(1, min(months, 36))
-        return Response(build_goals_report(households, months=months))
+        month = request.query_params.get("month")
+        return Response(
+            build_goals_report(
+                households,
+                months=months,
+                month=month,
+                user=request.user,
+            )
+        )
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
@@ -340,6 +349,39 @@ class GoalBucketViewSet(ModelViewSet):
         sid = int(scenario_id) if scenario_id and scenario_id.isdigit() else None
         return Response(build_goal_detail(bucket, user=request.user, scenario_id=sid))
 
+    @action(detail=True, methods=["put", "patch"], url_path="funding")
+    def configure_funding(self, request, pk=None):
+        """Link a paycheck rule to this bucket and optionally enable auto-transfer."""
+        from goals.auto_fund import apply_bucket_funding_config
+
+        bucket = self.get_object()
+        if bucket.is_debt_bucket():
+            return Response(
+                {"detail": "Debt payoff buckets cannot use paycheck auto-funding."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ser = BucketFundingConfigSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        try:
+            apply_bucket_funding_config(
+                bucket,
+                auto_fund_enabled=data.get("auto_fund_enabled"),
+                income_rule_id=data.get("income_rule_id"),
+                fixed_amount=data.get("fixed_amount"),
+                percent=data.get("percent"),
+                clear_allocation=data.get("clear_allocation", False),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        bucket.refresh_from_db()
+        from goals.auto_fund import find_auto_fund_transfer_rule
+
+        transfer_rule = find_auto_fund_transfer_rule(bucket)
+        payload = self.get_serializer(bucket).data
+        payload["auto_fund_transfer_rule_id"] = transfer_rule.pk if transfer_rule else None
+        return Response(payload)
+
 
 class GoalContributionViewSet(ModelViewSet):
     serializer_class = GoalContributionSerializer
@@ -377,6 +419,32 @@ class RuleAllocationViewSet(ModelViewSet):
 
     def get_queryset(self):
         households = get_households_for_user(self.request.user)
-        return RuleAllocation.objects.filter(bucket__household__in=households).select_related(
+        qs = RuleAllocation.objects.filter(bucket__household__in=households).select_related(
             "rule", "bucket"
         )
+        bucket = self.request.query_params.get("bucket")
+        if bucket:
+            qs = qs.filter(bucket_id=int(bucket))
+        rule = self.request.query_params.get("rule")
+        if rule:
+            qs = qs.filter(rule_id=int(rule))
+        return qs
+
+    def perform_create(self, serializer):
+        allocation = serializer.save()
+        from goals.auto_fund import sync_auto_fund_transfer_rule
+
+        sync_auto_fund_transfer_rule(allocation.bucket)
+
+    def perform_update(self, serializer):
+        allocation = serializer.save()
+        from goals.auto_fund import sync_auto_fund_transfer_rule
+
+        sync_auto_fund_transfer_rule(allocation.bucket)
+
+    def perform_destroy(self, instance):
+        bucket = instance.bucket
+        super().perform_destroy(instance)
+        from goals.auto_fund import sync_auto_fund_transfer_rule
+
+        sync_auto_fund_transfer_rule(bucket)

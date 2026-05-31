@@ -266,7 +266,7 @@ def _attention_actions(
         secondary = _attention_action(
             "Make payment",
             "make_payment",
-            url=f"/accounts?account={account.pk}",
+            url=f"/credit-cards?account={account.pk}",
         )
         return primary, secondary
 
@@ -410,30 +410,44 @@ def _safe_to_spend_status(total: Decimal, aggregate: dict[str, Any]) -> str:
 
 
 def _next_safe_to_spend_issue(
-    attention: list[dict[str, Any]],
     aggregate: dict[str, Any],
     forecasts: dict[int, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if attention:
-        top = attention[0]
-        forecast = forecasts.get(top["account_id"])
-        reason = "Projected balance drops below zero"
-        if forecast and forecast.get("risk_reason"):
-            reason = str(forecast["risk_reason"]).rstrip(".")
+    """Next cash safe-to-spend issue — not credit-card utilization from attention."""
+
+    def _risk_date_sort_key(entry: dict[str, Any]) -> tuple[date, int]:
+        rd = entry.get("risk_date")
+        if not rd:
+            return (date.max, int(entry.get("account_id") or 0))
+        try:
+            return (date.fromisoformat(str(rd)), int(entry.get("account_id") or 0))
+        except ValueError:
+            return (date.max, int(entry.get("account_id") or 0))
+
+    at_risk = aggregate.get("accounts_at_risk") or []
+    if at_risk:
+        top = min(at_risk, key=_risk_date_sort_key)
+        forecast = forecasts.get(top["account_id"]) or {}
+        reason = top.get("risk_reason") or forecast.get("risk_reason") or (
+            "Projected balance drops below buffer"
+        )
         return {
             "account_id": top["account_id"],
             "account_name": top["account_name"],
             "risk_date": top.get("risk_date"),
-            "reason": reason,
-            "recommended_action": top.get("recommended_action"),
+            "reason": str(reason).rstrip("."),
+            "recommended_action": None,
         }
+
     worst = aggregate.get("worst_projected_account")
     if worst:
+        forecast = forecasts.get(worst["account_id"]) or {}
+        reason = forecast.get("risk_reason") or "Projected balance drops below buffer"
         return {
             "account_id": worst["account_id"],
             "account_name": worst["account_name"],
             "risk_date": worst.get("risk_date"),
-            "reason": "Projected balance drops below buffer",
+            "reason": str(reason).rstrip("."),
             "recommended_action": None,
         }
     return None
@@ -570,6 +584,12 @@ def _compute_net_worth(accounts: list[Account], *, today: date | None = None) ->
     return str(total.quantize(Decimal("0.01")))
 
 
+def _active_credit_accounts_for_available_credit(
+    accounts: list[Account],
+) -> list[Account]:
+    return [a for a in accounts if a.counts_toward_available_credit()]
+
+
 def _compute_top_summary(
     accounts: list[Account],
     snapshot: dict[str, Any],
@@ -583,23 +603,32 @@ def _compute_top_summary(
     liquid_cash = cash + savings
 
     available_credit = Decimal("0")
-    for acc in accounts:
-        if acc.status != Account.Status.ACTIVE or acc.is_hidden:
+    total_credit_limit = Decimal("0")
+    total_credit_owed = Decimal("0")
+    for acc in _active_credit_accounts_for_available_credit(accounts):
+        limit = _decimal(acc.credit_limit or 0)
+        if limit <= 0:
             continue
-        if not (acc.is_credit_card() or acc.role == Account.AccountRole.CREDIT_CARD):
-            continue
-        try:
-            ac = acc.available_credit
-        except Exception:
-            ac = None
-        if ac is not None and ac > 0:
-            available_credit += _decimal(ac)
+        owed = credit_owed_balance(acc, today)
+        total_credit_limit += limit
+        total_credit_owed += owed
+        available_credit += max(Decimal("0"), limit - owed)
 
-    util = snapshot.get("utilization")
+    weighted_util: str | None = None
+    if total_credit_limit > 0:
+        weighted_util = str(
+            (total_credit_owed / total_credit_limit * Decimal("100")).quantize(Decimal("0.01"))
+        )
+
     return {
         "liquid_cash": str(liquid_cash.quantize(Decimal("0.01"))),
         "available_credit": str(available_credit.quantize(Decimal("0.01"))),
-        "credit_utilization": util,
+        "total_credit_limit": (
+            str(total_credit_limit.quantize(Decimal("0.01")))
+            if total_credit_limit > 0
+            else None
+        ),
+        "credit_utilization": weighted_util,
         "net_position": snapshot.get("net_position") or "0",
     }
 
@@ -900,7 +929,7 @@ def build_dashboard_summary(
 
     total_sts = _decimal(st_aggregate.get("total_safe_to_spend") or 0)
     sts_status = _safe_to_spend_status(total_sts, st_aggregate)
-    next_issue = _next_safe_to_spend_issue(attention_all, st_aggregate, forecasts)
+    next_issue = _next_safe_to_spend_issue(st_aggregate, forecasts)
 
     timeline_rows = build_timeline(
         user,

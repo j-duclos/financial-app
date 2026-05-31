@@ -9,7 +9,9 @@ from goals.bucket_services import (
     calculate_bucket_progress,
     enrich_bucket,
 )
+from goals.linked_account_sync import linked_account_in_use, sync_all_transactions_for_linked_bucket
 from goals.models import GoalBucket, GoalContribution, RuleAllocation
+from timeline.models import RecurringRule
 from transactions.models import Transaction
 
 
@@ -115,6 +117,16 @@ class GoalBucketSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"household": "Not a member of this household."})
         if linked and household and linked.household_id != household.id:
             raise serializers.ValidationError("Linked account must belong to the bucket household.")
+        if linked:
+            exclude_id = self.instance.pk if self.instance else None
+            if linked_account_in_use(linked.id, exclude_bucket_id=exclude_id):
+                raise serializers.ValidationError(
+                    {"linked_account": "This account already has an active goal."}
+                )
+        elif bucket_type != GoalBucket.BucketType.DEBT_PAYOFF:
+            raise serializers.ValidationError(
+                {"linked_account": "Link the checking or savings account where this goal's money lives."}
+            )
         return attrs
 
     def to_representation(self, instance):
@@ -133,7 +145,24 @@ class GoalBucketSerializer(serializers.ModelSerializer):
             from datetime import date
 
             validated_data.setdefault("start_date", date.today())
-        return super().create(validated_data)
+        bucket = super().create(validated_data)
+        sync_all_transactions_for_linked_bucket(bucket)
+        from goals.auto_fund import sync_auto_fund_transfer_rule
+
+        sync_auto_fund_transfer_rule(bucket)
+        return bucket
+
+    def update(self, instance, validated_data):
+        old_linked = instance.linked_account_id
+        old_auto_fund = instance.auto_fund_enabled
+        bucket = super().update(instance, validated_data)
+        if bucket.linked_account_id != old_linked:
+            sync_all_transactions_for_linked_bucket(bucket)
+        if bucket.auto_fund_enabled != old_auto_fund or bucket.linked_account_id != old_linked:
+            from goals.auto_fund import sync_auto_fund_transfer_rule
+
+            sync_auto_fund_transfer_rule(bucket)
+        return bucket
 
 
 class ContributePreviewSerializer(serializers.Serializer):
@@ -173,10 +202,77 @@ class AssignContributionSerializer(serializers.Serializer):
 
 
 class RuleAllocationSerializer(serializers.ModelSerializer):
+    rule_name = serializers.CharField(source="rule.name", read_only=True)
+    bucket_name = serializers.CharField(source="bucket.name", read_only=True)
+    rule_direction = serializers.CharField(source="rule.direction", read_only=True)
+
     class Meta:
         model = RuleAllocation
-        fields = ["id", "rule", "bucket", "percent", "fixed_amount", "active", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "rule",
+            "rule_name",
+            "rule_direction",
+            "bucket",
+            "bucket_name",
+            "percent",
+            "fixed_amount",
+            "active",
+            "created_at",
+            "updated_at",
+        ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        rule = attrs.get("rule") or getattr(self.instance, "rule", None)
+        bucket = attrs.get("bucket") or getattr(self.instance, "bucket", None)
+        if rule and bucket and rule.household_id != bucket.household_id:
+            raise serializers.ValidationError("Rule and bucket must belong to the same household.")
+        if rule and rule.direction != RecurringRule.Direction.INCOME:
+            raise serializers.ValidationError({"rule": "Only income rules (paychecks) can fund goal buckets."})
+
+        fixed = attrs.get("fixed_amount")
+        pct = attrs.get("percent")
+        if self.instance:
+            if fixed is None:
+                fixed = self.instance.fixed_amount
+            if pct is None:
+                pct = self.instance.percent
+        if (fixed is None or fixed <= 0) and (pct is None or pct <= 0):
+            raise serializers.ValidationError("Set a positive fixed_amount or percent.")
+        if fixed and fixed > 0 and pct and pct > 0:
+            raise serializers.ValidationError("Set either fixed_amount or percent, not both.")
+        if pct is not None and (pct <= 0 or pct > 100):
+            raise serializers.ValidationError({"percent": "Percent must be between 0 and 100."})
+        return attrs
+
+
+class BucketFundingConfigSerializer(serializers.Serializer):
+    auto_fund_enabled = serializers.BooleanField(required=False)
+    income_rule_id = serializers.IntegerField(required=False, allow_null=True)
+    fixed_amount = serializers.DecimalField(
+        max_digits=15, decimal_places=2, required=False, allow_null=True
+    )
+    percent = serializers.DecimalField(max_digits=6, decimal_places=2, required=False, allow_null=True)
+    clear_allocation = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if attrs.get("clear_allocation"):
+            return attrs
+        income_rule_id = attrs.get("income_rule_id")
+        fixed = attrs.get("fixed_amount")
+        pct = attrs.get("percent")
+        has_fixed = fixed is not None and fixed > 0
+        has_pct = pct is not None and pct > 0
+        if income_rule_id is not None and not has_fixed and not has_pct:
+            raise serializers.ValidationError(
+                "Set fixed_amount or percent when linking a paycheck rule."
+            )
+        if has_fixed and has_pct:
+            raise serializers.ValidationError("Set either fixed_amount or percent, not both.")
+        if has_pct and (pct <= 0 or pct > 100):
+            raise serializers.ValidationError({"percent": "Percent must be between 0 and 100."})
+        return attrs
 
 
 class GoalContributionSerializer(serializers.ModelSerializer):

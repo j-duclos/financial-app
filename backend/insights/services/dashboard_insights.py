@@ -45,6 +45,7 @@ def _insight(
     metric_value: str | None = None,
     action_label: str | None = None,
     action_url: str | None = None,
+    recommended_action: str | None = None,
     secondary_action_label: str | None = None,
     secondary_action_url: str | None = None,
 ) -> dict[str, Any]:
@@ -57,6 +58,7 @@ def _insight(
         "metric_value": metric_value,
         "action_label": action_label,
         "action_url": action_url,
+        "recommended_action": recommended_action,
         "secondary_action_label": secondary_action_label,
         "secondary_action_url": secondary_action_url,
     }
@@ -417,11 +419,20 @@ def _insights_goals(
     return out
 
 
+def _bill_insight_recommended_action(bills_summary: dict[str, Any]) -> str:
+    from bills.recurring_payment_status import recurring_insight_recommended_action
+
+    late = bills_summary.get("late_count") or bills_summary.get("missed_count") or 0
+    due_soon = bills_summary.get("due_soon_count") or 0
+    return recurring_insight_recommended_action(late, due_soon)
+
+
 def _insights_bills(bills_summary: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not bills_summary:
         return []
     out: list[dict[str, Any]] = []
-    url = bills_summary.get("checklist_url") or "/bills"
+    url = bills_summary.get("checklist_url") or "/recurring"
+    rec_action = _bill_insight_recommended_action(bills_summary)
     for w in (bills_summary.get("warnings") or [])[:3]:
         sev = w.get("severity", "info")
         insight_sev = "warning" if sev == "warning" else "critical" if sev == "critical" else "info"
@@ -432,19 +443,21 @@ def _insights_bills(bills_summary: dict[str, Any] | None) -> list[dict[str, Any]
                 "Bill alert",
                 w.get("message", ""),
                 action_label="View bill checklist",
-                action_url=url if url.startswith("/") else f"/bills",
+                action_url=url if url.startswith("/") else "/recurring",
+                recommended_action=rec_action,
             )
         )
     late = bills_summary.get("late_count") or bills_summary.get("missed_count") or 0
-    if late and not any(i.get("id", "").startswith("bill_late") for i in out):
+    if late and not any(i["id"] == "bill_multiple-late" for i in out):
         out.append(
             _insight(
-                "bills_overdue",
+                "bills_missed",
                 "critical",
-                f"{late} overdue bill{'s' if late != 1 else ''}",
+                f"{late} missed bill{'s' if late != 1 else ''}",
                 bills_summary.get("missed_message") or "Review your monthly bill checklist.",
                 action_label="View bill checklist",
-                action_url=url if url.startswith("/") else "/bills",
+                action_url=url if url.startswith("/") else "/recurring",
+                recommended_action=rec_action,
             )
         )
     return out

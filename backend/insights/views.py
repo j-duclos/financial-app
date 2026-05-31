@@ -12,6 +12,8 @@ from accounts.services.available_to_spend import normalize_forecast_days
 from accounts.services.balances import signed_ledger_balance
 from transactions.models import Transaction
 from .services.dashboard_summary import build_dashboard_summary
+from .services.reporting import exclude_internal_transfers
+from .services.subscription_intelligence import build_subscription_intelligence
 
 
 class MonthlySummaryView(APIView):
@@ -29,7 +31,9 @@ class MonthlySummaryView(APIView):
         account_ids = Account.objects.for_historical_reporting().filter(
             household__in=households,
         ).values_list("id", flat=True)
-        qs = Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
+        qs = exclude_internal_transfers(
+            Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
+        )
         total_income = qs.filter(amount__gt=0).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"] or Decimal("0")
         total_expenses = qs.filter(amount__lt=0).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"] or Decimal("0")
         net = total_income + total_expenses  # expenses are negative
@@ -59,7 +63,9 @@ class CategoryBreakdownView(APIView):
         from categories.models import Category
         # Group by category (including null = uncategorized)
         qs = (
-            Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
+            exclude_internal_transfers(
+                Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
+            )
             .values("category_id")
             .annotate(total=Coalesce(Sum("amount"), Decimal("0")))
         )
@@ -107,3 +113,10 @@ class DashboardSummaryView(APIView):
             return Response({"detail": str(exc)}, status=400)
         data = build_dashboard_summary(request.user, days=days)
         return Response(data)
+
+
+class SubscriptionIntelligenceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(build_subscription_intelligence(request.user))

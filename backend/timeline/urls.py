@@ -6,6 +6,7 @@ from .views import (
     ScenarioViewSet,
     ScenarioRuleOverrideViewSet,
     ScenarioOneTimeEventViewSet,
+    ScenarioAddedRecurringViewSet,
     ScenarioCategoryShockViewSet,
     UpcomingChargeNotificationViewSet,
     TimelineView,
@@ -30,6 +31,7 @@ router.register("rules", RecurringRuleViewSet, basename="rule")
 router.register("scenarios", ScenarioViewSet, basename="scenario")
 router.register("scenario-overrides", ScenarioRuleOverrideViewSet, basename="scenario-override")
 router.register("scenario-one-time-events", ScenarioOneTimeEventViewSet, basename="scenario-one-time-event")
+router.register("scenario-added-recurring", ScenarioAddedRecurringViewSet, basename="scenario-added-recurring")
 router.register("scenario-category-shocks", ScenarioCategoryShockViewSet, basename="scenario-category-shock")
 router.register("notifications", UpcomingChargeNotificationViewSet, basename="notification")
 

@@ -268,7 +268,11 @@ def build_occurrence_warnings(
 
     if status == DISPLAY_LATE:
         warnings.append(
-            {"id": f"late-{item['id']}", "severity": "critical", "message": f"{name} is late"}
+            {
+                "id": f"late-{item['id']}",
+                "severity": "critical",
+                "message": f"{name} missed payment",
+            }
         )
     elif status == DISPLAY_LIKELY_FORGOTTEN:
         warnings.append(
@@ -311,7 +315,46 @@ def build_occurrence_warnings(
     return warnings
 
 
-def build_checklist_warnings(items: list[dict[str, Any]], *, today: date) -> list[dict[str, str]]:
+def count_late_occurrences(items: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for i in items
+        if i.get("status") == DISPLAY_LATE and not i.get("skipped")
+    )
+
+
+def count_late_recurring_bills(items: list[dict[str, Any]]) -> int:
+    """
+    Distinct recurring rules (or manual bill rows) with a late occurrence.
+    Matches the Recurring page, which shows one status per rule—not one per due date.
+    """
+    keys: set[tuple[str, int]] = set()
+    for item in items:
+        if item.get("status") != DISPLAY_LATE or item.get("skipped"):
+            continue
+        rule_id = item.get("rule_id")
+        if rule_id is not None:
+            keys.add(("rule", int(rule_id)))
+        else:
+            occ_id = item.get("id")
+            if occ_id is not None:
+                keys.add(("occ", int(occ_id)))
+    return len(keys)
+
+
+def format_late_bills_message(late_bill_count: int) -> str:
+    if late_bill_count == 1:
+        return "1 bill missed this month"
+    return f"{late_bill_count} bills missed this month"
+
+
+def build_checklist_warnings(
+    items: list[dict[str, Any]],
+    *,
+    today: date,
+    missed_bill_count: int | None = None,
+) -> list[dict[str, str]]:
+    del today  # reserved for future date-aware rollups
     seen: set[str] = set()
     out: list[dict[str, str]] = []
     for item in items:
@@ -322,14 +365,18 @@ def build_checklist_warnings(items: list[dict[str, Any]], *, today: date) -> lis
             if wid:
                 seen.add(wid)
             out.append(w)
-    late_count = sum(1 for i in items if i.get("status") == DISPLAY_LATE)
-    if late_count >= 2:
+    late_bills = (
+        missed_bill_count
+        if missed_bill_count is not None
+        else count_late_recurring_bills(items)
+    )
+    if late_bills >= 2:
         out.insert(
             0,
             {
                 "id": "multiple-late",
                 "severity": "critical",
-                "message": f"{late_count} bills overdue this month",
+                "message": format_late_bills_message(late_bills),
             },
         )
     return out[:12]

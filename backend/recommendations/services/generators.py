@@ -112,8 +112,10 @@ def _gen_utilization(det: Detection, ctx: RecommendationContext, score: int) -> 
         impact_value=f"{det.utilization_current:.0f}% → {target:.0f}%"
         if det.utilization_current
         else None,
-        primary_action_label="Open payoff planner",
-        primary_action_url=f"/credit-cards?account={det.account_id}",
+        primary_action_label="Payment Planner",
+        primary_action_url=(
+            f"/credit-cards?account={det.account_id}&amount={format_money(amount)}"
+        ),
         primary_action_type="navigate",
         secondary_action_label="Open ledger",
         secondary_action_url=f"/transactions?account={det.account_id}",
@@ -145,7 +147,7 @@ def _gen_delay_bill(det: Detection, ctx: RecommendationContext, score: int) -> d
         impact_label="Shift days",
         impact_value=str(shift),
         primary_action_label="View bills",
-        primary_action_url="/bills",
+        primary_action_url="/recurring",
         primary_action_type="navigate",
         secondary_action_label="Open calendar",
         secondary_action_url=f"/timeline?date={date_label}",
@@ -173,8 +175,8 @@ def _gen_reduce_spending(det: Detection, ctx: RecommendationContext, score: int)
         priority_score=score,
         impact_label="Monthly reduction",
         impact_value=format_money(amount),
-        primary_action_label="Spending targets",
-        primary_action_url="/spending-targets",
+        primary_action_label="View spending limits",
+        primary_action_url="/spending-goals",
         primary_action_type="navigate",
     )
 
@@ -205,7 +207,7 @@ def _gen_pause_subscription(det: Detection, ctx: RecommendationContext, score: i
         projected_improvement=det.projected_improvement,
         priority_score=score,
         primary_action_label="View bills",
-        primary_action_url="/bills",
+        primary_action_url="/recurring",
         primary_action_type="navigate",
     )
 

@@ -270,14 +270,16 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
     try:
         from budgets.services.spending_targets import spending_targets_summary
 
-        summary = spending_targets_summary(ctx.user, anchor=ctx.today, include_forecast=True)
+        summary = spending_targets_summary(ctx.user, anchor=ctx.today)
         for row in summary.get("targets", []):
             if row["status"] not in ("above_target", "risky", "approaching"):
                 continue
             cat = row.get("category_name") or "Spending"
             if not is_category_discretionary(cat):
                 continue
-            over = _decimal(row.get("projected_over_under") or 0)
+            total = _decimal(row.get("period_total") or row.get("spent_so_far") or 0)
+            target_amt = _decimal(row.get("target_amount") or 0)
+            over = total - target_amt
             reduction = over if over > 0 else shortfall / Decimal("3")
             reduction = reduction.quantize(Decimal("0.01"))
             if reduction < Decimal("25"):
@@ -288,9 +290,9 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
                     severity="medium" if total_sts < 0 else "low",
                     category_name=cat,
                     amount=reduction,
-                    reason="Forecast shows pressure on safe-to-spend."
+                    reason="Spending limits show pressure on safe-to-spend."
                     if total_sts < 0
-                    else f"{cat} is trending above your target.",
+                    else f"{cat} is over your spending limit.",
                     projected_improvement="Helps restore spending stability.",
                     extra={"target_id": row.get("target_id")},
                 )

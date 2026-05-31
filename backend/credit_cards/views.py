@@ -63,7 +63,6 @@ class DebtPayoffPlanView(APIView):
 
         try:
             extra = _parse_decimal(request.query_params.get("extra_monthly"))
-            income_cut = _parse_decimal(request.query_params.get("income_reduction_pct"))
             lump = _parse_decimal(request.query_params.get("lump_sum"))
             lump_account = request.query_params.get("lump_sum_account")
         except (InvalidOperation, ValueError):
@@ -93,10 +92,6 @@ class DebtPayoffPlanView(APIView):
             lump_sum_by_account=lump_by or None,
             custom_order=custom_order,
         )
-        if income_cut > 0:
-            plan["income_reduction_note"] = (
-                f"Extra payments reduced by {income_cut}% for this scenario."
-            )
         return Response(plan)
 
 

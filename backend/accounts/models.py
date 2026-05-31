@@ -214,6 +214,12 @@ class Account(models.Model):
         default=True,
         help_text="When true, this account is included in timeline scenarios.",
     )
+    include_in_available_credit = models.BooleanField(
+        default=True,
+        help_text=(
+            "When true, this credit card counts toward dashboard Available Credit totals."
+        ),
+    )
     preserve_partner_transfer_legs = models.BooleanField(
         default=False,
         help_text=(
@@ -246,6 +252,14 @@ class Account(models.Model):
             self.status == self.Status.ACTIVE
             and self.include_in_forecast
             and self.is_active
+        )
+
+    def counts_toward_available_credit(self) -> bool:
+        return (
+            self.status == self.Status.ACTIVE
+            and not self.is_hidden
+            and self.is_credit_card()
+            and self.include_in_available_credit
         )
 
     def allows_plaid_sync(self) -> bool:

@@ -48,6 +48,7 @@ from timeline.services.ledger import (
     _balance_at_end_of_date,
     build_timeline,
     is_superseded_planned_row,
+    timeline_row_process_order,
 )
 
 
@@ -146,19 +147,25 @@ def build_timeline_calendar(
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
     ephemeral_events: Optional[list] = None,
+    projection_only: bool = False,
+    timeline_rows: Optional[list[dict]] = None,
 ) -> dict[str, Any]:
     today = as_of_date or date.today()
     # Full household timeline so transfer legs materialize; scope per account below.
-    rows = build_timeline(
-        user,
-        start_date=start_date,
-        end_date=end_date,
-        scenario_id=scenario_id,
-        account_id=None,
-        household_id=household_id,
-        as_of_date=as_of_date,
-        ephemeral_events=ephemeral_events,
-    )
+    if timeline_rows is not None:
+        rows = timeline_rows
+    else:
+        rows = build_timeline(
+            user,
+            start_date=start_date,
+            end_date=end_date,
+            scenario_id=scenario_id,
+            account_id=None,
+            household_id=household_id,
+            as_of_date=as_of_date,
+            ephemeral_events=ephemeral_events,
+            projection_only=projection_only,
+        )
     if account_id is not None:
         rows = [r for r in rows if r.get("account_id") == account_id]
 
@@ -233,14 +240,7 @@ def build_timeline_calendar(
         marker_txns: list[dict[str, Any]] = []
         day_lowest = None
 
-        for row in sorted(
-            day_rows,
-            key=lambda r: (
-                r.get("account_id") or 0,
-                r.get("transaction_id") or 0,
-                r.get("rule_id") or 0,
-            ),
-        ):
+        for row in sorted(day_rows, key=timeline_row_process_order):
             ev = _timeline_row_to_event(
                 row, accounts_by_id, transfer_rule_ids, transfer_rule_targets
             )
@@ -272,6 +272,11 @@ def build_timeline_calendar(
                     "category": txn.get("category"),
                     "kind": txn.get("kind"),
                     "source": txn.get("source"),
+                    "status": txn.get("status") or row.get("status"),
+                    "rule_id": txn.get("rule_id") or row.get("rule_id"),
+                    "transaction_id": txn.get("transaction_id") or row.get("transaction_id"),
+                    "reconciled": bool(row.get("reconciled")),
+                    "cleared": bool(row.get("cleared")),
                     "balance_after": txn.get("balance_after"),
                     "is_transfer": txn.get("is_transfer", False),
                 }
@@ -301,16 +306,24 @@ def build_timeline_calendar(
 
         if account_id is not None:
             ending = running.get(account_id, opening.get(account_id, Decimal("0")))
-            lowest = day_lowest if day_lowest is not None else ending
         else:
             ending = sum(running.get(aid, opening.get(aid, Decimal("0"))) for aid in scope_ids)
-            lowest = ending
-            for aid in scope_ids:
-                bal = running.get(aid, opening.get(aid, Decimal("0")))
-                if lowest is None or bal < lowest:
-                    lowest = bal
 
-        if day_rows:
+        eod_worst: Decimal | None = None
+        for aid in scope_ids:
+            bal = running.get(aid, opening.get(aid, Decimal("0")))
+            if eod_worst is None or bal < eod_worst:
+                eod_worst = bal
+
+        # Use intra-day low (matches Transactions ledger), not only end-of-day balances.
+        if day_lowest is not None:
+            lowest = day_lowest
+        elif account_id is not None:
+            lowest = ending
+        else:
+            lowest = eod_worst if eod_worst is not None else ending
+
+        if day_rows and d >= today:
             total_income += income
             total_expenses += expense
 
@@ -382,14 +395,15 @@ def build_timeline_calendar(
 
         has_risk = heat["heat_level"] in ("tight", "dangerous")
 
-        if global_lowest is None or lowest < global_lowest:
+        # Summary lowest is forward-looking only (exclude historical days in the range).
+        if d >= today and (global_lowest is None or lowest < global_lowest):
             global_lowest = lowest
             global_lowest_date = date_iso
 
         if has_risk and next_risk_date is None and d >= today:
             next_risk_date = date_iso
 
-        if best_balance is None or ending > best_balance:
+        if d >= today and (best_balance is None or ending > best_balance):
             best_balance = ending
             best_date = date_iso
 

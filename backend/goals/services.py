@@ -59,8 +59,83 @@ def _serialize_decimal(val: Decimal | None) -> str | None:
     return str(_quantize_money(val))
 
 
-def _linked_savings_balance(account: Account, today: date) -> Decimal:
-    balance = _balance_at_end_of_date(account.pk, today)
+def last_day_of_month(year: int, month: int) -> date:
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, last)
+
+
+def parse_report_month(month: str) -> date:
+    """Last calendar day of YYYY-MM (for month-scoped goal reports)."""
+    year, month_int = map(int, month.split("-"))
+    return last_day_of_month(year, month_int)
+
+
+def _actual_balance_at_end_of_date(account_id: int, as_of: date) -> Decimal:
+    """Posted ledger balance through end of ``as_of`` (actual + Plaid imports only)."""
+    from transactions.models import Transaction
+    from timeline.services.ledger import sum_transaction_amounts_for_balance
+
+    txn_sum = sum_transaction_amounts_for_balance(
+        account_id,
+        date_lt=as_of + timedelta(days=1),
+        sources=(Transaction.Source.ACTUAL, Transaction.Source.PLAID),
+    )
+    acc = Account.objects.filter(pk=account_id).first()
+    opening = Decimal("0")
+    if acc and acc.starting_balance is not None:
+        opening = Decimal(str(acc.starting_balance))
+    return opening + txn_sum
+
+
+def _timeline_balance_at_end_of_date(user, account_id: int, as_of: date) -> Decimal | None:
+    """Forecast running balance on ``as_of`` from the account timeline."""
+    from timeline.services.ledger import build_timeline
+
+    start = as_of - timedelta(days=120)
+    rows = build_timeline(
+        user,
+        start_date=start,
+        end_date=as_of,
+        account_id=account_id,
+        as_of_date=date.today(),
+    )
+    last: Decimal | None = None
+    for row in rows:
+        if row.get("account_id") != account_id:
+            continue
+        row_date = row.get("date")
+        if isinstance(row_date, str):
+            row_date = date.fromisoformat(row_date[:10])
+        if row_date is None or row_date > as_of:
+            continue
+        rb = row.get("running_balance")
+        if rb is not None:
+            last = _decimal(rb)
+    return last
+
+
+def _linked_savings_balance(
+    account: Account,
+    as_of: date,
+    *,
+    user=None,
+) -> Decimal:
+    """
+    Goal progress = linked account balance on ``as_of``.
+
+    Past/current: actual posted transactions only (matches the account register).
+    Future month-ends: timeline projected running balance.
+    """
+    today = date.today()
+    if as_of > today:
+        if user is None:
+            balance = _actual_balance_at_end_of_date(account.pk, today)
+        else:
+            projected = _timeline_balance_at_end_of_date(user, account.pk, as_of)
+            balance = projected if projected is not None else _actual_balance_at_end_of_date(account.pk, today)
+    else:
+        balance = _actual_balance_at_end_of_date(account.pk, as_of)
+
     buffer = _decimal(account.minimum_buffer or 0)
     if account.role in CASH_ROLES_FOR_BUFFER and buffer > 0:
         return max(Decimal("0"), balance - buffer)

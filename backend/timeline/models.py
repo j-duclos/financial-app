@@ -76,6 +76,49 @@ class RecurringRule(models.Model):
         ]
 
 
+class RecurringRuleSchedule(models.Model):
+    """
+    Schedule segment for a recurring rule: parameters effective from effective_from (inclusive).
+    Projections pick the latest segment where effective_from <= occurrence date.
+    """
+
+    rule = models.ForeignKey(RecurringRule, on_delete=models.CASCADE, related_name="schedules")
+    effective_from = models.DateField()
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="recurring_rule_schedules")
+    transfer_to_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="recurring_rule_schedule_destinations",
+    )
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="recurring_rule_schedules"
+    )
+    direction = models.CharField(max_length=20, choices=RecurringRule.Direction.choices)
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    currency = models.CharField(max_length=3, default="USD")
+    frequency = models.CharField(max_length=30, choices=RecurringRule.Frequency.choices)
+    interval = models.PositiveIntegerField(default=1)
+    day_of_week = models.PositiveSmallIntegerField(null=True, blank=True)
+    day_of_month = models.PositiveSmallIntegerField(null=True, blank=True)
+    nth_week = models.PositiveSmallIntegerField(null=True, blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timeline_recurring_rule_schedule"
+        ordering = ["effective_from", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rule", "effective_from"],
+                name="uniq_rule_schedule_rule_effective_from",
+            ),
+        ]
+        indexes = [models.Index(fields=["rule", "effective_from"])]
+
+
 class RecurringRuleSkip(models.Model):
     """User deleted this rule occurrence; do not re-materialize it when building the timeline."""
     rule = models.ForeignKey(RecurringRule, on_delete=models.CASCADE, related_name="skipped_occurrences")
@@ -176,6 +219,14 @@ class ScenarioOneTimeEvent(models.Model):
     scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="one_time_events")
     date = models.DateField()
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="scenario_one_time_events")
+    transfer_to_account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="scenario_one_time_transfer_destinations",
+        help_text="Required for TRANSFER direction — destination account.",
+    )
     description = models.CharField(max_length=512)
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="scenario_one_time_events"
@@ -194,6 +245,58 @@ class ScenarioOneTimeEvent(models.Model):
         db_table = "timeline_scenario_one_time_event"
         ordering = ["date", "id"]
         indexes = [models.Index(fields=["scenario", "date"])]
+
+
+class ScenarioAddedRecurring(models.Model):
+    """
+    Recurring income/expense that exists only in a what-if scenario.
+    Never creates a household RecurringRule or materialized Transaction rows.
+    """
+
+    class Direction(models.TextChoices):
+        INCOME = "INCOME", "Income"
+        EXPENSE = "EXPENSE", "Expense"
+        TRANSFER = "TRANSFER", "Transfer"
+
+    class Frequency(models.TextChoices):
+        WEEKLY = "WEEKLY", "Weekly"
+        BIWEEKLY = "BIWEEKLY", "Biweekly"
+        MONTHLY_DAY = "MONTHLY_DAY", "Monthly (day of month)"
+        MONTHLY_NTH_WEEKDAY = "MONTHLY_NTH_WEEKDAY", "Monthly (nth weekday)"
+        YEARLY = "YEARLY", "Yearly"
+
+    scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="added_recurring")
+    name = models.CharField(max_length=255)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="scenario_added_recurring")
+    transfer_to_account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="scenario_added_recurring_destinations",
+        help_text="Destination for scenario-only transfer payments (e.g. extra debt payment).",
+    )
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="scenario_added_recurring"
+    )
+    direction = models.CharField(max_length=20, choices=Direction.choices)
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    currency = models.CharField(max_length=3, default="USD")
+    frequency = models.CharField(max_length=30, choices=Frequency.choices)
+    interval = models.PositiveIntegerField(default=1)
+    day_of_week = models.PositiveSmallIntegerField(null=True, blank=True)
+    day_of_month = models.PositiveSmallIntegerField(null=True, blank=True)
+    nth_week = models.PositiveSmallIntegerField(null=True, blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timeline_scenario_added_recurring"
+        ordering = ["name", "id"]
+        indexes = [models.Index(fields=["scenario", "start_date"])]
 
 
 class ScenarioCategoryShock(models.Model):

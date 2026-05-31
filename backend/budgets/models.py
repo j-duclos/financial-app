@@ -17,6 +17,10 @@ class SpendingTarget(models.Model):
         QUARTERLY = "quarterly", "Quarterly"
         YEARLY = "yearly", "Yearly"
 
+    class TargetType(models.TextChoices):
+        FIXED = "fixed", "Fixed / scheduled"
+        VARIABLE = "variable", "Variable"
+
     household = models.ForeignKey(
         Household, on_delete=models.CASCADE, related_name="spending_targets"
     )
@@ -27,6 +31,11 @@ class SpendingTarget(models.Model):
     target_amount = models.DecimalField(max_digits=15, decimal_places=2)
     period = models.CharField(
         max_length=20, choices=Period.choices, default=Period.MONTHLY
+    )
+    target_type = models.CharField(
+        max_length=20,
+        choices=TargetType.choices,
+        default=TargetType.VARIABLE,
     )
     account = models.ForeignKey(
         Account,

@@ -120,7 +120,7 @@ def _recommendations_from_insights(
                 ins.get("severity", "info"),
                 ins.get("title") or "Recommendation",
                 ins.get("message") or "",
-                recommended_action=ins.get("action_label"),
+                recommended_action=ins.get("recommended_action") or ins.get("action_label"),
                 impact_label=ins.get("metric_label"),
                 impact_value=ins.get("metric_value"),
                 primary_action_label=ins.get("action_label"),

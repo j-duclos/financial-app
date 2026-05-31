@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from accounts.models import Account
 from categories.models import Category
@@ -169,6 +170,40 @@ def test_transfer_excluded_from_net(
 
 
 @pytest.mark.django_db
+def test_summary_lowest_balance_ignores_past_days_in_range(user, household, checking, expense_category):
+    """When the range includes prior-month days, summary lowest must be today onward."""
+    today = date(2026, 5, 28)
+    start = date(2026, 5, 1)
+    # Past dip on the 14th (would win if we scanned full range).
+    RecurringRule.objects.create(
+        household=household,
+        name="Past dip",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("5500"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=14,
+        start_date=start,
+        active=True,
+    )
+    # Future expense is smaller than starting balance carry-forward.
+    _expense_rule(household, checking, expense_category, Decimal("200"), 15)
+    end = today + timedelta(days=30)
+    result = build_timeline_calendar(
+        user,
+        start_date=start,
+        end_date=end,
+        account_id=checking.id,
+        as_of_date=today,
+    )
+    assert result["summary"]["lowest_balance_date"] >= today.isoformat()
+    assert result["summary"]["lowest_balance_date"] != "2026-05-14"
+
+
+@pytest.mark.django_db
 def test_detects_risk_when_below_buffer(user, household, checking, expense_category):
     checking.minimum_buffer = Decimal("5000")
     checking.save()
@@ -247,3 +282,31 @@ def test_scenario_does_not_mutate_base(
     )
     assert with_scenario["scenario_name"] == "Bonus"
     assert base["scenario_name"] is None
+
+
+def test_timeline_date_range_starts_at_current_month_by_default():
+    from timeline.views import _timeline_date_range
+
+    class Req:
+        query_params = {"horizon": "6m"}
+
+    start, end, _ = _timeline_date_range(Req())
+    today = timezone.localdate()
+    assert start == date(today.year, today.month, 1)
+    assert end >= today
+
+
+def test_timeline_date_range_lookback_months():
+    from timeline.views import _timeline_date_range
+
+    class Req:
+        query_params = {"horizon": "6m", "lookback_months": "2"}
+
+    start, _, _ = _timeline_date_range(Req())
+    today = timezone.localdate()
+    expected_month = today.month - 2
+    expected_year = today.year
+    while expected_month < 1:
+        expected_month += 12
+        expected_year -= 1
+    assert start == date(expected_year, expected_month, 1)

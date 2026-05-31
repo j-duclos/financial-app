@@ -16,9 +16,12 @@ from categories.models import Category
 from core.models import Household, HouseholdMembership
 from insights.services.dashboard_summary import (
     ATTENTION_TOP_LIMIT,
+    _active_credit_accounts_for_available_credit,
     build_attention_items,
     build_dashboard_summary,
+    _next_safe_to_spend_issue,
 )
+from accounts.services.available_to_spend import dashboard_safe_to_spend_aggregate, calculate_forecast_summaries_for_accounts
 from transactions.models import Transaction
 
 User = get_user_model()
@@ -109,6 +112,41 @@ def test_dashboard_summary_api_returns_safe_to_spend(auth_client, checking):
     assert data["safe_to_spend"]["window_days"] == 30
     assert "amount" in data["safe_to_spend"]
     assert data["safe_to_spend"]["status"] in ("healthy", "watch", "critical")
+
+
+def test_safe_to_spend_next_issue_uses_cash_forecast_not_credit_attention(
+    user, checking, credit_card, expense_category
+):
+    """Credit card attention must not override safe-to-spend risk date on cash accounts."""
+    cash_risk_day = AS_OF + timedelta(days=4)
+    credit_risk_day = AS_OF + timedelta(days=26)
+    Transaction.objects.create(
+        account=checking,
+        date=cash_risk_day,
+        payee="Hulu",
+        amount=Decimal("-999.41"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    credit_card.current_balance = Decimal("4900")
+    credit_card.next_payment_due_date = credit_risk_day
+    credit_card.save(update_fields=["current_balance", "next_payment_due_date"])
+
+    accounts = [checking, credit_card]
+    forecasts = calculate_forecast_summaries_for_accounts(
+        user, accounts, as_of_date=AS_OF, days=30
+    )
+    aggregate = dashboard_safe_to_spend_aggregate(forecasts, {a.id: a for a in accounts})
+    next_issue = _next_safe_to_spend_issue(aggregate, forecasts)
+
+    assert next_issue is not None
+    assert next_issue["account_id"] == checking.id
+    assert next_issue["risk_date"] == cash_risk_day.isoformat()
+
+    summary = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    assert summary["safe_to_spend"]["next_issue"]["account_id"] == checking.id
+    assert summary["safe_to_spend"]["next_issue"]["risk_date"] == cash_risk_day.isoformat()
 
 
 def test_attention_limited_to_top_three(auth_client, checking, savings, credit_card, expense_category):
@@ -241,7 +279,64 @@ def test_snapshot_totals_match_accounts(auth_client, checking, savings, credit_c
     assert "utilization" in snap or snap.get("utilization") is None
     assert "top_summary" in r.json()
     assert "liquid_cash" in r.json()["top_summary"]
+    assert "total_credit_limit" in r.json()["top_summary"]
     assert "recommendations" in r.json()
+
+
+def test_top_summary_includes_total_credit_limit(user, credit_card):
+    credit_card.credit_limit = Decimal("5000")
+    credit_card.current_balance = Decimal("1000")
+    credit_card.save(update_fields=["credit_limit", "current_balance"])
+    summary = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    top = summary["top_summary"]
+    assert top["total_credit_limit"] == "5000.00"
+    assert Decimal(top["available_credit"]) <= Decimal(top["total_credit_limit"])
+    assert top["credit_utilization"] is not None
+
+
+def test_top_summary_excludes_card_from_available_credit(user, household, expense_category):
+    care = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        role=Account.AccountRole.CREDIT_CARD,
+        name="Care",
+        credit_limit=Decimal("4800"),
+        include_in_available_credit=False,
+        currency="USD",
+    )
+    daily = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        role=Account.AccountRole.CREDIT_CARD,
+        name="Daily",
+        credit_limit=Decimal("1000"),
+        include_in_available_credit=True,
+        currency="USD",
+    )
+    Transaction.objects.create(
+        account=care,
+        date=AS_OF,
+        payee="Medical",
+        amount=Decimal("-960"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    Transaction.objects.create(
+        account=daily,
+        date=AS_OF,
+        payee="Groceries",
+        amount=Decimal("-500"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    summary = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    top = summary["top_summary"]
+    assert top["total_credit_limit"] == "1000.00"
+    assert top["available_credit"] == "500.00"
+    assert top["credit_utilization"] == "50.00"
+    assert care.id not in {a.id for a in _active_credit_accounts_for_available_credit([care, daily])}
 
 
 def test_mtd_net_equals_income_minus_expenses(auth_client, checking, expense_category):

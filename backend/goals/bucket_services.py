@@ -20,6 +20,7 @@ from timeline.services.ledger import _balance_at_end_of_date
 
 from goals.services import (
     _linked_savings_balance,
+    parse_report_month,
     HEALTH_AHEAD,
     HEALTH_BEHIND,
     HEALTH_COMPLETED,
@@ -56,32 +57,26 @@ GOAL_TYPE_TO_BUCKET = {
 NUMERIC_PRIORITY_TO_BUCKET = {1: GoalBucket.Priority.HIGH, 2: GoalBucket.Priority.MEDIUM, 3: GoalBucket.Priority.MEDIUM}
 
 
-def _active_buckets_on_linked_account(account_id: int) -> int:
-    return GoalBucket.objects.filter(
-        linked_account_id=account_id,
-        status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
-    ).count()
-
-
-def _effective_bucket_current(bucket: GoalBucket, *, today: date | None = None) -> Decimal:
+def _effective_bucket_current(
+    bucket: GoalBucket,
+    *,
+    as_of: date | None = None,
+    user=None,
+) -> Decimal:
     """
-    Savings progress: when this is the only bucket on a linked account, use the
-    account ledger balance (same as legacy goals). With multiple buckets on one
-    account, only explicit GoalContribution amounts count.
+    Savings progress = linked account balance on ``as_of`` (default today).
+    Debt buckets use explicit paydown contributions.
     """
-    today = today or date.today()
+    as_of = as_of or date.today()
     sync_bucket_allocated_amount(bucket)
-    contrib = _decimal(bucket.allocated_amount)
 
     if bucket.is_debt_bucket():
-        return contrib
+        return _decimal(bucket.allocated_amount)
 
     if bucket.linked_account_id and bucket.linked_account:
-        if _active_buckets_on_linked_account(bucket.linked_account_id) == 1:
-            return _linked_savings_balance(bucket.linked_account, today)
-        return contrib
+        return _linked_savings_balance(bucket.linked_account, as_of, user=user)
 
-    return contrib
+    return _decimal(bucket.allocated_amount)
 
 
 def sync_bucket_allocated_amount(bucket: GoalBucket) -> Decimal:
@@ -109,8 +104,7 @@ def bucket_reserve_for_account(
     )
     total = Decimal("0")
     for bucket in qs:
-        sync_bucket_allocated_amount(bucket)
-        total += _decimal(bucket.allocated_amount)
+        total += _effective_bucket_current(bucket, as_of=today)
     return _quantize_money(total)
 
 
@@ -133,7 +127,9 @@ def account_bucket_summary(account_id: int, *, today: date | None = None) -> dic
             {
                 "id": b.id,
                 "name": b.name,
-                "allocated_amount": _serialize_decimal(b.allocated_amount),
+                "allocated_amount": _serialize_decimal(
+                    _effective_bucket_current(b, as_of=today)
+                ),
                 "target_amount": _serialize_decimal(b.target_amount),
                 "include_in_safe_to_spend": b.include_in_safe_to_spend,
             }
@@ -190,8 +186,15 @@ def _effective_monthly_for_bucket(bucket: GoalBucket) -> Decimal:
     return _monthly_from_contributions(bucket)
 
 
-def calculate_bucket_progress(bucket: GoalBucket, *, today: date | None = None) -> dict[str, Any]:
+def calculate_bucket_progress(
+    bucket: GoalBucket,
+    *,
+    today: date | None = None,
+    as_of: date | None = None,
+    user=None,
+) -> dict[str, Any]:
     today = today or date.today()
+    progress_as_of = as_of or today
     sync_bucket_allocated_amount(bucket)
     target = _decimal(bucket.target_amount)
     if target <= 0:
@@ -199,11 +202,11 @@ def calculate_bucket_progress(bucket: GoalBucket, *, today: date | None = None) 
 
     if bucket.is_debt_bucket() and bucket.linked_account_id:
         owed = ledger_owed_balance(bucket.linked_account, today)
-        current = _effective_bucket_current(bucket, today=today)
+        current = _effective_bucket_current(bucket, as_of=progress_as_of, user=user)
         remaining = max(Decimal("0"), owed)
         progress = min(Decimal("100"), current / target * Decimal("100")) if target > 0 else Decimal("0")
     else:
-        current = _effective_bucket_current(bucket, today=today)
+        current = _effective_bucket_current(bucket, as_of=progress_as_of, user=user)
         remaining = max(Decimal("0"), target - current)
         progress = min(Decimal("100"), current / target * Decimal("100"))
 
@@ -377,8 +380,15 @@ def bucket_to_api_dict(bucket: GoalBucket, enriched: dict[str, Any]) -> dict[str
     }
 
 
-def calculate_aggregate_bucket_summary(buckets: list[GoalBucket], *, today: date | None = None) -> dict[str, Any]:
+def calculate_aggregate_bucket_summary(
+    buckets: list[GoalBucket],
+    *,
+    today: date | None = None,
+    as_of: date | None = None,
+    user=None,
+) -> dict[str, Any]:
     today = today or date.today()
+    progress_as_of = as_of or today
     active = [b for b in buckets if b.status in (GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED)]
     total_saved = Decimal("0")
     total_target = Decimal("0")
@@ -388,7 +398,11 @@ def calculate_aggregate_bucket_summary(buckets: list[GoalBucket], *, today: date
     warnings: list[dict[str, Any]] = []
 
     for bucket in active:
-        progress = enrich_bucket(bucket, calculate_bucket_progress(bucket, today=today), today=today)
+        progress = enrich_bucket(
+            bucket,
+            calculate_bucket_progress(bucket, today=today, as_of=progress_as_of, user=user),
+            today=today,
+        )
         total_saved += _decimal(progress["current_amount"])
         total_target += _decimal(progress["target_amount"])
         monthly_req = progress.get("monthly_required")
@@ -427,10 +441,13 @@ def build_goals_report(
     households,
     *,
     months: int = 12,
+    month: str | None = None,
+    user=None,
     today: date | None = None,
 ) -> dict[str, Any]:
     """Aggregate bucket progress, contribution history, and funding for reports."""
     today = today or date.today()
+    progress_as_of = parse_report_month(month) if month else today
     since = today.replace(day=1)
     for _ in range(max(0, months - 1)):
         if since.month == 1:
@@ -446,7 +463,11 @@ def build_goals_report(
     )
     bucket_rows = []
     for bucket in buckets:
-        progress = enrich_bucket(bucket, calculate_bucket_progress(bucket, today=today), today=today)
+        progress = enrich_bucket(
+            bucket,
+            calculate_bucket_progress(bucket, today=today, as_of=progress_as_of, user=user),
+            today=today,
+        )
         bucket_rows.append(bucket_to_api_dict(bucket, progress))
 
     contributions = (
@@ -484,7 +505,11 @@ def build_goals_report(
         "summary": calculate_aggregate_bucket_summary(
             [b for b in buckets if b.status in (GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED)],
             today=today,
+            as_of=progress_as_of,
+            user=user,
         ),
+        "report_month": month,
+        "progress_as_of": progress_as_of.isoformat(),
     }
 
 
@@ -521,16 +546,18 @@ def record_contribution(
     source: str,
 ) -> GoalContribution:
     amount = _quantize_money(_decimal(amount))
-    contrib = GoalContribution.objects.create(
-        bucket=bucket,
-        transaction=transaction,
-        account_id=account_id,
-        amount=amount,
-        date=contrib_date,
-        source=source,
+    contrib, _created = GoalContribution.objects.update_or_create(
+        transaction_id=transaction.pk,
+        defaults={
+            "bucket": bucket,
+            "account_id": account_id,
+            "amount": amount,
+            "date": contrib_date,
+            "source": source,
+        },
     )
     sync_bucket_allocated_amount(bucket)
-    remaining = _decimal(bucket.target_amount) - _decimal(bucket.allocated_amount)
+    remaining = _decimal(bucket.target_amount) - _effective_bucket_current(bucket, as_of=contrib_date)
     if remaining <= 0 and bucket.status == GoalBucket.Status.ACTIVE:
         bucket.status = GoalBucket.Status.COMPLETED
         bucket.completed_at = timezone.now()

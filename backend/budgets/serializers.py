@@ -4,7 +4,7 @@ from categories.models import Category
 from categories.serializers import CategorySerializer
 
 from .models import Budget, SpendingTarget
-from .services.spending_targets import calculate_target_metrics
+from .services.spending_targets import calculate_target_metrics, suggest_target_type
 
 
 class BudgetSerializer(serializers.ModelSerializer):
@@ -37,6 +37,7 @@ class SpendingTargetSerializer(serializers.ModelSerializer):
             "name",
             "target_amount",
             "period",
+            "target_type",
             "account",
             "active",
             "warning_threshold_percent",
@@ -52,11 +53,13 @@ class SpendingTargetSerializer(serializers.ModelSerializer):
 
     def get_metrics(self, obj: SpendingTarget) -> dict:
         request = self.context.get("request")
-        include_forecast = True
+        include_scheduled = True
         anchor = None
         if request:
-            if request.query_params.get("include_forecast", "true").lower() == "false":
-                include_forecast = False
+            if request.query_params.get("include_scheduled", "true").lower() == "false":
+                include_scheduled = False
+            elif request.query_params.get("include_forecast", "true").lower() == "false":
+                include_scheduled = False
             anchor_str = request.query_params.get("anchor")
             if anchor_str:
                 from datetime import date
@@ -68,7 +71,7 @@ class SpendingTargetSerializer(serializers.ModelSerializer):
         return calculate_target_metrics(
             obj,
             anchor=anchor,
-            include_forecast=include_forecast,
+            include_scheduled=include_scheduled,
         )
 
 
@@ -82,6 +85,7 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
             "name",
             "target_amount",
             "period",
+            "target_type",
             "account",
             "active",
             "warning_threshold_percent",
@@ -92,10 +96,17 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
 
     def validate_category(self, category: Category) -> Category:
         if category.category_type != Category.CategoryType.EXPENSE:
-            raise serializers.ValidationError("Spending targets require an expense category.")
+            raise serializers.ValidationError("Spending limits require an expense category.")
         household = self.initial_data.get("household") or (
             self.instance.household_id if self.instance else None
         )
         if household and category.household_id != int(household):
             raise serializers.ValidationError("Category must belong to the same household.")
         return category
+
+    def create(self, validated_data):
+        if not validated_data.get("target_type"):
+            validated_data["target_type"] = suggest_target_type(validated_data["category"])[
+                "target_type"
+            ]
+        return super().create(validated_data)

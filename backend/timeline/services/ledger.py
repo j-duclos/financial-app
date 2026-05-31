@@ -20,12 +20,286 @@ from timeline.models import (
     RecurringRule,
     RecurringRuleSkip,
     Scenario,
+    ScenarioAddedRecurring,
     ScenarioRuleOverride,
 )
 from transactions.models import Transaction
 from transactions.services.matching import ledger_visible_transactions, try_match_rule_to_pending_imports
+from timeline.services.rule_schedule import (
+    generate_rule_occurrence_dates,
+    promote_due_schedules,
+    resolve_rule_params,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def timeline_row_process_order(row: dict) -> tuple:
+    """
+    Within-day ordering for running balance and calendar heat.
+
+    Matches apps/web compareTimelineRows: transaction_id (missing → -1), then description.
+    """
+    tid = row.get("transaction_id")
+    if tid is None:
+        tid_key = -1
+    else:
+        try:
+            tid_key = int(tid)
+        except (TypeError, ValueError):
+            tid_key = -1
+    desc = str(row.get("description") or "").lower()
+    return (tid_key, desc)
+
+
+def _rule_row_precedence(row: dict) -> tuple:
+    """Lower is better — prefer materialized / cleared rows over synthetic duplicates."""
+    status = (row.get("status") or "").upper()
+    tid = row.get("transaction_id")
+    source = (row.get("source") or "").lower()
+    return (
+        0 if tid is not None else 1,
+        0 if status in ("CLEARED", "RECONCILED") else 1,
+        0 if source == "actual" else 1,
+    )
+
+
+def _timeline_row_date(val) -> date | None:
+    if val is None:
+        return None
+    if isinstance(val, date):
+        return val
+    try:
+        return date.fromisoformat(str(val)[:10])
+    except ValueError:
+        return None
+
+
+def dedupe_future_rule_occurrence_rows(rows: list[dict], today: date) -> list[dict]:
+    """
+    Keep one timeline row per (rule_id, date, account) for future occurrences.
+
+    Duplicate planned + projected rows for the same paycheck were being patched twice
+    (e.g. $2,100 + $2,100) and destroying what-if math.
+    """
+    groups: dict[tuple, list[tuple[int, dict]]] = defaultdict(list)
+    for idx, row in enumerate(rows):
+        rd = _timeline_row_date(row.get("date"))
+        rid = row.get("rule_id")
+        aid = row.get("account_id")
+        if rid is None or rd is None or rd < today:
+            continue
+        groups[(rid, rd, aid)].append((idx, row))
+
+    drop: set[int] = set()
+    for items in groups.values():
+        if len(items) <= 1:
+            continue
+        best_idx = min(items, key=lambda pair: _rule_row_precedence(pair[1]))[0]
+        for idx, _ in items:
+            if idx != best_idx:
+                drop.add(idx)
+    if not drop:
+        return rows
+    return [row for idx, row in enumerate(rows) if idx not in drop]
+
+
+def signed_amount_for_rule(
+    rule: RecurringRule,
+    amount: Decimal,
+    reference_row: dict | None = None,
+) -> Decimal:
+    """Signed ledger amount — when editing an existing row, keep that row's inflow/outflow sign."""
+    amt = abs(amount) if not isinstance(amount, Decimal) else abs(Decimal(str(amount)))
+    if reference_row is not None:
+        ref_raw = reference_row.get("amount")
+        if ref_raw is not None:
+            return amt if Decimal(str(ref_raw)) >= 0 else -amt
+    if rule.direction == RecurringRule.Direction.EXPENSE:
+        return -amt
+    if rule.direction == RecurringRule.Direction.INCOME:
+        return amt
+    return amt
+
+
+def recompute_timeline_running_balances(
+    rows: list[dict],
+    *,
+    opening: dict[int, Decimal],
+    account_ids: set[int],
+) -> None:
+    """Re-sort rows and refresh running_balance after scenario edits."""
+    for r in rows:
+        if "sort_key" not in r and r.get("date"):
+            tid = r.get("transaction_id")
+            tier = 0 if tid is not None else 1
+            r["sort_key"] = (r.get("date"), tier, tid or r.get("rule_id") or 0)
+
+    rows.sort(key=timeline_rows_chronological_key)
+    for r in rows:
+        r.pop("sort_key", None)
+
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        aid = r.get("account_id")
+        if aid is not None:
+            rows_by_account[aid].append(r)
+
+    running = dict(opening)
+    for r in rows:
+        aid = r.get("account_id")
+        if aid is None or aid not in account_ids:
+            continue
+        acct_rows = rows_by_account.get(aid, [])
+        if is_superseded_planned_row(r, acct_rows):
+            r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
+            continue
+        amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
+        running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
+        r["running_balance"] = running[aid]
+
+
+def recompute_future_timeline_running_balances(
+    rows: list[dict],
+    *,
+    today: date,
+    account_ids: set[int],
+    opening: dict[int, Decimal] | None = None,
+) -> None:
+    """
+    Refresh running_balance for today+ rows only.
+
+    Opening defaults to end-of-yesterday balance per account (matches Transactions ledger).
+    Past rows are left unchanged — avoids double-counting history when reopening at today.
+    """
+    if opening is None:
+        opening = {
+            aid: _balance_at_end_of_date(aid, today - timedelta(days=1)) for aid in account_ids
+        }
+
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        aid = r.get("account_id")
+        if aid is not None:
+            rows_by_account[aid].append(r)
+
+    for r in rows:
+        if "sort_key" not in r and r.get("date"):
+            tid = r.get("transaction_id")
+            tier = 0 if tid is not None else 1
+            r["sort_key"] = (r.get("date"), tier, tid or r.get("rule_id") or 0)
+    rows.sort(key=timeline_rows_chronological_key)
+    for r in rows:
+        r.pop("sort_key", None)
+
+    running = dict(opening)
+    for r in rows:
+        rd = _timeline_row_date(r.get("date"))
+        if rd is None or rd < today:
+            continue
+        aid = r.get("account_id")
+        if aid is None or aid not in account_ids:
+            continue
+        acct_rows = rows_by_account.get(aid, [])
+        if is_superseded_planned_row(r, acct_rows):
+            r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
+            continue
+        amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
+        running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
+        r["running_balance"] = running[aid]
+
+
+def forecast_lowest_balance_from_rows(
+    rows: list[dict],
+    *,
+    account_ids: set[int],
+    today: date,
+    end_date: date,
+) -> tuple[Decimal | None, date | None, int | None]:
+    """
+    Lowest intra-day balance from today through end_date for the given accounts.
+
+    Same walk as build_timeline_calendar and the Transactions ledger: opening at end of
+    yesterday, then apply today+ rows in ledger display order (superseded planned skipped).
+    """
+    if not account_ids:
+        return None, None, None
+
+    opening: dict[int, Decimal] = {
+        aid: _balance_at_end_of_date(aid, today - timedelta(days=1)) for aid in account_ids
+    }
+
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        aid = r.get("account_id")
+        if aid is not None:
+            rows_by_account[aid].append(r)
+
+    by_date: dict[date, list[dict]] = defaultdict(list)
+    for r in rows:
+        rd = _timeline_row_date(r.get("date"))
+        if rd is None or rd < today or rd > end_date:
+            continue
+        aid = r.get("account_id")
+        if aid not in account_ids:
+            continue
+        if is_superseded_planned_row(r, rows_by_account.get(aid, [])):
+            continue
+        by_date[rd].append(r)
+
+    running = dict(opening)
+    global_low: Decimal | None = None
+    global_date: date | None = None
+    global_aid: int | None = None
+
+    d = today
+    while d <= end_date:
+        day_rows = by_date.get(d, [])
+        day_lowest: Decimal | None = None
+        day_lowest_aid: int | None = None
+
+        for row in sorted(day_rows, key=timeline_row_process_order):
+            aid = row.get("account_id")
+            if aid not in account_ids:
+                continue
+            amt = (
+                row["amount"]
+                if isinstance(row["amount"], Decimal)
+                else Decimal(str(row["amount"]))
+            )
+            running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
+            bal = running[aid]
+            if day_lowest is None or bal < day_lowest:
+                day_lowest = bal
+                day_lowest_aid = aid
+
+        if day_lowest is not None:
+            if global_low is None or day_lowest < global_low:
+                global_low = day_lowest
+                global_date = d
+                global_aid = day_lowest_aid
+        else:
+            for aid in account_ids:
+                bal = running.get(aid, opening.get(aid, Decimal("0")))
+                if global_low is None or bal < global_low:
+                    global_low = bal
+                    global_date = d
+                    global_aid = aid
+
+        d += timedelta(days=1)
+
+    return global_low, global_date, global_aid
+
+
+def timeline_rows_chronological_key(row: dict) -> tuple:
+    """Full sort key for timeline rows (date, then ledger display order)."""
+    d = row.get("date")
+    if hasattr(d, "isoformat"):
+        d_key = d.isoformat()
+    else:
+        d_key = str(d or "")
+    tid_key, desc = timeline_row_process_order(row)
+    return (d_key, tid_key, desc)
 
 
 def _safe_try_match_rule_to_pending_imports(txn: Transaction) -> None:
@@ -150,9 +424,9 @@ def _future_recurring_expense_impact_on_card(
     if occ_start > through_date:
         return Decimal("0")
     for rule in rules:
-        raw_amt = Decimal(str(rule.amount))
-        amt_delta = -abs(raw_amt)
-        for d in generate_rule_occurrences(rule, occ_start, through_date):
+        for d in generate_rule_occurrence_dates(rule, occ_start, through_date):
+            params = resolve_rule_params(rule, d)
+            amt_delta = -abs(params.amount)
             if d <= payment_date:
                 continue
             if Transaction.objects.filter(account_id=card_account_id, date=d).exists():
@@ -328,6 +602,14 @@ def _materialize_rule_occurrence(
         .first()
     )
     if txn is not None:
+        if (
+            d >= timezone.localdate()
+            and txn.source == Transaction.Source.RULE
+            and amount is not None
+            and txn.amount != amount
+        ):
+            txn.amount = amount
+            txn.save(update_fields=["amount", "updated_at"])
         _safe_try_match_rule_to_pending_imports(txn)
         return txn
     if not _rule_allows_materialization(rule, d):
@@ -354,6 +636,193 @@ def _materialize_rule_occurrence(
         except Exception:
             pass
     return created
+
+
+def _twice_monthly_days_from_notes(notes: str | None) -> tuple[int, int] | None:
+    import re
+
+    if not notes:
+        return None
+    m = re.search(r"twice_monthly_days=(\d{1,2}),(\d{1,2})", notes)
+    if not m:
+        return None
+    d1, d2 = int(m.group(1)), int(m.group(2))
+    if 1 <= d1 <= 31 and 1 <= d2 <= 31 and d1 != d2:
+        return d1, d2
+    return None
+
+
+def _twice_monthly_occurrence_dates(
+    added: ScenarioAddedRecurring,
+    start_date: date,
+    end_date: date,
+) -> list[date]:
+    """Two fixed days per month (scenario-only extra debt payments)."""
+    days = _twice_monthly_days_from_notes(added.notes)
+    if not days:
+        return []
+    d1, d2 = days
+    rule_start = added.start_date
+    rule_end = added.end_date
+    start = max(start_date, rule_start)
+    end = end_date
+    if rule_end:
+        end = min(end, rule_end)
+    if start > end:
+        return []
+    out: list[date] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        for day in (d1, d2):
+            try:
+                d = date(y, m, min(day, _days_in_month(y, m)))
+            except ValueError:
+                d = date(y, m, _days_in_month(y, m))
+            if start <= d <= end and d >= rule_start and (not rule_end or d <= rule_end):
+                out.append(d)
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return sorted(set(out))
+
+
+def _occurrence_dates_for_added_recurring(
+    added: ScenarioAddedRecurring,
+    start_date: date,
+    end_date: date,
+) -> list[date]:
+    """Reuse rule occurrence scheduling for scenario-only recurring rows."""
+    if _twice_monthly_days_from_notes(added.notes):
+        return _twice_monthly_occurrence_dates(added, start_date, end_date)
+
+    from types import SimpleNamespace
+
+    stub = SimpleNamespace(
+        active=True,
+        start_date=added.start_date,
+        end_date=added.end_date,
+        paused_at=None,
+        interval=added.interval or 1,
+        frequency=added.frequency,
+        day_of_week=added.day_of_week,
+        day_of_month=added.day_of_month,
+        nth_week=added.nth_week,
+    )
+    return generate_rule_occurrences(stub, start_date, end_date)
+
+
+def append_scenario_added_recurring_projections(
+    *,
+    scenario: Scenario,
+    rows: list[dict],
+    start_date: date,
+    end_date: date,
+    forecastable_account_ids: set[int],
+    seen_keys: set[tuple],
+) -> None:
+    """Project what-if-only recurring items — never persisted as RecurringRule or Transaction."""
+    added_qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
+        "account", "transfer_to_account", "category"
+    )
+    for added in added_qs:
+        occ_dates = _occurrence_dates_for_added_recurring(added, start_date, end_date)
+        if not occ_dates:
+            continue
+        amount_decimal = abs(Decimal(str(added.amount))).quantize(Decimal("0.01"))
+
+        if (
+            added.direction == ScenarioAddedRecurring.Direction.TRANSFER
+            and added.transfer_to_account_id
+        ):
+            if added.account_id not in forecastable_account_ids:
+                continue
+            to_acc = added.transfer_to_account
+            from_name = added.account.effective_display_name if added.account else ""
+            to_name = to_acc.effective_display_name if to_acc else ""
+            cat_name = _scenario_transfer_category_name(to_acc)
+            label = added.name or f"Transfer to {to_name}"
+            for d in occ_dates:
+                if to_acc and to_acc.id in forecastable_account_ids:
+                    in_key = ("added", added.id, d, to_acc.id, "in")
+                    if in_key not in seen_keys:
+                        seen_keys.add(in_key)
+                        rows.append(
+                            {
+                                "date": d,
+                                "description": label,
+                                "account_id": to_acc.id,
+                                "account_name": to_name,
+                                "category_id": None,
+                                "category_name": cat_name,
+                                "amount": amount_decimal,
+                                "type": "INFLOW",
+                                "status": "planned",
+                                "source": "scenario_added_recurring",
+                                "rule_id": None,
+                                "scenario_added_recurring_id": added.id,
+                                "transaction_id": None,
+                                "sort_key": (d, 1, added.id + 1),
+                                **_timeline_row_meta(None),
+                            }
+                        )
+                out_key = ("added", added.id, d, added.account_id, "out")
+                if out_key in seen_keys:
+                    continue
+                seen_keys.add(out_key)
+                rows.append(
+                    {
+                        "date": d,
+                        "description": label,
+                        "account_id": added.account_id,
+                        "account_name": from_name,
+                        "category_id": None,
+                        "category_name": cat_name,
+                        "amount": -amount_decimal,
+                        "type": "OUTFLOW",
+                        "status": "planned",
+                        "source": "scenario_added_recurring",
+                        "rule_id": None,
+                        "scenario_added_recurring_id": added.id,
+                        "transaction_id": None,
+                        "sort_key": (d, 1, added.id),
+                        **_timeline_row_meta(None),
+                    }
+                )
+            continue
+
+        if added.account_id not in forecastable_account_ids:
+            continue
+        signed = amount_decimal
+        if added.direction == ScenarioAddedRecurring.Direction.EXPENSE:
+            signed = -amount_decimal
+        elif added.direction == ScenarioAddedRecurring.Direction.INCOME:
+            signed = amount_decimal
+        cat_name = added.category.name if added.category else None
+        acc_name = added.account.name if added.account else ""
+        for d in occ_dates:
+            proj_key = ("added", added.id, d, added.account_id)
+            if proj_key in seen_keys:
+                continue
+            seen_keys.add(proj_key)
+            rows.append(
+                {
+                    "date": d,
+                    "description": added.name,
+                    "account_id": added.account_id,
+                    "account_name": acc_name,
+                    "category_id": added.category_id,
+                    "category_name": cat_name,
+                    "amount": signed,
+                    "type": "INFLOW" if signed >= 0 else "OUTFLOW",
+                    "status": "planned",
+                    "source": "scenario_added_recurring",
+                    "rule_id": None,
+                    "scenario_added_recurring_id": added.id,
+                    "transaction_id": None,
+                    "sort_key": (d, 1, added.id),
+                    **_timeline_row_meta(None),
+                }
+            )
 
 
 def generate_rule_occurrences(
@@ -426,7 +895,7 @@ def generate_rule_occurrences(
                 d = date(y, m, min(day, _days_in_month(y, m)))
             except ValueError:
                 d = date(y, m, _days_in_month(y, m))
-            if rule.start_date <= d <= end and (not rule.end_date or d <= rule.end_date):
+            if start <= d <= end and (not rule.end_date or d <= rule.end_date):
                 if month_count % interval == 0:
                     out.append(d)
             month_count += 1
@@ -442,7 +911,7 @@ def generate_rule_occurrences(
         month_count = 0
         while (y, m) <= (end.year, end.month):
             d = _nth_weekday_in_month(y, m, dow, nth)
-            if d and rule.start_date <= d <= end and (not rule.end_date or d <= rule.end_date):
+            if d and start <= d <= end and (not rule.end_date or d <= rule.end_date):
                 if month_count % interval == 0:
                     out.append(d)
             month_count += 1
@@ -603,6 +1072,7 @@ def sum_transaction_amounts_for_balance(
     date_lt: Optional[date] = None,
     date_lte: Optional[date] = None,
     exclude_interest: bool = True,
+    sources: Optional[Collection[str]] = None,
 ) -> Decimal:
     """Sum signed transaction amounts, excluding superseded PLANNED duplicates."""
     qs = Transaction.objects.filter(account_id=account_id)
@@ -610,6 +1080,8 @@ def sum_transaction_amounts_for_balance(
         qs = qs.filter(date__lt=date_lt)
     if date_lte is not None:
         qs = qs.filter(date__lte=date_lte)
+    if sources is not None:
+        qs = qs.filter(source__in=sources)
     if exclude_interest:
         qs = qs.exclude(source=Transaction.Source.INTEREST)
     rows = [
@@ -1037,6 +1509,14 @@ def _scenario_event_signed_amount(direction: str, amount: Decimal) -> Decimal:
     return -amt
 
 
+def _scenario_transfer_category_name(to_account) -> str:
+    from accounts.models import Account
+
+    if getattr(to_account, "account_type", None) == Account.AccountType.CREDIT:
+        return "Credit Card Payment"
+    return "Bank Transfer"
+
+
 def _append_scenario_projection_rows(
     rows: list[dict],
     scenario: Optional["Scenario"],
@@ -1054,29 +1534,74 @@ def _append_scenario_projection_rows(
                 scenario=scenario,
                 date__gte=start_date,
                 date__lte=end_date,
-            ).select_related("account", "category")
+            ).select_related("account", "category", "transfer_to_account")
         )
     if ephemeral_events:
         events.extend(ephemeral_events)
 
     for ev in events:
         raw_amt = ev.amount if isinstance(ev.amount, Decimal) else Decimal(str(ev.amount))
-        signed = _scenario_event_signed_amount(ev.direction, raw_amt)
+        amt = abs(raw_amt).quantize(Decimal("0.01"))
         acc = getattr(ev, "account", None)
+        to_acc = getattr(ev, "transfer_to_account", None)
+        desc = ev.description
+        cat_id = ev.category_id if hasattr(ev, "category_id") else (ev.category.id if ev.category else None)
+        cat_name = ev.category.name if getattr(ev, "category", None) else None
+        ev_id = getattr(ev, "id", 0) or 0
+
+        if ev.direction == ScenarioOneTimeEvent.Direction.TRANSFER and to_acc is not None:
+            if not cat_name:
+                cat_name = _scenario_transfer_category_name(to_acc)
+            label = desc or f"Transfer to {to_acc.effective_display_name}"
+            rows.append({
+                "date": ev.date,
+                "description": label,
+                "account_id": ev.account_id if hasattr(ev, "account_id") else acc.id,
+                "account_name": acc.effective_display_name if acc else "",
+                "category_id": cat_id,
+                "category_name": cat_name,
+                "amount": -amt,
+                "type": "OUTFLOW",
+                "status": "planned",
+                "source": "scenario_event",
+                "rule_id": None,
+                "transaction_id": None,
+                "sort_key": (ev.date, 3, ev_id),
+                **_timeline_row_meta(None),
+            })
+            rows.append({
+                "date": ev.date,
+                "description": label,
+                "account_id": to_acc.id,
+                "account_name": to_acc.effective_display_name,
+                "category_id": cat_id,
+                "category_name": cat_name,
+                "amount": amt,
+                "type": "INFLOW",
+                "status": "planned",
+                "source": "scenario_event",
+                "rule_id": None,
+                "transaction_id": None,
+                "sort_key": (ev.date, 3, ev_id + 1),
+                **_timeline_row_meta(None),
+            })
+            continue
+
+        signed = _scenario_event_signed_amount(ev.direction, raw_amt)
         rows.append({
             "date": ev.date,
-            "description": ev.description,
+            "description": desc,
             "account_id": ev.account_id if hasattr(ev, "account_id") else acc.id,
             "account_name": acc.effective_display_name if acc else "",
-            "category_id": ev.category_id if hasattr(ev, "category_id") else (ev.category.id if ev.category else None),
-            "category_name": ev.category.name if getattr(ev, "category", None) else None,
+            "category_id": cat_id,
+            "category_name": cat_name,
             "amount": signed,
             "type": "INFLOW" if signed >= 0 else "OUTFLOW",
             "status": "planned",
             "source": "scenario_event",
             "rule_id": None,
             "transaction_id": None,
-            "sort_key": (ev.date, 3, getattr(ev, "id", 0) or 0),
+            "sort_key": (ev.date, 3, ev_id),
             **_timeline_row_meta(None),
         })
 
@@ -1127,6 +1652,7 @@ def build_timeline(
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
     ephemeral_events: Optional[list] = None,
+    projection_only: bool = False,
 ) -> list[dict]:
     """
     Build merged timeline: opening balances, actual transactions, projected rule occurrences,
@@ -1142,6 +1668,8 @@ def build_timeline(
         households = households.filter(pk=household_id)
     if not households.exists():
         return []
+
+    promote_due_schedules(as_of_date=as_of_date)
 
     if account_id:
         accounts = Account.all_objects.for_historical_reporting().filter(
@@ -1218,15 +1746,11 @@ def build_timeline(
     ids_in_rows: set[int] = set()
     seen_rule_actual_key: set[tuple] = set()
     purged_rule_dates: set[tuple[int, date]] = set()
-    scenario_projection_only = scenario is not None
+    scenario_projection_only = projection_only or scenario is not None
     for t in actual:
         # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
-        if (
-            scenario_projection_only
-            and t.rule_id is not None
-            and t.date >= today
-            and t.source == Transaction.Source.RULE
-        ):
+        # Re-project rule occurrences with scenario overrides — do not double-count DB rows.
+        if scenario_projection_only and t.rule_id is not None and t.date >= today:
             continue
         amt = t.amount
         sign = 1 if (amt is not None and amt >= 0) else -1
@@ -1373,7 +1897,7 @@ def build_timeline(
             continue
         eff_start = eff.get("start_date") or rule.start_date
         eff_end = eff.get("end_date")
-        occ_dates = generate_rule_occurrences(
+        occ_dates = generate_rule_occurrence_dates(
             rule, start_date, end_date,
             effective_start=eff_start,
             effective_end=eff_end,
@@ -1406,12 +1930,25 @@ def build_timeline(
     for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
         if not _rule_account_forecastable(rule, eff):
             continue
-        raw_amount = eff.get("amount") or rule.amount
-        amount_decimal = Decimal(str(raw_amount))
-        if rule.direction == RecurringRule.Direction.EXPENSE and amount_decimal > 0:
-            amount_decimal = -amount_decimal
-        elif rule.direction == RecurringRule.Direction.INCOME and amount_decimal < 0:
-            amount_decimal = abs(amount_decimal)
+
+        def _amount_for_date(d: date) -> Decimal:
+            params = resolve_rule_params(rule, d)
+            raw_amount = params.amount
+            if scenario_id and scenario:
+                try:
+                    override = rule.scenario_overrides.get(scenario=scenario)
+                    if override.override_amount is not None:
+                        raw_amount = override.override_amount
+                except ScenarioRuleOverride.DoesNotExist:
+                    pass
+            amount_decimal = Decimal(str(raw_amount))
+            direction = eff.get("direction") or params.direction
+            if direction == RecurringRule.Direction.EXPENSE and amount_decimal > 0:
+                amount_decimal = -amount_decimal
+            elif direction == RecurringRule.Direction.INCOME and amount_decimal < 0:
+                amount_decimal = abs(amount_decimal)
+            return amount_decimal
+
         cat_id = eff.get("category_id")
         cat_name = None
         if rule.category_id:
@@ -1431,12 +1968,13 @@ def build_timeline(
                 to_acc = accs.get(to_acc_id) or Account.objects.filter(pk=to_acc_id).first()
             from_name = from_acc.name if from_acc else getattr(rule.account, "name", "")
             to_name = to_acc.name if to_acc else ""
-            out_amount = -abs(amount_decimal)
-            in_amount = abs(amount_decimal)
             is_debt_dest = bool(to_acc and _account_is_debt_payment_destination(to_acc, cat_name))
             for d in occ_dates:
                 if d < today or (rule.id, d) in skipped_occurrences:
                     continue
+                amount_decimal = _amount_for_date(d)
+                out_amount = -abs(amount_decimal)
+                in_amount = abs(amount_decimal)
                 sort_amt = -in_amount if is_debt_dest else Decimal("0")
                 occurrence_events.append(
                     (
@@ -1489,7 +2027,7 @@ def build_timeline(
                         Decimal("0"),
                         rule.id,
                         "single",
-                        (rule, acc_id, acc_name, amount_decimal, cat_id, cat_name, card_for_skip),
+                        (rule, acc_id, acc_name, _amount_for_date(d), cat_id, cat_name, card_for_skip),
                     )
                 )
 
@@ -1666,6 +2204,13 @@ def build_timeline(
                 proj_key = (rule.id, d, acc_id)
                 if proj_key in seen_scenario_rule_keys:
                     continue
+                if any(
+                    r.get("rule_id") == rule.id
+                    and r.get("account_id") == acc_id
+                    and r.get("date") == d
+                    for r in rows
+                ):
+                    continue
                 seen_scenario_rule_keys.add(proj_key)
                 rows.append(
                     _projected_rule_timeline_row(
@@ -1705,6 +2250,16 @@ def build_timeline(
                 "sort_key": (d, 1, rule.id),
                 **_timeline_row_meta(txn),
             })
+
+    if scenario_id and scenario:
+        append_scenario_added_recurring_projections(
+            scenario=scenario,
+            rows=rows,
+            start_date=start_date,
+            end_date=end_date,
+            forecastable_account_ids=forecastable_account_ids,
+            seen_keys=seen_scenario_rule_keys,
+        )
 
     # User-deleted projected interest: do not re-show or re-materialize that billing cycle.
     skipped_interest_by_account: dict[int, set[date]] = defaultdict(set)
@@ -1837,8 +2392,8 @@ def build_timeline(
     )
     _apply_scenario_category_shocks(rows, scenario)
 
-    # Sort by date, then by sort_key tiebreaker
-    rows.sort(key=lambda x: (x["date"], x["sort_key"][1], x["sort_key"][2] or 0))
+    # Sort by date, then same order as Transactions ledger (transaction_id, description).
+    rows.sort(key=timeline_rows_chronological_key)
     for r in rows:
         r.pop("sort_key", None)
         r.setdefault("reconciled", False)
@@ -1854,24 +2409,14 @@ def build_timeline(
                 sb = -sb
             opening[aid] = sb
 
-    # Running balance: skip superseded PLANNED duplicates (same rule as calendar / ledger UI).
-    rows_by_account: dict[int, list[dict]] = defaultdict(list)
-    for r in rows:
-        aid = r.get("account_id")
-        if aid is not None:
-            rows_by_account[aid].append(r)
+    recompute_timeline_running_balances(rows, opening=opening, account_ids=set(account_ids))
 
-    running = dict(opening)
-    for r in rows:
-        aid = r["account_id"]
-        acct_rows = rows_by_account.get(aid, [])
-        if is_superseded_planned_row(r, acct_rows):
-            r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
-            continue
-        amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
-        running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
-        r["running_balance"] = running[aid]
-
-    # Return only rows for requested accounts (we added both legs for CC transfers for balance math)
-    rows = [r for r in rows if r["account_id"] in account_ids]
+    # Return only rows for requested accounts (we added both legs for CC transfers for balance math).
+    # Projected interest is forecast-only — never surface on or before as_of (estimates, not history).
+    rows = [
+        r
+        for r in rows
+        if r["account_id"] in account_ids
+        and not (r.get("source") == "interest" and r["date"] <= today)
+    ]
     return rows

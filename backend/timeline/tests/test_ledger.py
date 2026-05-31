@@ -191,6 +191,14 @@ class TestGenerateRuleOccurrences:
         )
         assert occ == []
 
+    def test_monthly_day_respects_query_start_not_rule_start(self, rule_monthly_day):
+        """Occurrences before the query start must not leak in (e.g. mid-month windows)."""
+        rule_monthly_day.start_date = date(2026, 5, 24)
+        rule_monthly_day.day_of_month = 24
+        rule_monthly_day.save()
+        occ = generate_rule_occurrences(rule_monthly_day, date(2026, 5, 29), date(2026, 5, 31))
+        assert occ == []
+
 
 class TestApplyScenarioOverrides:
     def test_no_scenario_returns_base(self, rule_weekly):
@@ -316,6 +324,45 @@ class TestBuildTimeline:
             assert r.get("transaction_id") is None
         assert date(2026, 4, 2) not in {r["date"] for r in interest_rows}
         assert not any(r.get("transaction_id") == legacy.id for r in rows)
+
+    def test_projected_interest_never_in_past_after_cycle_end_passes(
+        self, user, household, db
+    ):
+        """After a billing cycle ends, projected interest for that cycle is omitted entirely."""
+        as_of = date(2026, 5, 15)
+        start = date(2026, 3, 1)
+        end = date(2026, 8, 31)
+        credit = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Credit Card",
+            currency="USD",
+            starting_balance=Decimal("0"),
+            billing_cycle_end_day=2,
+            apr=Decimal("12.00"),
+        )
+        Category.objects.get_or_create(
+            household=household,
+            name="Interest",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 252},
+        )
+        Transaction.objects.create(
+            account=credit,
+            date=date(2026, 3, 15),
+            payee="Test charge",
+            amount=Decimal("-500.00"),
+            source=Transaction.Source.ACTUAL,
+        )
+        rows = build_timeline(user, start, end, account_id=credit.id, as_of_date=as_of)
+        interest_rows = [
+            r
+            for r in rows
+            if r.get("source") == "interest" and r.get("description") == "Projected Interest"
+        ]
+        assert all(r["date"] > as_of for r in interest_rows)
+        assert date(2026, 5, 2) not in {r["date"] for r in interest_rows}
+        assert date(2026, 4, 2) not in {r["date"] for r in interest_rows}
 
     def test_savings_interest_income_appears_on_cycle_end(self, user, household, db):
         """With interest_cycle_end_day and interest_rate set, next cycle end gets one Projected Interest Income row."""

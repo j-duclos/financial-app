@@ -172,6 +172,12 @@ class TestScenarioSandbox:
         data = res.json()
         assert "metrics" in data
         assert "ending_cash" in data["metrics"]
+        assert "forecast_changes" in data
+        assert "forecast_change_groups" in data
+        assert "risk_explanation" in data
+        assert "is_risky" in data["risk_explanation"]
+        assert "credit_utilization_at_horizon" in data
+        assert isinstance(data["credit_utilization_at_horizon"], list)
 
     def test_timeline_respects_scenario(
         self, api_client, user, scenario_household, scenario_checking, scenario_income_category
@@ -210,6 +216,122 @@ class TestScenarioSandbox:
         )
         after = Transaction.objects.filter(rule=scenario_rule).count()
         assert after == before
+
+    def test_scenario_transfer_projects_two_legs(self, user, scenario_checking, scenario_household):
+        savings = Account.objects.create(
+            household=scenario_household,
+            account_type=Account.AccountType.SAVINGS,
+            name="Savings",
+            starting_balance=Decimal("1000"),
+            currency="USD",
+            include_in_forecast=True,
+        )
+        scenario = Scenario.objects.create(household=scenario_household, name="Xfer")
+        event_date = date.today() + timedelta(days=14)
+        ScenarioOneTimeEvent.objects.create(
+            scenario=scenario,
+            date=event_date,
+            account=scenario_checking,
+            transfer_to_account=savings,
+            description="Move to savings",
+            direction=ScenarioOneTimeEvent.Direction.TRANSFER,
+            amount=Decimal("200"),
+        )
+        today = date.today()
+        end = today + timedelta(days=45)
+        rows = build_timeline(
+            user, today, end, scenario_id=scenario.id, household_id=scenario_household.id
+        )
+        xfer_rows = [r for r in rows if r.get("source") == "scenario_event"]
+        assert len(xfer_rows) == 2
+        out_row = next(r for r in xfer_rows if r["account_id"] == scenario_checking.id)
+        in_row = next(r for r in xfer_rows if r["account_id"] == savings.id)
+        assert out_row["amount"] == Decimal("-200")
+        assert in_row["amount"] == Decimal("200")
+
+    def test_scenario_added_recurring_shows_in_comparison_not_base_timeline(
+        self, user, scenario_household, scenario_checking, scenario_income_category
+    ):
+        from timeline.models import ScenarioAddedRecurring
+
+        scenario = Scenario.objects.create(household=scenario_household, name="Side gig")
+        ScenarioAddedRecurring.objects.create(
+            scenario=scenario,
+            name="Rental",
+            account=scenario_checking,
+            category=scenario_income_category,
+            direction=ScenarioAddedRecurring.Direction.INCOME,
+            amount=Decimal("500"),
+            currency="USD",
+            frequency=ScenarioAddedRecurring.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=1,
+            start_date=date(2020, 1, 1),
+        )
+        today = date.today()
+        end = today + timedelta(days=90)
+        base_rows = build_timeline(
+            user, today, end, scenario_id=None, household_id=scenario_household.id
+        )
+        scenario_rows = build_timeline(
+            user, today, end, scenario_id=scenario.id, household_id=scenario_household.id
+        )
+        assert not any(r.get("description") == "Rental" for r in base_rows)
+        assert any(r.get("description") == "Rental" for r in scenario_rows)
+
+        payload = build_scenario_comparison(
+            user, scenario.id, horizon="12m", household_id=scenario_household.id
+        )
+        lowest = payload["metrics"]["lowest_projected_balance"]
+        ending = payload["metrics"]["ending_cash"]
+        assert Decimal(str(ending["scenario"])) > Decimal(str(ending["base"]))
+        assert Decimal(str(lowest["scenario"])) >= Decimal(str(lowest["base"]))
+
+    def test_scenario_added_recurring_debt_transfer_projects_to_card(
+        self, user, scenario_household, scenario_checking
+    ):
+        from timeline.models import ScenarioAddedRecurring
+
+        card = Account.objects.create(
+            household=scenario_household,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            starting_balance=Decimal("-500"),
+            currency="USD",
+            include_in_forecast=True,
+        )
+        scenario = Scenario.objects.create(household=scenario_household, name="Extra pay")
+        ScenarioAddedRecurring.objects.create(
+            scenario=scenario,
+            name="Extra Venture Payment",
+            account=scenario_checking,
+            transfer_to_account=card,
+            category=None,
+            direction=ScenarioAddedRecurring.Direction.TRANSFER,
+            amount=Decimal("100"),
+            currency="USD",
+            frequency=ScenarioAddedRecurring.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=15,
+            start_date=date(2020, 1, 1),
+            notes="what_if_debt_recurring",
+        )
+        today = date.today()
+        end = today + timedelta(days=120)
+        base_rows = build_timeline(
+            user, today, end, scenario_id=None, household_id=scenario_household.id
+        )
+        scenario_rows = build_timeline(
+            user, today, end, scenario_id=scenario.id, household_id=scenario_household.id
+        )
+        assert not any(r.get("description") == "Extra Venture Payment" for r in base_rows)
+        xfer = [r for r in scenario_rows if r.get("description") == "Extra Venture Payment"]
+        assert len(xfer) >= 2
+        out_row = next(r for r in xfer if r["account_id"] == scenario_checking.id)
+        in_row = next(r for r in xfer if r["account_id"] == card.id)
+        assert out_row["amount"] == Decimal("-100")
+        assert in_row["amount"] == Decimal("100")
+        assert out_row.get("category_id") is None
 
     def test_affordability_endpoint(self, api_client, user, scenario_checking):
         api_client.force_authenticate(user=user)

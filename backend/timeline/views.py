@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.utils import timezone
@@ -18,6 +18,7 @@ from .models import (
     Scenario,
     ScenarioRuleOverride,
     ScenarioOneTimeEvent,
+    ScenarioAddedRecurring,
     ScenarioCategoryShock,
     StatementTransaction,
     ReconciliationMatch,
@@ -28,6 +29,7 @@ from .serializers import (
     ScenarioSerializer,
     ScenarioRuleOverrideSerializer,
     ScenarioOneTimeEventSerializer,
+    ScenarioAddedRecurringSerializer,
     ScenarioCategoryShockSerializer,
     StatementTransactionSerializer,
     ReconciliationMatchSerializer,
@@ -40,9 +42,11 @@ from .services.resolve_risk import build_resolve_risk_plan
 from .services.transfer_simulation import simulate_transfer_impact
 from .services.rule_cleanup import (
     delete_future_materialized_transactions_for_rule,
+    delete_materialized_transactions_for_rule_on_or_after,
     pause_recurring_rule,
     resume_recurring_rule,
 )
+from .services.rule_schedule import promote_due_schedules
 from .reconcile_services import parse_csv_to_statement_rows, get_suggestions
 from .pagination import RecurringRulePagination
 
@@ -85,11 +89,19 @@ class RecurringRuleViewSet(ModelViewSet):
     permission_classes = [IsHouseholdMember]
     pagination_class = RecurringRulePagination
 
+    def list(self, request, *args, **kwargs):
+        promote_due_schedules()
+        return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        promote_due_schedules()
+        return super().retrieve(request, *args, **kwargs)
+
     def get_queryset(self):
         households = get_households_for_user(self.request.user)
         return RecurringRule.objects.filter(household__in=households).select_related(
-            "account", "category", "household"
-        )
+            "account", "category", "household", "transfer_to_account"
+        ).prefetch_related("schedules")
 
     def perform_create(self, serializer):
         rule = serializer.save()
@@ -97,20 +109,28 @@ class RecurringRuleViewSet(ModelViewSet):
             pause_recurring_rule(rule)
 
     def update(self, request, *args, **kwargs):
+        promote_due_schedules()
         instance = self.get_object()
         was_active = instance.active
-        response = super().update(request, *args, **kwargs)
+        partial = kwargs.pop("partial", False)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        instance = serializer.instance
+        cutoff = serializer.materialize_cutoff
+        today = timezone.localdate()
+        response = Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
         # Move any "from" leg transactions that are on a different account onto the rule's
         # current account. If the same occurrence already exists on the target account
         # (e.g. materialized when viewing the timeline), remove the duplicate instead of moving.
-        if response.status_code != status.HTTP_200_OK:
-            return response
         instance.refresh_from_db()
         if was_active and not instance.active:
             pause_recurring_rule(instance)
         elif not was_active and instance.active:
             resume_recurring_rule(instance)
-        today = timezone.localdate()
         valid_account_ids = [instance.account_id]
         if instance.transfer_to_account_id:
             valid_account_ids.append(instance.transfer_to_account_id)
@@ -208,8 +228,11 @@ class RecurringRuleViewSet(ModelViewSet):
         else:
             wrong_account.delete()
 
-        # Remove future rows so the next timeline build materializes fresh amount/schedule/account.
-        delete_future_materialized_transactions_for_rule(instance.pk)
+        # Remove materialized rows from cutoff so the next timeline build uses schedule segments.
+        if cutoff <= today:
+            delete_future_materialized_transactions_for_rule(instance.pk)
+        else:
+            delete_materialized_transactions_for_rule_on_or_after(instance.pk, cutoff)
 
         return response
 
@@ -269,11 +292,28 @@ class ScenarioViewSet(ModelViewSet):
         scenario = self.get_object()
         if request.method == "GET":
             qs = ScenarioOneTimeEvent.objects.filter(scenario=scenario).select_related(
-                "account", "category"
+                "account", "transfer_to_account", "category"
             )
             serializer = ScenarioOneTimeEventSerializer(qs, many=True, context={"request": request})
             return Response(serializer.data)
         serializer = ScenarioOneTimeEventSerializer(
+            data={**request.data, "scenario": scenario.pk},
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(scenario=scenario)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get", "post"], url_path="added-recurring")
+    def added_recurring(self, request, pk=None):
+        scenario = self.get_object()
+        if request.method == "GET":
+            qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
+                "account", "transfer_to_account", "category"
+            )
+            serializer = ScenarioAddedRecurringSerializer(qs, many=True, context={"request": request})
+            return Response(serializer.data)
+        serializer = ScenarioAddedRecurringSerializer(
             data={**request.data, "scenario": scenario.pk},
             context={"request": request},
         )
@@ -349,11 +389,31 @@ class ScenarioViewSet(ModelViewSet):
                 scenario=copy,
                 date=ev.date,
                 account=ev.account,
+                transfer_to_account=ev.transfer_to_account,
                 description=ev.description,
                 category=ev.category,
                 direction=ev.direction,
                 amount=ev.amount,
                 notes=ev.notes,
+            )
+        for added in source.added_recurring.all():
+            ScenarioAddedRecurring.objects.create(
+                scenario=copy,
+                name=added.name,
+                account=added.account,
+                transfer_to_account=added.transfer_to_account,
+                category=added.category,
+                direction=added.direction,
+                amount=added.amount,
+                currency=added.currency,
+                frequency=added.frequency,
+                interval=added.interval,
+                day_of_week=added.day_of_week,
+                day_of_month=added.day_of_month,
+                nth_week=added.nth_week,
+                start_date=added.start_date,
+                end_date=added.end_date,
+                notes=added.notes,
             )
         for shock in source.category_shocks.all():
             ScenarioCategoryShock.objects.create(
@@ -432,7 +492,7 @@ class ScenarioOneTimeEventViewSet(ModelViewSet):
         households = get_households_for_user(self.request.user)
         return ScenarioOneTimeEvent.objects.filter(
             scenario__household__in=households
-        ).select_related("scenario", "account", "category")
+        ).select_related("scenario", "account", "transfer_to_account", "category")
 
     def perform_create(self, serializer):
         scenario_id = self.request.data.get("scenario")
@@ -460,43 +520,33 @@ class ScenarioCategoryShockViewSet(ModelViewSet):
             serializer.save()
 
 
+class ScenarioAddedRecurringViewSet(ModelViewSet):
+    serializer_class = ScenarioAddedRecurringSerializer
+    permission_classes = [IsHouseholdMember]
+
+    def get_queryset(self):
+        households = get_households_for_user(self.request.user)
+        return ScenarioAddedRecurring.objects.filter(
+            scenario__household__in=households
+        ).select_related("scenario", "account", "transfer_to_account", "category")
+
+    def perform_create(self, serializer):
+        scenario_id = self.request.data.get("scenario")
+        if scenario_id:
+            serializer.save(scenario_id=scenario_id)
+        else:
+            serializer.save()
+
+
 class TimelineView(APIView):
     permission_classes = [IsHouseholdMember]
 
     def get(self, request):
         try:
-            start = request.query_params.get("start")
-            end = request.query_params.get("end")
-            as_of = request.query_params.get("as_of")
-            horizon = request.query_params.get("horizon", "6m")
+            start, end, as_of_date = _timeline_date_range(request)
             scenario_id = request.query_params.get("scenario_id")
             account_id = request.query_params.get("account_id")
             household_id = request.query_params.get("household_id")
-
-            from datetime import datetime as dt
-            today = timezone.localdate()
-            as_of_date = dt.strptime(as_of, "%Y-%m-%d").date() if as_of else None
-            if not end:
-                if horizon == "14d":
-                    end = today + timedelta(days=14)
-                elif horizon == "3m":
-                    end = today + timedelta(days=90)
-                elif horizon == "12m":
-                    end = today + timedelta(days=365)
-                elif horizon == "18m":
-                    end = today + timedelta(days=548)  # ~18 months
-                elif horizon == "24m":
-                    end = today + timedelta(days=730)
-                elif horizon == "36m":
-                    end = today + timedelta(days=1095)  # ~36 months
-                else:
-                    end = today + timedelta(days=180)
-            else:
-                end = dt.strptime(end, "%Y-%m-%d").date() if isinstance(end, str) else end
-            if not start:
-                start = today
-            else:
-                start = dt.strptime(start, "%Y-%m-%d").date() if isinstance(start, str) else start
 
             scenario_id = int(scenario_id) if scenario_id else None
             account_id = int(account_id) if account_id else None
@@ -537,6 +587,14 @@ class TimelineView(APIView):
             )
 
 
+def _first_day_of_month(d: date, months_back: int = 0) -> date:
+    year, month = d.year, d.month - months_back
+    while month < 1:
+        month += 12
+        year -= 1
+    return date(year, month, 1)
+
+
 def _timeline_date_range(request):
     """Shared start/end resolution for timeline and calendar endpoints."""
     from datetime import datetime as dt
@@ -565,7 +623,12 @@ def _timeline_date_range(request):
     else:
         end = dt.strptime(end, "%Y-%m-%d").date() if isinstance(end, str) else end
     if not start:
-        start = today
+        lookback_raw = request.query_params.get("lookback_months", "0")
+        try:
+            lookback_months = max(0, min(12, int(lookback_raw)))
+        except ValueError:
+            lookback_months = 0
+        start = _first_day_of_month(today, lookback_months)
     else:
         start = dt.strptime(start, "%Y-%m-%d").date() if isinstance(start, str) else start
     return start, end, as_of_date

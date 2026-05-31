@@ -174,8 +174,22 @@ def build_funding_info(bucket: GoalBucket) -> dict[str, Any]:
         bucket.linked_account.effective_display_name if bucket.linked_account else None
     )
     automatic_transfer_label = None
+    auto_transfer_rule_id = None
+    if bucket.auto_fund_enabled:
+        from goals.auto_fund import find_auto_fund_transfer_rule
+
+        transfer_rule = find_auto_fund_transfer_rule(bucket)
+        if transfer_rule and transfer_rule.active:
+            auto_transfer_rule_id = transfer_rule.id
+            freq = FREQ_LABELS.get(transfer_rule.frequency, "period")
+            xfer_label = (
+                f"Auto-transfer ${_quantize_money(_decimal(transfer_rule.amount))}/{freq} "
+                f"to {funding_account_name or 'linked account'}"
+            )
+            automatic_parts.append(xfer_label)
+
     if automatic_parts:
-        automatic_transfer_label = "Automatic transfers: " + ", ".join(automatic_parts)
+        automatic_transfer_label = "Paycheck funding: " + "; ".join(automatic_parts)
     elif bucket.auto_fund_enabled and bucket.monthly_target > 0:
         automatic_transfer_label = f"Planned: ${_quantize_money(_decimal(bucket.monthly_target))}/mo"
 
@@ -184,7 +198,8 @@ def build_funding_info(bucket: GoalBucket) -> dict[str, Any]:
         "funding_account_name": funding_account_name,
         "linked_rules": linked_rules,
         "automatic_transfer_label": automatic_transfer_label,
-        "has_automatic_funding": bool(linked_rules),
+        "auto_fund_transfer_rule_id": auto_transfer_rule_id,
+        "has_automatic_funding": bool(linked_rules) or auto_transfer_rule_id is not None,
     }
 
 
