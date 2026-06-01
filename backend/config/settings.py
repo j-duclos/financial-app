@@ -9,16 +9,17 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+_ON_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
 
 # Load .env from backend/ when python-dotenv is installed (pip install python-dotenv).
-try:
-    from dotenv import load_dotenv
-    load_dotenv(BASE_DIR / ".env")
-except ImportError:
-    pass
+if not _ON_RENDER:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(BASE_DIR / ".env")
+    except ImportError:
+        pass
 
 _INSECURE_DEV_SECRET = "dev-secret-key-change-in-production"
-_ON_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
 
 
 def _env_bool(name: str, *, default: bool) -> bool:
