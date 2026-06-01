@@ -32,36 +32,20 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
   exit 1
 fi
 echo "python: $($PYTHON --version) at $(command -v "$PYTHON")"
-if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
-  echo "WARN: pip module not available for $PYTHON in this build stage."
-  echo "      Trying to bootstrap pip with ensurepip..."
-  "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
-fi
 
-if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
-  echo "WARN: ensurepip did not provide pip; falling back to get-pip.py bootstrap."
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
-    "$PYTHON" /tmp/get-pip.py
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py
-    "$PYTHON" /tmp/get-pip.py
-  else
-    echo "ERROR: Neither curl nor wget available to bootstrap pip."
-    exit 1
-  fi
-fi
-
-if "$PYTHON" -m pip --version >/dev/null 2>&1; then
-  "$PYTHON" -m pip install -r requirements.txt
-else
-  echo "ERROR: pip still unavailable after bootstrap attempts."
-  exit 1
-fi
+# Use an isolated venv to avoid PEP 668 "externally-managed-environment" failures.
+VENV_DIR="${VENV_DIR:-$BACKEND_DIR/.venv}"
+echo "Creating virtualenv at $VENV_DIR"
+"$PYTHON" -m venv "$VENV_DIR"
+PYTHON="$VENV_DIR/bin/python"
+PIP="$VENV_DIR/bin/pip"
+"$PYTHON" --version
+"$PIP" --version
+"$PIP" install --upgrade pip setuptools wheel
+"$PIP" install -r requirements.txt
 
 if ! "$PYTHON" -c "import django" >/dev/null 2>&1; then
-  echo "ERROR: Django is not installed in this build environment."
-  echo "       Railway: ensure nixpacks.toml install phase runs python -m pip install -r backend/requirements.txt"
+  echo "ERROR: Django missing even after venv install."
   exit 1
 fi
 
