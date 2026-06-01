@@ -32,7 +32,18 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
   exit 1
 fi
 echo "python: $($PYTHON --version) at $(command -v "$PYTHON")"
-"$PYTHON" -m pip install -r requirements.txt
+if "$PYTHON" -m pip --version >/dev/null 2>&1; then
+  "$PYTHON" -m pip install -r requirements.txt
+else
+  echo "WARN: pip module not available for $PYTHON in this build stage."
+  echo "      Assuming dependencies were installed earlier by the platform builder."
+fi
+
+if ! "$PYTHON" -c "import django" >/dev/null 2>&1; then
+  echo "ERROR: Django is not installed in this build environment."
+  echo "       Railway: ensure nixpacks.toml install phase runs python -m pip install -r backend/requirements.txt"
+  exit 1
+fi
 
 _on_render() {
   case "${RENDER:-}" in true|1|yes|TRUE) return 0 ;; esac
