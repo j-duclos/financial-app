@@ -14,6 +14,7 @@ from .plaid_api_client import (
     plaid_configured,
     plaid_credential_diagnostics,
     plaid_env_configured_explicitly,
+    plaid_token_fernet_key_set,
     plaid_unconfigured_detail,
 )
 from .plaid_errors import format_plaid_api_exception
@@ -183,6 +184,7 @@ class PlaidMetaView(APIView):
             {
                 "plaid_env": plaid_api_env(),
                 "plaid_configured": plaid_configured(),
+                "plaid_token_fernet_key_set": plaid_token_fernet_key_set(),
                 "oauth_institutions_url": "https://dashboard.plaid.com/settings/compliance/us-oauth-institutions",
                 "oauth_institution_status_url": "https://dashboard.plaid.com/activity/status/oauth-institutions",
                 "plaid_dashboard_home": "https://dashboard.plaid.com/",

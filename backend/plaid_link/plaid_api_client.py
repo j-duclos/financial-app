@@ -116,6 +116,10 @@ def plaid_unconfigured_detail() -> str:
     return "".join(parts)
 
 
+def plaid_token_fernet_key_set() -> bool:
+    return bool(os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip())
+
+
 def plaid_credential_diagnostics() -> dict[str, str | int | None]:
     """Non-sensitive facts about how credentials were resolved (for INVALID_API_KEYS debugging)."""
     env = plaid_api_env()

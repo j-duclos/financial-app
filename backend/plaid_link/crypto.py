@@ -33,19 +33,18 @@ def decrypt_plaid_access_token(cipher: str) -> str:
         return decrypt_secret(cipher)
     except InvalidToken as exc:
         on_render = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
-        where = "Render → Environment" if on_render else "backend/.env"
+        where = "Render Dashboard → Web Service → Environment" if on_render else "backend/.env"
         explicit = bool(os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip())
         raise PlaidTokenDecryptError(
-            "Cannot decrypt this bank login's saved Plaid token. It was encrypted with a different "
-            f"PLAID_TOKEN_FERNET_KEY or DJANGO_SECRET_KEY than this server uses now. "
-            f"Copy the same PLAID_TOKEN_FERNET_KEY from your local {where} (if you have one), or set "
-            "PLAID_TOKEN_FERNET_KEY on this server to a Fernet key derived from the DJANGO_SECRET_KEY "
-            "that was active when you exported/imported data, or remove and re-link the bank on this "
-            "server so a new token is stored."
+            "Cannot decrypt this bank login's saved Plaid token. The database copy was encrypted "
+            "on your dev machine, not on Render. "
             + (
-                ""
+                "PLAID_TOKEN_FERNET_KEY is set here but does not match the export machine — run "
+                "`python manage.py plaid_fernet_key_for_render` on the Mac that created data.json, "
+                "or remove and re-link the bank on Render."
                 if explicit
-                else " This server has no PLAID_TOKEN_FERNET_KEY — tokens use a key derived from "
-                "DJANGO_SECRET_KEY, which often differs between local and production."
+                else f"Set PLAID_TOKEN_FERNET_KEY in {where} (local: "
+                "`python manage.py plaid_fernet_key_for_render`), save, wait for redeploy, then retry. "
+                "Or remove and re-link the bank on Render."
             )
         ) from exc
