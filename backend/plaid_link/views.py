@@ -9,13 +9,20 @@ from core.permissions import IsHouseholdMember
 from core.utils import get_households_for_user, get_user_profile
 
 from .models import PlaidItem
-from .plaid_api_client import plaid_api_env, plaid_configured, plaid_credential_diagnostics
+from .plaid_api_client import (
+    plaid_api_env,
+    plaid_configured,
+    plaid_credential_diagnostics,
+    plaid_env_configured_explicitly,
+    plaid_unconfigured_detail,
+)
 from .plaid_errors import format_plaid_api_exception
 from .serializers import (
     PlaidExchangeRequestSerializer,
     PlaidItemSerializer,
     PlaidLinkTokenRequestSerializer,
 )
+from .crypto import PlaidTokenDecryptError
 from .services import (
     create_link_token,
     exchange_public_token,
@@ -146,18 +153,20 @@ class PlaidItemViewSet(
         if not plaid_configured():
             return Response(
                 {
-                    "detail": (
-                        "Plaid is not configured on this server. Set PLAID_CLIENT_ID and a secret for "
-                        f"PLAID_ENV={plaid_api_env()!r} in backend/.env, then restart the backend. "
-                        "Existing bank logins in the database still need live API credentials to sync."
-                    ),
+                    "detail": plaid_unconfigured_detail(),
                     "plaid_env": plaid_api_env(),
+                    "plaid_env_explicit": plaid_env_configured_explicitly(),
                     "plaid_diagnostics": plaid_credential_diagnostics(),
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         try:
             counts = sync_transactions_for_item(item)
+        except PlaidTokenDecryptError as e:
+            return Response(
+                {"detail": str(e), "plaid_env": plaid_api_env()},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except ApiException as e:
             payload = format_plaid_api_exception(e, plaid_env=plaid_api_env())
             return Response(payload, status=status.HTTP_400_BAD_REQUEST)

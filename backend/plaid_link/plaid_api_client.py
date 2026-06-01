@@ -78,6 +78,44 @@ def resolved_secret_env_var_name() -> str | None:
     return None
 
 
+def plaid_env_configured_explicitly() -> bool:
+    """True when PLAID_ENV was set in the environment (not only the app default)."""
+    return bool(os.environ.get("PLAID_ENV", "").strip())
+
+
+def plaid_config_location_hint() -> str:
+    """Where operators should set credentials (local .env vs Render env)."""
+    if os.environ.get("RENDER", "").lower() in ("true", "1", "yes"):
+        return "this server's environment (Render Dashboard → Environment)"
+    return "backend/.env"
+
+
+def plaid_unconfigured_detail() -> str:
+    """
+    Human-readable message when Plaid API keys are missing.
+
+    Clarifies that a missing PLAID_ENV defaults to sandbox in code — that is not the user's
+    Plaid account type (free trial / production keys are separate).
+    """
+    where = plaid_config_location_hint()
+    env = plaid_api_env()
+    parts = [
+        f"Plaid API keys are not set on this server. Add PLAID_CLIENT_ID and a secret for "
+        f"PLAID_ENV={env!r} in {where}, then redeploy or restart the backend.",
+    ]
+    if not plaid_env_configured_explicitly():
+        parts.append(
+            " PLAID_ENV is unset here, so the app defaults to 'sandbox' — that does not mean "
+            "your Plaid account is sandbox. For real banks (Chase, etc.) set PLAID_ENV=production "
+            "and PLAID_PRODUCTION_SECRET from Plaid Team → Keys (Production row). "
+            "Plaid Development / free-trial keys use PLAID_ENV=development and PLAID_DEVELOPMENT_SECRET."
+        )
+    parts.append(
+        " Existing bank logins in the database still need matching live API credentials to sync."
+    )
+    return "".join(parts)
+
+
 def plaid_credential_diagnostics() -> dict[str, str | int | None]:
     """Non-sensitive facts about how credentials were resolved (for INVALID_API_KEYS debugging)."""
     env = plaid_api_env()

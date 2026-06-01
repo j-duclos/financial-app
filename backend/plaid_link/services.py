@@ -33,7 +33,7 @@ from transactions.services.matching import (
     reconcile_orphan_matched_plaid_imports,
 )
 
-from .crypto import decrypt_secret, encrypt_secret
+from .crypto import decrypt_plaid_access_token, decrypt_secret, encrypt_secret
 from .models import PlaidItem, PlaidLinkedAccount
 from .plaid_api_client import _clean_cred, get_plaid_client, plaid_api_env
 
@@ -442,7 +442,7 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     """
     skipped_accounts = 0
     client = get_plaid_client()
-    access_token = decrypt_secret(plaid_item.access_token_cipher)
+    access_token = decrypt_plaid_access_token(plaid_item.access_token_cipher)
 
     reconcile_linked_account_ids_with_plaid(plaid_item, client, access_token)
 
@@ -547,7 +547,7 @@ def remove_plaid_item_from_plaid(plaid_item: PlaidItem) -> None:
     """Revoke the Item at Plaid (best effort)."""
     try:
         client = get_plaid_client()
-        token = decrypt_secret(plaid_item.access_token_cipher)
+        token = decrypt_plaid_access_token(plaid_item.access_token_cipher)
         client.item_remove(ItemRemoveRequest(access_token=token))
     except ApiException:
         pass
