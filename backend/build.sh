@@ -38,10 +38,25 @@ if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
   "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
 fi
 
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+  echo "WARN: ensurepip did not provide pip; falling back to get-pip.py bootstrap."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+    "$PYTHON" /tmp/get-pip.py
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py
+    "$PYTHON" /tmp/get-pip.py
+  else
+    echo "ERROR: Neither curl nor wget available to bootstrap pip."
+    exit 1
+  fi
+fi
+
 if "$PYTHON" -m pip --version >/dev/null 2>&1; then
   "$PYTHON" -m pip install -r requirements.txt
 else
-  echo "WARN: pip still unavailable; assuming dependencies were installed by platform install phase."
+  echo "ERROR: pip still unavailable after bootstrap attempts."
+  exit 1
 fi
 
 if ! "$PYTHON" -c "import django" >/dev/null 2>&1; then
