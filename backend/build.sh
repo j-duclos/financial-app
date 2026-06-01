@@ -20,34 +20,18 @@ fi
 if command -v npm >/dev/null 2>&1; then
   echo "npm: $(command -v npm) ($(npm --version))"
 else
-  echo "npm: NOT FOUND — set NODE_VERSION=20 (Render) or NIXPACKS_NODE_VERSION=20 (Railway)"
+  echo "npm: NOT FOUND — set NODE_VERSION=20 in Render Environment and redeploy"
 fi
 
 PYTHON="${PYTHON:-python3}"
 command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   echo "ERROR: python not found."
-  echo "       Railway: commit budget-app/nixpacks.toml (providers = node + python) at repo root."
-  echo "       Render: use a Python runtime with NODE_VERSION=20 for the frontend build."
+  echo "       Use a Python runtime on Render."
   exit 1
 fi
 echo "python: $($PYTHON --version) at $(command -v "$PYTHON")"
-
-# Use an isolated venv to avoid PEP 668 "externally-managed-environment" failures.
-VENV_DIR="${VENV_DIR:-$BACKEND_DIR/.venv}"
-echo "Creating virtualenv at $VENV_DIR"
-"$PYTHON" -m venv "$VENV_DIR"
-PYTHON="$VENV_DIR/bin/python"
-PIP="$VENV_DIR/bin/pip"
-"$PYTHON" --version
-"$PIP" --version
-"$PIP" install --upgrade pip setuptools wheel
-"$PIP" install -r requirements.txt
-
-if ! "$PYTHON" -c "import django" >/dev/null 2>&1; then
-  echo "ERROR: Django missing even after venv install."
-  exit 1
-fi
+"$PYTHON" -m pip install -r requirements.txt
 
 _on_render() {
   case "${RENDER:-}" in true|1|yes|TRUE) return 0 ;; esac
