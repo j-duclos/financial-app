@@ -20,13 +20,19 @@ fi
 if command -v npm >/dev/null 2>&1; then
   echo "npm: $(command -v npm) ($(npm --version))"
 else
-  echo "npm: NOT FOUND — set NODE_VERSION=20 in Render Environment and redeploy"
+  echo "npm: NOT FOUND — set NODE_VERSION=20 (Render) or NIXPACKS_NODE_VERSION=20 (Railway)"
 fi
-
-pip install -r requirements.txt
 
 PYTHON="${PYTHON:-python3}"
 command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  echo "ERROR: python not found."
+  echo "       Railway: commit budget-app/nixpacks.toml (providers = node + python) at repo root."
+  echo "       Render: use a Python runtime with NODE_VERSION=20 for the frontend build."
+  exit 1
+fi
+echo "python: $($PYTHON --version) at $(command -v "$PYTHON")"
+"$PYTHON" -m pip install -r requirements.txt
 
 _on_render() {
   case "${RENDER:-}" in true|1|yes|TRUE) return 0 ;; esac
