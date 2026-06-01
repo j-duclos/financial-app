@@ -32,11 +32,16 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
   exit 1
 fi
 echo "python: $($PYTHON --version) at $(command -v "$PYTHON")"
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+  echo "WARN: pip module not available for $PYTHON in this build stage."
+  echo "      Trying to bootstrap pip with ensurepip..."
+  "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+fi
+
 if "$PYTHON" -m pip --version >/dev/null 2>&1; then
   "$PYTHON" -m pip install -r requirements.txt
 else
-  echo "WARN: pip module not available for $PYTHON in this build stage."
-  echo "      Assuming dependencies were installed earlier by the platform builder."
+  echo "WARN: pip still unavailable; assuming dependencies were installed by platform install phase."
 fi
 
 if ! "$PYTHON" -c "import django" >/dev/null 2>&1; then
