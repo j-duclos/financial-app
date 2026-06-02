@@ -39,6 +39,19 @@ def serve_frontend(request):
     asset = _safe_path(root, rel) if rel else None
     if asset:
         content_type, _ = mimetypes.guess_type(str(asset))
-        return FileResponse(asset.open("rb"), content_type=content_type or "application/octet-stream")
+        resp = FileResponse(asset.open("rb"), content_type=content_type or "application/octet-stream")
+        # Hashed Vite files are immutable; index.html must always revalidate after deploy.
+        resp["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
 
-    return FileResponse(index.open("rb"), content_type="text/html")
+    # Missing hashed bundle (stale browser tab after deploy) — do not return index.html as CSS/JS.
+    if rel.startswith("assets/"):
+        return HttpResponse(
+            "Asset not found — hard refresh the app (deploy updated frontend hashes).",
+            status=404,
+            content_type="text/plain",
+        )
+
+    resp = FileResponse(index.open("rb"), content_type="text/html")
+    resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return resp
