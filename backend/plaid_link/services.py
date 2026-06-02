@@ -543,6 +543,15 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     return totals
 
 
+def disconnect_plaid_linked_account(linked_account: PlaidLinkedAccount) -> Account:
+    """Remove Plaid mapping for one app account; keep the account and its transactions."""
+    account = linked_account.account
+    account.plaid_sync_enabled = False
+    account.save(update_fields=["plaid_sync_enabled", "updated_at"])
+    linked_account.delete()
+    return account
+
+
 def remove_plaid_item_from_plaid(plaid_item: PlaidItem) -> None:
     """Revoke the Item at Plaid (best effort)."""
     try:

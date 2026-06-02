@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 from core.permissions import IsHouseholdMember
 from core.utils import get_households_for_user, get_user_profile
 
-from .models import PlaidItem
+from .models import PlaidItem, PlaidLinkedAccount
 from .plaid_api_client import (
     plaid_api_env,
     plaid_configured,
@@ -26,6 +26,7 @@ from .serializers import (
 from .crypto import PlaidTokenDecryptError
 from .services import (
     create_link_token,
+    disconnect_plaid_linked_account,
     exchange_public_token,
     remove_plaid_item_from_plaid,
     resolve_plaid_link_redirect_uri,
@@ -172,6 +173,30 @@ class PlaidItemViewSet(
             payload = format_plaid_api_exception(e, plaid_env=plaid_api_env())
             return Response(payload, status=status.HTTP_400_BAD_REQUEST)
         return Response(counts)
+
+
+class PlaidLinkedAccountDisconnectView(APIView):
+    """Disconnect Plaid from a single app account (keeps the account and ledger rows)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk: int):
+        households = get_households_for_user(request.user)
+        linked = (
+            PlaidLinkedAccount.objects.filter(pk=pk, item__household__in=households)
+            .select_related("account", "item")
+            .first()
+        )
+        if not linked:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        account_id = linked.account_id
+        disconnect_plaid_linked_account(linked)
+        return Response(
+            {
+                "detail": "Plaid disconnected from this account. Transactions already imported are unchanged.",
+                "account_id": account_id,
+            }
+        )
 
 
 class PlaidMetaView(APIView):
