@@ -9,6 +9,7 @@ import {
   deleteCategory,
   getProfile,
 } from "@budget-app/api-client";
+import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 
 function groupByParent(categories: Category[]): Map<number | null, Category[]> {
   const map = new Map<number | null, Category[]>();
@@ -194,49 +195,48 @@ export default function Categories() {
   const parentsForType = categories.filter((c) => c.category_type === type && c.parent === null && !c.is_archived && c.id !== editing?.id);
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-        <h1 className="text-2xl font-bold">Categories</h1>
+    <div className={PAGE_SHELL_PY_LOOSE}>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-4 min-w-0">
+          <div className="flex rounded overflow-hidden border border-gray-300">
+            <button
+              type="button"
+              onClick={() => setType("EXPENSE")}
+              className={`px-4 py-2 text-sm font-medium ${type === "EXPENSE" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+            >
+              Expense
+            </button>
+            <button
+              type="button"
+              onClick={() => setType("INCOME")}
+              className={`px-4 py-2 text-sm font-medium ${type === "INCOME" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+            >
+              Income
+            </button>
+          </div>
+          <input
+            type="search"
+            placeholder="Search categories..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm min-w-[200px]"
+          />
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+        </div>
         <button
+          type="button"
           onClick={openCreate}
-          className="py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700"
+          className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           Add category
         </button>
-      </div>
-
-      <div className="flex items-center gap-4 mb-4 flex-wrap">
-        <div className="flex rounded overflow-hidden border border-gray-300">
-          <button
-            type="button"
-            onClick={() => setType("EXPENSE")}
-            className={`px-4 py-2 text-sm font-medium ${type === "EXPENSE" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-          >
-            Expense
-          </button>
-          <button
-            type="button"
-            onClick={() => setType("INCOME")}
-            className={`px-4 py-2 text-sm font-medium ${type === "INCOME" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-          >
-            Income
-          </button>
-        </div>
-        <input
-          type="search"
-          placeholder="Search categories..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm min-w-[200px]"
-        />
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
-          />
-          Show archived
-        </label>
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-hidden max-h-[calc(100vh-16rem)] overflow-y-auto">

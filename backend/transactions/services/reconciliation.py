@@ -12,6 +12,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from accounts.models import Account
+from common.services.cache import invalidate_user_financial_cache
 from timeline.services.ledger import _balance_at_end_of_date, _opening_balance
 
 from ..models import Reconciliation, ReconciliationEntry, Transaction
@@ -390,6 +391,8 @@ def complete_reconciliation(
                 for pk in checked_ids
             ]
         )
+    if user is not None and getattr(user, "pk", None):
+        invalidate_user_financial_cache(user.pk)
     return rec
 
 
@@ -467,6 +470,8 @@ def undo_reconciliation(*, session: Reconciliation, user) -> dict[str, Any]:
     session.save(update_fields=["is_active", "undone_at", "undone_by", "updated_at"])
 
     new_last_end = last_reconcile_period_end(session.account)
+    if user is not None and getattr(user, "pk", None):
+        invalidate_user_financial_cache(user.pk)
     return {
         "success": True,
         "account_id": session.account_id,

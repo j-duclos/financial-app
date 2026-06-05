@@ -98,9 +98,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (auth.refresh) {
           refreshToken(auth.refresh)
-            .then((r) => {
+            .then(async (r) => {
               setTokens(r.access, auth.refresh!);
-              setAuth((prev) => ({ ...prev, loading: false }));
+              try {
+                const profile = await getProfile();
+                setAuth((prev) => ({
+                  ...prev,
+                  user: { id: profile.id, username: profileLabel(profile) },
+                  loading: false,
+                }));
+              } catch {
+                logout();
+              }
             })
             .catch(() => {
               logout();
@@ -109,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logout();
         }
       });
-  }, [auth.access, auth.refresh]);
+  }, [auth.access, auth.refresh, auth.user, logout, setTokens]);
 
   const login = useCallback(
     async (username: string, password: string) => {

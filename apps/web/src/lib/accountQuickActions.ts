@@ -1,28 +1,19 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Archive,
   ArrowLeftRight,
-  CalendarClock,
   CircleDollarSign,
-  Download,
-  Eraser,
-  FileText,
-  LineChart,
   List,
   Pencil,
   PiggyBank,
-  Plus,
-  Receipt,
   RotateCcw,
   Scale,
   Star,
   Trash2,
-  TrendingUp,
-  Wallet,
   XCircle,
 } from "lucide-react";
-import type { Account, AccountRelationship, AccountRole, AccountType } from "@budget-app/shared";
-import { inferAccountRoleFromType, getEffectiveDisplayName } from "@budget-app/shared";
+import type { Account, AccountRole, AccountType } from "@budget-app/shared";
+import { inferAccountRoleFromType } from "@budget-app/shared";
+import { formatDateDisplay } from "./dateDisplay";
 
 export type QuickActionId =
   | "add_expense"
@@ -40,6 +31,7 @@ export type QuickActionId =
   | "pay_statement"
   | "pay_minimum"
   | "pay_current"
+  | "payment_planner"
   | "move_to_savings"
   | "reconcile"
   | "import_txns"
@@ -85,7 +77,6 @@ export interface QuickActionDef {
 export interface QuickActionsContext {
   plaidLinkedAccountIds: Set<number>;
   allAccounts: Account[];
-  relationships: AccountRelationship[];
   forecastDays: number;
 }
 
@@ -94,6 +85,25 @@ export interface AccountManagementOptions {
   lifecycle: "active" | "archived" | "closed" | "deleted";
   setPrimaryPending?: boolean;
   updatePending?: boolean;
+}
+
+function parseAmount(raw: string | null | undefined): number | null {
+  if (raw == null || String(raw).trim() === "") return null;
+  const n = parseFloat(String(raw));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Suggested transfer amount to cover a projected shortfall (e.g. move-before-risk). */
+export function inboundTransferAmount(account: Account): string | undefined {
+  const lowest = parseAmount(account.lowest_projected_balance_30_days);
+  if (lowest != null && lowest < 0) {
+    return String(Math.abs(lowest).toFixed(2));
+  }
+  const sts = parseAmount(account.available_to_spend);
+  if (sts != null && sts < 0) {
+    return String(Math.abs(sts).toFixed(2));
+  }
+  return undefined;
 }
 
 function isCashLike(type: AccountType, role: AccountRole): boolean {
@@ -119,57 +129,6 @@ function isCredit(type: AccountType, role: AccountRole): boolean {
   return type === "CREDIT" || role === "credit_card";
 }
 
-function relLabel(rel: AccountRelationship, account: Account, allAccounts: Account[]): string {
-  const otherId =
-    rel.source_account === account.id ? rel.destination_account : rel.source_account;
-  const other = allAccounts.find((a) => a.id === otherId);
-  const otherName = other ? getEffectiveDisplayName(other) : rel.destination_account_name;
-  if (rel.source_account === account.id) {
-    return `To ${otherName}`;
-  }
-  return `From ${otherName}`;
-}
-
-function paymentAmountPreset(
-  account: Account,
-  preset: "statement" | "minimum" | "current"
-): string | undefined {
-  if (preset === "statement" && account.statement_balance) return account.statement_balance;
-  if (preset === "minimum" && account.minimum_payment_amount) return account.minimum_payment_amount;
-  if (preset === "current" && account.balance_owed) return account.balance_owed;
-  return undefined;
-}
-
-function activeRelationshipsFor(account: Account, relationships: AccountRelationship[]): AccountRelationship[] {
-  const list = Array.isArray(relationships) ? relationships : [];
-  return list.filter(
-    (r) =>
-      r.is_active &&
-      (r.source_account === account.id || r.destination_account === account.id)
-  );
-}
-
-function savingsTargets(account: Account, allAccounts: Account[]): Account[] {
-  return allAccounts.filter(
-    (a) =>
-      a.id !== account.id &&
-      a.household?.id === account.household?.id &&
-      (a.role === "savings" ||
-        a.role === "emergency_fund" ||
-        a.account_type === "SAVINGS")
-  );
-}
-
-function checkingSources(account: Account, allAccounts: Account[]): Account[] {
-  return allAccounts.filter(
-    (a) =>
-      a.id !== account.id &&
-      a.household?.id === account.household?.id &&
-      a.account_type !== "CREDIT" &&
-      (a.account_type === "CHECKING" || a.role === "spending" || a.role === "bills")
-  );
-}
-
 function addMonitoringPrimary(primary: QuickActionDef[]) {
   primary.push({
     id: "view_transactions",
@@ -178,134 +137,51 @@ function addMonitoringPrimary(primary: QuickActionDef[]) {
     tier: "primary",
     tooltip: "View transactions for this account",
   });
-  primary.push({
-    id: "view_forecast",
-    label: "Forecast",
-    icon: LineChart,
-    tier: "primary",
-    tooltip: "View projected balance and upcoming activity",
-  });
 }
 
-function addMoveMoneyPrimary(
+function addTransferMoneyPrimary(
   primary: QuickActionDef[],
   account: Account,
   tooltip?: string
 ) {
   primary.push({
     id: "transfer",
-    label: "Move Money",
+    label: "Transfer Money",
     icon: ArrowLeftRight,
     tier: "primary",
     tooltip: tooltip ?? "Transfer between accounts",
-    payload: { transferFromAccountId: account.id },
   });
 }
 
-function addMakePaymentPrimary(
+function addPaymentPlannerPrimary(
   primary: QuickActionDef[],
   account: Account,
   payload?: QuickActionPayload
 ) {
   primary.push({
-    id: "pay_card",
-    label: "Make Payment",
+    id: "payment_planner",
+    label: "Payment Planner",
     icon: CircleDollarSign,
     tier: "primary",
-    tooltip: "Pay from another account",
+    tooltip: "Payoff timeline, interest, and payment scenarios",
     payload,
   });
 }
 
-function addTransactionSecondary(secondary: QuickActionDef[], account: Account, role: AccountRole, type: AccountType) {
-  if (isCredit(type, role)) {
-    secondary.push({
-      id: "add_purchase",
-      label: "Add Purchase",
-      icon: Receipt,
-      tier: "secondary",
-      tooltip: "Record a charge on this card",
-    });
-  } else if (isInvestment(type, role)) {
-    secondary.push({
-      id: "add_contribution",
-      label: "Add Contribution",
-      icon: Plus,
-      tier: "secondary",
-    });
-  } else {
-    secondary.push({
-      id: "add_transaction",
-      label: "Add Transaction",
-      icon: Plus,
-      tier: "secondary",
-      tooltip: "Record income or expense",
-    });
-  }
-}
-
-function addScheduleSecondary(
-  secondary: QuickActionDef[],
-  account: Account,
-  role: AccountRole,
-  type: AccountType
-) {
-  if (isCredit(type, role) || isLoan(role)) {
-    secondary.push({
-      id: "schedule_payment",
-      label: "Schedule Payment",
-      icon: CalendarClock,
-      tier: "secondary",
-      payload: {
-        recurringDirection: isLoan(role) ? "EXPENSE" : "TRANSFER",
-      },
-    });
-  } else if (isSavingsRole(role, type)) {
-    secondary.push({
-      id: "schedule_savings",
-      label: "Schedule Transfer",
-      icon: CalendarClock,
-      tier: "secondary",
-      payload: { recurringDirection: "TRANSFER" },
-    });
-  } else if (isInvestment(type, role)) {
-    secondary.push({
-      id: "schedule_contribution",
-      label: "Schedule Contribution",
-      icon: CalendarClock,
-      tier: "secondary",
-      payload: { recurringDirection: "EXPENSE" },
-    });
-  } else {
-    secondary.push({
-      id: "schedule",
-      label: "Schedule Payment",
-      icon: CalendarClock,
-      tier: "secondary",
-    });
-  }
-}
-
-function addPlaidSecondary(
+function addReconcileSecondary(
   secondary: QuickActionDef[],
   isPlaid: boolean,
   unmatched: number
 ) {
-  if (!isPlaid) return;
-  secondary.push({
-    id: "import_txns",
-    label: "Import Transactions",
-    icon: Download,
-    tier: "secondary",
-    badge: unmatched > 0 ? unmatched : undefined,
-  });
   secondary.push({
     id: "reconcile",
     label: "Reconcile",
     icon: Scale,
     tier: "secondary",
-    badge: unmatched > 0 ? unmatched : undefined,
-    tooltip: unmatched > 0 ? `${unmatched} unmatched import(s)` : undefined,
+    tooltip:
+      isPlaid && unmatched > 0
+        ? `${unmatched} unmatched import(s)`
+        : "Compare your ledger to your statement balance",
   });
 }
 
@@ -331,20 +207,6 @@ export function buildAccountManagementActions(
       icon: Pencil,
       tier: "secondary",
     });
-    secondary.push({
-      id: "mgmt_archive",
-      label: "Archive",
-      icon: Archive,
-      tier: "secondary",
-      disabled: opts.updatePending,
-    });
-    secondary.push({
-      id: "mgmt_close",
-      label: "Close",
-      icon: XCircle,
-      tier: "secondary",
-      disabled: opts.updatePending,
-    });
   } else if (opts.lifecycle !== "deleted") {
     secondary.push({
       id: "mgmt_restore",
@@ -355,13 +217,17 @@ export function buildAccountManagementActions(
     });
   }
 
-  danger.push({
-    id: "mgmt_clear_ledger",
-    label: "Clear Transactions",
-    icon: Eraser,
-    tier: "secondary",
-    danger: true,
-  });
+  if (opts.lifecycle === "active") {
+    danger.push({
+      id: "mgmt_close",
+      label: "Close Account",
+      icon: XCircle,
+      tier: "secondary",
+      disabled: opts.updatePending,
+      danger: true,
+    });
+  }
+
   danger.push({
     id: "mgmt_delete",
     label: "Delete",
@@ -384,228 +250,43 @@ export function buildAccountQuickActions(
   const health = account.health_status ?? account.risk_status;
   const unmatched = account.health_details?.unmatched_import_count ?? 0;
   const isPlaid = ctx.plaidLinkedAccountIds.has(account.id);
-  const rels = activeRelationshipsFor(account, ctx.relationships);
 
   if (isCredit(type, role)) {
     addMonitoringPrimary(primary);
-    addMakePaymentPrimary(primary, account);
-
-    addTransactionSecondary(secondary, account, role, type);
-    addScheduleSecondary(secondary, account, role, type);
-
-    if (account.statement_balance) {
-      secondary.push({
-        id: "view_statement",
-        label: "View Statement",
-        icon: FileText,
-        tier: "secondary",
-        tooltip: "Statement balance and due date",
-      });
-    }
-
-    if (account.statement_balance) {
-      secondary.push({
-        id: "pay_statement",
-        label: "Pay Statement",
-        icon: Wallet,
-        tier: "secondary",
-        payload: {
-          paymentPreset: "statement",
-          amount: paymentAmountPreset(account, "statement"),
-        },
-      });
-    }
-    if (account.minimum_payment_amount) {
-      secondary.push({
-        id: "pay_minimum",
-        label: "Pay Minimum",
-        icon: Wallet,
-        tier: "secondary",
-        payload: {
-          paymentPreset: "minimum",
-          amount: paymentAmountPreset(account, "minimum"),
-        },
-      });
-    }
-    if (account.balance_owed) {
-      secondary.push({
-        id: "pay_current",
-        label: "Pay Balance",
-        icon: Wallet,
-        tier: "secondary",
-        payload: {
-          paymentPreset: "current",
-          amount: paymentAmountPreset(account, "current"),
-        },
-      });
-    }
-
-    const payFromId = account.autopay_account;
-    if (payFromId) {
-      const src = ctx.allAccounts.find((a) => a.id === payFromId);
-      secondary.push({
-        id: "relationship_transfer",
-        label: src ? `Autopay from ${getEffectiveDisplayName(src)}` : "Autopay linked",
-        icon: ArrowLeftRight,
-        tier: "secondary",
-        disabled: !src,
-        payload: {
-          transferFromAccountId: payFromId,
-          transferToAccountId: account.id,
-          amount: paymentAmountPreset(account, "minimum"),
-        },
-      });
-    } else {
-      secondary.push({
-        id: "link_payment",
-        label: "Link Payment Account",
-        icon: Wallet,
-        tier: "secondary",
-        tooltip: "Set autopay source in account settings",
-      });
-    }
-
-    if (account.utilization_percent != null) {
-      secondary.push({
-        id: "view_utilization",
-        label: "Utilization",
-        icon: TrendingUp,
-        tier: "secondary",
-      });
-    }
-
-    addPlaidSecondary(secondary, isPlaid, unmatched);
+    addPaymentPlannerPrimary(primary, account);
   } else if (isLoan(role)) {
     addMonitoringPrimary(primary);
-    addMakePaymentPrimary(
+    addPaymentPlannerPrimary(
       primary,
       account,
       account.minimum_payment_amount ? { amount: account.minimum_payment_amount } : undefined
     );
-
-    addScheduleSecondary(secondary, account, role, type);
-    addPlaidSecondary(secondary, isPlaid, unmatched);
   } else if (isInvestment(type, role)) {
     addMonitoringPrimary(primary);
-
-    addTransactionSecondary(secondary, account, role, type);
-    addScheduleSecondary(secondary, account, role, type);
-    addPlaidSecondary(secondary, isPlaid, unmatched);
   } else if (isSavingsRole(role, type)) {
     addMonitoringPrimary(primary);
-    addMoveMoneyPrimary(
+    addTransferMoneyPrimary(
       primary,
       account,
       health === "critical" || health === "risk"
         ? (account.health_reason ?? "Account needs attention")
         : undefined
     );
-
-    addTransactionSecondary(secondary, account, role, type);
-    addScheduleSecondary(secondary, account, role, type);
-
-    const sources = checkingSources(account, ctx.allAccounts);
-    for (const src of sources.slice(0, 2)) {
-      secondary.push({
-        id: "relationship_transfer",
-        label: `From ${getEffectiveDisplayName(src)}`,
-        icon: ArrowLeftRight,
-        tier: "secondary",
-        payload: {
-          transferFromAccountId: src.id,
-          transferToAccountId: account.id,
-        },
-      });
-    }
-    addPlaidSecondary(secondary, isPlaid, unmatched);
   } else if (isCashLike(type, role)) {
     addMonitoringPrimary(primary);
-    addMoveMoneyPrimary(
+    addTransferMoneyPrimary(
       primary,
       account,
       health === "critical" || health === "risk"
         ? (account.health_reason ?? "Account needs attention")
         : undefined
     );
-
-    addTransactionSecondary(secondary, account, role, type);
-    addScheduleSecondary(secondary, account, role, type);
-
-    secondary.push({
-      id: "add_income",
-      label: "Add Income",
-      icon: CircleDollarSign,
-      tier: "secondary",
-    });
-
-    const savings = savingsTargets(account, ctx.allAccounts);
-    if (savings.length === 1) {
-      secondary.push({
-        id: "move_to_savings",
-        label: `Move to ${getEffectiveDisplayName(savings[0])}`,
-        icon: PiggyBank,
-        tier: "secondary",
-        payload: { transferToAccountId: savings[0].id },
-      });
-    } else if (savings.length > 1) {
-      secondary.push({
-        id: "move_to_savings",
-        label: "Move to Savings",
-        icon: PiggyBank,
-        tier: "secondary",
-      });
-    }
-
-    const cards = ctx.allAccounts.filter(
-      (a) => a.account_type === "CREDIT" && a.household?.id === account.household?.id
-    );
-    for (const card of cards.slice(0, 2)) {
-      secondary.push({
-        id: "pay_card",
-        label: `Pay ${getEffectiveDisplayName(card)}`,
-        icon: Wallet,
-        tier: "secondary",
-        payload: {
-          transferFromAccountId: account.id,
-          transferToAccountId: card.id,
-          amount: card.minimum_payment_amount ?? card.statement_balance,
-        },
-      });
-    }
-
-    addPlaidSecondary(secondary, isPlaid, unmatched);
   } else {
     addMonitoringPrimary(primary);
-    addMoveMoneyPrimary(primary, account);
-    addTransactionSecondary(secondary, account, role, type);
-    addScheduleSecondary(secondary, account, role, type);
-    addPlaidSecondary(secondary, isPlaid, unmatched);
+    addTransferMoneyPrimary(primary, account);
   }
 
-  for (const rel of rels.slice(0, 3)) {
-    const exists = secondary.some(
-      (a) =>
-        a.id === "relationship_transfer" &&
-        a.payload?.relationshipId === rel.id
-    );
-    if (exists) continue;
-    const from =
-      rel.source_account === account.id ? account.id : rel.source_account;
-    const to =
-      rel.destination_account === account.id ? account.id : rel.destination_account;
-    secondary.push({
-      id: "relationship_transfer",
-      label: relLabel(rel, account, ctx.allAccounts),
-      icon: ArrowLeftRight,
-      tier: "secondary",
-      payload: {
-        relationshipId: rel.id,
-        transferFromAccountId: from,
-        transferToAccountId: to,
-        amount: rel.default_amount ?? undefined,
-      },
-    });
-  }
+  addReconcileSecondary(secondary, isPlaid, unmatched);
 
   const riskDate = account.health_risk_date ?? account.risk_date;
   if (
@@ -614,16 +295,17 @@ export function buildAccountQuickActions(
     account.lowest_projected_balance_30_days != null &&
     parseFloat(account.lowest_projected_balance_30_days) < 0
   ) {
-    const formatted = new Date(riskDate + "T12:00:00").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
+    const formatted = formatDateDisplay(riskDate);
     secondary.unshift({
       id: "move_before_risk",
       label: `Move Money Before ${formatted}`,
       icon: PiggyBank,
       tier: "secondary",
       tooltip: account.health_reason ?? undefined,
+      payload: {
+        transferToAccountId: account.id,
+        amount: inboundTransferAmount(account),
+      },
     });
   }
 

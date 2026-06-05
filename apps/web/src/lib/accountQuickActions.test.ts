@@ -26,7 +26,6 @@ function baseAccount(overrides: Partial<Account> = {}): Account {
 const ctx = (overrides: Partial<QuickActionsContext> = {}): QuickActionsContext => ({
   plaidLinkedAccountIds: new Set<number>(),
   allAccounts: [],
-  relationships: [],
   forecastDays: 30,
   ...overrides,
 });
@@ -42,10 +41,10 @@ function secondaryIds(account: Account, role: Account["role"] = account.role!) {
 }
 
 describe("buildAccountQuickActions", () => {
-  it("shows Open Ledger, Forecast, Move Money for checking/spending", () => {
+  it("shows Open Ledger and Transfer Money for checking/spending", () => {
     const account = baseAccount();
     const labels = primaryLabels(account, "spending");
-    expect(labels).toEqual(["Open Ledger", "Forecast", "Move Money"]);
+    expect(labels).toEqual(["Open Ledger", "Transfer Money"]);
     expect(labels).not.toContain("Add expense");
     expect(labels).not.toContain("Schedule");
   });
@@ -58,14 +57,40 @@ describe("buildAccountQuickActions", () => {
     expect(ids).not.toContain("schedule");
   });
 
-  it("puts Add Transaction and Schedule in overflow for checking", () => {
+  it("does not show Add Transaction or Schedule Payment in overflow", () => {
     const account = baseAccount();
     const ids = secondaryIds(account, "spending");
-    expect(ids).toContain("add_transaction");
-    expect(ids).toContain("schedule");
+    expect(ids).not.toContain("add_transaction");
+    expect(ids).not.toContain("schedule");
+    expect(ids).not.toContain("add_income");
+    expect(ids).not.toContain("move_to_savings");
+    expect(ids).toContain("reconcile");
   });
 
-  it("shows Make Payment instead of Move Money for credit cards", () => {
+  it("does not add relationship shortcuts to checking overflow", () => {
+    const checking = baseAccount({ id: 1, name: "Checking" });
+    const savor = baseAccount({
+      id: 2,
+      name: "Savor",
+      account_type: "CREDIT",
+      role: "credit_card",
+    });
+    const savings = baseAccount({
+      id: 3,
+      name: "Savings",
+      account_type: "SAVINGS",
+      role: "savings",
+    });
+    const { secondary } = buildAccountQuickActions(
+      checking,
+      "spending",
+      ctx({ allAccounts: [checking, savor, savings] })
+    );
+    expect(secondary.some((a) => a.id === "relationship_transfer")).toBe(false);
+    expect(secondary.some((a) => a.id === "pay_card" && a.label.includes("Savor"))).toBe(false);
+  });
+
+  it("shows Payment Planner instead of Transfer Money for credit cards", () => {
     const card = baseAccount({
       id: 2,
       name: "Venture",
@@ -76,21 +101,34 @@ describe("buildAccountQuickActions", () => {
       minimum_payment_amount: "35.00",
     });
     const labels = primaryLabels(card, "credit_card");
-    expect(labels).toContain("Make Payment");
-    expect(labels).not.toContain("Move Money");
-    expect(labels).toEqual(["Open Ledger", "Forecast", "Make Payment"]);
+    expect(labels).toContain("Payment Planner");
+    expect(labels).not.toContain("Transfer Money");
+    expect(labels).toEqual(["Open Ledger", "Payment Planner"]);
   });
 
-  it("puts purchase and schedule payment in overflow for credit cards", () => {
+  it("keeps credit card overflow minimal without purchase, payment, or statement shortcuts", () => {
     const card = baseAccount({
       id: 2,
       account_type: "CREDIT",
       role: "credit_card",
       statement_balance: "400.00",
+      minimum_payment_amount: "35.00",
+      balance_owed: "500.00",
+      utilization_percent: "72.5",
     });
     const ids = secondaryIds(card, "credit_card");
-    expect(ids).toContain("add_purchase");
-    expect(ids).toContain("schedule_payment");
+    expect(ids).toContain("reconcile");
+    expect(ids).not.toContain("add_purchase");
+    expect(ids).not.toContain("schedule_payment");
+    expect(ids).not.toContain("view_statement");
+    expect(ids).not.toContain("pay_statement");
+    expect(ids).not.toContain("pay_minimum");
+    expect(ids).not.toContain("pay_current");
+    expect(ids).not.toContain("payment_planner");
+    expect(ids).not.toContain("link_payment");
+    expect(ids).not.toContain("view_utilization");
+    expect(ids).not.toContain("import_txns");
+    expect(ids).not.toContain("add_transaction");
     expect(ids).not.toContain("schedule");
   });
 
@@ -103,14 +141,16 @@ describe("buildAccountQuickActions", () => {
     });
     const checking = baseAccount({ id: 4, name: "Checking" });
     const labels = primaryLabels(savings, "savings");
-    expect(labels).toEqual(["Open Ledger", "Forecast", "Move Money"]);
+    expect(labels).toEqual(["Open Ledger", "Transfer Money"]);
     const ids = buildAccountQuickActions(savings, "savings", ctx({ allAccounts: [savings, checking] }))
       .secondary.map((a) => a.id);
-    expect(ids).toContain("schedule_savings");
+    expect(ids).toContain("reconcile");
+    expect(ids).not.toContain("schedule_savings");
+    expect(ids).not.toContain("add_transaction");
     expect(ids).not.toContain("add_expense");
   });
 
-  it("shows loan primaries with Make Payment", () => {
+  it("shows loan primaries with Payment Planner", () => {
     const loan = baseAccount({
       id: 5,
       account_type: "LOAN",
@@ -118,23 +158,26 @@ describe("buildAccountQuickActions", () => {
       minimum_payment_amount: "250.00",
     });
     const labels = primaryLabels(loan, "loan");
-    expect(labels).toEqual(["Open Ledger", "Forecast", "Make Payment"]);
+    expect(labels).toEqual(["Open Ledger", "Payment Planner"]);
   });
 
-  it("shows investment primaries without Move Money", () => {
+  it("shows investment primaries without Transfer Money", () => {
     const inv = baseAccount({
       id: 6,
       account_type: "INVESTMENT",
       role: "investment",
     });
     const labels = primaryLabels(inv, "investment");
-    expect(labels).toEqual(["Open Ledger", "Forecast"]);
+    expect(labels).toEqual(["Open Ledger"]);
     const ids = secondaryIds(inv, "investment");
-    expect(ids).toContain("add_contribution");
-    expect(ids).toContain("schedule_contribution");
+    expect(ids).toContain("reconcile");
+    expect(ids).not.toContain("add_contribution");
+    expect(ids).not.toContain("schedule_contribution");
+    expect(ids).not.toContain("add_transaction");
+    expect(ids).not.toContain("schedule");
   });
 
-  it("shows reconcile/import with badge when plaid-linked and unmatched imports", () => {
+  it("shows reconcile for all accounts, with plaid unmatched hint when linked", () => {
     const account = baseAccount({
       health_details: { unmatched_import_count: 3 },
     });
@@ -144,45 +187,50 @@ describe("buildAccountQuickActions", () => {
       ctx({ plaidLinkedAccountIds: new Set([1]), allAccounts: [account] })
     );
     const reconcile = secondary.find((a) => a.id === "reconcile");
-    expect(reconcile?.badge).toBe(3);
-    expect(secondary.some((a) => a.id === "import_txns")).toBe(true);
+    expect(reconcile?.badge).toBeUndefined();
+    expect(reconcile?.tooltip).toBe("3 unmatched import(s)");
+    expect(secondary.some((a) => a.id === "import_txns")).toBe(false);
   });
 
-  it("prefills relationship transfer from outgoing link", () => {
-    const checking = baseAccount({ id: 1 });
-    const savings = baseAccount({ id: 2, account_type: "SAVINGS", role: "savings", name: "Save" });
-    const { secondary } = buildAccountQuickActions(
-      checking,
-      "spending",
-      ctx({
-        allAccounts: [checking, savings],
-        relationships: [
-          {
-            id: 99,
-            source_account: 1,
-            source_account_name: "Checking",
-            destination_account: 2,
-            destination_account_name: "Save",
-            relationship_type: "savings_funding",
-            relationship_type_display: "Savings",
-            frequency: "monthly",
-            is_active: true,
-            default_amount: "200.00",
-          },
-        ],
-      })
-    );
-    const relAction = secondary.find((a) => a.payload?.relationshipId === 99);
-    expect(relAction?.payload?.transferToAccountId).toBe(2);
-    expect(relAction?.payload?.amount).toBe("200.00");
+  it("shows reconcile for manual accounts without plaid link", () => {
+    const card = baseAccount({
+      id: 2,
+      account_type: "CREDIT",
+      role: "credit_card",
+    });
+    const { secondary } = buildAccountQuickActions(card, "credit_card", ctx({ allAccounts: [card] }));
+    const reconcile = secondary.find((a) => a.id === "reconcile");
+    expect(reconcile?.label).toBe("Reconcile");
+    expect(reconcile?.tooltip).toBe("Compare your ledger to your statement balance");
   });
 
-  it("preselects source account on Move Money primary action", () => {
+  it("Transfer Money primary has no preset accounts", () => {
     const account = baseAccount({ id: 7 });
     const { primary } = buildAccountQuickActions(account, "spending", ctx({ allAccounts: [account] }));
-    const move = primary.find((a) => a.id === "transfer");
-    expect(move?.label).toBe("Move Money");
-    expect(move?.payload?.transferFromAccountId).toBe(7);
+    const transfer = primary.find((a) => a.id === "transfer");
+    expect(transfer?.label).toBe("Transfer Money");
+    expect(transfer?.payload).toBeUndefined();
+  });
+
+  it("move before risk defaults to account as destination", () => {
+    const account = baseAccount({
+      id: 7,
+      lowest_projected_balance_30_days: "-37.06",
+      available_to_spend: "-37.06",
+      health_risk_date: "2026-06-17",
+    });
+    const { primary, secondary } = buildAccountQuickActions(
+      account,
+      "spending",
+      ctx({ allAccounts: [account] })
+    );
+    const transfer = primary.find((a) => a.id === "transfer");
+    expect(transfer?.label).toBe("Transfer Money");
+    expect(transfer?.payload).toBeUndefined();
+    const beforeRisk = secondary.find((a) => a.id === "move_before_risk");
+    expect(beforeRisk?.payload?.transferToAccountId).toBe(7);
+    expect(beforeRisk?.payload?.amount).toBe("37.06");
+    expect(beforeRisk?.payload?.transferFromAccountId).toBeUndefined();
   });
 });
 
@@ -193,8 +241,11 @@ describe("buildAccountManagementActions", () => {
       lifecycle: "active",
     });
     expect(secondary.some((a) => a.id === "mgmt_edit")).toBe(true);
-    expect(secondary.some((a) => a.id === "mgmt_archive")).toBe(true);
-    expect(danger.map((a) => a.id)).toEqual(["mgmt_clear_ledger", "mgmt_delete"]);
+    expect(secondary.some((a) => a.id === "mgmt_archive")).toBe(false);
+    expect(secondary.some((a) => a.id === "mgmt_close")).toBe(false);
+    const closeAction = danger.find((a) => a.id === "mgmt_close");
+    expect(closeAction?.label).toBe("Close Account");
+    expect(danger.map((a) => a.id)).toEqual(["mgmt_close", "mgmt_delete"]);
     expect(danger.every((a) => a.danger)).toBe(true);
   });
 });

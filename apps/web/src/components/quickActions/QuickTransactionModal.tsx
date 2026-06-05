@@ -3,6 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatAccountOptionLabel, getEffectiveDisplayName } from "@budget-app/shared";
 import type { Account, Category } from "@budget-app/shared";
 import { createTransaction, createTransfer, listCategories } from "@budget-app/api-client";
+import {
+  amountForPaymentPlanOption,
+  type PaymentPlanOptionId,
+} from "../../lib/paymentPlannerDisplay";
+import { isTransferCategoryName } from "../transactions/transactionsLedgerUtils";
+import PaymentPlannerSection from "./PaymentPlannerSection";
 
 export type QuickTransactionMode =
   | "expense"
@@ -19,6 +25,9 @@ export type QuickTransactionPreset = {
   transferFromAccountId?: number;
   defaultAmount?: string;
   defaultPayee?: string;
+  defaultDate?: string;
+  /** Prefills payment planner radio selection (credit card / loan payments). */
+  paymentPlanOption?: PaymentPlanOptionId;
 };
 
 type Props = {
@@ -34,6 +43,14 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function accountHouseholdId(account: Account | undefined): number | undefined {
+  if (!account) return undefined;
+  const h = account.household as Account["household"] | number | undefined;
+  if (typeof h === "object" && h != null && "id" in h) return h.id;
+  if (typeof h === "number") return h;
+  return undefined;
+}
+
 function titleForMode(mode: QuickTransactionMode): string {
   switch (mode) {
     case "expense":
@@ -45,7 +62,7 @@ function titleForMode(mode: QuickTransactionMode): string {
     case "transfer":
       return "Transfer money";
     case "credit_card_payment":
-      return "Pay credit card";
+      return "Record credit card payment";
     case "contribution":
       return "Add contribution";
     default:
@@ -62,7 +79,7 @@ export default function QuickTransactionModal({
 }: Props) {
   const queryClient = useQueryClient();
   const account = accounts.find((a) => a.id === preset?.accountId);
-  const householdId = account?.household?.id;
+  const householdId = accountHouseholdId(account);
 
   const { data: categoriesData } = useQuery({
     queryKey: ["categories", "quick-txn", householdId],
@@ -82,46 +99,129 @@ export default function QuickTransactionModal({
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [transferToId, setTransferToId] = useState<number | "">("");
   const [transferFromId, setTransferFromId] = useState<number | "">("");
+  const [paymentPlanOption, setPaymentPlanOption] =
+    useState<PaymentPlanOptionId>("statement_balance");
   const [error, setError] = useState<string | null>(null);
 
-  const isTransfer =
-    preset?.mode === "transfer" ||
-    preset?.mode === "credit_card_payment";
+  const isDedicatedTransfer =
+    preset?.mode === "transfer" || preset?.mode === "credit_card_payment";
   const isPayment = preset?.mode === "credit_card_payment";
+  const isBankTransfer = preset?.mode === "transfer";
 
   const transferCategory = useMemo(() => {
     const name = isPayment ? "Credit Card Payment" : "Bank Transfer";
     return categories.find((c: Category) => c.name === name) ?? null;
   }, [categories, isPayment]);
 
-  const counterpartyAccounts = useMemo(() => {
+  const selectedCategory = useMemo(
+    () => (categoryId ? categories.find((c: Category) => c.id === categoryId) : null),
+    [categories, categoryId]
+  );
+
+  const categoryDrivenTransfer =
+    !isDedicatedTransfer && isTransferCategoryName(selectedCategory?.name);
+
+  const bankTransferAccounts = useMemo(() => {
     if (!account) return [];
+    const hid = accountHouseholdId(account);
+    return accounts.filter(
+      (a) => accountHouseholdId(a) === hid && a.account_type !== "CREDIT"
+    );
+  }, [account, accounts]);
+
+  const debtPaymentAccounts = useMemo(() => {
+    if (!account) return [];
+    const hid = accountHouseholdId(account);
     return accounts.filter(
       (a) =>
-        a.id !== account.id &&
-        a.household?.id === account.household?.id &&
-        (isPayment ? a.account_type === "CREDIT" : true)
+        accountHouseholdId(a) === hid &&
+        (a.account_type === "CREDIT" || a.account_type === "LOAN")
     );
-  }, [account, accounts, isPayment]);
+  }, [account, accounts]);
+
+  const categoryTransferDestinations = useMemo(() => {
+    if (!account || !preset) return [];
+    const hid = accountHouseholdId(account);
+    const isCcPayment = selectedCategory?.name === "Credit Card Payment";
+    return accounts.filter((a) => {
+      if (accountHouseholdId(a) !== hid) return false;
+      if (a.id === preset.accountId) return false;
+      if (isCcPayment) return a.account_type === "CREDIT";
+      return true;
+    });
+  }, [account, accounts, preset, selectedCategory?.name]);
+
+  const fromAccount = accounts.find((a) => a.id === transferFromId);
+  const toAccount = accounts.find((a) => a.id === transferToId);
+  const paymentCard = isPayment ? toAccount : null;
+
+  function applyPaymentPlanOption(option: PaymentPlanOptionId, card: Account | undefined) {
+    setPaymentPlanOption(option);
+    if (option === "custom_amount" || !card) return;
+    const next = amountForPaymentPlanOption(card, option);
+    if (next) setAmount(next);
+  }
 
   useEffect(() => {
-    if (!open || !preset) return;
-    setDate(todayStr());
+    if (!open || !preset || !account) return;
+    setDate(preset.defaultDate && preset.defaultDate >= todayStr() ? preset.defaultDate : todayStr());
     setPayee(preset.defaultPayee ?? "");
     setAmount(preset.defaultAmount ?? "");
     setError(null);
     setCategoryId(transferCategory?.id ?? "");
+    setPaymentPlanOption(
+      preset.paymentPlanOption ??
+        (preset.defaultAmount ? "custom_amount" : "statement_balance")
+    );
+
     if (preset.mode === "credit_card_payment") {
-      setTransferFromId(preset.transferFromAccountId ?? preset.accountId);
-      setTransferToId(preset.transferToAccountId ?? "");
+      const validFrom =
+        preset.transferFromAccountId != null &&
+        bankTransferAccounts.some((a) => a.id === preset.transferFromAccountId);
+      setTransferFromId(
+        validFrom
+          ? preset.transferFromAccountId!
+          : (bankTransferAccounts[0]?.id ?? "")
+      );
+      const validTo =
+        preset.transferToAccountId != null &&
+        debtPaymentAccounts.some((a) => a.id === preset.transferToAccountId);
+      setTransferToId(
+        validTo ? preset.transferToAccountId! : (debtPaymentAccounts[0]?.id ?? "")
+      );
     } else if (preset.mode === "transfer") {
-      setTransferFromId(preset.transferFromAccountId ?? preset.accountId);
+      const fundingInbound =
+        preset.transferToAccountId != null &&
+        preset.transferToAccountId === preset.accountId &&
+        preset.transferFromAccountId == null;
+      const defaultFrom =
+        preset.transferFromAccountId ??
+        (fundingInbound
+          ? ""
+          : account.account_type !== "CREDIT"
+            ? preset.accountId
+            : "");
+      setTransferFromId(defaultFrom);
       setTransferToId(preset.transferToAccountId ?? "");
     } else {
       setTransferFromId("");
       setTransferToId("");
     }
-  }, [open, preset, transferCategory?.id]);
+  }, [
+    open,
+    preset,
+    account,
+    transferCategory?.id,
+    bankTransferAccounts,
+    debtPaymentAccounts,
+  ]);
+
+  useEffect(() => {
+    if (!open || !isPayment || !paymentCard) return;
+    if (paymentPlanOption === "custom_amount") return;
+    const next = amountForPaymentPlanOption(paymentCard, paymentPlanOption);
+    if (next) setAmount(next);
+  }, [open, isPayment, paymentCard?.id, paymentPlanOption]);
 
   const createMu = useMutation({
     mutationFn: createTransaction,
@@ -153,10 +253,37 @@ export default function QuickTransactionModal({
     const n = parseFloat(amount);
     if (!amount.trim() || Number.isNaN(n) || n === 0) return null;
     const abs = Math.abs(n);
-    if (isTransfer) return -abs;
+    if (isDedicatedTransfer || categoryDrivenTransfer) return -abs;
     if (preset!.mode === "income" || preset!.mode === "contribution") return abs;
     if (preset!.mode === "purchase" && account!.account_type === "CREDIT") return -abs;
     return -abs;
+  }
+
+  function submitTransfer(from: number, to: number, signed: number) {
+    if (!from) {
+      setError("Select a source account.");
+      return;
+    }
+    if (!to) {
+      setError("Select a destination account.");
+      return;
+    }
+    if (from === to) {
+      setError("Choose two different accounts.");
+      return;
+    }
+    transferMu.mutate({
+      from_account: from,
+      to_account: to,
+      amount: String(Math.abs(signed)),
+      date,
+      payee:
+        payee.trim() ||
+        (isPayment || selectedCategory?.name === "Credit Card Payment"
+          ? "Credit card payment"
+          : "Transfer"),
+      from_category_id: transferCategory?.id ?? (categoryId || null),
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -169,21 +296,13 @@ export default function QuickTransactionModal({
       return;
     }
 
-    if (isTransfer) {
-      const from = (transferFromId || preset.accountId) as number;
-      const to = transferToId as number;
-      if (!to) {
-        setError("Select a destination account.");
-        return;
-      }
-      transferMu.mutate({
-        from_account: from,
-        to_account: to,
-        amount: String(Math.abs(signed)),
-        date,
-        payee: payee.trim() || (isPayment ? "Credit card payment" : "Transfer"),
-        from_category_id: transferCategory?.id ?? (categoryId || null),
-      });
+    if (isDedicatedTransfer) {
+      submitTransfer(transferFromId as number, transferToId as number, signed);
+      return;
+    }
+
+    if (categoryDrivenTransfer) {
+      submitTransfer(preset.accountId, transferToId as number, signed);
       return;
     }
 
@@ -197,6 +316,7 @@ export default function QuickTransactionModal({
   }
 
   const pending = createMu.isPending || transferMu.isPending;
+  const isCcPaymentCategory = selectedCategory?.name === "Credit Card Payment";
 
   return (
     <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
@@ -215,13 +335,31 @@ export default function QuickTransactionModal({
             Close
           </button>
         </div>
-        <p className="px-4 pt-2 text-sm text-gray-600">
-          {getEffectiveDisplayName(account)}
-          {isTransfer && transferToId
-            ? ` → ${getEffectiveDisplayName(accounts.find((a) => a.id === transferToId)!)}`
-            : ""}
-        </p>
-        <form onSubmit={handleSubmit} className="p-4 space-y-3">
+        {isBankTransfer && fromAccount && toAccount ? (
+          <p className="px-4 pt-2 text-sm text-gray-600">
+            {getEffectiveDisplayName(fromAccount)} → {getEffectiveDisplayName(toAccount)}
+          </p>
+        ) : isPayment && fromAccount && toAccount ? (
+          <p className="px-4 pt-2 text-sm text-gray-600">
+            {getEffectiveDisplayName(fromAccount)} → {getEffectiveDisplayName(toAccount)}
+          </p>
+        ) : null}
+        {isPayment && paymentCard ? (
+          <div className="px-4 pt-2">
+            <PaymentPlannerSection
+              card={paymentCard}
+              accounts={accounts}
+              planOption={paymentPlanOption}
+              onPlanOptionChange={(opt) => applyPaymentPlanOption(opt, paymentCard)}
+            />
+          </div>
+        ) : null}
+        {!isPayment && categoryDrivenTransfer && toAccount ? (
+          <p className="px-4 pt-2 text-sm text-gray-600">
+            {getEffectiveDisplayName(account)} → {getEffectiveDisplayName(toAccount)}
+          </p>
+        ) : null}
+        <form onSubmit={handleSubmit} className="p-4 space-y-3 border-t border-gray-100">
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <div>
             <label className="block text-sm font-medium text-gray-700">Date</label>
@@ -255,12 +393,15 @@ export default function QuickTransactionModal({
               required
             />
           </div>
-          {!isTransfer ? (
+          {!isDedicatedTransfer ? (
             <div>
               <label className="block text-sm font-medium text-gray-700">Category</label>
               <select
                 value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : "")}
+                onChange={(e) => {
+                  setCategoryId(e.target.value ? Number(e.target.value) : "");
+                  setTransferToId("");
+                }}
                 className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
               >
                 <option value="">None</option>
@@ -274,42 +415,39 @@ export default function QuickTransactionModal({
                   ))}
               </select>
             </div>
-          ) : (
+          ) : null}
+          {isBankTransfer ? (
             <>
-              {preset.mode === "credit_card_payment" ? (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Pay from</label>
-                  <select
-                    value={transferFromId}
-                    onChange={(e) => setTransferFromId(Number(e.target.value))}
-                    className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    {accounts
-                      .filter(
-                        (a) =>
-                          a.account_type !== "CREDIT" &&
-                          a.household?.id === account.household?.id
-                      )
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {formatAccountOptionLabel(a)}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : null}
               <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  {isPayment ? "Credit card" : "To account"}
-                </label>
+                <label className="block text-sm font-medium text-gray-700">From account</label>
                 <select
-                  value={transferToId}
-                  onChange={(e) => setTransferToId(Number(e.target.value))}
+                  value={transferFromId}
+                  onChange={(e) =>
+                    setTransferFromId(e.target.value ? Number(e.target.value) : "")
+                  }
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   required
                 >
                   <option value="">Select account</option>
-                  {counterpartyAccounts.map((a) => (
+                  {bankTransferAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {formatAccountOptionLabel(a)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">To account</label>
+                <select
+                  value={transferToId}
+                  onChange={(e) =>
+                    setTransferToId(e.target.value ? Number(e.target.value) : "")
+                  }
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">Select account</option>
+                  {bankTransferAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {formatAccountOptionLabel(a)}
                     </option>
@@ -317,7 +455,79 @@ export default function QuickTransactionModal({
                 </select>
               </div>
             </>
-          )}
+          ) : null}
+          {isPayment ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Pay from</label>
+                <select
+                  value={transferFromId}
+                  onChange={(e) =>
+                    setTransferFromId(e.target.value ? Number(e.target.value) : "")
+                  }
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">Select account</option>
+                  {bankTransferAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {formatAccountOptionLabel(a)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Credit card</label>
+                <select
+                  value={transferToId}
+                  onChange={(e) => {
+                    const id = e.target.value ? Number(e.target.value) : "";
+                    setTransferToId(id);
+                    if (id && paymentPlanOption !== "custom_amount") {
+                      const card = debtPaymentAccounts.find((a) => a.id === id);
+                      if (card) {
+                        const next = amountForPaymentPlanOption(card, paymentPlanOption);
+                        if (next) setAmount(next);
+                      }
+                    }
+                  }}
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">Select card</option>
+                  {debtPaymentAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {formatAccountOptionLabel(a)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : null}
+          {categoryDrivenTransfer ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                {isCcPaymentCategory ? "Credit card" : "Transfer to"}
+              </label>
+              <select
+                value={transferToId}
+                onChange={(e) =>
+                  setTransferToId(e.target.value ? Number(e.target.value) : "")
+                }
+                className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                required
+              >
+                <option value="">
+                  {isCcPaymentCategory ? "Select card" : "Select account"}
+                </option>
+                {categoryTransferDestinations.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {formatAccountOptionLabel(a)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="flex gap-2 justify-end pt-2">
             <button
               type="button"
@@ -332,7 +542,7 @@ export default function QuickTransactionModal({
               disabled={pending}
               className="py-2 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
             >
-              {pending ? "Saving…" : "Save"}
+              {pending ? "Saving…" : isPayment ? "Record payment" : "Save"}
             </button>
           </div>
         </form>

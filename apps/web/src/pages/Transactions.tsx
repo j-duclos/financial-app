@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
 import type { Transaction } from "@budget-app/shared";
 import {
@@ -23,28 +23,36 @@ import {
 } from "@budget-app/api-client";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
-import TodayCard from "../components/transactions/TodayCard";
 import PastSection from "../components/transactions/PastSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
-import AddTransactionModal from "../components/transactions/AddTransactionModal";
+import InlineAddRow from "../components/transactions/InlineAddRow";
 import MaintenanceMenu from "../components/transactions/MaintenanceMenu";
-import ViewModeToggle from "../components/transactions/ViewModeToggle";
 import {
   todayStr,
   formatDateDisplay,
   addMonths,
-  addDaysToIsoDate,
-  maxIsoDate,
   creditOwedAsOfDateFromTimeline,
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
   splitLedgerSections,
+  timelineHasAccountRows,
   isTransferCategoryName,
-  TIME_FILTER_MONTHS,
+  accountLedgerDisplayBalance,
+  timelineRangeForFilter,
+  projectionTimelineRangeForAsOf,
   type TimeFilter,
-  type ViewMode,
 } from "../components/transactions/transactionsLedgerUtils";
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+import { accountLifecycleStatus } from "../lib/accountOrganization";
 
 export type { TimeFilter };
 
@@ -52,6 +60,10 @@ type TransactionsLocationState = {
   accountId?: number;
   focus?: string;
   focusPlaid?: boolean;
+  prefillDate?: string;
+  prefillPayee?: string;
+  prefillAmount?: string;
+  fromBillChecklist?: boolean;
 };
 
 export default function Transactions() {
@@ -62,25 +74,9 @@ export default function Transactions() {
   const [accountId, setAccountId] = useState<number | "">("");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("3m");
   const hasSetInitialAccount = useRef(false);
-  const pastScrollRef = useRef<HTMLDivElement>(null);
+  const hasAppliedBillPrefill = useRef(false);
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
-  useEffect(() => {
-    if (hasSetInitialAccount.current) return;
-    if (navState?.accountId != null) {
-      setAccountId(navState.accountId);
-      hasSetInitialAccount.current = true;
-      if (navState.focus === "view_upcoming") {
-        setLedgerPanelFocus("future");
-      }
-      return;
-    }
-    const defaultId = profile?.default_account;
-    if (defaultId != null) {
-      setAccountId(Number(defaultId));
-      hasSetInitialAccount.current = true;
-    }
-  }, [profile?.default_account, navState?.accountId]);
 
   const [inlineRow, setInlineRow] = useState({
     date: todayStr(),
@@ -98,12 +94,9 @@ export default function Transactions() {
   const [payoffResult, setPayoffResult] = useState<PayoffProjection | null>(null);
   const [payoffError, setPayoffError] = useState<string | null>(null);
   const [payoffLoading, setPayoffLoading] = useState(false);
-  /** split = default heights; past = maximize past (future collapsed); future = maximize future (past collapsed) */
-  const [ledgerPanelFocus, setLedgerPanelFocus] = useState<"split" | "past" | "future">("split");
+  const [pastExpanded, setPastExpanded] = useState(true);
+  const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("timeline");
-  const [addModalOpen, setAddModalOpen] = useState(false);
-  const [householdProjectionOpen, setHouseholdProjectionOpen] = useState(true);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [orphanCleanupMessage, setOrphanCleanupMessage] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
@@ -115,24 +108,41 @@ export default function Transactions() {
     direction: "OUTFLOW" as "INFLOW" | "OUTFLOW",
     transfer_to_account_id: "" as number | "",
   });
+  const debouncedInlineDate = useDebouncedValue(inlineRow.date, 450);
+  const debouncedEditDate = useDebouncedValue(editForm.date, 450);
   const queryClient = useQueryClient();
 
-  const months = TIME_FILTER_MONTHS[timeFilter];
-  const timelineStart = useMemo(() => addMonths(-months), [months]);
-  const timelineEnd = useMemo(() => addMonths(months), [months]);
+  const { start: timelineStart, end: timelineEnd } = useMemo(
+    () => timelineRangeForFilter(timeFilter),
+    [timeFilter]
+  );
 
   const { data: txnsData } = useQuery({
-    queryKey: ["transactions", { account: accountId || undefined, page_size: 5000 }],
+    queryKey: [
+      "transactions",
+      { account: accountId || undefined, date_after: timelineStart, date_before: timelineEnd },
+    ],
     queryFn: () =>
       listTransactions({
-        ...(accountId ? { account: accountId as number, page_size: 5000 } : {}),
+        ...(accountId
+          ? {
+              account: accountId as number,
+              date_after: timelineStart,
+              date_before: timelineEnd,
+              page_size: 2000,
+            }
+          : {}),
       }),
-    enabled: !!accountId,
-    staleTime: 0,
-    /** Avoid showing another account’s cached ledger after switching back (stale inactive queries). */
-    refetchOnMount: "always",
+    enabled: !!accountId && !!timelineStart && !!timelineEnd,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
-  const { data: timelineData } = useQuery({
+  const {
+    data: timelineData,
+    isFetching: timelineFetching,
+    isError: timelineError,
+  } = useQuery({
     queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr()],
     queryFn: () =>
       getTimeline({
@@ -142,20 +152,32 @@ export default function Transactions() {
         account_id: typeof accountId === "number" ? accountId : undefined,
       }),
     enabled: typeof accountId === "number",
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
   const { data: accountData } = useQuery({
+    queryKey: ["account", accountId, "ledger"],
+    queryFn: () => getAccount(accountId as number, true),
+    enabled: !!accountId,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+  const { data: accountForecastData } = useQuery({
     queryKey: ["account", accountId, "forecast", "health"],
     queryFn: () =>
       getAccount(accountId as number, true, { forecast_summary: true, health: true, days: 30 }),
-    enabled: !!accountId,
-    staleTime: 0,
+    enabled: !!accountId && !!accountData,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
   });
   const { data: accountsData } = useQuery({
-    queryKey: ["accounts"],
-    queryFn: () => listAccounts(),
+    queryKey: ["accounts", "transactions-picker"],
+    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
     staleTime: 0,
+    refetchOnMount: "always",
   });
   const { data: categoriesData } = useQuery({
     queryKey: ["categories", "transactions", accountData?.household?.id ?? "all"],
@@ -169,8 +191,74 @@ export default function Transactions() {
   });
 
   const transactions = txnsData?.results ?? [];
-  const account = accountData;
-  const accounts = accountsData?.results ?? [];
+  const account = useMemo(() => {
+    if (!accountData) return accountForecastData;
+    if (!accountForecastData) return accountData;
+    return { ...accountData, ...accountForecastData };
+  }, [accountData, accountForecastData]);
+
+  const [loadHouseholdWarnings, setLoadHouseholdWarnings] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setLoadHouseholdWarnings(true), 3000);
+    return () => window.clearTimeout(t);
+  }, []);
+  const accounts = useMemo(() => {
+    const rows = accountsData?.results ?? [];
+    return rows.filter((a) => accountLifecycleStatus(a) === "active");
+  }, [accountsData?.results]);
+
+  useEffect(() => {
+    if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {
+      setAccountId("");
+      hasSetInitialAccount.current = false;
+    }
+  }, [accountId, accounts]);
+
+  useEffect(() => {
+    if (hasSetInitialAccount.current || accounts.length === 0) return;
+    if (navState?.accountId != null) {
+      const navId = Number(navState.accountId);
+      if (accounts.some((a) => a.id === navId)) {
+        setAccountId(navId);
+        hasSetInitialAccount.current = true;
+        if (navState.focus === "view_upcoming") {
+          setForecastExpanded(true);
+          setPastExpanded(false);
+        }
+      }
+      return;
+    }
+    const defaultId = profile?.default_account;
+    const defaultActive =
+      defaultId != null && accounts.some((a) => a.id === Number(defaultId))
+        ? Number(defaultId)
+        : null;
+    setAccountId(defaultActive ?? accounts[0].id);
+    hasSetInitialAccount.current = true;
+  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts]);
+
+  useEffect(() => {
+    if (hasAppliedBillPrefill.current || accountId === "") return;
+    if (!navState?.prefillDate && !navState?.prefillPayee) return;
+    const amtRaw = navState.prefillAmount ? parseFloat(navState.prefillAmount) : NaN;
+    const outflowAmt = Number.isFinite(amtRaw) ? String(-Math.abs(amtRaw)) : "";
+    setInlineRow((row) => ({
+      ...row,
+      date: navState.prefillDate ?? row.date,
+      payee: navState.prefillPayee ?? row.payee,
+      amount: outflowAmt || row.amount,
+      direction: "OUTFLOW",
+    }));
+    const due = navState.prefillDate ?? todayStr();
+    if (due > todayStr()) {
+      setForecastExpanded(true);
+      setPastExpanded(false);
+    } else {
+      setPastExpanded(true);
+    }
+    hasAppliedBillPrefill.current = true;
+  }, [accountId, navState?.prefillDate, navState?.prefillPayee, navState?.prefillAmount]);
+
   const categories = categoriesData?.results ?? [];
   const categoriesForDropdown = useMemo(() => {
     const sorted = [...categories].sort((a, b) =>
@@ -204,23 +292,32 @@ export default function Transactions() {
       ? inlineRow.transfer_to_account_id
       : null;
 
-  const inlineCardTimelineEnd = useMemo(
-    () =>
-      inlineRow.date ? addDaysToIsoDate(maxIsoDate(inlineRow.date, todayStr()), 450) : addDaysToIsoDate(todayStr(), 450),
-    [inlineRow.date]
+  const inlineProjectionRange = useMemo(
+    () => (debouncedInlineDate ? projectionTimelineRangeForAsOf(debouncedInlineDate) : null),
+    [debouncedInlineDate]
   );
 
   const { data: inlineCardTimelineData, isFetching: inlineCardTimelineLoading } = useQuery({
-    queryKey: ["timeline", "card-projection", inlinePayToCardAccountId, inlineRow.date, inlineCardTimelineEnd, todayStr()],
-    queryFn: () =>
-      getTimeline({
-        start: "2010-01-01",
-        end: inlineCardTimelineEnd,
-        as_of: todayStr(),
+    queryKey: [
+      "timeline",
+      "card-projection",
+      inlinePayToCardAccountId,
+      inlineProjectionRange?.start,
+      inlineProjectionRange?.end,
+      inlineProjectionRange?.as_of,
+    ],
+    queryFn: () => {
+      const range = inlineProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: inlinePayToCardAccountId!,
-      }),
-    enabled: inlinePayToCardAccountId != null && !!inlineRow.date,
-    staleTime: 20_000,
+      });
+    },
+    enabled: inlinePayToCardAccountId != null && inlineProjectionRange != null,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const inlineOwedAsOfPaymentDate = useMemo(() => {
@@ -252,19 +349,22 @@ export default function Transactions() {
       "timeline",
       "bank-dest-inline",
       inlineBankTransferDestId,
-      inlineRow.date,
-      inlineCardTimelineEnd,
-      todayStr(),
+      inlineProjectionRange?.start,
+      inlineProjectionRange?.end,
+      inlineProjectionRange?.as_of,
     ],
-    queryFn: () =>
-      getTimeline({
-        start: "2010-01-01",
-        end: inlineCardTimelineEnd,
-        as_of: todayStr(),
+    queryFn: () => {
+      const range = inlineProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: inlineBankTransferDestId!,
-      }),
-    enabled: inlineBankTransferDestId != null && !!inlineRow.date,
-    staleTime: 20_000,
+      });
+    },
+    enabled: inlineBankTransferDestId != null && inlineProjectionRange != null,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const inlineBankDestBalanceBefore = useMemo(() => {
@@ -310,9 +410,17 @@ export default function Transactions() {
     editSourceAccount != null &&
     String(editSourceAccount.account_type ?? "").toUpperCase() === "CREDIT" &&
     editForm.direction === "INFLOW";
+  /** Incoming leg of an existing two-sided transfer — destination is chosen on the outflow row only. */
+  const editIsTransferInflowLeg =
+    editForm.direction === "INFLOW" &&
+    Boolean(
+      editing &&
+        ((editing as { linked_transaction_id?: number | null }).linked_transaction_id != null ||
+          editIsLinkedTransfer)
+    );
   /** “Payment to” / “Transfer to” only applies when money is leaving another account toward a destination — not when editing the card side of a payment. */
   const hideEditTransferToSelector =
-    editIsCreditCardInflow &&
+    (editIsCreditCardInflow || editIsTransferInflowLeg) &&
     (editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name));
   const editTransferCounterparty = editing
     ? ((editing as { transfer_to_account?: { id?: number; name?: string } | null }).transfer_to_account ?? null)
@@ -334,6 +442,7 @@ export default function Transactions() {
   }, [editing, account, accounts, editForm.account_id, editForm.category_id, editCategory?.name]);
   const showEditTransferToSelector =
     Boolean(editing) &&
+    editForm.direction === "OUTFLOW" &&
     editTransferToAccounts.length > 0 &&
     (editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name)) &&
     !hideEditTransferToSelector;
@@ -377,10 +486,9 @@ export default function Transactions() {
     return s;
   }, [editing]);
 
-  const editCardTimelineEnd = useMemo(
-    () =>
-      editForm.date ? addDaysToIsoDate(maxIsoDate(editForm.date, todayStr()), 450) : addDaysToIsoDate(todayStr(), 450),
-    [editForm.date]
+  const editProjectionRange = useMemo(
+    () => (debouncedEditDate ? projectionTimelineRangeForAsOf(debouncedEditDate) : null),
+    [debouncedEditDate]
   );
 
   const { data: editCardTimelineData, isFetching: editCardTimelineLoading } = useQuery({
@@ -388,20 +496,23 @@ export default function Transactions() {
       "timeline",
       "card-projection",
       editPayToCardId,
-      editForm.date,
-      editCardTimelineEnd,
-      todayStr(),
+      editProjectionRange?.start,
+      editProjectionRange?.end,
+      editProjectionRange?.as_of,
       editing?.id,
     ],
-    queryFn: () =>
-      getTimeline({
-        start: "2010-01-01",
-        end: editCardTimelineEnd,
-        as_of: todayStr(),
+    queryFn: () => {
+      const range = editProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: editPayToCardId!,
-      }),
-    enabled: editPayToCardId != null && !!editForm.date,
-    staleTime: 20_000,
+      });
+    },
+    enabled: editPayToCardId != null && editProjectionRange != null,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const editOwedAsOfPaymentDate = useMemo(() => {
@@ -419,20 +530,23 @@ export default function Transactions() {
       "timeline",
       "bank-dest-projection",
       editBankTransferDestId,
-      editForm.date,
-      editCardTimelineEnd,
-      todayStr(),
+      editProjectionRange?.start,
+      editProjectionRange?.end,
+      editProjectionRange?.as_of,
       editing?.id,
     ],
-    queryFn: () =>
-      getTimeline({
-        start: "2010-01-01",
-        end: editCardTimelineEnd,
-        as_of: todayStr(),
+    queryFn: () => {
+      const range = editProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: editBankTransferDestId!,
-      }),
-    enabled: editBankTransferDestId != null && !!editForm.date,
-    staleTime: 20_000,
+      });
+    },
+    enabled: editBankTransferDestId != null && editProjectionRange != null,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const editBankDestBalanceExcludingTransfer = useMemo(() => {
@@ -505,9 +619,10 @@ export default function Transactions() {
         as_of: todayStr(),
         household_id: householdId ?? undefined,
       }),
-    enabled: !!householdId && !!timelineStart && !!timelineEnd,
-    staleTime: 0,
-    refetchOnMount: "always",
+    enabled: !!householdId && !!timelineStart && !!timelineEnd && loadHouseholdWarnings,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
   const today = todayStr();
@@ -561,87 +676,33 @@ export default function Transactions() {
     return warnings.sort((a, b) => a.date.localeCompare(b.date));
   }, [householdTimelineData?.timeline, accountsForHousehold, today]);
 
-  /** Per-account projected high/low for the selected time range (household-wide; matches former single-account copy). */
-  const householdProjectionLines = useMemo(() => {
-    const timeline = householdTimelineData?.timeline ?? [];
-    if (!timeline.length || !accountsForHousehold.length) return [] as { key: string; text: string }[];
-    const lines: { key: string; text: string }[] = [];
-    for (const acc of accountsForHousehold) {
-      const cur = acc.currency ?? "USD";
-      const accRows = timeline
-        .filter((r) => Number(r.account_id) === Number(acc.id) && r.date > today)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      if (accRows.length === 0) continue;
-      const isCredit = String(acc.account_type ?? "").toUpperCase() === "CREDIT";
-      let minBal = Infinity;
-      let maxBal = -Infinity;
-      let minRow = accRows[0];
-      let maxRow = accRows[0];
-      for (const r of accRows) {
-        const bal = parseFloat(r.running_balance);
-        if (bal < minBal) {
-          minBal = bal;
-          minRow = r;
-        }
-        if (bal > maxBal) {
-          maxBal = bal;
-          maxRow = r;
-        }
-      }
-      if (isCredit) {
-        lines.push({
-          key: `${acc.id}-credit-high`,
-          text: `${acc.name}: Highest projected in this time range: ${formatCurrency(-minBal, cur)} on ${formatDateDisplay(minRow.date)}`,
-        });
-        lines.push({
-          key: `${acc.id}-credit-low`,
-          text: `${acc.name}: Lowest projected in this time range: ${formatCurrency(-maxBal, cur)} on ${formatDateDisplay(maxRow.date)}`,
-        });
-      } else {
-        lines.push({
-          key: `${acc.id}-bank-low`,
-          text: `${acc.name}: Lowest projected in this time range: ${formatCurrency(minBal, cur)} on ${formatDateDisplay(minRow.date)}`,
-        });
-      }
-    }
-    return lines;
-  }, [householdTimelineData?.timeline, accountsForHousehold, today]);
-
   const ledgerRows = useMemo(() => {
     if (!account || typeof accountId !== "number") return [];
     const today = todayStr();
-    const accountBalance = account.balance != null ? parseFloat(account.balance) : (account.starting_balance ? parseFloat(account.starting_balance) : 0);
-    if (timelineData?.timeline != null && timelineData.timeline.length >= 0) {
-      // Only this account’s ledger lines (defense in depth if the API omits account_id or returns
-      // a household-wide timeline). Coerce IDs — JSON or proxies may stringify numeric ids.
+    const openingBalance =
+      account.starting_balance != null && String(account.starting_balance).trim() !== ""
+        ? parseFloat(account.starting_balance)
+        : 0;
+    const start = openingBalance;
+    const timeline = timelineData?.timeline;
+    if (timelineHasAccountRows(timeline, accountId)) {
       const aid = Number(accountId);
-      const timelineForAccount = timelineData.timeline.filter((r) => Number(r.account_id) === aid);
-      return buildLedgerRowsFromTimeline(timelineForAccount, today, accountBalance, isCreditAccount);
+      const timelineForAccount = timeline!.filter((r) => Number(r.account_id) === aid);
+      return buildLedgerRowsFromTimeline(timelineForAccount, today, openingBalance, isCreditAccount);
     }
-    const start = account.starting_balance ? parseFloat(account.starting_balance) : 0;
+    // Timeline missing, slow, errored, or empty on Render — show posted transactions immediately.
     return buildLedgerRows(transactions, start, account.currency, isCreditAccount);
   }, [account, accountId, transactions, timelineData?.timeline, isCreditAccount]);
 
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
-
-  // Same single scrollbar on past section — just start it at bottom (most recent); scroll up for older
-  useEffect(() => {
-    const el = pastScrollRef.current;
-    if (!el) return;
-    const scrollToBottom = () => {
-      el.scrollTop = el.scrollHeight - el.clientHeight;
-    };
-    scrollToBottom();
-    const rafId = requestAnimationFrame(scrollToBottom);
-    const t1 = setTimeout(scrollToBottom, 50);
-    const t2 = setTimeout(scrollToBottom, 200);
-    return () => {
-      cancelAnimationFrame(rafId);
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [accountId, ledgerSections.past.length, ledgerPanelFocus]);
+  const firstNegativeForecastBalance = useMemo(() => {
+    const firstNegative = ledgerSections.future.find(
+      (row): row is Extract<(typeof ledgerSections.future)[number], { type: "recurring" }> =>
+        row.type === "recurring" && row.balance < 0
+    );
+    return firstNegative ? firstNegative.balance : null;
+  }, [ledgerSections.future]);
 
   const resetInlineRow = () => {
     setInlineRow((prev) => ({
@@ -663,7 +724,6 @@ export default function Transactions() {
         queryClient.invalidateQueries({ queryKey: ["timeline"] }),
       ]);
       resetInlineRow();
-      setAddModalOpen(false);
     },
   });
 
@@ -679,7 +739,6 @@ export default function Transactions() {
         queryClient.invalidateQueries({ queryKey: ["timeline"] }),
       ]);
       resetInlineRow();
-      setAddModalOpen(false);
     },
   });
 
@@ -700,7 +759,22 @@ export default function Transactions() {
         rule_id?: number | null;
       };
     }) => updateTransaction(id, data),
-    onError: (err: Error) => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["timeline"] });
+      setDeleteError(null);
+      const snapshot = { editing, editForm, editingRuleId, applyToRule };
+      setEditing(null);
+      setEditingRuleId(null);
+      setApplyToRule(false);
+      return snapshot;
+    },
+    onError: (err: Error, _vars, context) => {
+      if (context?.editing) {
+        setEditing(context.editing);
+        setEditForm(context.editForm);
+        setEditingRuleId(context.editingRuleId);
+        setApplyToRule(context.applyToRule);
+      }
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to save transaction");
     },
@@ -727,60 +801,37 @@ export default function Transactions() {
           ),
         };
       });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["account", accountId] });
-      const accountIdsToRefetch = new Set([accountId]);
-      if (newAccountId != null) accountIdsToRefetch.add(newAccountId);
-      if (syncedToAccountId != null && syncedToAccountId !== accountId) accountIdsToRefetch.add(syncedToAccountId);
-      await Promise.all(
-        [...accountIdsToRefetch].flatMap((aid) => [
-          queryClient.refetchQueries({
-            queryKey: ["transactions", { account: aid, page_size: 5000 }],
-            exact: true,
-          }),
-          queryClient.refetchQueries({
-            queryKey: ["timeline", timelineStart, timelineEnd, aid, t],
-            exact: true,
-          }),
-          queryClient.invalidateQueries({ queryKey: ["account", aid] }),
-        ])
-      );
+      const accountIdsToRefresh = new Set<number>();
+      if (typeof accountId === "number") accountIdsToRefresh.add(accountId);
+      if (newAccountId != null) accountIdsToRefresh.add(newAccountId);
+      if (syncedToAccountId != null) accountIdsToRefresh.add(syncedToAccountId);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      for (const aid of accountIdsToRefresh) {
+        void queryClient.invalidateQueries({ queryKey: ["account", aid] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
       if (householdId != null) {
-        await queryClient.refetchQueries({
+        void queryClient.invalidateQueries({
           queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, t],
-          exact: true,
         });
       }
       if (newAccountId != null) setAccountId(newAccountId);
-      setEditing(null);
-      setEditingRuleId(null);
-      setApplyToRule(false);
     },
   });
 
   const deleteMu = useMutation({
     mutationFn: deleteTransaction,
-    onSuccess: async () => {
+    onSuccess: () => {
       setDeleteError(null);
       const t = todayStr();
       if (typeof accountId !== "number") return;
-      await Promise.all([
-        queryClient.refetchQueries({
-          queryKey: ["timeline", timelineStart, timelineEnd, accountId, t],
-          exact: true,
-        }),
-        queryClient.refetchQueries({
-          queryKey: ["transactions", { account: accountId, page_size: 5000 }],
-          exact: true,
-        }),
-        queryClient.invalidateQueries({ queryKey: ["account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      ]);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["account", accountId] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
       if (householdId != null) {
-        await queryClient.refetchQueries({
+        void queryClient.invalidateQueries({
           queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, t],
-          exact: true,
         });
       }
     },
@@ -795,7 +846,7 @@ export default function Transactions() {
     onSuccess: async (data) => {
       setOrphanCleanupMessage(
         data.deleted === 0
-          ? "No orphaned rule rows found (future dated, from-rule source, no rule link)."
+          ? "No orphaned automation rows found (future dated, from automation source, no link)."
           : `Removed ${data.deleted} orphaned row(s). Refresh if counts look off.`
       );
       await Promise.all([
@@ -879,9 +930,12 @@ export default function Transactions() {
     const editSrcSubmit =
       editAccountIdSubmit != null ? accounts.find((a) => a.id === editAccountIdSubmit) : null;
     const omitTransferToOnSubmit =
-      editSrcSubmit != null &&
-      String(editSrcSubmit.account_type ?? "").toUpperCase() === "CREDIT" &&
       editForm.direction === "INFLOW" &&
+      (linkedTransfer || transferCategory);
+    const includeTransferToOnSubmit =
+      !omitTransferToOnSubmit &&
+      editForm.direction === "OUTFLOW" &&
+      editForm.transfer_to_account_id &&
       (linkedTransfer || transferCategory);
     const payload = {
       date: editForm.date,
@@ -889,15 +943,13 @@ export default function Transactions() {
       amount: String(signedAmount),
       category_id: editForm.category_id || null,
       ...(editForm.account_id ? { account_id: editForm.account_id as number } : {}),
-      ...(!omitTransferToOnSubmit &&
-      editForm.transfer_to_account_id &&
-      (linkedTransfer || transferCategory)
+      ...(includeTransferToOnSubmit
         ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
         : {}),
     };
     if (applyToRule && editingRuleId != null) {
       const ruleDirection =
-        editForm.transfer_to_account_id && !omitTransferToOnSubmit
+        includeTransferToOnSubmit
           ? "TRANSFER"
           : editForm.direction === "INFLOW"
             ? "INCOME"
@@ -909,14 +961,14 @@ export default function Transactions() {
           category_id: editForm.category_id || null,
           account_id: editForm.account_id ? (editForm.account_id as number) : undefined,
           direction: ruleDirection,
-          ...(editForm.transfer_to_account_id && !omitTransferToOnSubmit
+          ...(includeTransferToOnSubmit
             ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
             : {}),
         });
         queryClient.invalidateQueries({ queryKey: ["rules"] });
         queryClient.invalidateQueries({ queryKey: ["timeline"] });
       } catch (err) {
-        setDeleteError(err instanceof Error ? err.message : "Failed to update rule");
+        setDeleteError(err instanceof Error ? err.message : "Failed to update automation");
         return;
       }
     }
@@ -947,44 +999,13 @@ export default function Transactions() {
         amount: String(signedAmt),
         category_id: inlineRow.category_id || null,
         memo: "",
+        ...(navState?.fromBillChecklist ? { is_bill: true } : {}),
       });
     }
   }
 
   const currency = account?.currency ?? "USD";
   const isCredit = isCreditAccount;
-  const availableCredit =
-    isCredit &&
-    account?.credit_limit != null &&
-    String(account.credit_limit).trim() !== ""
-      ? (() => {
-          const limit = parseFloat(account.credit_limit);
-          const balance =
-            ledgerSections.today?.balance != null
-              ? ledgerSections.today.balance
-              : account.balance != null
-                ? parseFloat(account.balance)
-                : 0;
-          const amountOwed = balance < 0 ? Math.abs(balance) : 0;
-          if (Number.isNaN(limit)) return null;
-          return Math.max(0, limit - amountOwed);
-        })()
-      : null;
-  const availableCreditBreakdown =
-    isCredit &&
-    account?.credit_limit != null &&
-    String(account.credit_limit).trim() !== "" &&
-    ledgerSections.today?.balance != null
-      ? {
-          limit: parseFloat(account.credit_limit),
-          amountOwed: Math.max(0, -ledgerSections.today.balance),
-        }
-      : null;
-
-  const hasFutureProjectionRows = ledgerSections.future.length > 0;
-  const expandPastSection = hasFutureProjectionRows && ledgerPanelFocus === "past";
-  const pastCollapsed = hasFutureProjectionRows && ledgerPanelFocus === "future";
-  const futureCollapsed = hasFutureProjectionRows && ledgerPanelFocus === "past";
 
   const householdWarnings = useMemo(
     () => [
@@ -993,12 +1014,6 @@ export default function Transactions() {
     ],
     [negativeBalanceWarnings, creditLimitWarnings]
   );
-
-  useEffect(() => {
-    if (!hasFutureProjectionRows && ledgerPanelFocus === "future") {
-      setLedgerPanelFocus("split");
-    }
-  }, [hasFutureProjectionRows, ledgerPanelFocus]);
 
   function confirmDelete(id: number, label: string) {
     setDeleteError(null);
@@ -1038,12 +1053,8 @@ export default function Transactions() {
     }
   }
 
-  async function handleMove(transactionId: number) {
-    await openEditByTimelineId(transactionId);
-  }
-
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden px-6 pt-2 pb-6">
+    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden w-full px-4 sm:px-6 lg:px-8 pt-2 pb-6">
       {isPlaidOAuthReturn ? (
         <div className="sr-only" aria-hidden>
           <PlaidConnectBar householdId={plaidHouseholdId} />
@@ -1055,50 +1066,18 @@ export default function Transactions() {
           {account && ledgerSections.today?.type === "today_balance" && (
             <ForecastSummaryBar
               account={account}
-              currentBalance={ledgerSections.today.balance}
+              currentBalance={
+                ledgerSections.today?.balance ??
+                accountLedgerDisplayBalance(account, isCredit)
+              }
               isCredit={isCredit}
               currency={currency}
               nextRiskDate={account.risk_date ?? null}
+              firstNegativeAmount={firstNegativeForecastBalance}
               householdWarnings={householdWarnings}
               expanded={forecastSummaryExpanded}
               onToggle={() => setForecastSummaryExpanded((v) => !v)}
             />
-          )}
-
-          {householdId != null && householdProjectionLines.length > 0 && (
-            <div className="text-gray-800 text-xs border border-slate-200 rounded bg-slate-50 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setHouseholdProjectionOpen((open) => !open)}
-                className="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/80"
-                aria-expanded={householdProjectionOpen}
-              >
-                <span className="font-medium text-slate-600">
-                  All accounts — projected in this time range
-                  {!householdProjectionOpen && (
-                    <span className="font-normal text-slate-500">
-                      {" "}
-                      ({householdProjectionLines.length} lines)
-                    </span>
-                  )}
-                </span>
-                <svg
-                  className={`w-4 h-4 shrink-0 text-slate-500 transition-transform ${householdProjectionOpen ? "rotate-180" : ""}`}
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                  aria-hidden
-                >
-                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-              {householdProjectionOpen && (
-                <div className="px-2.5 pb-1.5 space-y-0.5 border-t border-slate-200">
-                  {householdProjectionLines.map((line) => (
-                    <div key={line.key}>{line.text}</div>
-                  ))}
-                </div>
-              )}
-            </div>
           )}
 
           {accountId && isCreditAccount && (
@@ -1131,7 +1110,9 @@ export default function Transactions() {
                   setPayoffError(null);
                   setPayoffResult(null);
                   try {
-                    const res = await getAccountPayoff(accountId as number, val);
+                    const res = await getAccountPayoff(accountId as number, {
+                      monthly_payment: val,
+                    });
                     setPayoffResult(res);
                   } catch (err: unknown) {
                     setPayoffError(err instanceof Error ? err.message : "Failed to load payoff.");
@@ -1159,7 +1140,6 @@ export default function Transactions() {
         </div>
 
         <div className="flex gap-2 items-end flex-wrap flex-shrink-0">
-          <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
           <MaintenanceMenu
             onCleanupOrphans={() => {
               setOrphanCleanupMessage(null);
@@ -1170,12 +1150,13 @@ export default function Transactions() {
             onDismissMessage={() => setOrphanCleanupMessage(null)}
           />
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-0.5">Time range</label>
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
             <select
               value={timeFilter}
               onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
               className="rounded border border-gray-300 px-3 py-1.5 text-sm"
             >
+              <option value="14d">14 days</option>
               <option value="1m">1 month</option>
               <option value="3m">3 months</option>
               <option value="6m">6 months</option>
@@ -1218,20 +1199,37 @@ export default function Transactions() {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col bg-white rounded-lg shadow overflow-hidden">
+          {timelineFetching && transactions.length > 0 ? (
+            <p
+              className="shrink-0 text-sm text-amber-900 bg-amber-50 border-b border-amber-200 px-4 py-2"
+              role="status"
+            >
+              Loading timeline and forecast… showing posted transactions until that finishes.
+            </p>
+          ) : null}
+          {timelineError && !timelineFetching && transactions.length > 0 ? (
+            <p
+              className="shrink-0 text-sm text-amber-900 bg-amber-50 border-b border-amber-200 px-4 py-2"
+              role="status"
+            >
+              Timeline could not load (server may have timed out). Showing posted transactions only.
+            </p>
+          ) : null}
           <PastSection
             start={ledgerSections.start}
             past={ledgerSections.past}
-            viewMode={viewMode}
             currency={currency}
             isCredit={isCredit}
-            scrollRef={pastScrollRef}
-            collapsed={pastCollapsed}
-            expanded={expandPastSection}
-            hasFuture={hasFutureProjectionRows}
-            panelFocus={ledgerPanelFocus}
-            onExpandFuture={() => setLedgerPanelFocus("future")}
-            onBalancedLayout={() => setLedgerPanelFocus("split")}
-            onShowPast={() => setLedgerPanelFocus("split")}
+            expanded={pastExpanded}
+            minimized={forecastExpanded}
+            onToggleExpanded={() => {
+              setPastExpanded((v) => {
+                const next = !v;
+                if (next) setForecastExpanded(false);
+                return next;
+              });
+            }}
+            accountId={accountId}
             onEditTimeline={openEditByTimelineId}
             onEditTransaction={openEdit}
             onDuplicateById={duplicateByTimelineId}
@@ -1240,60 +1238,57 @@ export default function Transactions() {
             deletePending={deleteMu.isPending}
           />
 
-          {account && ledgerSections.today?.type === "today_balance" && (
-            <TodayCard
-              account={account}
-              currentBalance={ledgerSections.today.balance}
-              isCredit={isCredit}
-              currency={currency}
-              availableCredit={availableCredit}
-              availableCreditBreakdown={availableCreditBreakdown}
-              onAddClick={() => setAddModalOpen(true)}
-            />
-          )}
+          <div className="flex-none shrink-0 z-10">
+          <InlineAddRow
+            form={inlineRow}
+            onChange={(patch) => setInlineRow((r) => ({ ...r, ...patch }))}
+            onSubmit={() => handleInlineAdd()}
+            onCancel={resetInlineRow}
+            categories={categoriesForDropdown}
+            transferToAccounts={transferToAccounts}
+            isTransferCategory={isTransferCategory}
+            transferCategoryName={selectedCategory?.name}
+            isPending={createMu.isPending || createTransferMu.isPending}
+            currency={currency}
+            inlinePayToCardAccountId={inlinePayToCardAccountId}
+            inlineCardTimelineLoading={inlineCardTimelineLoading}
+            inlineOwedAsOfPaymentDate={inlineOwedAsOfPaymentDate}
+            inlineBankTransferDestId={inlineBankTransferDestId}
+            inlineBankDestTimelineLoading={inlineBankDestTimelineLoading}
+            inlineDestPickAccount={inlineDestPickAccount}
+            inlineBankDestBalanceBefore={inlineBankDestBalanceBefore}
+            inlineBankDestBalanceAfter={inlineBankDestBalanceAfter}
+            cardCurrency={accounts.find((a) => a.id === inlinePayToCardAccountId)?.currency}
+          />
+          </div>
 
           <ForecastCardsSection
             future={ledgerSections.future}
-            viewMode={viewMode}
             currency={currency}
             isCredit={isCredit}
             isCreditAccount={isCreditAccount}
-            collapsed={futureCollapsed}
-            panelFocus={ledgerPanelFocus}
-            onExpandPast={() => setLedgerPanelFocus("past")}
-            onBalancedLayout={() => setLedgerPanelFocus("split")}
-            onShowFuture={() => setLedgerPanelFocus("split")}
+            expanded={forecastExpanded}
+            hiddenByPast={pastExpanded}
+            onToggleExpanded={() => {
+              setForecastExpanded((v) => {
+                const next = !v;
+                if (next) setPastExpanded(false);
+                return next;
+              });
+            }}
             onEditTimeline={openEditByTimelineId}
-            onMove={handleMove}
             onSkip={confirmSkip}
             onDelete={confirmDelete}
             deletePending={deleteMu.isPending}
+            minimumBuffer={
+              account?.minimum_buffer != null && String(account.minimum_buffer).trim() !== ""
+                ? parseFloat(String(account.minimum_buffer))
+                : null
+            }
+            riskDate={account?.risk_date ?? null}
           />
         </div>
       )}
-
-      <AddTransactionModal
-        open={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        form={inlineRow}
-        onChange={(patch) => setInlineRow((r) => ({ ...r, ...patch }))}
-        onSubmit={() => handleInlineAdd()}
-        categories={categoriesForDropdown}
-        transferToAccounts={transferToAccounts}
-        isTransferCategory={isTransferCategory}
-        transferCategoryName={selectedCategory?.name}
-        isPending={createMu.isPending || createTransferMu.isPending}
-        currency={currency}
-        inlinePayToCardAccountId={inlinePayToCardAccountId}
-        inlineCardTimelineLoading={inlineCardTimelineLoading}
-        inlineOwedAsOfPaymentDate={inlineOwedAsOfPaymentDate}
-        inlineBankTransferDestId={inlineBankTransferDestId}
-        inlineBankDestTimelineLoading={inlineBankDestTimelineLoading}
-        inlineDestPickAccount={inlineDestPickAccount}
-        inlineBankDestBalanceBefore={inlineBankDestBalanceBefore}
-        inlineBankDestBalanceAfter={inlineBankDestBalanceAfter}
-        cardCurrency={accounts.find((a) => a.id === inlinePayToCardAccountId)?.currency}
-      />
 
       {editing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-20">
@@ -1506,7 +1501,8 @@ export default function Transactions() {
                 <select
                   value={editForm.direction}
                   onChange={(e) => setEditForm((f) => ({ ...f, direction: e.target.value as "INFLOW" | "OUTFLOW" }))}
-                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                  disabled={editIsTransferInflowLeg && editIsLinkedTransfer}
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                 >
                   {editDirectionIsPaymentLike ? (
                     <>
@@ -1520,6 +1516,11 @@ export default function Transactions() {
                     </>
                   )}
                 </select>
+                {editIsTransferInflowLeg && editIsLinkedTransfer && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    This is the receiving side of a transfer — change the date here and the other account updates automatically.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Amount</label>
@@ -1555,7 +1556,7 @@ export default function Transactions() {
                         onChange={() => setApplyToRule(true)}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <span>All future transactions (update the recurring rule)</span>
+                      <span>All future transactions (update automation)</span>
                     </label>
                   </div>
                 </div>
@@ -1580,6 +1581,7 @@ export default function Transactions() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

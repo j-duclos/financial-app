@@ -1,8 +1,11 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
-import TransactionSourceBadge from "./TransactionSourceBadge";
 import TransactionContextMenu from "./TransactionContextMenu";
-import { categoryLabel, formatDateDisplay, type ViewMode } from "./transactionsLedgerUtils";
+import TransactionStatusIcons from "./TransactionStatusIcons";
+import { categoryLabel, creditBalanceColorClass, formatDateDisplay } from "./transactionsLedgerUtils";
+import { LEDGER_TABLE_GRID } from "./ledgerTableLayout";
+import { resolveTransactionKind } from "./transactionKindUtils";
+import type { ForecastRowSeverityClasses } from "./forecastRowSeverity";
 
 export type TransactionRowData = {
   id: string;
@@ -13,22 +16,26 @@ export type TransactionRowData = {
   balance: number;
   isOutflow: boolean;
   source: { source?: string; rule_id?: number | null; type?: string; direction?: string; category_name?: string | null; description?: string };
+  reconciled?: boolean;
+  txnSource?: string | null;
   transactionId?: number | null;
+  linkedTransactionId?: number | null;
+  hasTransferDestination?: boolean;
   readOnly?: boolean;
 };
 
 type Props = {
   row: TransactionRowData;
   variant: "past" | "future";
-  viewMode: ViewMode;
   currency: string;
   isCredit: boolean;
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
-  onMove?: () => void;
   actionsDisabled?: boolean;
+  /** Forecast-only row background / border styling */
+  forecastSeverity?: ForecastRowSeverityClasses;
 };
 
 export function timelineRowToData(
@@ -52,8 +59,12 @@ export function timelineRowToData(
       category_name: row.category_name,
       description: row.description,
     },
+    reconciled: row.reconciled ?? false,
+    txnSource: row.txn_source ?? null,
     transactionId: row.transaction_id,
     readOnly: row.source === "interest",
+    linkedTransactionId: null,
+    hasTransferDestination: false,
   };
 }
 
@@ -72,80 +83,102 @@ export function transactionToData(txn: Transaction, balance: number): Transactio
       rule_id: txn.rule_id,
       direction: txn.direction,
       category_name: txn.category?.name,
+      description: txn.payee,
     },
+    reconciled: txn.reconciled ?? false,
+    txnSource: txn.source ?? null,
     transactionId: txn.id,
+    linkedTransactionId: txn.linked_transaction_id ?? null,
+    hasTransferDestination: Boolean(txn.transfer_to_account),
   };
 }
 
 export default function TransactionRow({
   row,
   variant,
-  viewMode,
   currency,
   isCredit,
   onEdit,
   onDuplicate,
   onDelete,
   onSkip,
-  onMove,
   actionsDisabled,
+  forecastSeverity,
 }: Props) {
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
-  const creditClass = isCredit ? (row.balance > 0 ? "text-green-600" : "text-red-600") : "";
+  const creditClass = creditBalanceColorClass(isCredit, row.balance);
   const abs = Math.abs(row.amount);
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);
+  const clickable = Boolean(onEdit) && !row.readOnly;
+  const kind = resolveTransactionKind({
+    type: row.source.type,
+    direction: row.source.direction,
+    category_name: row.source.category_name,
+    description: row.source.description,
+    linked_transaction_id: row.linkedTransactionId,
+    has_transfer_destination: row.hasTransferDestination,
+  });
 
-  const balanceFirst = viewMode === "balance";
+  const rowSurface =
+    variant === "future" && forecastSeverity
+      ? `${forecastSeverity.backgroundClass} ${forecastSeverity.hoverClass} ${forecastSeverity.borderClass}`
+      : variant === "future"
+        ? "bg-white hover:bg-gray-50/80 border-b border-gray-100"
+        : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
 
   return (
     <article
-      className={`group flex items-center gap-3 px-4 py-2.5 border-b border-gray-100 hover:bg-gray-50/80 ${
-        variant === "future" ? "bg-amber-50/30" : "bg-white"
-      }`}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={() => {
+        if (clickable) onEdit?.();
+      }}
+      onKeyDown={(e) => {
+        if (clickable && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onEdit?.();
+        }
+      }}
+      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${rowSurface} ${clickable ? "cursor-pointer" : ""}`}
     >
-      {balanceFirst ? (
-        <>
-          <div className={`shrink-0 w-24 text-right font-semibold tabular-nums ${creditClass}`}>
-            {fmtBal(row.balance)}
-          </div>
-          <RowDetails row={row} amountStr={amountStr} />
-        </>
-      ) : (
-        <>
-          <RowDetails row={row} amountStr={amountStr} />
-          <div className={`shrink-0 w-24 text-right font-medium tabular-nums text-sm ${creditClass}`}>
-            {fmtBal(row.balance)}
-          </div>
-        </>
-      )}
-
-      <TransactionContextMenu
-        variant={variant}
-        onEdit={onEdit}
-        onDuplicate={variant === "past" ? onDuplicate : undefined}
-        onDelete={onDelete}
-        onSkip={variant === "future" ? onSkip : undefined}
-        onMove={variant === "future" ? onMove : undefined}
-        disabled={actionsDisabled}
-        readOnly={row.readOnly}
-      />
+      <time className="text-xs text-gray-500 tabular-nums">{formatDateDisplay(row.date)}</time>
+      <div className="flex justify-center">
+        <TransactionStatusIcons
+          reconciled={row.reconciled}
+          txnSource={row.txnSource}
+          ledgerSource={row.source.source}
+          ruleId={row.source.rule_id}
+          transactionId={row.transactionId}
+          readOnly={row.readOnly}
+          type={row.source.type}
+          category_name={row.source.category_name}
+          description={row.source.description}
+          linkedTransactionId={row.linkedTransactionId}
+          hasTransferDestination={row.hasTransferDestination}
+        />
+      </div>
+      <p className="min-w-0 truncate font-medium text-gray-900" title={row.payee}>
+        {row.payee}
+      </p>
+      <span className="min-w-0 truncate text-[10px] font-medium text-gray-600">{kind}</span>
+      <p className="min-w-0 truncate text-xs text-gray-500">{row.category}</p>
+      <span
+        className={`text-right font-medium tabular-nums ${row.isOutflow ? "text-red-600" : "text-green-600"}`}
+      >
+        {amountStr}
+      </span>
+      <span className={`text-right font-medium tabular-nums text-xs ${creditClass}`}>{fmtBal(row.balance)}</span>
+      <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+        <TransactionContextMenu
+          variant={variant}
+          onEdit={onEdit}
+          onDuplicate={variant === "past" ? onDuplicate : undefined}
+          onDelete={onDelete}
+          onSkip={variant === "future" ? onSkip : undefined}
+          disabled={actionsDisabled}
+          readOnly={row.readOnly}
+        />
+      </div>
     </article>
   );
 }
-
-function RowDetails({ row, amountStr }: { row: TransactionRowData; amountStr: string }) {
-  return (
-    <div className="flex-1 min-w-0 grid grid-cols-[5.5rem_1fr_auto] sm:grid-cols-[5.5rem_1fr_8rem_auto] gap-2 items-center">
-      <time className="text-xs text-gray-500 tabular-nums">{formatDateDisplay(row.date)}</time>
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate">{row.payee}</p>
-        <p className="text-xs text-gray-500 truncate">{row.category}</p>
-      </div>
-      <TransactionSourceBadge {...row.source} className="hidden sm:inline-flex" />
-      <span className={`text-sm font-medium tabular-nums text-right ${row.isOutflow ? "text-red-600" : "text-green-600"}`}>
-        {amountStr}
-      </span>
-    </div>
-  );
-}
-

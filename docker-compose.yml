@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: budget
       POSTGRES_PASSWORD: budget
@@ -21,13 +21,16 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    # Loads PLAID_* from ./backend/.env. DATABASE_URL="" → SQLite (backend/db.sqlite3 on host).
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Local dev uses Docker Postgres (fast). Sync with Render via scripts/sync-db-*.sh when needed.
     # Web UI: npm run dev:web → http://localhost:5173 (API proxied to this service on :8000).
     env_file:
       - ./backend/.env
     environment:
+      DATABASE_URL: postgres://budget:budget@postgres:5432/budget
       DJANGO_SECRET_KEY: dev-secret-change-in-production
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
-      DATABASE_URL: ""

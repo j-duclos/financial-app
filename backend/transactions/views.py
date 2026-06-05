@@ -1,5 +1,7 @@
 from typing import Optional
 
+from decimal import Decimal
+
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -29,6 +31,124 @@ from .services.matching import (
     unmatch_transaction,
 )
 from .pagination import TransactionPagination
+
+
+def _dedupe_rule_rows_on_date(
+    *,
+    rule_id: int,
+    occurrence_date,
+    keep_ids: set[int],
+    account_ids: list[int],
+) -> None:
+    """One materialized row per rule occurrence per account — drop extras after date moves."""
+    Transaction.objects.filter(
+        rule_id=rule_id,
+        date=occurrence_date,
+        account_id__in=account_ids,
+    ).exclude(pk__in=keep_ids).delete()
+
+
+def _record_rule_occurrence_date_move(
+    instance: Transaction,
+    *,
+    old_date,
+    new_date,
+    other: Optional[Transaction],
+) -> None:
+    """Skip the old schedule date and remove duplicate rule rows after a one-off date change."""
+    if instance.rule_id is None or old_date == new_date or new_date is None:
+        return
+    from timeline.models import RecurringRule, RecurringRuleSkip
+
+    RecurringRuleSkip.objects.get_or_create(rule_id=instance.rule_id, date=old_date)
+
+    rule = RecurringRule.objects.filter(pk=instance.rule_id).first()
+    if rule is None:
+        return
+
+    keep_ids = {instance.pk}
+    if other is not None:
+        keep_ids.add(other.pk)
+    for mm in TransactionMatch.objects.filter(
+        Q(imported_transaction_id=instance.pk) | Q(planned_transaction_id=instance.pk)
+    ):
+        keep_ids.add(mm.imported_transaction_id)
+        keep_ids.add(mm.planned_transaction_id)
+
+    if rule.transfer_to_account_id:
+        account_ids = [rule.account_id, rule.transfer_to_account_id]
+    else:
+        account_ids = [instance.account_id]
+
+    _dedupe_rule_rows_on_date(
+        rule_id=rule.id,
+        occurrence_date=old_date,
+        keep_ids=keep_ids,
+        account_ids=account_ids,
+    )
+    _dedupe_rule_rows_on_date(
+        rule_id=rule.id,
+        occurrence_date=new_date,
+        keep_ids=keep_ids,
+        account_ids=account_ids,
+    )
+
+
+def _resolve_transfer_pair(
+    instance: Transaction,
+) -> tuple[Optional[Transfer], Optional[Transaction]]:
+    try:
+        t = instance.transfer_out
+        return t, t.to_transaction
+    except Transfer.DoesNotExist:
+        pass
+    try:
+        t = instance.transfer_in
+        return t, t.from_transaction
+    except Transfer.DoesNotExist:
+        pass
+    return None, None
+
+
+def _find_likely_transfer_counterpart(instance: Transaction, *, on_date) -> Optional[Transaction]:
+    """When the Transfer row is missing, find the other leg by date, amount, and payee."""
+    if instance.amount in (None, 0):
+        return None
+    abs_amt = abs(instance.amount)
+    opp_amt = abs_amt if instance.amount < 0 else -abs_amt
+    payee_root = (instance.payee or "").split("(")[0].strip()[:40]
+    qs = (
+        Transaction.objects.filter(
+            date=on_date,
+            amount=opp_amt,
+            source=Transaction.Source.ACTUAL,
+            account__household_id=instance.account.household_id,
+        )
+        .exclude(account_id=instance.account_id)
+        .exclude(pk=instance.pk)
+    )
+    if payee_root:
+        qs = qs.filter(Q(payee__icontains=payee_root) | Q(payee__startswith=payee_root))
+    return qs.order_by("id").first()
+
+
+def _delete_stale_transfer_legs_on_date(
+    *,
+    old_date,
+    keep_ids: set[int],
+    account_ids: list[int],
+    amount_abs: Decimal,
+) -> None:
+    """Remove duplicate ACTUAL legs left on the old date after a transfer date move."""
+    if not old_date or not account_ids or amount_abs <= 0:
+        return
+    amounts = [amount_abs, -amount_abs]
+    Transaction.objects.filter(
+        date=old_date,
+        account_id__in=account_ids,
+        source=Transaction.Source.ACTUAL,
+    ).exclude(pk__in=keep_ids).filter(amount__in=amounts).delete()
+
 
 def _ensure_rule_transfer_counterpart_after_update(
     instance: Transaction,
@@ -178,33 +298,12 @@ class TransactionViewSet(ModelViewSet):
             )
             if paired is not None:
                 Transaction.objects.filter(pk=paired.pk).update(rule_id=None)
-        today = timezone.localdate()
-        if (
-            instance.rule_id is not None
-            and new_date is not None
-            and old_date != new_date
-            and old_date >= today
-        ):
-            from timeline.models import RecurringRuleSkip
-            RecurringRuleSkip.objects.get_or_create(rule_id=instance.rule_id, date=old_date)
         # Optionally change the transfer's "to" account (credit account) when editing the from leg.
         # Handled below for both Transfer-linked and rule-created pairs.
         transfer_to_account_id = serializer.validated_data.get("transfer_to_account_id")
-        # Keep transfer in sync: when one leg is updated, update the other leg (and Transfer if it exists).
-        # Rule-created "transfers" are two separate transactions with the same rule_id/date but NO Transfer
-        # record, so we must find the paired transaction by rule + date + other account.
-        other = None
-        transfer = None
-        try:
-            transfer = instance.transfer_out
-            other = transfer.to_transaction
-        except Transfer.DoesNotExist:
-            try:
-                transfer = instance.transfer_in
-                other = transfer.from_transaction
-            except Transfer.DoesNotExist:
-                transfer = None
-                other = None
+        transfer, other = _resolve_transfer_pair(instance)
+        if other is None and "date" in serializer.validated_data:
+            other = _find_likely_transfer_counterpart(instance, on_date=old_date)
 
         if other is None and instance.rule_id is not None:
             other = _ensure_rule_transfer_counterpart_after_update(
@@ -218,7 +317,6 @@ class TransactionViewSet(ModelViewSet):
             if (
                 "date" in serializer.validated_data
                 and getattr(other, "rule_id", None) is not None
-                and other.date >= today
                 and other.date != serializer.validated_data["date"]
             ):
                 from timeline.models import RecurringRuleSkip
@@ -252,35 +350,33 @@ class TransactionViewSet(ModelViewSet):
                         Transfer.objects.filter(pk=transfer.pk).update(
                             amount=abs(serializer.validated_data["amount"])
                         )
-        # Moving one leg leaves duplicate/orphan rows on the old date (e.g. two materialized
-        # +amount legs on the card); we only sync one counterpart. Remove any other rule rows
-        # still dated old_date on either transfer account.
+            if (
+                "date" in serializer.validated_data
+                and old_date != serializer.validated_data["date"]
+            ):
+                instance.refresh_from_db()
+                other.refresh_from_db()
+                amt = abs(instance.amount or Decimal("0"))
+                if amt <= 0 and other.amount is not None:
+                    amt = abs(other.amount)
+                _delete_stale_transfer_legs_on_date(
+                    old_date=old_date,
+                    keep_ids={instance.pk, other.pk},
+                    account_ids=[instance.account_id, other.account_id],
+                    amount_abs=amt,
+                )
         if (
             instance.rule_id is not None
             and new_date is not None
             and old_date != new_date
             and "date" in serializer.validated_data
         ):
-            from timeline.models import RecurringRule
-
-            rule = RecurringRule.objects.filter(pk=instance.rule_id).first()
-            if rule and rule.transfer_to_account_id:
-                keep_ids = {instance.pk}
-                if other is not None:
-                    keep_ids.add(other.pk)
-                # Same-account matched pair (Planned ↔ imported): counterpart finder skips same bank,
-                # so include explicit match ids so we never drop the partner Chase row on date moves.
-                for mm in TransactionMatch.objects.filter(
-                    Q(imported_transaction_id=instance.pk) | Q(planned_transaction_id=instance.pk)
-                ):
-                    keep_ids.add(mm.imported_transaction_id)
-                    keep_ids.add(mm.planned_transaction_id)
-                stale = Transaction.objects.filter(
-                    rule_id=rule.id,
-                    date=old_date,
-                    account_id__in=[rule.account_id, rule.transfer_to_account_id],
-                ).exclude(pk__in=keep_ids)
-                stale.delete()
+            _record_rule_occurrence_date_move(
+                instance,
+                old_date=old_date,
+                new_date=new_date,
+                other=other,
+            )
         data = dict(serializer.data)
         if other is not None:
             data["synced_to_account_id"] = other.account_id

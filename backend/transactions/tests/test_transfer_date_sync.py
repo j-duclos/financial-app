@@ -469,3 +469,273 @@ def test_patch_imported_date_moves_matched_planned_row_same_account(auth_client,
     assert planned.date == date(2026, 7, 29)
     assert imported.date == date(2026, 7, 29)
     assert Transaction.objects.filter(pk=planned.pk).exists()
+
+
+@pytest.mark.django_db
+def test_patch_rent_rule_date_skips_old_day_and_dedupes_new_day(auth_client, household):
+    """Moving a monthly rent occurrence must not respawn on the 1st or duplicate on the new date."""
+    from timeline.models import RecurringRule, RecurringRuleSkip
+
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Rent / Mortgage",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 100},
+    )[0]
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Rent",
+        account=bank,
+        category=cat,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("3100.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    rent = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 6, 1),
+        payee="Rent",
+        amount=Decimal("-3100.00"),
+        category=cat,
+        rule=rule,
+        source=Transaction.Source.RULE,
+    )
+    duplicate = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 6, 2),
+        payee="Rent",
+        amount=Decimal("-3100.00"),
+        category=cat,
+        rule=rule,
+        source=Transaction.Source.RULE,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{rent.id}/",
+        {"date": "2026-06-02"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    rent.refresh_from_db()
+    assert rent.date == date(2026, 6, 2)
+    assert RecurringRuleSkip.objects.filter(rule_id=rule.id, date=date(2026, 6, 1)).exists()
+    assert not Transaction.objects.filter(pk=duplicate.pk).exists()
+    assert (
+        Transaction.objects.filter(
+            rule_id=rule.id, account=bank, date=date(2026, 6, 2)
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_patch_actual_transfer_inflow_date_syncs_outflow_leg(auth_client, household):
+    """Editing the incoming leg of a Transfer-linked pair must update the outgoing leg and Transfer.date."""
+    savings = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.SAVINGS,
+        name="Chase Savings",
+        currency="USD",
+    )
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Bank Transfer",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 50},
+    )[0]
+    out_leg = Transaction.objects.create(
+        account=savings,
+        date=date(2026, 5, 30),
+        payee="Move for Rent",
+        amount=Decimal("-900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 30),
+        payee="Move for Rent (Chase Savings)",
+        amount=Decimal("900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    tr = Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("900.00"),
+        date=date(2026, 5, 30),
+        memo="",
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{in_leg.id}/",
+        {"date": "2026-06-02"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    out_leg.refresh_from_db()
+    in_leg.refresh_from_db()
+    tr.refresh_from_db()
+    assert in_leg.date == date(2026, 6, 2)
+    assert out_leg.date == date(2026, 6, 2)
+    assert tr.date == date(2026, 6, 2)
+    assert r.data.get("synced_to_account_id") == savings.id
+
+
+@pytest.mark.django_db
+def test_patch_bank_transfer_inflow_date_ignores_transfer_to_account_id(auth_client, household):
+    """Date-only edit on the receiving leg must not 400 when UI sends transfer_to_account_id."""
+    savings = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.SAVINGS,
+        name="Chase Savings",
+        currency="USD",
+    )
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Bank Transfer",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 50},
+    )[0]
+    out_leg = Transaction.objects.create(
+        account=savings,
+        date=date(2026, 6, 2),
+        payee="Move for Rent",
+        amount=Decimal("-900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 6, 2),
+        payee="Move for Rent (Chase Savings)",
+        amount=Decimal("900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("900.00"),
+        date=date(2026, 6, 2),
+        memo="",
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{in_leg.id}/",
+        {
+            "date": "2026-06-04",
+            "payee": "Move for Rent (Chase Savings)",
+            "amount": "900.00",
+            "category_id": cat.id,
+            "transfer_to_account_id": savings.id,
+        },
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    out_leg.refresh_from_db()
+    in_leg.refresh_from_db()
+    assert in_leg.date == date(2026, 6, 4)
+    assert out_leg.date == date(2026, 6, 4)
+
+
+@pytest.mark.django_db
+def test_patch_actual_transfer_date_removes_stale_leg_on_old_date(auth_client, household):
+    """Moving a Transfer-linked pair must not leave a duplicate outflow on the old date."""
+    savings = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.SAVINGS,
+        name="Chase Savings",
+        currency="USD",
+    )
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Bank Transfer",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 50},
+    )[0]
+    out_leg = Transaction.objects.create(
+        account=savings,
+        date=date(2026, 6, 3),
+        payee="Move for Rent",
+        amount=Decimal("-900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=checking,
+        date=date(2026, 6, 3),
+        payee="Move for Rent (Chase Savings)",
+        amount=Decimal("900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("900.00"),
+        date=date(2026, 6, 3),
+        memo="",
+    )
+    stale = Transaction.objects.create(
+        account=savings,
+        date=date(2026, 6, 3),
+        payee="Move for Rent",
+        amount=Decimal("-900.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{out_leg.id}/",
+        {"date": "2026-06-04"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    out_leg.refresh_from_db()
+    in_leg.refresh_from_db()
+    assert out_leg.date == date(2026, 6, 4)
+    assert in_leg.date == date(2026, 6, 4)
+    assert not Transaction.objects.filter(pk=stale.pk).exists()
+    assert (
+        Transaction.objects.filter(
+            account=savings,
+            date=date(2026, 6, 3),
+            amount=Decimal("-900.00"),
+            source=Transaction.Source.ACTUAL,
+        ).count()
+        == 0
+    )

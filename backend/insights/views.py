@@ -8,7 +8,7 @@ from django.db.models.functions import Coalesce
 
 from core.utils import get_households_for_user
 from accounts.models import Account
-from accounts.services.available_to_spend import normalize_forecast_days
+from common.services.forecast_horizon import parse_forecast_days_param
 from accounts.services.balances import signed_ledger_balance
 from transactions.models import Transaction
 from .services.dashboard_summary import build_dashboard_summary
@@ -106,10 +106,9 @@ class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        days_param = request.query_params.get("days")
         try:
-            days = normalize_forecast_days(int(days_param)) if days_param else 30
-        except (TypeError, ValueError) as exc:
+            days = parse_forecast_days_param(request)
+        except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         data = build_dashboard_summary(request.user, days=days)
         return Response(data)

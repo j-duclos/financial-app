@@ -1,201 +1,257 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { formatCurrency, currentMonthStr } from "@budget-app/shared";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { FinancialGoal } from "@budget-app/shared";
+import { getDashboardSummary, listAccounts, listAllBuckets } from "@budget-app/api-client";
+import { topActiveGoalsForDashboard } from "../lib/goalsDashboard";
+import { PAGE_SHELL } from "../lib/pageLayout";
+import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
+import DashboardSkeleton from "../components/dashboard/DashboardSkeleton";
+import { AttentionCardGrid } from "../components/dashboard/AttentionCard";
+import RecommendationsSection from "../components/dashboard/RecommendationsSection";
+import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
+import type { DashboardAttentionItem } from "@budget-app/shared";
+import UpcomingList from "../components/dashboard/UpcomingList";
+import FinancialSnapshotCard from "../components/dashboard/FinancialSnapshotCard";
+import GoalsProgressSection from "../components/dashboard/GoalsProgressSection";
+import QuickTransactionModal, {
+  type QuickTransactionPreset,
+} from "../components/quickActions/QuickTransactionModal";
+import ActionToast from "../components/quickActions/ActionToast";
+import { attentionTransferPreset } from "../lib/attentionCardDisplay";
+import { recommendationTransferPreset } from "../lib/recommendationDisplay";
 import {
-  getAccountBalances,
-  getMonthlySummary,
-  getCategoryBreakdown,
-  getSafeToSpendDashboard,
-  listAccountRelationships,
-  listBudgets,
-} from "@budget-app/api-client";
-import AccountHealthBadge from "../components/AccountHealthBadge";
-import { FORECAST_DAY_OPTIONS, type ForecastDays, riskStatusLabel } from "../lib/safeToSpendLabels";
+  DEFAULT_PASSIVE_FORECAST_DAYS,
+  type PassiveForecastDays,
+} from "../lib/safeToSpendLabels";
+import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
+import {
+  UPCOMING_SECTION_TITLE,
+  upcomingSectionCollapsedSummary,
+  upcomingSectionCollapseLabel,
+} from "../lib/upcomingDisplay";
+
+function DashboardOnboarding() {
+  return (
+    <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
+      <p className="font-medium text-gray-900">Get started with your financial command center</p>
+      <ul className="list-disc list-inside text-xs space-y-1 text-gray-600">
+        <li>
+          <Link to="/accounts" className="text-blue-600 hover:underline">
+            Connect or add your first account
+          </Link>
+        </li>
+        <li>
+          <Link to="/goals?new=1" className="text-blue-600 hover:underline">
+            Create a savings goal
+          </Link>
+        </li>
+        <li>
+          <Link to="/transactions" className="text-blue-600 hover:underline">
+            Add recurring bills and income
+          </Link>
+        </li>
+      </ul>
+    </div>
+  );
+}
 
 export default function Dashboard() {
-  const month = currentMonthStr();
-  const [forecastDays, setForecastDays] = useState<ForecastDays>(30);
-
-  const { data: balances } = useQuery({
-    queryKey: ["account-balances"],
-    queryFn: () => getAccountBalances(),
-  });
-  const { data: safeToSpend } = useQuery({
-    queryKey: ["safe-to-spend-dashboard", forecastDays],
-    queryFn: () => getSafeToSpendDashboard({ days: forecastDays }),
-  });
-  const { data: summary } = useQuery({
-    queryKey: ["monthly-summary", month],
-    queryFn: () => getMonthlySummary(month),
-  });
-  const { data: breakdown } = useQuery({
-    queryKey: ["category-breakdown", month],
-    queryFn: () => getCategoryBreakdown(month),
-  });
-  const { data: linkedRelationships } = useQuery({
-    queryKey: ["account-relationships", "active"],
-    queryFn: () => listAccountRelationships({ is_active: true }),
-  });
-  const { data: budgets } = useQuery({
-    queryKey: ["budgets", month],
-    queryFn: () => {
-      const [y, m] = month.split("-").map(Number);
-      return listBudgets({ year: y, month: m });
-    },
-  });
-
-  const netWorth = balances?.balances?.reduce((s, b) => s + parseFloat(b.balance), 0) ?? 0;
-  const income = summary ? parseFloat(summary.total_income) : 0;
-  const expenses = summary ? Math.abs(parseFloat(summary.total_expenses)) : 0;
-  const net = summary ? parseFloat(summary.net) : 0;
-
-  const budgetMap = new Map(
-    budgets?.results?.map((b) => [b.category.id, parseFloat(b.planned_amount)]) ?? []
+  const queryClient = useQueryClient();
+  const [forecastDays, setForecastDays] = useState<PassiveForecastDays>(
+    DEFAULT_PASSIVE_FORECAST_DAYS
   );
-  const spentByCategory = new Map(
-    breakdown?.breakdown?.filter((c) => c.category_id != null).map((c) => [c.category_id!, parseFloat(c.total)]) ?? []
+  const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [upcomingCollapsed, setUpcomingCollapsed] = useState(false);
+  const [resolveRiskTarget, setResolveRiskTarget] = useState<DashboardAttentionItem | null>(
+    null
   );
-  const overspent = Array.from(budgetMap.entries())
-    .map(([catId, planned]) => ({
-      catId,
-      planned,
-      spent: Math.abs(spentByCategory.get(catId) ?? 0),
-    }))
-    .filter((x) => x.spent > x.planned)
-    .slice(0, 5);
+  const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
 
-  const worst = safeToSpend?.worst_projected_account;
+  const { data: summary, isLoading, isError } = useQuery({
+    queryKey: ["dashboard-summary", forecastDays],
+    queryFn: () => getDashboardSummary({ forecast_days: forecastDays }),
+  });
+
+  const { data: accountsData } = useQuery({
+    queryKey: ["accounts", "dashboard"],
+    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
+  });
+  const accounts = accountsData?.results ?? [];
+
+  const { data: allGoals = [], isLoading: goalsLoading } = useQuery({
+    queryKey: ["buckets", "all"],
+    queryFn: () => listAllBuckets(),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const dashboardGoals = useMemo(() => {
+    if (summary?.goals?.length) return summary.goals as FinancialGoal[];
+    return topActiveGoalsForDashboard(allGoals, 3);
+  }, [summary?.goals, allGoals]);
+  const showOnboarding =
+    summary &&
+    accounts.length === 0 &&
+    summary.attention.length === 0 &&
+    (summary.recommendations?.length ?? summary.insights.length) === 0;
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="text-sm text-gray-600 flex items-center gap-2">
-          Safe-to-spend window
-          <select
-            value={forecastDays}
-            onChange={(e) => setForecastDays(Number(e.target.value) as ForecastDays)}
-            className="rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-          >
-            {FORECAST_DAY_OPTIONS.map((d) => (
-              <option key={d} value={d}>
-                {d} days
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-4 md:col-span-2">
-          <p className="text-sm text-gray-500">Safe to spend (spending & bills)</p>
-          <p className="text-xl font-semibold text-emerald-800">
-            {safeToSpend ? formatCurrency(safeToSpend.total_safe_to_spend) : "—"}
-          </p>
-          {safeToSpend &&
-          (safeToSpend.accounts_needing_attention_count ?? safeToSpend.accounts_at_risk_count) > 0 ? (
-            <p className="text-sm text-amber-800 mt-1">
-              {safeToSpend.accounts_needing_attention_count ?? safeToSpend.accounts_at_risk_count}{" "}
-              account
-              {(safeToSpend.accounts_needing_attention_count ?? safeToSpend.accounts_at_risk_count) === 1
-                ? ""
-                : "s"}{" "}
-              need attention
-              {(safeToSpend.critical_accounts_count ?? 0) > 0
-                ? ` (${safeToSpend.critical_accounts_count} critical)`
-                : ""}
-            </p>
-          ) : (
-            <p className="text-sm text-gray-500 mt-1">All accounts look healthy</p>
-          )}
-          {safeToSpend?.next_health_issue_text ? (
-            <p className="text-xs text-gray-600 mt-2">{safeToSpend.next_health_issue_text}</p>
-          ) : safeToSpend?.next_risk_date && worst ? (
-            <p className="text-xs text-gray-600 mt-2">
-              Next risk: <strong>{worst.account_name}</strong> may drop below buffer on{" "}
-              {safeToSpend.next_risk_date}
-            </p>
-          ) : null}
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Net worth</p>
-          <p className="text-xl font-semibold">{formatCurrency(netWorth)}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Net (MTD)</p>
-          <p className={`text-xl font-semibold ${net >= 0 ? "text-green-600" : "text-red-600"}`}>
-            {formatCurrency(net)}
+    <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
+      <section aria-label={DASHBOARD_SECTION.financialHealth}>
+        <DashboardTopSummaryBar
+          summary={summary}
+          forecastDays={forecastDays}
+          onForecastDaysChange={setForecastDays}
+          loading={isLoading}
+        />
+      </section>
+
+      {isLoading && <DashboardSkeleton omitHealth />}
+
+      {isError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+          <p className="font-medium">Could not load dashboard data.</p>
+          <p className="mt-1">
+            Manual accounts still work — add accounts and transactions to see forecasts and alerts.
           </p>
         </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Income (MTD)</p>
-          <p className="text-xl font-semibold text-green-600">{formatCurrency(income)}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Expenses (MTD)</p>
-          <p className="text-xl font-semibold text-red-600">{formatCurrency(expenses)}</p>
-        </div>
-      </div>
-      {safeToSpend &&
-        (safeToSpend.accounts_needing_attention?.length ?? safeToSpend.accounts_at_risk.length) > 0 && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="font-semibold mb-2">Accounts needing attention</h2>
-          <ul className="space-y-3 text-sm">
-            {(safeToSpend.accounts_needing_attention?.length
-              ? safeToSpend.accounts_needing_attention
-              : safeToSpend.accounts_at_risk.map((a) => ({
-                  account_id: a.account_id,
-                  account_name: a.account_name,
-                  health_status: a.risk_status,
-                  health_reason: a.risk_reason,
-                  health_risk_date: a.risk_date,
-                }))
-            ).map((a) => (
-              <li key={a.account_id} className="flex flex-wrap justify-between gap-2 border-b border-gray-100 pb-2">
-                <span className="font-medium">{a.account_name}</span>
-                <AccountHealthBadge
-                  status={a.health_status}
-                  reason={a.health_reason}
-                  compact
-                  className="text-right"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
-      {linkedRelationships && linkedRelationships.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="font-semibold mb-2">Linked money movement</h2>
-          <ul className="space-y-2 text-sm text-gray-700">
-            {linkedRelationships.slice(0, 8).map((rel) => (
-              <li key={rel.id}>
-                <span className="font-medium">{rel.source_account_name}</span>
-                <span className="mx-1 text-gray-400">→</span>
-                <span className="font-medium">{rel.destination_account_name}</span>
-                <span className="ml-2 text-xs text-gray-500">
-                  {rel.relationship_type_display}
-                  {rel.default_amount ? ` · $${rel.default_amount}` : ""}
-                  {rel.frequency && rel.frequency !== "one_time" ? ` · ${rel.frequency}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+
+      {summary && (
+        <>
+          {showOnboarding && <DashboardOnboarding />}
+
+          <section>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+              Attention Required
+            </h2>
+            <AttentionCardGrid
+              items={summary.attention}
+              windowDays={summary.safe_to_spend.window_days}
+              totalCount={summary.attention_total_count}
+              onMoveMoney={(item) => setTxnPreset(attentionTransferPreset(item))}
+              onResolveRisk={setResolveRiskTarget}
+            />
+          </section>
+
+          <section>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+              Recommendations
+            </h2>
+            <RecommendationsSection
+              summary={summary}
+              onExecuteTransfer={(rec) => {
+                const preset = recommendationTransferPreset(rec);
+                if (preset) setTxnPreset(preset);
+              }}
+              onResolveRisk={(accountId) => setResolveRiskAccountId(accountId)}
+            />
+          </section>
+
+          <section aria-label={UPCOMING_SECTION_TITLE}>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+              <button
+                type="button"
+                onClick={() => setUpcomingCollapsed((v) => !v)}
+                aria-expanded={!upcomingCollapsed}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700"
+              >
+                {upcomingCollapsed ? (
+                  <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                ) : (
+                  <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
+                )}
+                {UPCOMING_SECTION_TITLE}
+                <span className="sr-only">{upcomingSectionCollapseLabel(upcomingCollapsed)}</span>
+              </button>
+              {upcomingCollapsed && (
+                <p className="text-xs text-gray-500">
+                  {upcomingSectionCollapsedSummary(
+                    summary.upcoming_groups ?? [],
+                    summary.upcoming_days
+                  )}
+                </p>
+              )}
+            </div>
+            {!upcomingCollapsed && (
+              <UpcomingList
+                groups={summary.upcoming_groups ?? []}
+                days={summary.upcoming_days}
+                truncated={summary.upcoming_truncated}
+              />
+            )}
+          </section>
+
+          <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
+            <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+              {DASHBOARD_SECTION.resourceBreakdown}
+            </h2>
+            <FinancialSnapshotCard snapshot={summary.snapshot} />
+          </section>
+
+          <section>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Goals &amp; Progress
+              </h2>
+              <div className="flex items-center gap-3 shrink-0 text-xs">
+                <Link to="/goals?new=1" className="text-blue-600 hover:underline">
+                  Add goal
+                </Link>
+                <Link to="/goals" className="text-blue-600 hover:underline">
+                  View goals
+                </Link>
+              </div>
+            </div>
+            <GoalsProgressSection
+              goals={dashboardGoals}
+              goalsLoading={goalsLoading}
+              goalsSummary={summary.goals_summary}
+              warnings={summary.goal_warnings ?? []}
+            />
+          </section>
+
+        </>
       )}
-      {overspent.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="font-semibold mb-2">Overspent categories</h2>
-          <ul className="space-y-1">
-            {overspent.map(({ catId, planned, spent }) => (
-              <li key={catId} className="text-red-600 text-sm">
-                Category #{catId}: spent {formatCurrency(spent)} vs planned {formatCurrency(planned)}
-              </li>
-            ))}
-          </ul>
-        </div>
+
+      {(resolveRiskTarget || resolveRiskAccountId != null) && (
+        <ResolveRiskModal
+          open
+          accountId={resolveRiskTarget?.account_id ?? resolveRiskAccountId!}
+          accountName={
+            resolveRiskTarget?.account_name ??
+            accounts.find((a) => a.id === resolveRiskAccountId)?.effective_display_name ??
+            "Account"
+          }
+          forecastDays={forecastDays}
+          accounts={accounts}
+          onClose={() => {
+            setResolveRiskTarget(null);
+            setResolveRiskAccountId(null);
+          }}
+          onApplyTransfer={(preset) => {
+            setTxnPreset(preset);
+            setResolveRiskTarget(null);
+            setResolveRiskAccountId(null);
+          }}
+          onSnoozed={() => {
+            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+          }}
+        />
       )}
+      <ActionToast message={toast} onDismiss={() => setToast(null)} />
+      <QuickTransactionModal
+        open={txnPreset != null}
+        preset={txnPreset}
+        accounts={accounts}
+        onClose={() => setTxnPreset(null)}
+        onSuccess={async (message) => {
+          setToast(message);
+          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+        }}
+      />
     </div>
   );
 }

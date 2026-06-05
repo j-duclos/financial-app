@@ -2,7 +2,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.services.available_to_spend import normalize_forecast_days
+from common.services.forecast_horizon import (
+    ADVANCED_DEFAULT_FORECAST_DAYS,
+    parse_forecast_days_param,
+)
 from recommendations.services.engine import (
     build_dashboard_recommendation_list,
     build_recommendation_context,
@@ -20,9 +23,9 @@ class RecommendationsListView(APIView):
 
     def get(self, request):
         try:
-            days = normalize_forecast_days(int(request.query_params.get("days", 30)))
-        except (TypeError, ValueError):
-            return Response({"detail": "days must be 7, 14, 30, 60, or 90."}, status=400)
+            days = parse_forecast_days_param(request)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
 
         scenario_id = request.query_params.get("scenario_id")
         sid = None
@@ -52,9 +55,11 @@ class ScenarioRecommendationsView(APIView):
 
     def get(self, request, scenario_id: int):
         try:
-            days = normalize_forecast_days(int(request.query_params.get("days", 90)))
-        except (TypeError, ValueError):
-            return Response({"detail": "days must be 7, 14, 30, 60, or 90."}, status=400)
+            days = parse_forecast_days_param(
+                request, default=ADVANCED_DEFAULT_FORECAST_DAYS, allow_extended=True
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
 
         recs = build_scenario_recommendations(request.user, scenario_id, days=days)
         return Response(

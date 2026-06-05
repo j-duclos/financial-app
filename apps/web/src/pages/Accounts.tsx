@@ -1,15 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  formatCurrency,
   ACCOUNT_TYPE_LABELS,
   inferAccountRoleFromType,
   getEffectiveDisplayName,
 } from "@budget-app/shared";
 import type { Account, AccountRole, AccountType } from "@budget-app/shared";
 import {
-  listAccounts,
   listHouseholds,
   createAccount,
   createHousehold,
@@ -22,35 +20,55 @@ import {
   clearAllAccountTransactions,
 } from "@budget-app/api-client";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
-import AccountRelationshipsPanel from "../components/AccountRelationshipsPanel";
 import { ACCOUNT_ROLE_OPTIONS, getAccountRoleMeta } from "../lib/accountRoles";
 import {
-  FORECAST_DAY_OPTIONS,
-  type ForecastDays,
+  DEFAULT_PASSIVE_FORECAST_DAYS,
+  type PassiveForecastDays,
 } from "../lib/safeToSpendLabels";
+import { nextBillingCycleEndDate } from "../lib/billingCycle";
+import { formatDateDisplay } from "../components/transactions/transactionsLedgerUtils";
 import {
   filterAccounts,
   groupAccounts,
   reorderAccountsInGroup,
+  accountsForPageStats,
 } from "../lib/accountOrganization";
+import {
+  computeAccountsPageStats,
+  formatAccountsPageSummaryLine,
+} from "../lib/accountPageSummary";
 import { useAccountOrganizationPreferences } from "../hooks/useAccountOrganizationPreferences";
 import AccountOrganizationToolbar from "../components/accounts/AccountOrganizationToolbar";
 import AccountGroupSection from "../components/accounts/AccountGroupSection";
+import AccountsForecastAlertsPanel from "../components/accounts/AccountsForecastAlertsPanel";
 import AccountLifecycleModal, {
   type LifecycleAction,
 } from "../components/accounts/AccountLifecycleModal";
 import ActionToast from "../components/quickActions/ActionToast";
+import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import QuickTransactionModal from "../components/quickActions/QuickTransactionModal";
 import QuickRecurringModal from "../components/quickActions/QuickRecurringModal";
 import AccountForecastPanel from "../components/quickActions/AccountForecastPanel";
+import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import { useAccountsQuickActions } from "../hooks/useAccountsQuickActions";
+import { useAccountsPageList } from "../hooks/useAccountsPageList";
+
+function formatBillingCycleEndPreview(closingDay: string): string {
+  const day = Number(closingDay);
+  if (!Number.isFinite(day) || day < 1 || day > 31) return "";
+  return formatDateDisplay(nextBillingCycleEndDate(day));
+}
 
 export default function Accounts() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [forecastDays, setForecastDays] = useState<ForecastDays>(30);
+  const [forecastDays, setForecastDays] = useState<PassiveForecastDays>(
+    DEFAULT_PASSIVE_FORECAST_DAYS
+  );
+  const [resolveRiskAccount, setResolveRiskAccount] = useState<Account | null>(null);
   const [newHouseholdName, setNewHouseholdName] = useState("");
   const roleManuallySetRef = useRef(false);
   const [form, setForm] = useState<{
@@ -68,6 +86,7 @@ export default function Accounts() {
     interest_rate: string;
     interest_cycle_end_day: string;
     credit_limit: string;
+    target_utilization_percent: string;
     billing_cycle_end_day: string;
     statement_closing_day: string;
     payment_due_day: string;
@@ -82,6 +101,7 @@ export default function Accounts() {
     promotional_end_date: string;
     last_four: string;
     preserve_partner_transfer_legs: boolean;
+    include_in_available_credit: boolean;
   }>({
     name: "",
     display_name: "",
@@ -98,6 +118,7 @@ export default function Accounts() {
     interest_rate: "",
     interest_cycle_end_day: "",
     credit_limit: "",
+    target_utilization_percent: "10",
     billing_cycle_end_day: "",
     statement_closing_day: "",
     payment_due_day: "",
@@ -135,6 +156,7 @@ export default function Accounts() {
       interest_rate: "",
       interest_cycle_end_day: "",
       credit_limit: "",
+      target_utilization_percent: "10",
       billing_cycle_end_day: "",
       statement_closing_day: "",
       payment_due_day: "",
@@ -148,6 +170,7 @@ export default function Accounts() {
       promotional_apr: "",
       promotional_end_date: "",
       preserve_partner_transfer_legs: false,
+      include_in_available_credit: true,
     };
   }
 
@@ -167,6 +190,10 @@ export default function Accounts() {
       interest_rate: acc.interest_rate ?? "",
       interest_cycle_end_day: acc.interest_cycle_end_day != null ? String(acc.interest_cycle_end_day) : "",
       credit_limit: acc.credit_limit != null && acc.credit_limit !== "" ? String(acc.credit_limit) : "",
+      target_utilization_percent:
+        acc.target_utilization_percent != null && acc.target_utilization_percent !== ""
+          ? String(acc.target_utilization_percent)
+          : "10",
       billing_cycle_end_day: acc.billing_cycle_end_day != null ? String(acc.billing_cycle_end_day) : "",
       statement_closing_day:
         acc.statement_closing_day != null
@@ -186,6 +213,7 @@ export default function Accounts() {
       promotional_end_date: acc.promotional_end_date ?? "",
       last_four: acc.last_four ?? "",
       preserve_partner_transfer_legs: Boolean(acc.preserve_partner_transfer_legs),
+      include_in_available_credit: acc.include_in_available_credit !== false,
     };
   }
 
@@ -211,26 +239,42 @@ export default function Accounts() {
     resetPreferences,
   } = useAccountOrganizationPreferences();
 
-  const { data: accountsData } = useQuery({
-    queryKey: [
-      "accounts",
-      {
-        balance: "true",
-        forecast_summary: "true",
-        health: "true",
-        days: forecastDays,
-        showDeleted: orgPrefs.filters.showDeleted,
-      },
-    ],
-    queryFn: () =>
-      listAccounts({
-        balance: "true",
-        forecast_summary: "true",
-        health: "true",
-        days: forecastDays,
-        include_deleted: orgPrefs.filters.showDeleted,
-      }),
-  });
+  useEffect(() => {
+    if (searchParams.get("attention") === "1") {
+      setFilters((f) => ({
+        ...f,
+        healthStatuses: ["watch", "risk", "critical"],
+      }));
+    }
+    if (searchParams.get("debtOnly") === "1") {
+      setFilters((f) => ({ ...f, debtOnly: true, spendingOnly: false }));
+    }
+    if (searchParams.get("savingsOnly") === "1") {
+      setFilters((f) => ({
+        ...f,
+        debtOnly: false,
+        roles: ["savings", "emergency_fund", "investment"],
+      }));
+    }
+    if (searchParams.get("cashOnly") === "1") {
+      setFilters((f) => ({
+        ...f,
+        debtOnly: false,
+        spendingOnly: true,
+        roles: [],
+      }));
+    }
+  }, [searchParams, setFilters]);
+
+  const {
+    accounts,
+    isLoading: accountsLoading,
+    isEnriching: accountsEnriching,
+    enrichFailed: accountsEnrichFailed,
+    isError: accountsError,
+    error: accountsLoadError,
+    refetch: refetchAccounts,
+  } = useAccountsPageList(forecastDays, orgPrefs.filters);
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const { data: editingAccount } = useQuery({
@@ -239,19 +283,10 @@ export default function Accounts() {
       getAccount(editing!.id, true, { relationships: true, health: true, forecast_summary: true }),
     enabled: !!editing?.id && modalOpen,
   });
-  const accounts = accountsData?.results ?? [];
   const householdId =
-    accounts[0]?.household?.id ?? profile?.default_household ?? households?.[0]?.id;
-
-  const filteredAccounts = useMemo(
-    () => filterAccounts(accounts, orgPrefs.filters),
-    [accounts, orgPrefs.filters]
-  );
-
-  const accountGroups = useMemo(
-    () => groupAccounts(filteredAccounts, orgPrefs.groupBy, orgPrefs.sortBy),
-    [filteredAccounts, orgPrefs.groupBy, orgPrefs.sortBy]
-  );
+    profile?.default_household ??
+    households?.[0]?.id ??
+    accounts[0]?.household?.id;
 
   const allowManualOrder =
     orgPrefs.sortBy === "custom" || orgPrefs.groupBy === "custom";
@@ -375,18 +410,6 @@ export default function Accounts() {
     },
   });
 
-  const handleMoveInGroup = useCallback(
-    (groupKey: string, indexInGroup: number, direction: "up" | "down") => {
-      const group = accountGroups.find((g) => g.key === groupKey);
-      if (!group) return;
-      const toIndex = direction === "up" ? indexInGroup - 1 : indexInGroup + 1;
-      if (toIndex < 0 || toIndex >= group.accounts.length) return;
-      const groupIds = group.accounts.map((a) => a.id);
-      const newOrder = reorderAccountsInGroup(accounts, groupIds, indexInGroup, toIndex);
-      reorderMu.mutate(newOrder);
-    },
-    [accountGroups, accounts, reorderMu]
-  );
   function openCreate() {
     setEditing(null);
     roleManuallySetRef.current = false;
@@ -429,6 +452,9 @@ export default function Accounts() {
         : null;
     const creditLimitStr = String(form.credit_limit ?? "").trim();
     const creditLimitValue = form.account_type === "CREDIT" && creditLimitStr ? creditLimitStr : null;
+    const targetUtilStr = String(form.target_utilization_percent ?? "").trim();
+    const targetUtilValue =
+      form.account_type === "CREDIT" && targetUtilStr ? targetUtilStr : null;
     const interestRateStr = String(form.interest_rate ?? "").trim();
     const interestRateValue = form.account_type === "SAVINGS" && interestRateStr ? interestRateStr : null;
     // Always send interest_rate and interest_cycle_end_day (null when not SAVINGS) so backend persists them
@@ -459,6 +485,7 @@ export default function Accounts() {
         interest_rate: interestRate,
         interest_cycle_end_day: interestCycleDayVal,
         credit_limit: creditLimitValue,
+        target_utilization_percent: targetUtilValue,
         billing_cycle_end_day: billingDay,
         statement_closing_day: billingDay,
         payment_due_day: paymentDueDay,
@@ -475,6 +502,8 @@ export default function Accounts() {
         promotional_apr: form.account_type === "CREDIT" && form.promotional_apr.trim() ? form.promotional_apr : null,
         promotional_end_date: form.account_type === "CREDIT" && form.promotional_end_date.trim() ? form.promotional_end_date : null,
         preserve_partner_transfer_legs: form.preserve_partner_transfer_legs,
+        include_in_available_credit:
+          form.account_type === "CREDIT" ? form.include_in_available_credit : undefined,
       };
       updateMu.mutate({ id: editing.id, data: payload });
     } else if (householdId != null) {
@@ -494,6 +523,7 @@ export default function Accounts() {
         interest_rate: interestRate,
         interest_cycle_end_day: interestCycleDayVal,
         credit_limit: creditLimitValue ?? null,
+        target_utilization_percent: targetUtilValue ?? "10",
         billing_cycle_end_day: billingDay ?? null,
         statement_closing_day: billingDay ?? null,
         payment_due_day: paymentDueDay ?? null,
@@ -510,6 +540,7 @@ export default function Accounts() {
         promotional_apr: form.account_type === "CREDIT" && form.promotional_apr.trim() ? form.promotional_apr : null,
         promotional_end_date: form.account_type === "CREDIT" && form.promotional_end_date.trim() ? form.promotional_end_date : null,
         preserve_partner_transfer_legs: form.preserve_partner_transfer_legs,
+        include_in_available_credit: form.account_type === "CREDIT" ? form.include_in_available_credit : true,
         household: householdId,
       };
       createMu.mutate(payload);
@@ -530,17 +561,9 @@ export default function Accounts() {
     createHouseholdMu.mutate({ name: newHouseholdName.trim() });
   }
 
-  const summaryCurrency = accounts[0]?.currency ?? "USD";
-  const cash = accounts
-    .filter((a) => a.account_type !== "CREDIT")
-    .reduce((sum, a) => sum + parseFloat(a.available_balance ?? "0") || 0, 0);
-  const creditDebt = accounts
-    .filter((a) => a.account_type === "CREDIT")
-    .reduce((sum, a) => sum + parseFloat(a.balance_owed ?? "0") || 0, 0);
-  const netPosition = cash - creditDebt;
-
   const {
     quickActionsContext,
+    plaidStats,
     toast,
     setToast,
     txnPreset,
@@ -553,60 +576,100 @@ export default function Accounts() {
     accountRoleForQuickActions: roleForQuick,
   } = useAccountsQuickActions(accounts, householdId, forecastDays, openEdit);
 
+  const filteredAccounts = useMemo(
+    () =>
+      filterAccounts(accounts, orgPrefs.filters, {
+        plaidLinkedAccountIds: quickActionsContext.plaidLinkedAccountIds,
+      }),
+    [accounts, orgPrefs.filters, quickActionsContext.plaidLinkedAccountIds]
+  );
+
+  const accountGroups = useMemo(
+    () => groupAccounts(filteredAccounts, orgPrefs.groupBy, orgPrefs.sortBy),
+    [filteredAccounts, orgPrefs.groupBy, orgPrefs.sortBy]
+  );
+
+  const pageStats = useMemo(() => {
+    const countable = accountsForPageStats(accounts, orgPrefs.filters);
+    return computeAccountsPageStats(
+      countable,
+      plaidStats.bankLoginCount,
+      plaidStats.linkedAccountCount
+    );
+  }, [accounts, orgPrefs.filters, plaidStats.bankLoginCount, plaidStats.linkedAccountCount]);
+
+  const summaryLine = formatAccountsPageSummaryLine(pageStats);
+
+  const [highlightedAccountId, setHighlightedAccountId] = useState<number | null>(null);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const focusAccount = useCallback((accountId: number) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setHighlightedAccountId(accountId);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-testid="account-row-${accountId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    highlightTimeoutRef.current = setTimeout(() => setHighlightedAccountId(null), 4500);
+  }, []);
+
+  useEffect(() => {
+    const raw = searchParams.get("account");
+    if (!raw || accounts.length === 0) return;
+    const id = parseInt(raw, 10);
+    if (!Number.isFinite(id) || !accounts.some((a) => a.id === id)) return;
+    focusAccount(id);
+  }, [searchParams, accounts, focusAccount]);
+
+  useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    },
+    []
+  );
+
+  const handleMoveInGroup = useCallback(
+    (groupKey: string, indexInGroup: number, direction: "up" | "down") => {
+      const group = accountGroups.find((g) => g.key === groupKey);
+      if (!group) return;
+      const toIndex = direction === "up" ? indexInGroup - 1 : indexInGroup + 1;
+      if (toIndex < 0 || toIndex >= group.accounts.length) return;
+      const groupIds = group.accounts.map((a) => a.id);
+      const newOrder = reorderAccountsInGroup(accounts, groupIds, indexInGroup, toIndex);
+      reorderMu.mutate(newOrder);
+    },
+    [accountGroups, accounts, reorderMu]
+  );
+
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Accounts</h1>
+    <div className={PAGE_SHELL_PY} data-testid="accounts-page">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1 w-full">
+          <PlaidConnectBar householdId={householdId ?? null} />
+        </div>
         <button
+          type="button"
           onClick={openCreate}
-          className="py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700"
+          className="shrink-0 self-start rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           Add account
         </button>
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <label className="text-sm text-gray-600 flex items-center gap-2">
-          Forecast window
-          <select
-            value={forecastDays}
-            onChange={(e) => setForecastDays(Number(e.target.value) as ForecastDays)}
-            className="rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-          >
-            {FORECAST_DAY_OPTIONS.map((d) => (
-              <option key={d} value={d}>
-                {d} days
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 flex flex-wrap gap-6">
-        <div>
-          <span className="text-sm font-medium text-gray-600">Cash</span>
-          <p className="text-lg font-semibold text-gray-900">{formatCurrency(String(cash.toFixed(2)), summaryCurrency)}</p>
-        </div>
-        <div>
-          <span className="text-sm font-medium text-gray-600">Credit debt</span>
-          <p className="text-lg font-semibold text-red-600">{formatCurrency(String(creditDebt.toFixed(2)), summaryCurrency)}</p>
-        </div>
-        <div>
-          <span className="text-sm font-medium text-gray-600">Net Position</span>
-          <p className={`text-lg font-semibold ${netPosition >= 0 ? "text-gray-900" : "text-red-600"}`}>
-            {formatCurrency(String(netPosition.toFixed(2)), summaryCurrency)}
-          </p>
-        </div>
-      </div>
-      <div className="mb-4">
-        <PlaidConnectBar householdId={householdId ?? null} />
-      </div>
       <AccountOrganizationToolbar
+        forecastDays={forecastDays}
+        onForecastDaysChange={setForecastDays}
         groupBy={orgPrefs.groupBy}
         sortBy={orgPrefs.sortBy}
         layoutMode={orgPrefs.layoutMode}
         showGroupSummaries={orgPrefs.showGroupSummaries}
         filters={orgPrefs.filters}
         accounts={accounts}
-        filteredCount={filteredAccounts.length}
+        summaryLine={
+          accounts.length > 0
+            ? summaryLine
+            : "Organize accounts, health, and actions per account."
+        }
         onGroupByChange={setGroupBy}
         onSortByChange={setSortBy}
         onLayoutModeChange={setLayoutMode}
@@ -615,11 +678,79 @@ export default function Accounts() {
         onReset={resetPreferences}
       />
 
-      {filteredAccounts.length === 0 ? (
-        <div className="bg-white rounded-lg shadow border border-gray-200 p-8 text-center text-gray-600">
-          {accounts.length === 0
-            ? "No accounts yet. Add an account or connect via Plaid."
-            : "No accounts match your filters. Adjust filters to see more."}
+      <AccountsForecastAlertsPanel
+        accounts={accounts}
+        forecastDays={forecastDays}
+        onViewAccount={focusAccount}
+      />
+
+      {accountsLoading ? (
+        <div
+          className="bg-white rounded-lg shadow border border-gray-200 p-8 text-center text-gray-600"
+          data-testid="accounts-loading-state"
+        >
+          <p>Loading accounts…</p>
+        </div>
+      ) : accountsError && accounts.length === 0 ? (
+        <div
+          className="bg-white rounded-lg shadow border border-red-200 p-8 text-center text-red-700"
+          data-testid="accounts-error-state"
+        >
+          <p className="mb-3">
+            Could not load accounts
+            {accountsLoadError instanceof Error && accountsLoadError.message
+              ? `: ${accountsLoadError.message}`
+              : "."}
+          </p>
+          <button
+            type="button"
+            onClick={() => refetchAccounts()}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </div>
+      ) : accountsEnriching || accountsEnrichFailed ? (
+        <p
+          className="mb-3 text-sm text-gray-500"
+          data-testid="accounts-enrich-status"
+          role="status"
+        >
+          {accountsEnriching
+            ? "Loading forecasts and health scores…"
+            : "Forecasts could not load; balances are shown. "}
+          {accountsEnrichFailed && !accountsEnriching ? (
+            <button
+              type="button"
+              onClick={() => refetchAccounts()}
+              className="text-blue-600 hover:underline font-medium"
+            >
+              Retry forecasts
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+
+      {!accountsLoading && !accountsError && filteredAccounts.length === 0 ? (
+        <div
+          className="bg-white rounded-lg shadow border border-gray-200 p-8 text-center text-gray-600"
+          data-testid="accounts-empty-state"
+        >
+          {accounts.length === 0 ? (
+            <p>No accounts yet. Add your first account or link a bank.</p>
+          ) : (
+            <p>
+              No accounts match these filters.{" "}
+              <button
+                type="button"
+                onClick={resetPreferences}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                Reset filters
+              </button>
+              .
+            </p>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
@@ -627,6 +758,7 @@ export default function Accounts() {
             <AccountGroupSection
               key={group.key}
               group={group}
+              groupBy={orgPrefs.groupBy}
               collapsed={isGroupCollapsed(group.key)}
               showSummary={orgPrefs.showGroupSummaries}
               layoutMode={orgPrefs.layoutMode}
@@ -656,6 +788,9 @@ export default function Accounts() {
               updatePending={updateMu.isPending}
               quickActionsContext={quickActionsContext}
               onQuickAction={handleQuickAction}
+              highlightedAccountId={highlightedAccountId}
+              onFocusAccount={focusAccount}
+              onResolveRisk={setResolveRiskAccount}
             />
           ))}
         </div>
@@ -678,7 +813,7 @@ export default function Accounts() {
               transfers (normally the other account&apos;s linked leg is removed too; accounts marked{" "}
               <em>preserve partner transfer legs</em> keep their side and only the link is removed), and reconcile
               statement lines for this account. Your <strong className="font-semibold">starting balance</strong> and
-              account settings stay; recurring rules are not deleted.
+              account settings stay; automation schedules are not deleted.
             </p>
             <p className="text-sm text-gray-600 mb-3">
               {clearLedgerPreview != null ? (
@@ -766,6 +901,24 @@ export default function Accounts() {
           }
         }}
       />
+
+      {resolveRiskAccount && (
+        <ResolveRiskModal
+          open
+          accountId={resolveRiskAccount.id}
+          accountName={getEffectiveDisplayName(resolveRiskAccount)}
+          forecastDays={forecastDays}
+          accounts={accounts}
+          onClose={() => setResolveRiskAccount(null)}
+          onApplyTransfer={(preset) => {
+            setTxnPreset(preset);
+            setResolveRiskAccount(null);
+          }}
+          onSnoozed={() => {
+            void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+          }}
+        />
+      )}
 
       <ActionToast message={toast} onDismiss={() => setToast(null)} />
       <QuickTransactionModal
@@ -1060,6 +1213,42 @@ export default function Accounts() {
                       Used to show available credit on the Transactions page.
                     </p>
                   </div>
+                  <div className="flex items-start gap-2 col-span-full">
+                    <input
+                      id="include-in-available-credit"
+                      type="checkbox"
+                      className="mt-1 rounded border-gray-300"
+                      checked={form.include_in_available_credit}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, include_in_available_credit: e.target.checked }))
+                      }
+                    />
+                    <label htmlFor="include-in-available-credit" className="text-sm text-gray-700 cursor-pointer">
+                      <span className="font-medium">Include in Available Credit total</span>
+                      <span className="block text-xs text-gray-500 mt-0.5">
+                        Uncheck for specialty cards you don&apos;t spend from day to day (e.g. medical or
+                        store-only). They&apos;ll still appear on your accounts list and in debt totals.
+                      </span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Target utilization %</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={form.target_utilization_percent}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, target_utilization_percent: e.target.value }))
+                      }
+                      placeholder="10"
+                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Healthy when balance is at or below this % of your limit (10% is a common credit-score target).
+                    </p>
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">APR % (optional)</label>
                     <input
@@ -1102,7 +1291,9 @@ export default function Accounts() {
                     </p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Statement closing day (1–31)</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Billing cycle end day (1–31)
+                    </label>
                     <input
                       type="number"
                       min="1"
@@ -1118,6 +1309,20 @@ export default function Accounts() {
                       placeholder="e.g. 15"
                       className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
                     />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Day of month your statement closes. Used for projected statement balance and
+                      interest.
+                    </p>
+                    {form.statement_closing_day &&
+                    Number(form.statement_closing_day) >= 1 &&
+                    Number(form.statement_closing_day) <= 31 ? (
+                      <p className="mt-1 text-xs text-gray-600">
+                        Next cycle ends:{" "}
+                        <span className="font-medium tabular-nums">
+                          {formatBillingCycleEndPreview(form.statement_closing_day)}
+                        </span>
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Payment due day (1–31)</label>
@@ -1229,14 +1434,6 @@ export default function Accounts() {
                     </>
                   )}
                 </>
-              )}
-              {editing?.id && (
-                <AccountRelationshipsPanel
-                  accountId={editing.id}
-                  accounts={accounts}
-                  outgoing={editingAccount?.outgoing_relationships}
-                  incoming={editingAccount?.incoming_relationships}
-                />
               )}
               <div className="flex gap-2 justify-end">
                 <button type="button" onClick={() => setModalOpen(false)} className="py-2 px-4 border rounded" disabled={createMu.isPending || updateMu.isPending}>

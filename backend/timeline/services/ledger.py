@@ -4,6 +4,7 @@ Recurring rule instances are evaluated in date order; debt payments may material
 rows or be skipped and purged when the destination balance is already clear on that date.
 """
 import logging
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -14,7 +15,21 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from accounts.models import Account
+from common.services.profiler import QueryProfiler, PerfTimer, log_perf, perf_enabled, phase_end, phase_start
 from core.utils import get_households_for_user
+from timeline.services.balance_cache import TimelineBalanceCache, get_active_balance_cache
+
+
+def _lookup_account(account_id: int, accs: dict[int, Account]) -> Account | None:
+    """Resolve account from preloaded timeline cache, local map, or DB."""
+    cache = get_active_balance_cache()
+    if cache is not None:
+        acc = cache.get_account(account_id)
+        if acc is not None:
+            return acc
+    if account_id in accs:
+        return accs[account_id]
+    return Account.objects.filter(pk=account_id).first()
 from timeline.models import (
     InterestCycleSkip,
     RecurringRule,
@@ -391,6 +406,9 @@ def _db_card_postings_in_exclusive_range(
     through_date: date,
 ) -> Decimal:
     """Signed sum of ledger-visible postings on the card with date in (after_date, through_date]."""
+    cache = get_active_balance_cache()
+    if cache is not None:
+        return cache.db_card_postings_in_exclusive_range(card_account_id, after_date, through_date)
     qs = ledger_visible_transactions(
         Transaction.objects.filter(
             account_id=card_account_id,
@@ -429,7 +447,11 @@ def _future_recurring_expense_impact_on_card(
             amt_delta = -abs(params.amount)
             if d <= payment_date:
                 continue
-            if Transaction.objects.filter(account_id=card_account_id, date=d).exists():
+            cache = get_active_balance_cache()
+            if cache is not None:
+                if cache.has_posting_on_date(card_account_id, d):
+                    continue
+            elif Transaction.objects.filter(account_id=card_account_id, date=d).exists():
                 continue
             total += amt_delta
     return total
@@ -443,11 +465,18 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     """
     if occurrence_date < as_of_today:
         return
-    Transaction.objects.filter(
+    deleted = Transaction.objects.filter(
         rule_id=rule_id,
         date=occurrence_date,
         source=Transaction.Source.RULE,
-    ).delete()
+    )
+    account_ids = list(deleted.values_list("account_id", flat=True).distinct())
+    deleted.delete()
+    cache = get_active_balance_cache()
+    if cache is not None:
+        for aid in account_ids:
+            if aid is not None:
+                cache.note_transactions_deleted(aid, rule_id=rule_id, on_date=occurrence_date)
 
 
 def _liability_balance_through_date(
@@ -463,6 +492,17 @@ def _liability_balance_through_date(
     Signed balance for a non-credit liability account (e.g. OTHER loan): starting_balance + txns.
     Convention matches bank-style accounts: negative balance = owed principal (payments are inflows).
     """
+    cache = get_active_balance_cache()
+    if cache is not None:
+        return cache.balance_through_date(
+            account_id,
+            as_of_date,
+            rows,
+            include_row_leg_without_txn=include_row_leg_without_txn,
+            include_db_postings_on_as_of_date=include_db_postings_on_as_of_date,
+            exclude_transaction_ids=exclude_transaction_ids,
+            credit_style=False,
+        )
     acc = Account.objects.filter(pk=account_id).first()
     if not acc:
         return Decimal("0")
@@ -610,6 +650,9 @@ def _materialize_rule_occurrence(
         ):
             txn.amount = amount
             txn.save(update_fields=["amount", "updated_at"])
+            cache = get_active_balance_cache()
+            if cache is not None:
+                cache.note_transaction_saved(txn)
         _safe_try_match_rule_to_pending_imports(txn)
         return txn
     if not _rule_allows_materialization(rule, d):
@@ -635,6 +678,9 @@ def _materialize_rule_occurrence(
             process_rule_allocations_for_transaction(rule, created)
         except Exception:
             pass
+    cache = get_active_balance_cache()
+    if cache is not None:
+        cache.note_transaction_saved(created)
     return created
 
 
@@ -1108,6 +1154,9 @@ def _opening_balance(account_id: int, as_of_date: date) -> Decimal:
     """Balance for account as of end of day before as_of_date. amount is signed: positive=inflow, negative=outflow.
     For CREDIT accounts, negate so debt is negative: debits (expenses) make balance more negative, credits (payments) less negative.
     Includes all transaction sources (ACTUAL, RULE, ONE_TIME) so interest uses full balance."""
+    cache = get_active_balance_cache()
+    if cache is not None:
+        return cache.opening_balance(account_id, as_of_date)
     acc = Account.objects.filter(pk=account_id).first()
     txn_sum = sum_transaction_amounts_for_balance(account_id, date_lt=as_of_date)
     opening = Decimal("0")
@@ -1256,6 +1305,9 @@ def _sum_payments_to_card_from_other_accounts(
 def _raw_balance_at_end_of_date(account_id: int, as_of_date: date) -> Decimal:
     """Balance at end of as_of_date from actual transactions only, without CREDIT sign flip.
     Used to detect 'no debt': raw <= 0 means paid off or in credit (overpayment)."""
+    cache = get_active_balance_cache()
+    if cache is not None:
+        return cache.raw_balance_at_end_of_date(account_id, as_of_date)
     acc = Account.objects.filter(pk=account_id).first()
     txns = ledger_visible_transactions(
         Transaction.objects.filter(
@@ -1289,6 +1341,20 @@ def _credit_card_balance_through_date(
     that date (so earlier same-day rule payments are included). Add only non-DB rows on that
     date (transaction_id is None) when include_row_leg_without_txn is True.
     """
+    cache = get_active_balance_cache()
+    if cache is not None:
+        acc = cache.get_account(card_account_id)
+        if not acc or acc.account_type != Account.AccountType.CREDIT:
+            return Decimal("0")
+        return cache.balance_through_date(
+            card_account_id,
+            as_of_date,
+            rows,
+            include_row_leg_without_txn=include_row_leg_without_txn,
+            include_db_postings_on_as_of_date=include_db_postings_on_as_of_date,
+            exclude_transaction_ids=exclude_transaction_ids,
+            credit_style=True,
+        )
     acc = Account.objects.filter(pk=card_account_id).first()
     if not acc or acc.account_type != Account.AccountType.CREDIT:
         return Decimal("0")
@@ -1663,6 +1729,14 @@ def build_timeline(
     cycles are not shown on the timeline, and ``source=INTEREST`` rows from the database are
     omitted here (use a normal transaction to record actual bank interest if needed).
     """
+    timer = PerfTimer() if perf_enabled() else None
+    query_profiler = QueryProfiler() if perf_enabled() else None
+    wall_start = time.perf_counter() if perf_enabled() else None
+    perf_generated_occurrences = 0
+    if query_profiler is not None:
+        query_profiler.start()
+
+    _phase_setup = phase_start(timer, "setup")
     households = get_households_for_user(user)
     if household_id:
         households = households.filter(pk=household_id)
@@ -1680,743 +1754,806 @@ def build_timeline(
     account_ids = list(accounts.values_list("pk", flat=True))
     forecastable_account_ids = {
         a.pk
-        for a in Account.objects.filter(pk__in=account_ids)
+        for a in accounts
         if a.participates_in_forecast()
     }
     if not account_ids:
         return []
 
-    scenario = None
-    if scenario_id:
-        scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
-
-    # 1) Actual transactions: fetch ALL with date <= end_date so nothing is ever hidden in opening balance.
-    #    Exclude Plaid rows that are matched as imports (canonical row is the planned side).
-    actual = list(
-        ledger_visible_transactions(
-            Transaction.objects.filter(
-                account_id__in=account_ids,
-                date__lte=end_date,
-            )
+    if perf_enabled():
+        requested_days = max((end_date - start_date).days, 0)
+        logger.info(
+            "[PERF] forecast_requested\nuser=%s\ndays=%s\nstart=%s\nend=%s",
+            getattr(user, "pk", user),
+            requested_days,
+            start_date.isoformat(),
+            end_date.isoformat(),
         )
-        .select_related(
-            "account",
-            "category",
-            "rule",
-            "rule__transfer_to_account",
-            "match_as_planned__imported_transaction",
-        )
-        .order_by("date", "id")
-    )
-    # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
-    # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
-    # one row per rule occurrence when duplicates exist (e.g. after account change + materialization).
-    # Do NOT hide rule-backed transactions by "rule's current account" — if the user moved a single
-    # instance to another account (e.g. Savor), it should still show on that account.
-    # Build map (rule_id, date) -> destination account name for transfer "from" legs so we can show "Move to CC (Savor)" in the list.
-    from_leg_keys = [(t.rule_id, t.date) for t in actual if t.rule_id is not None and t.amount is not None and t.amount < 0]
-    to_leg_account_name: dict[tuple[int, date], str] = {}
-    if from_leg_keys:
-        rule_dates = {(r, d) for r, d in from_leg_keys}
-        to_legs = Transaction.objects.filter(
-            rule_id__in={r for r, _ in rule_dates},
-            date__in={d for _, d in rule_dates},
-        ).exclude(account_id__in=account_ids).select_related("account")
-        for to_txn in to_legs:
-            if to_txn.account_id and to_txn.rule_id:
-                to_leg_account_name[(to_txn.rule_id, to_txn.date)] = getattr(to_txn.account, "name", "") or ""
 
-    today = as_of_date or timezone.localdate()
-    accs = {a.id: a for a in Account.objects.filter(pk__in=account_ids)}
-    credit_account_ids = {
-        aid for aid in account_ids
-        if accs.get(aid) and getattr(accs[aid], "account_type", None) == Account.AccountType.CREDIT
-    }
-
-    # Opening balances (before actual + rule rows) — used with full row ledger when skipping min payments
-    opening: dict[int, Decimal] = {}
-    for aid in account_ids:
-        acc = accs.get(aid)
-        sb = Decimal(str(acc.starting_balance)) if acc and acc.starting_balance is not None else Decimal("0")
-        if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
-            sb = -sb
-        opening[aid] = sb
-
-    rows: list[dict] = []
-    ids_in_rows: set[int] = set()
-    seen_rule_actual_key: set[tuple] = set()
-    purged_rule_dates: set[tuple[int, date]] = set()
-    scenario_projection_only = projection_only or scenario is not None
-    for t in actual:
-        # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
-        # Re-project rule occurrences with scenario overrides — do not double-count DB rows.
-        if scenario_projection_only and t.rule_id is not None and t.date >= today:
-            continue
-        amt = t.amount
-        sign = 1 if (amt is not None and amt >= 0) else -1
-        if t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
-            ids_in_rows.add(t.id)
-            continue
-        if t.rule_id is not None:
-            rule_actual_key = (t.account_id, t.date, t.rule_id, sign)
-            if rule_actual_key in seen_rule_actual_key:
-                ids_in_rows.add(t.id)
-                continue
-            seen_rule_actual_key.add(rule_actual_key)
-        if t.source == Transaction.Source.INTEREST:
-            ids_in_rows.add(t.id)
-            continue
-        # Per-occurrence: skip (and purge) debt payments when destination owes nothing that day.
-        cat_nm = (t.category.name if getattr(t, "category", None) and t.category else None) or ""
-        if t.rule_id is not None and t.date >= today and amt is not None:
-            hide_paid_off = False
-            if t.account_id in credit_account_ids and amt > 0 and t.account:
-                hide_paid_off = _skip_payment_to_debt_destination(
-                    t.account,
-                    t.date,
-                    rows,
-                    amt,
-                    exclude_transaction_ids=(t.id,),
-                    category_name=cat_nm,
-                )
-            elif amt < 0:
-                dest_account: Optional[Account] = None
-                payment_amt: Optional[Decimal] = None
-                exclude_ids: list[int] = []
-                for cand in (
-                    Transaction.objects.filter(
-                        rule_id=t.rule_id,
-                        date=t.date,
-                        amount__gt=0,
-                    )
-                    .exclude(account_id=t.account_id)
-                    .select_related("account")
-                ):
-                    acc_c = cand.account
-                    if acc_c and _account_is_debt_payment_destination(acc_c, cat_nm):
-                        dest_account = acc_c
-                        payment_amt = cand.amount
-                        exclude_ids.append(cand.id)
-                        break
-                if dest_account is None:
-                    rule_obj = getattr(t, "rule", None)
-                    tac = None
-                    if (
-                        rule_obj is not None
-                        and rule_obj.transfer_to_account_id
-                        and _category_name_allows_rule_transfer_destination(cat_nm)
-                    ):
-                        tac = getattr(rule_obj, "transfer_to_account", None) or Account.objects.filter(
-                            pk=rule_obj.transfer_to_account_id
-                        ).first()
-                    if tac and _account_is_debt_payment_destination(tac, cat_nm):
-                        dest_account = tac
-                        try:
-                            payment_amt = abs(Decimal(str(amt)))
-                        except (TypeError, ValueError):
-                            payment_amt = None
-                        exclude_ids.extend(
-                            Transaction.objects.filter(
-                                rule_id=t.rule_id,
-                                date=t.date,
-                                account_id=tac.id,
-                            ).values_list("pk", flat=True)
-                        )
-                if dest_account is not None and payment_amt is not None:
-                    hide_paid_off = _skip_payment_to_debt_destination(
-                        dest_account,
-                        t.date,
-                        rows,
-                        payment_amt,
-                        exclude_transaction_ids=tuple(exclude_ids) if exclude_ids else None,
-                        category_name=cat_nm,
-                    )
-            if hide_paid_off:
-                if not scenario_projection_only:
-                    _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
-                purged_rule_dates.add((t.rule_id, t.date))
-                ids_in_rows.add(t.id)
-                continue
-        desc = t.payee or ""
-        try:
-            mpl = t.match_as_planned
-            imp = mpl.imported_transaction
-            bank_hint = (imp.payee or imp.imported_description or "").strip()
-            if bank_hint and bank_hint not in desc:
-                desc = f"{desc} — bank: {bank_hint}" if desc else f"Bank: {bank_hint}"
-        except Exception:
-            pass
-        if t.rule_id and amt is not None and amt < 0:
-            to_name = to_leg_account_name.get((t.rule_id, t.date))
-            if to_name and to_name not in desc:
-                desc = f"{desc} ({to_name})" if desc else to_name
-        row_source = (
-            "interest" if t.source == Transaction.Source.INTEREST else "actual"
-        )
-        rows.append({
-            "date": t.date,
-            "description": desc,
-            "account_id": t.account_id,
-            "account_name": t.account.effective_display_name,
-            "category_id": t.category_id,
-            "category_name": t.category.name if t.category else None,
-            "amount": amt,
-            "type": "INFLOW" if amt >= 0 else "OUTFLOW",
-            "status": t.status,
-            "source": row_source,
-            "rule_id": t.rule_id,
-            "transaction_id": t.id,
-            "sort_key": (t.date, 0, t.id),
-            **_timeline_row_meta(t),
-        })
-        ids_in_rows.add(t.id)
-
-    # 2) One-time planned (Transaction with source=ONE_TIME or status=PLANNED, in range)
-    # Already included in actual queryset above; we tagged by source. So no duplicate.
-
-    # 3) Projected recurring occurrences (computed, not stored).
-    # Only dates >= today are emitted. Rule amount/schedule changes affect only these
-    # future projections; past actual transactions in the DB are never modified.
-    #
-    # Use every active rule in the household (not only rules touching the filtered account).
-    # Otherwise a Chase-only timeline would never materialize e.g. Savings→Platinum payments,
-    # and bank→card minimum rules would still project because the card balance looked wrong.
-    rules_qs = RecurringRule.objects.filter(
-        household__in=households,
-        active=True,
-    ).select_related("account", "category", "transfer_to_account")
-    if scenario_id and scenario:
-        rules_qs = rules_qs.prefetch_related("scenario_overrides")
-
-    # Build rule list and sort by first occurrence date so that when we evaluate "skip 3/23?"
-    # we have already added any earlier payment (e.g. 3/20) from the same or another rule.
-    rules_with_occ: list[tuple] = []
-    for rule in rules_qs:
-        eff = apply_scenario_overrides(rule, scenario)
-        if not eff.get("active", True):
-            continue
-        eff_start = eff.get("start_date") or rule.start_date
-        eff_end = eff.get("end_date")
-        occ_dates = generate_rule_occurrence_dates(
-            rule, start_date, end_date,
-            effective_start=eff_start,
-            effective_end=eff_end,
-        )
-        first_occ = min(occ_dates) if occ_dates else date.max
-        rules_with_occ.append((rule, eff, eff_start, eff_end, occ_dates, first_occ))
-    rules_with_occ.sort(key=lambda x: x[5])
-
-    # User-deleted rule occurrences: do not re-materialize or show them.
-    rule_ids = [r.id for r, *_ in rules_with_occ]
-    skipped_occurrences = set(
-        RecurringRuleSkip.objects.filter(
-            rule_id__in=rule_ids, date__gte=start_date, date__lte=end_date
-        ).values_list("rule_id", "date")
+    from timeline.services.balance_cache import (
+        activate_balance_cache,
+        deactivate_balance_cache,
+        preload_household_balance_data,
     )
 
-    # Queue all occurrences, then process in global order. Same calendar day, same destination
-    # card: larger transfers first (then rule_id) so a full payment materializes before a minimum.
-    occurrence_events: list[tuple[date, Decimal, int, str, tuple]] = []
+    balance_cache, balance_cache_token = activate_balance_cache()
+    try:
+        preload_household_balance_data(balance_cache, households, end_date)
+        scenario = None
+        if scenario_id:
+            scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
-    def _rule_account_forecastable(rule_obj: RecurringRule, eff: dict) -> bool:
-        acc_id = eff.get("account_id") or rule_obj.account_id
-        if acc_id not in forecastable_account_ids:
-            return False
-        to_id = rule_obj.transfer_to_account_id
-        if to_id and to_id not in forecastable_account_ids:
-            return False
-        return True
-
-    for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
-        if not _rule_account_forecastable(rule, eff):
-            continue
-
-        def _amount_for_date(d: date) -> Decimal:
-            params = resolve_rule_params(rule, d)
-            raw_amount = params.amount
-            if scenario_id and scenario:
-                try:
-                    override = rule.scenario_overrides.get(scenario=scenario)
-                    if override.override_amount is not None:
-                        raw_amount = override.override_amount
-                except ScenarioRuleOverride.DoesNotExist:
-                    pass
-            amount_decimal = Decimal(str(raw_amount))
-            direction = eff.get("direction") or params.direction
-            if direction == RecurringRule.Direction.EXPENSE and amount_decimal > 0:
-                amount_decimal = -amount_decimal
-            elif direction == RecurringRule.Direction.INCOME and amount_decimal < 0:
-                amount_decimal = abs(amount_decimal)
-            return amount_decimal
-
-        cat_id = eff.get("category_id")
-        cat_name = None
-        if rule.category_id:
-            from categories.models import Category
-            c = Category.objects.filter(pk=cat_id or rule.category_id).first()
-            cat_name = c.name if c else None
-
-        use_transfer_branch = bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
-            cat_name
+        # 1) Actual transactions: fetch ALL with date <= end_date so nothing is ever hidden in opening balance.
+        #    Exclude Plaid rows that are matched as imports (canonical row is the planned side).
+        actual = list(
+            ledger_visible_transactions(
+                Transaction.objects.filter(
+                    account_id__in=account_ids,
+                    date__lte=end_date,
+                )
+            )
+            .select_related(
+                "account",
+                "category",
+                "rule",
+                "rule__transfer_to_account",
+                "match_as_planned__imported_transaction",
+            )
+            .order_by("date", "id")
         )
-        if use_transfer_branch:
-            from_acc_id = eff.get("account_id") or rule.account_id
-            to_acc_id = rule.transfer_to_account_id
-            from_acc = next((a for a in accounts if a.pk == from_acc_id), None)
-            to_acc = getattr(rule, "transfer_to_account", None) or next((a for a in accounts if a.pk == to_acc_id), None)
-            if to_acc is None:
-                to_acc = accs.get(to_acc_id) or Account.objects.filter(pk=to_acc_id).first()
-            from_name = from_acc.name if from_acc else getattr(rule.account, "name", "")
-            to_name = to_acc.name if to_acc else ""
-            is_debt_dest = bool(to_acc and _account_is_debt_payment_destination(to_acc, cat_name))
-            for d in occ_dates:
-                if d < today or (rule.id, d) in skipped_occurrences:
-                    continue
-                amount_decimal = _amount_for_date(d)
-                out_amount = -abs(amount_decimal)
-                in_amount = abs(amount_decimal)
-                sort_amt = -in_amount if is_debt_dest else Decimal("0")
-                occurrence_events.append(
-                    (
-                        d,
-                        sort_amt,
-                        rule.id,
-                        "transfer",
-                        (
-                            rule,
-                            from_acc_id,
-                            to_acc_id,
-                            from_name,
-                            to_name,
-                            out_amount,
-                            in_amount,
-                            is_debt_dest,
-                            cat_id,
-                            cat_name,
-                        ),
-                    )
-                )
-        else:
-            acc_id = eff.get("account_id") or rule.account_id
-            acc = next((a for a in accounts if a.pk == acc_id), None)
-            acc_name = acc.name if acc else getattr(rule.account, "name", "")
-            card_for_skip = None
-            if acc and acc.account_type == Account.AccountType.CREDIT and rule.direction == RecurringRule.Direction.INCOME:
-                card_for_skip = acc
-            elif (
-                rule.direction == RecurringRule.Direction.EXPENSE
-                and cat_name
-                and "credit" in (cat_name or "").lower()
-            ):
-                rule_name_lower = (getattr(rule, "name", None) or "").lower()
-                for a in Account.objects.operational().filter(
-                    household__in=households, account_type=Account.AccountType.CREDIT,
-                ):
-                    an = (a.name or "").strip()
-                    if not an:
-                        continue
-                    if an.lower() in rule_name_lower or rule_name_lower in an.lower() or rule_name_lower.startswith(an.lower()) or an.lower().startswith(rule_name_lower[:20]):
-                        card_for_skip = a
-                        break
-            for d in occ_dates:
-                if d < today or (rule.id, d) in skipped_occurrences:
-                    continue
-                occurrence_events.append(
-                    (
-                        d,
-                        Decimal("0"),
-                        rule.id,
-                        "single",
-                        (rule, acc_id, acc_name, _amount_for_date(d), cat_id, cat_name, card_for_skip),
-                    )
-                )
+        # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
+        # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
+        # one row per rule occurrence when duplicates exist (e.g. after account change + materialization).
+        # Do NOT hide rule-backed transactions by "rule's current account" — if the user moved a single
+        # instance to another account (e.g. Savor), it should still show on that account.
+        # Build map (rule_id, date) -> destination account name for transfer "from" legs so we can show "Move to CC (Savor)" in the list.
+        from_leg_keys = [(t.rule_id, t.date) for t in actual if t.rule_id is not None and t.amount is not None and t.amount < 0]
+        to_leg_account_name: dict[tuple[int, date], str] = {}
+        if from_leg_keys:
+            rule_dates = {(r, d) for r, d in from_leg_keys}
+            to_legs = Transaction.objects.filter(
+                rule_id__in={r for r, _ in rule_dates},
+                date__in={d for _, d in rule_dates},
+            ).exclude(account_id__in=account_ids).select_related("account")
+            for to_txn in to_legs:
+                if to_txn.account_id and to_txn.rule_id:
+                    to_leg_account_name[(to_txn.rule_id, to_txn.date)] = getattr(to_txn.account, "name", "") or ""
 
-    occurrence_events.sort(key=lambda x: (x[0], x[1], x[2]))
-    seen_scenario_rule_keys: set[tuple] = set()
+        today = as_of_date or timezone.localdate()
+        accs = {
+            aid: balance_cache.get_account(aid)
+            for aid in account_ids
+            if balance_cache.get_account(aid) is not None
+        }
+        credit_account_ids = {
+            aid for aid in account_ids
+            if accs.get(aid) and getattr(accs[aid], "account_type", None) == Account.AccountType.CREDIT
+        }
 
-    for d, _sort_amt, _rid, kind, payload in occurrence_events:
-        if kind == "transfer":
-            (
-                rule,
-                from_acc_id,
-                to_acc_id,
-                from_name,
-                to_name,
-                out_amount,
-                in_amount,
-                is_debt_dest,
-                cat_id,
-                cat_name,
-            ) = payload
-            to_acc_for_skip = Account.objects.filter(pk=to_acc_id).first()
-            if is_debt_dest and to_acc_for_skip:
-                dest_leg_ids = tuple(
-                    Transaction.objects.filter(
-                        rule_id=rule.id, date=d, account_id=to_acc_id
-                    ).values_list("pk", flat=True)
-                )
-                from_acc_obj = accs.get(from_acc_id) or Account.objects.filter(pk=from_acc_id).first()
-                fund_from_bank = (
-                    from_acc_obj is not None
-                    and from_acc_obj.account_type != Account.AccountType.CREDIT
-                )
-                lookahead_end = d + timedelta(days=45)
-                skip_payment = False
-                if fund_from_bank:
-                    bal = _credit_card_balance_through_date(
-                        to_acc_for_skip.id,
-                        d,
-                        rows,
-                        include_row_leg_without_txn=True,
-                        include_db_postings_on_as_of_date=True,
-                        exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
-                    )
-                    extra_scheduled = _future_recurring_expense_impact_on_card(
-                        to_acc_for_skip.id,
-                        d,
-                        lookahead_end,
-                        households,
-                    )
-                    extra_db = _db_card_postings_in_exclusive_range(
-                        to_acc_for_skip.id,
-                        d,
-                        lookahead_end,
-                    )
-                    skip_payment = bal + extra_scheduled + extra_db >= 0
-                else:
-                    skip_payment = _skip_payment_to_debt_destination(
-                        to_acc_for_skip,
-                        d,
-                        rows,
-                        in_amount,
-                        exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
-                        category_name=cat_name,
-                    )
-                if skip_payment:
-                    if not scenario_projection_only:
-                        _purge_skipped_rule_occurrence(rule.id, d, today)
-                    continue
-            if scenario_projection_only:
-                proj_key = (rule.id, d, "transfer")
-                if proj_key in seen_scenario_rule_keys:
-                    continue
-                seen_scenario_rule_keys.add(proj_key)
-                desc_with_card = f"{rule.name} ({to_name})" if to_name else rule.name
-                rows.append(
-                    _projected_rule_timeline_row(
-                        d=d,
-                        description=desc_with_card,
-                        account_id=from_acc_id,
-                        account_name=from_name,
-                        category_id=cat_id,
-                        category_name=cat_name,
-                        amount=out_amount,
-                        row_type="OUTFLOW",
-                        rule_id=rule.id,
-                        sort_key=(d, 1, rule.id * 2),
-                    )
-                )
-                rows.append(
-                    _projected_rule_timeline_row(
-                        d=d,
-                        description=desc_with_card,
-                        account_id=to_acc_id,
-                        account_name=to_name,
-                        category_id=None,
-                        category_name=None,
-                        amount=in_amount,
-                        row_type="INFLOW",
-                        rule_id=rule.id,
-                        sort_key=(d, 1, rule.id * 2 + 1),
-                    )
-                )
-                continue
-            txn_from = _materialize_rule_occurrence(
-                rule, d, from_acc_id, out_amount, rule.name, cat_id
-            )
-            existing_to = Transaction.objects.filter(
-                rule_id=rule.id, date=d
-            ).exclude(account_id=from_acc_id).select_related("account").first()
-            if existing_to is not None:
-                txn_to = existing_to
-                to_acc_id_actual = txn_to.account_id
-                to_name_actual = getattr(txn_to.account, "name", "") if txn_to.account else to_name
-            else:
-                txn_to = _materialize_rule_occurrence(
-                    rule, d, to_acc_id, in_amount, rule.name, None
-                )
-                to_acc_id_actual = to_acc_id
-                to_name_actual = to_name
-            if txn_from.id in ids_in_rows or txn_to.id in ids_in_rows:
-                continue
-            ids_in_rows.add(txn_from.id)
-            ids_in_rows.add(txn_to.id)
-            amt_from = txn_from.amount if txn_from.amount is not None else out_amount
-            amt_to = txn_to.amount if txn_to.amount is not None else in_amount
-            desc_with_card = f"{rule.name} ({to_name_actual})" if to_name_actual else rule.name
-            rows.append({
-                "date": d,
-                "description": desc_with_card,
-                "account_id": from_acc_id,
-                "account_name": from_name,
-                "category_id": cat_id,
-                "category_name": cat_name,
-                "amount": amt_from,
-                "type": "OUTFLOW",
-                "status": txn_from.status,
-                "source": "actual",
-                "rule_id": rule.id,
-                "transaction_id": txn_from.id,
-                "sort_key": (d, 1, rule.id * 2),
-                **_timeline_row_meta(txn_from),
-            })
-            rows.append({
-                "date": d,
-                "description": desc_with_card,
-                "account_id": to_acc_id_actual,
-                "account_name": to_name_actual,
-                "category_id": None,
-                "category_name": None,
-                "amount": amt_to,
-                "type": "INFLOW",
-                "status": txn_to.status,
-                "source": "actual",
-                "rule_id": rule.id,
-                "transaction_id": txn_to.id,
-                "sort_key": (d, 1, rule.id * 2 + 1),
-                **_timeline_row_meta(txn_to),
-            })
-        else:
-            rule, acc_id, acc_name, amount_decimal, cat_id, cat_name, card_for_skip = payload
-            if card_for_skip is not None:
-                if _skip_payment_to_debt_destination(
-                    card_for_skip,
-                    d,
-                    rows,
-                    None,
-                    exclude_transaction_ids=None,
-                    category_name=cat_name,
-                ):
-                    if not scenario_projection_only:
-                        _purge_skipped_rule_occurrence(rule.id, d, today)
-                    continue
-            if scenario_projection_only:
-                proj_key = (rule.id, d, acc_id)
-                if proj_key in seen_scenario_rule_keys:
-                    continue
-                if any(
-                    r.get("rule_id") == rule.id
-                    and r.get("account_id") == acc_id
-                    and r.get("date") == d
-                    for r in rows
-                ):
-                    continue
-                seen_scenario_rule_keys.add(proj_key)
-                rows.append(
-                    _projected_rule_timeline_row(
-                        d=d,
-                        description=rule.name,
-                        account_id=acc_id,
-                        account_name=acc_name,
-                        category_id=cat_id,
-                        category_name=cat_name,
-                        amount=amount_decimal,
-                        row_type=rule.direction,
-                        rule_id=rule.id,
-                        sort_key=(d, 1, rule.id),
-                    )
-                )
-                continue
-            txn = _materialize_rule_occurrence(
-                rule, d, acc_id, amount_decimal, rule.name, cat_id
-            )
-            if txn.id in ids_in_rows:
-                continue
-            ids_in_rows.add(txn.id)
-            amt = txn.amount if txn.amount is not None else amount_decimal
-            rows.append({
-                "date": d,
-                "description": rule.name,
-                "account_id": acc_id,
-                "account_name": acc_name,
-                "category_id": cat_id,
-                "category_name": cat_name,
-                "amount": amt,
-                "type": rule.direction,
-                "status": txn.status,
-                "source": "actual",
-                "rule_id": rule.id,
-                "transaction_id": txn.id,
-                "sort_key": (d, 1, rule.id),
-                **_timeline_row_meta(txn),
-            })
-
-    if scenario_id and scenario:
-        append_scenario_added_recurring_projections(
-            scenario=scenario,
-            rows=rows,
-            start_date=start_date,
-            end_date=end_date,
-            forecastable_account_ids=forecastable_account_ids,
-            seen_keys=seen_scenario_rule_keys,
-        )
-
-    # User-deleted projected interest: do not re-show or re-materialize that billing cycle.
-    skipped_interest_by_account: dict[int, set[date]] = defaultdict(set)
-    for sk in InterestCycleSkip.objects.filter(account_id__in=account_ids).values(
-        "account_id", "cycle_end_date"
-    ):
-        skipped_interest_by_account[sk["account_id"]].add(sk["cycle_end_date"])
-
-    # 4) Projected credit card interest: one row per CREDIT account per cycle end in range.
-    # Each month's interest uses projected balance (actual + recurring + prior months' interest).
-    from categories.models import Category
-    interest_category_cache: dict[int, tuple[Optional[int], str]] = {}  # household_id -> (category_id, name)
-    credit_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "CREDIT"]
-    for acc in credit_accounts:
-        cycle_day = acc.get_statement_closing_day() if hasattr(acc, "get_statement_closing_day") else getattr(acc, "billing_cycle_end_day", None)
-        apr_val = getattr(acc, "apr", None)
-        if cycle_day is None or apr_val is None:
-            continue
-        cycle_dates = _cycle_end_dates_in_range(
-            int(cycle_day), start_date, end_date, on_or_after=None
-        )
-        if not cycle_dates:
-            continue
-        if acc.id not in opening:
-            sb = Decimal(str(acc.starting_balance)) if acc.starting_balance is not None else Decimal("0")
-            if acc.account_type == Account.AccountType.CREDIT and sb > 0:
-                sb = -sb
-            opening[acc.id] = sb
-        if acc.household_id not in interest_category_cache:
-            cat = Category.objects.filter(
-                household_id=acc.household_id, name="Interest", category_type="EXPENSE"
-            ).first()
-            interest_category_cache[acc.household_id] = (
-                (cat.id, cat.name) if cat else (None, "Interest")
-            )
-        cat_id, cat_name = interest_category_cache[acc.household_id]
-        promo_end = getattr(acc, "promotional_end_date", None)
-        promo_apr = getattr(acc, "promotional_apr", None)
-        for cycle_end in cycle_dates:
-            if cycle_end in skipped_interest_by_account.get(acc.id, ()):
-                continue
-            if cycle_end <= today:
-                continue
-            # Use promotional APR until promotional_end_date, then standard APR
-            if promo_end is not None and cycle_end <= promo_end and promo_apr is not None:
-                effective_apr = Decimal(str(promo_apr))
-            else:
-                effective_apr = Decimal(str(apr_val))
-            if effective_apr <= 0:
-                continue
-            projected_balance_at_cycle_end = _balance_at_date_from_rows(
-                acc.id, cycle_end, rows, opening
-            )
-            if projected_balance_at_cycle_end >= 0:
-                continue
-            interest_amount = _interest_for_cycle_from_rows(
-                acc.id, cycle_end, effective_apr, rows, opening
-            )
-            if interest_amount is None or interest_amount <= 0:
-                continue
-            rows.append({
-                "date": cycle_end,
-                "description": "Projected Interest",
-                "account_id": acc.id,
-                "account_name": acc.effective_display_name,
-                "category_id": cat_id,
-                "category_name": cat_name,
-                "amount": -interest_amount,
-                "type": "OUTFLOW",
-                "status": "planned",
-                "source": "interest",
-                "rule_id": None,
-                "transaction_id": None,
-                "sort_key": (cycle_end, 2, acc.id),
-                **_timeline_row_meta(None),
-            })
-
-    # 5) Savings interest: project next future cycle end only (no past/current rows).
-    income_interest_category_cache: dict[int, tuple[Optional[int], str]] = {}
-    savings_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "SAVINGS"]
-    for acc in savings_accounts:
-        cycle_day = getattr(acc, "interest_cycle_end_day", None)
-        rate_val = getattr(acc, "interest_rate", None)
-        if cycle_day is None or rate_val is None:
-            continue
-        all_cycles = _cycle_end_dates_in_range(
-            int(cycle_day), start_date, end_date, on_or_after=None
-        )
-        if not all_cycles:
-            continue
-        if acc.household_id not in income_interest_category_cache:
-            cat = Category.objects.filter(
-                household_id=acc.household_id, name="Interest Income", category_type="INCOME"
-            ).first()
-            income_interest_category_cache[acc.household_id] = (
-                (cat.id, cat.name) if cat else (None, "Interest Income")
-            )
-        cat_id, cat_name = income_interest_category_cache[acc.household_id]
-        rate_decimal = Decimal(str(rate_val))
-        future_cycles = [d for d in all_cycles if d > today]
-        if not future_cycles:
-            continue
-        cycle_end = min(future_cycles)
-        if cycle_end in skipped_interest_by_account.get(acc.id, ()):
-            continue
-        interest_amount = _savings_interest_earned(
-            acc.id, cycle_end, rate_decimal, as_of_date=today
-        )
-        if interest_amount is None or interest_amount <= 0:
-            continue
-            rows.append({
-                "date": cycle_end,
-                "description": "Projected Interest Income",
-                "account_id": acc.id,
-                "account_name": acc.effective_display_name,
-                "category_id": cat_id,
-                "category_name": cat_name,
-                "amount": interest_amount,
-                "type": "INFLOW",
-                "status": "planned",
-                "source": "interest",
-                "rule_id": None,
-                "transaction_id": None,
-                "sort_key": (cycle_end, 2, acc.id),
-                **_timeline_row_meta(None),
-            })
-
-    _append_scenario_projection_rows(
-        rows, scenario, start_date, end_date, ephemeral_events=ephemeral_events
-    )
-    _apply_scenario_category_shocks(rows, scenario)
-
-    # Sort by date, then same order as Transactions ledger (transaction_id, description).
-    rows.sort(key=timeline_rows_chronological_key)
-    for r in rows:
-        r.pop("sort_key", None)
-        r.setdefault("reconciled", False)
-        r.setdefault("txn_source", None)
-
-    # Opening balance for any account that appears in rows (e.g. card when we added both legs for CC rules)
-    for r in rows:
-        aid = r["account_id"]
-        if aid not in opening:
-            acc = accs.get(aid) or Account.objects.filter(pk=aid).first()
+        # Opening balances (before actual + rule rows) — used with full row ledger when skipping min payments
+        opening: dict[int, Decimal] = {}
+        for aid in account_ids:
+            acc = accs.get(aid)
             sb = Decimal(str(acc.starting_balance)) if acc and acc.starting_balance is not None else Decimal("0")
             if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
                 sb = -sb
             opening[aid] = sb
+        phase_end(timer, _phase_setup)
 
-    recompute_timeline_running_balances(rows, opening=opening, account_ids=set(account_ids))
+        rows: list[dict] = []
+        ids_in_rows: set[int] = set()
+        seen_rule_actual_key: set[tuple] = set()
+        purged_rule_dates: set[tuple[int, date]] = set()
+        scenario_projection_only = projection_only or scenario is not None
+        _phase_load = phase_start(timer, "load_transactions")
+        for t in actual:
+            # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
+            # Re-project rule occurrences with scenario overrides — do not double-count DB rows.
+            if scenario_projection_only and t.rule_id is not None and t.date >= today:
+                continue
+            amt = t.amount
+            sign = 1 if (amt is not None and amt >= 0) else -1
+            if t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
+                ids_in_rows.add(t.id)
+                continue
+            if t.rule_id is not None:
+                rule_actual_key = (t.account_id, t.date, t.rule_id, sign)
+                if rule_actual_key in seen_rule_actual_key:
+                    ids_in_rows.add(t.id)
+                    continue
+                seen_rule_actual_key.add(rule_actual_key)
+            if t.source == Transaction.Source.INTEREST:
+                ids_in_rows.add(t.id)
+                continue
+            # Per-occurrence: skip (and purge) debt payments when destination owes nothing that day.
+            cat_nm = (t.category.name if getattr(t, "category", None) and t.category else None) or ""
+            if t.rule_id is not None and t.date >= today and amt is not None:
+                hide_paid_off = False
+                if t.account_id in credit_account_ids and amt > 0 and t.account:
+                    hide_paid_off = _skip_payment_to_debt_destination(
+                        t.account,
+                        t.date,
+                        rows,
+                        amt,
+                        exclude_transaction_ids=(t.id,),
+                        category_name=cat_nm,
+                    )
+                elif amt < 0:
+                    dest_account: Optional[Account] = None
+                    payment_amt: Optional[Decimal] = None
+                    exclude_ids: list[int] = []
+                    for cand in (
+                        Transaction.objects.filter(
+                            rule_id=t.rule_id,
+                            date=t.date,
+                            amount__gt=0,
+                        )
+                        .exclude(account_id=t.account_id)
+                        .select_related("account")
+                    ):
+                        acc_c = cand.account
+                        if acc_c and _account_is_debt_payment_destination(acc_c, cat_nm):
+                            dest_account = acc_c
+                            payment_amt = cand.amount
+                            exclude_ids.append(cand.id)
+                            break
+                    if dest_account is None:
+                        rule_obj = getattr(t, "rule", None)
+                        tac = None
+                        if (
+                            rule_obj is not None
+                            and rule_obj.transfer_to_account_id
+                            and _category_name_allows_rule_transfer_destination(cat_nm)
+                        ):
+                            tac = getattr(rule_obj, "transfer_to_account", None) or _lookup_account(
+                                rule_obj.transfer_to_account_id, accs
+                            )
+                        if tac and _account_is_debt_payment_destination(tac, cat_nm):
+                            dest_account = tac
+                            try:
+                                payment_amt = abs(Decimal(str(amt)))
+                            except (TypeError, ValueError):
+                                payment_amt = None
+                            exclude_ids.extend(
+                                Transaction.objects.filter(
+                                    rule_id=t.rule_id,
+                                    date=t.date,
+                                    account_id=tac.id,
+                                ).values_list("pk", flat=True)
+                            )
+                    if dest_account is not None and payment_amt is not None:
+                        hide_paid_off = _skip_payment_to_debt_destination(
+                            dest_account,
+                            t.date,
+                            rows,
+                            payment_amt,
+                            exclude_transaction_ids=tuple(exclude_ids) if exclude_ids else None,
+                            category_name=cat_nm,
+                        )
+                if hide_paid_off:
+                    if not scenario_projection_only:
+                        _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
+                    purged_rule_dates.add((t.rule_id, t.date))
+                    ids_in_rows.add(t.id)
+                    continue
+            desc = t.payee or ""
+            try:
+                mpl = t.match_as_planned
+                imp = mpl.imported_transaction
+                bank_hint = (imp.payee or imp.imported_description or "").strip()
+                if bank_hint and bank_hint not in desc:
+                    desc = f"{desc} — bank: {bank_hint}" if desc else f"Bank: {bank_hint}"
+            except Exception:
+                pass
+            if t.rule_id and amt is not None and amt < 0:
+                to_name = to_leg_account_name.get((t.rule_id, t.date))
+                if to_name and to_name not in desc:
+                    desc = f"{desc} ({to_name})" if desc else to_name
+            row_source = (
+                "interest" if t.source == Transaction.Source.INTEREST else "actual"
+            )
+            rows.append({
+                "date": t.date,
+                "description": desc,
+                "account_id": t.account_id,
+                "account_name": t.account.effective_display_name,
+                "category_id": t.category_id,
+                "category_name": t.category.name if t.category else None,
+                "amount": amt,
+                "type": "INFLOW" if amt >= 0 else "OUTFLOW",
+                "status": t.status,
+                "source": row_source,
+                "rule_id": t.rule_id,
+                "transaction_id": t.id,
+                "sort_key": (t.date, 0, t.id),
+                **_timeline_row_meta(t),
+            })
+            ids_in_rows.add(t.id)
+        perf_transactions = len(actual)
+        phase_end(timer, _phase_load)
 
-    # Return only rows for requested accounts (we added both legs for CC transfers for balance math).
-    # Projected interest is forecast-only — never surface on or before as_of (estimates, not history).
-    rows = [
-        r
-        for r in rows
-        if r["account_id"] in account_ids
-        and not (r.get("source") == "interest" and r["date"] <= today)
-    ]
+        # 2) One-time planned (Transaction with source=ONE_TIME or status=PLANNED, in range)
+        # Already included in actual queryset above; we tagged by source. So no duplicate.
+
+        # 3) Projected recurring occurrences (computed, not stored).
+        _phase_generate = phase_start(timer, "generate_occurrences")
+        # Only dates >= today are emitted. Rule amount/schedule changes affect only these
+        # future projections; past actual transactions in the DB are never modified.
+        #
+        # Use every active rule in the household (not only rules touching the filtered account).
+        # Otherwise a Chase-only timeline would never materialize e.g. Savings→Platinum payments,
+        # and bank→card minimum rules would still project because the card balance looked wrong.
+        rules_qs = RecurringRule.objects.filter(
+            household__in=households,
+            active=True,
+        ).select_related("account", "category", "transfer_to_account")
+        if scenario_id and scenario:
+            rules_qs = rules_qs.prefetch_related("scenario_overrides")
+
+        # Build rule list and sort by first occurrence date so that when we evaluate "skip 3/23?"
+        # we have already added any earlier payment (e.g. 3/20) from the same or another rule.
+        rules_with_occ: list[tuple] = []
+        for rule in rules_qs:
+            eff = apply_scenario_overrides(rule, scenario)
+            if not eff.get("active", True):
+                continue
+            eff_start = eff.get("start_date") or rule.start_date
+            eff_end = eff.get("end_date")
+            occ_dates = generate_rule_occurrence_dates(
+                rule, start_date, end_date,
+                effective_start=eff_start,
+                effective_end=eff_end,
+            )
+            first_occ = min(occ_dates) if occ_dates else date.max
+            rules_with_occ.append((rule, eff, eff_start, eff_end, occ_dates, first_occ))
+        rules_with_occ.sort(key=lambda x: x[5])
+
+        # User-deleted rule occurrences: do not re-materialize or show them.
+        rule_ids = [r.id for r, *_ in rules_with_occ]
+        skipped_occurrences = set(
+            RecurringRuleSkip.objects.filter(
+                rule_id__in=rule_ids, date__gte=start_date, date__lte=end_date
+            ).values_list("rule_id", "date")
+        )
+
+        # Queue all occurrences, then process in global order. Same calendar day, same destination
+        # card: larger transfers first (then rule_id) so a full payment materializes before a minimum.
+        occurrence_events: list[tuple[date, Decimal, int, str, tuple]] = []
+
+        def _rule_account_forecastable(rule_obj: RecurringRule, eff: dict) -> bool:
+            acc_id = eff.get("account_id") or rule_obj.account_id
+            if acc_id not in forecastable_account_ids:
+                return False
+            to_id = rule_obj.transfer_to_account_id
+            if to_id and to_id not in forecastable_account_ids:
+                return False
+            return True
+
+        for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
+            if not _rule_account_forecastable(rule, eff):
+                continue
+
+            def _amount_for_date(d: date) -> Decimal:
+                params = resolve_rule_params(rule, d)
+                raw_amount = params.amount
+                if scenario_id and scenario:
+                    try:
+                        override = rule.scenario_overrides.get(scenario=scenario)
+                        if override.override_amount is not None:
+                            raw_amount = override.override_amount
+                    except ScenarioRuleOverride.DoesNotExist:
+                        pass
+                amount_decimal = Decimal(str(raw_amount))
+                direction = eff.get("direction") or params.direction
+                if direction == RecurringRule.Direction.EXPENSE and amount_decimal > 0:
+                    amount_decimal = -amount_decimal
+                elif direction == RecurringRule.Direction.INCOME and amount_decimal < 0:
+                    amount_decimal = abs(amount_decimal)
+                return amount_decimal
+
+            cat_id = eff.get("category_id")
+            cat_name = None
+            if rule.category_id:
+                from categories.models import Category
+                c = Category.objects.filter(pk=cat_id or rule.category_id).first()
+                cat_name = c.name if c else None
+
+            use_transfer_branch = bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
+                cat_name
+            )
+            if use_transfer_branch:
+                from_acc_id = eff.get("account_id") or rule.account_id
+                to_acc_id = rule.transfer_to_account_id
+                from_acc = next((a for a in accounts if a.pk == from_acc_id), None)
+                to_acc = getattr(rule, "transfer_to_account", None) or next((a for a in accounts if a.pk == to_acc_id), None)
+                if to_acc is None:
+                    to_acc = _lookup_account(to_acc_id, accs)
+                from_name = from_acc.name if from_acc else getattr(rule.account, "name", "")
+                to_name = to_acc.name if to_acc else ""
+                is_debt_dest = bool(to_acc and _account_is_debt_payment_destination(to_acc, cat_name))
+                for d in occ_dates:
+                    if d < today or (rule.id, d) in skipped_occurrences:
+                        continue
+                    amount_decimal = _amount_for_date(d)
+                    out_amount = -abs(amount_decimal)
+                    in_amount = abs(amount_decimal)
+                    sort_amt = -in_amount if is_debt_dest else Decimal("0")
+                    occurrence_events.append(
+                        (
+                            d,
+                            sort_amt,
+                            rule.id,
+                            "transfer",
+                            (
+                                rule,
+                                from_acc_id,
+                                to_acc_id,
+                                from_name,
+                                to_name,
+                                out_amount,
+                                in_amount,
+                                is_debt_dest,
+                                cat_id,
+                                cat_name,
+                            ),
+                        )
+                    )
+            else:
+                acc_id = eff.get("account_id") or rule.account_id
+                acc = next((a for a in accounts if a.pk == acc_id), None)
+                acc_name = acc.name if acc else getattr(rule.account, "name", "")
+                card_for_skip = None
+                if acc and acc.account_type == Account.AccountType.CREDIT and rule.direction == RecurringRule.Direction.INCOME:
+                    card_for_skip = acc
+                elif (
+                    rule.direction == RecurringRule.Direction.EXPENSE
+                    and cat_name
+                    and "credit" in (cat_name or "").lower()
+                ):
+                    rule_name_lower = (getattr(rule, "name", None) or "").lower()
+                    for a in Account.objects.operational().filter(
+                        household__in=households, account_type=Account.AccountType.CREDIT,
+                    ):
+                        an = (a.name or "").strip()
+                        if not an:
+                            continue
+                        if an.lower() in rule_name_lower or rule_name_lower in an.lower() or rule_name_lower.startswith(an.lower()) or an.lower().startswith(rule_name_lower[:20]):
+                            card_for_skip = a
+                            break
+                for d in occ_dates:
+                    if d < today or (rule.id, d) in skipped_occurrences:
+                        continue
+                    occurrence_events.append(
+                        (
+                            d,
+                            Decimal("0"),
+                            rule.id,
+                            "single",
+                            (rule, acc_id, acc_name, _amount_for_date(d), cat_id, cat_name, card_for_skip),
+                        )
+                    )
+
+        occurrence_events.sort(key=lambda x: (x[0], x[1], x[2]))
+        perf_generated_occurrences = len(occurrence_events)
+        phase_end(timer, _phase_generate)
+        seen_scenario_rule_keys: set[tuple] = set()
+
+        _phase_materialize = phase_start(timer, "materialize_occurrences")
+        for d, _sort_amt, _rid, kind, payload in occurrence_events:
+            if kind == "transfer":
+                (
+                    rule,
+                    from_acc_id,
+                    to_acc_id,
+                    from_name,
+                    to_name,
+                    out_amount,
+                    in_amount,
+                    is_debt_dest,
+                    cat_id,
+                    cat_name,
+                ) = payload
+                to_acc_for_skip = _lookup_account(to_acc_id, accs)
+                if is_debt_dest and to_acc_for_skip:
+                    dest_leg_ids = tuple(
+                        Transaction.objects.filter(
+                            rule_id=rule.id, date=d, account_id=to_acc_id
+                        ).values_list("pk", flat=True)
+                    )
+                    from_acc_obj = _lookup_account(from_acc_id, accs)
+                    fund_from_bank = (
+                        from_acc_obj is not None
+                        and from_acc_obj.account_type != Account.AccountType.CREDIT
+                    )
+                    lookahead_end = d + timedelta(days=45)
+                    skip_payment = False
+                    if fund_from_bank:
+                        bal = _credit_card_balance_through_date(
+                            to_acc_for_skip.id,
+                            d,
+                            rows,
+                            include_row_leg_without_txn=True,
+                            include_db_postings_on_as_of_date=True,
+                            exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
+                        )
+                        extra_scheduled = _future_recurring_expense_impact_on_card(
+                            to_acc_for_skip.id,
+                            d,
+                            lookahead_end,
+                            households,
+                        )
+                        extra_db = _db_card_postings_in_exclusive_range(
+                            to_acc_for_skip.id,
+                            d,
+                            lookahead_end,
+                        )
+                        skip_payment = bal + extra_scheduled + extra_db >= 0
+                    else:
+                        skip_payment = _skip_payment_to_debt_destination(
+                            to_acc_for_skip,
+                            d,
+                            rows,
+                            in_amount,
+                            exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
+                            category_name=cat_name,
+                        )
+                    if skip_payment:
+                        if not scenario_projection_only:
+                            _purge_skipped_rule_occurrence(rule.id, d, today)
+                        continue
+                if scenario_projection_only:
+                    proj_key = (rule.id, d, "transfer")
+                    if proj_key in seen_scenario_rule_keys:
+                        continue
+                    seen_scenario_rule_keys.add(proj_key)
+                    desc_with_card = f"{rule.name} ({to_name})" if to_name else rule.name
+                    rows.append(
+                        _projected_rule_timeline_row(
+                            d=d,
+                            description=desc_with_card,
+                            account_id=from_acc_id,
+                            account_name=from_name,
+                            category_id=cat_id,
+                            category_name=cat_name,
+                            amount=out_amount,
+                            row_type="OUTFLOW",
+                            rule_id=rule.id,
+                            sort_key=(d, 1, rule.id * 2),
+                        )
+                    )
+                    rows.append(
+                        _projected_rule_timeline_row(
+                            d=d,
+                            description=desc_with_card,
+                            account_id=to_acc_id,
+                            account_name=to_name,
+                            category_id=None,
+                            category_name=None,
+                            amount=in_amount,
+                            row_type="INFLOW",
+                            rule_id=rule.id,
+                            sort_key=(d, 1, rule.id * 2 + 1),
+                        )
+                    )
+                    continue
+                txn_from = _materialize_rule_occurrence(
+                    rule, d, from_acc_id, out_amount, rule.name, cat_id
+                )
+                existing_to = Transaction.objects.filter(
+                    rule_id=rule.id, date=d
+                ).exclude(account_id=from_acc_id).select_related("account").first()
+                if existing_to is not None:
+                    txn_to = existing_to
+                    to_acc_id_actual = txn_to.account_id
+                    to_name_actual = getattr(txn_to.account, "name", "") if txn_to.account else to_name
+                else:
+                    txn_to = _materialize_rule_occurrence(
+                        rule, d, to_acc_id, in_amount, rule.name, None
+                    )
+                    to_acc_id_actual = to_acc_id
+                    to_name_actual = to_name
+                if txn_from.id in ids_in_rows or txn_to.id in ids_in_rows:
+                    continue
+                ids_in_rows.add(txn_from.id)
+                ids_in_rows.add(txn_to.id)
+                amt_from = txn_from.amount if txn_from.amount is not None else out_amount
+                amt_to = txn_to.amount if txn_to.amount is not None else in_amount
+                desc_with_card = f"{rule.name} ({to_name_actual})" if to_name_actual else rule.name
+                rows.append({
+                    "date": d,
+                    "description": desc_with_card,
+                    "account_id": from_acc_id,
+                    "account_name": from_name,
+                    "category_id": cat_id,
+                    "category_name": cat_name,
+                    "amount": amt_from,
+                    "type": "OUTFLOW",
+                    "status": txn_from.status,
+                    "source": "actual",
+                    "rule_id": rule.id,
+                    "transaction_id": txn_from.id,
+                    "sort_key": (d, 1, rule.id * 2),
+                    **_timeline_row_meta(txn_from),
+                })
+                rows.append({
+                    "date": d,
+                    "description": desc_with_card,
+                    "account_id": to_acc_id_actual,
+                    "account_name": to_name_actual,
+                    "category_id": None,
+                    "category_name": None,
+                    "amount": amt_to,
+                    "type": "INFLOW",
+                    "status": txn_to.status,
+                    "source": "actual",
+                    "rule_id": rule.id,
+                    "transaction_id": txn_to.id,
+                    "sort_key": (d, 1, rule.id * 2 + 1),
+                    **_timeline_row_meta(txn_to),
+                })
+            else:
+                rule, acc_id, acc_name, amount_decimal, cat_id, cat_name, card_for_skip = payload
+                if card_for_skip is not None:
+                    if _skip_payment_to_debt_destination(
+                        card_for_skip,
+                        d,
+                        rows,
+                        None,
+                        exclude_transaction_ids=None,
+                        category_name=cat_name,
+                    ):
+                        if not scenario_projection_only:
+                            _purge_skipped_rule_occurrence(rule.id, d, today)
+                        continue
+                if scenario_projection_only:
+                    proj_key = (rule.id, d, acc_id)
+                    if proj_key in seen_scenario_rule_keys:
+                        continue
+                    if any(
+                        r.get("rule_id") == rule.id
+                        and r.get("account_id") == acc_id
+                        and r.get("date") == d
+                        for r in rows
+                    ):
+                        continue
+                    seen_scenario_rule_keys.add(proj_key)
+                    rows.append(
+                        _projected_rule_timeline_row(
+                            d=d,
+                            description=rule.name,
+                            account_id=acc_id,
+                            account_name=acc_name,
+                            category_id=cat_id,
+                            category_name=cat_name,
+                            amount=amount_decimal,
+                            row_type=rule.direction,
+                            rule_id=rule.id,
+                            sort_key=(d, 1, rule.id),
+                        )
+                    )
+                    continue
+                txn = _materialize_rule_occurrence(
+                    rule, d, acc_id, amount_decimal, rule.name, cat_id
+                )
+                if txn.id in ids_in_rows:
+                    continue
+                ids_in_rows.add(txn.id)
+                amt = txn.amount if txn.amount is not None else amount_decimal
+                rows.append({
+                    "date": d,
+                    "description": rule.name,
+                    "account_id": acc_id,
+                    "account_name": acc_name,
+                    "category_id": cat_id,
+                    "category_name": cat_name,
+                    "amount": amt,
+                    "type": rule.direction,
+                    "status": txn.status,
+                    "source": "actual",
+                    "rule_id": rule.id,
+                    "transaction_id": txn.id,
+                    "sort_key": (d, 1, rule.id),
+                    **_timeline_row_meta(txn),
+                })
+        phase_end(timer, _phase_materialize)
+
+        if scenario_id and scenario:
+            append_scenario_added_recurring_projections(
+                scenario=scenario,
+                rows=rows,
+                start_date=start_date,
+                end_date=end_date,
+                forecastable_account_ids=forecastable_account_ids,
+                seen_keys=seen_scenario_rule_keys,
+            )
+
+        # User-deleted projected interest: do not re-show or re-materialize that billing cycle.
+        _phase_interest = phase_start(timer, "interest_calc")
+        skipped_interest_by_account: dict[int, set[date]] = defaultdict(set)
+        for sk in InterestCycleSkip.objects.filter(account_id__in=account_ids).values(
+            "account_id", "cycle_end_date"
+        ):
+            skipped_interest_by_account[sk["account_id"]].add(sk["cycle_end_date"])
+
+        # 4) Projected credit card interest: one row per CREDIT account per cycle end in range.
+        # Each month's interest uses projected balance (actual + recurring + prior months' interest).
+        from categories.models import Category
+        interest_category_cache: dict[int, tuple[Optional[int], str]] = {}  # household_id -> (category_id, name)
+        credit_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "CREDIT"]
+        for acc in credit_accounts:
+            cycle_day = acc.get_statement_closing_day() if hasattr(acc, "get_statement_closing_day") else getattr(acc, "billing_cycle_end_day", None)
+            apr_val = getattr(acc, "apr", None)
+            if cycle_day is None or apr_val is None:
+                continue
+            cycle_dates = _cycle_end_dates_in_range(
+                int(cycle_day), start_date, end_date, on_or_after=None
+            )
+            if not cycle_dates:
+                continue
+            if acc.id not in opening:
+                sb = Decimal(str(acc.starting_balance)) if acc.starting_balance is not None else Decimal("0")
+                if acc.account_type == Account.AccountType.CREDIT and sb > 0:
+                    sb = -sb
+                opening[acc.id] = sb
+            if acc.household_id not in interest_category_cache:
+                cat = Category.objects.filter(
+                    household_id=acc.household_id, name="Interest", category_type="EXPENSE"
+                ).first()
+                interest_category_cache[acc.household_id] = (
+                    (cat.id, cat.name) if cat else (None, "Interest")
+                )
+            cat_id, cat_name = interest_category_cache[acc.household_id]
+            promo_end = getattr(acc, "promotional_end_date", None)
+            promo_apr = getattr(acc, "promotional_apr", None)
+            for cycle_end in cycle_dates:
+                if cycle_end in skipped_interest_by_account.get(acc.id, ()):
+                    continue
+                if cycle_end <= today:
+                    continue
+                # Use promotional APR until promotional_end_date, then standard APR
+                if promo_end is not None and cycle_end <= promo_end and promo_apr is not None:
+                    effective_apr = Decimal(str(promo_apr))
+                else:
+                    effective_apr = Decimal(str(apr_val))
+                if effective_apr <= 0:
+                    continue
+                projected_balance_at_cycle_end = _balance_at_date_from_rows(
+                    acc.id, cycle_end, rows, opening
+                )
+                if projected_balance_at_cycle_end >= 0:
+                    continue
+                interest_amount = _interest_for_cycle_from_rows(
+                    acc.id, cycle_end, effective_apr, rows, opening
+                )
+                if interest_amount is None or interest_amount <= 0:
+                    continue
+                rows.append({
+                    "date": cycle_end,
+                    "description": "Projected Interest",
+                    "account_id": acc.id,
+                    "account_name": acc.effective_display_name,
+                    "category_id": cat_id,
+                    "category_name": cat_name,
+                    "amount": -interest_amount,
+                    "type": "OUTFLOW",
+                    "status": "planned",
+                    "source": "interest",
+                    "rule_id": None,
+                    "transaction_id": None,
+                    "sort_key": (cycle_end, 2, acc.id),
+                    **_timeline_row_meta(None),
+                })
+
+        # 5) Savings interest: project next future cycle end only (no past/current rows).
+        income_interest_category_cache: dict[int, tuple[Optional[int], str]] = {}
+        savings_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "SAVINGS"]
+        for acc in savings_accounts:
+            cycle_day = getattr(acc, "interest_cycle_end_day", None)
+            rate_val = getattr(acc, "interest_rate", None)
+            if cycle_day is None or rate_val is None:
+                continue
+            all_cycles = _cycle_end_dates_in_range(
+                int(cycle_day), start_date, end_date, on_or_after=None
+            )
+            if not all_cycles:
+                continue
+            if acc.household_id not in income_interest_category_cache:
+                cat = Category.objects.filter(
+                    household_id=acc.household_id, name="Interest Income", category_type="INCOME"
+                ).first()
+                income_interest_category_cache[acc.household_id] = (
+                    (cat.id, cat.name) if cat else (None, "Interest Income")
+                )
+            cat_id, cat_name = income_interest_category_cache[acc.household_id]
+            rate_decimal = Decimal(str(rate_val))
+            future_cycles = [d for d in all_cycles if d > today]
+            if not future_cycles:
+                continue
+            cycle_end = min(future_cycles)
+            if cycle_end in skipped_interest_by_account.get(acc.id, ()):
+                continue
+            interest_amount = _savings_interest_earned(
+                acc.id, cycle_end, rate_decimal, as_of_date=today
+            )
+            if interest_amount is None or interest_amount <= 0:
+                continue
+                rows.append({
+                    "date": cycle_end,
+                    "description": "Projected Interest Income",
+                    "account_id": acc.id,
+                    "account_name": acc.effective_display_name,
+                    "category_id": cat_id,
+                    "category_name": cat_name,
+                    "amount": interest_amount,
+                    "type": "INFLOW",
+                    "status": "planned",
+                    "source": "interest",
+                    "rule_id": None,
+                    "transaction_id": None,
+                    "sort_key": (cycle_end, 2, acc.id),
+                    **_timeline_row_meta(None),
+                })
+        phase_end(timer, _phase_interest)
+
+        _phase_scenario = phase_start(timer, "scenario_rows")
+        _append_scenario_projection_rows(
+            rows, scenario, start_date, end_date, ephemeral_events=ephemeral_events
+        )
+        _apply_scenario_category_shocks(rows, scenario)
+        phase_end(timer, _phase_scenario)
+
+        # Sort by date, then same order as Transactions ledger (transaction_id, description).
+        _phase_finalize = phase_start(timer, "finalize")
+        rows.sort(key=timeline_rows_chronological_key)
+        for r in rows:
+            r.pop("sort_key", None)
+            r.setdefault("reconciled", False)
+            r.setdefault("txn_source", None)
+
+        # Opening balance for any account that appears in rows (e.g. card when we added both legs for CC rules)
+        for r in rows:
+            aid = r["account_id"]
+            if aid not in opening:
+                acc = _lookup_account(aid, accs)
+                sb = Decimal(str(acc.starting_balance)) if acc and acc.starting_balance is not None else Decimal("0")
+                if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
+                    sb = -sb
+                opening[aid] = sb
+        phase_end(timer, _phase_finalize)
+
+        _phase_balances = phase_start(timer, "running_balances")
+        recompute_timeline_running_balances(rows, opening=opening, account_ids=set(account_ids))
+        phase_end(timer, _phase_balances)
+
+        # Return only rows for requested accounts (we added both legs for CC transfers for balance math).
+        _phase_output = phase_start(timer, "output_filter")
+        # Projected interest is forecast-only — never surface on or before as_of (estimates, not history).
+        rows = [
+            r
+            for r in rows
+            if r["account_id"] in account_ids
+            and not (r.get("source") == "interest" and r["date"] <= today)
+        ]
+        phase_end(timer, _phase_output)
+    finally:
+        deactivate_balance_cache(balance_cache_token)
+
+    if perf_enabled() and wall_start is not None:
+        if query_profiler is not None:
+            query_profiler.stop()
+        forecast_days = max((end_date - start_date).days, 0)
+        log_perf(
+            "build_timeline",
+            timer=timer,
+            query_profiler=query_profiler,
+            user=getattr(user, "pk", user),
+            accounts=len(account_ids),
+            transactions=perf_transactions,
+            generated_occurrences=perf_generated_occurrences,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            days=forecast_days,
+            rows_returned=len(rows),
+            elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+        )
     return rows

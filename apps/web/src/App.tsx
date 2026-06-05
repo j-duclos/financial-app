@@ -5,19 +5,30 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import Goals from "./pages/Goals";
+import GoalDetail from "./pages/GoalDetail";
 import Timeline from "./pages/Timeline";
 import Accounts from "./pages/Accounts";
 import Rules from "./pages/Rules";
 import Categories from "./pages/Categories";
 import Transactions from "./pages/Transactions";
 import Scenarios from "./pages/Scenarios";
-import Budget from "./pages/Budget";
+import SpendingTargets from "./pages/SpendingTargets";
 import Reconcile from "./pages/Reconcile";
 import Reports from "./pages/Reports";
+import Recurring from "./pages/Recurring";
+import CreditCards from "./pages/CreditCards";
 import Profile from "./pages/Profile";
 import PlaidOAuthReturn from "./pages/PlaidOAuthReturn";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 30_000,
+    },
+  },
+});
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { auth } = useAuth();
@@ -58,11 +69,19 @@ function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="timeline" element={<Timeline />} />
         <Route path="accounts" element={<Accounts />} />
-        <Route path="rules" element={<Rules />} />
+        <Route path="automation" element={<Rules />} />
+        <Route path="rules" element={<Navigate to="/automation" replace />} />
         <Route path="categories" element={<Categories />} />
         <Route path="transactions" element={<Transactions />} />
         <Route path="scenarios" element={<Scenarios />} />
-        <Route path="budget" element={<Budget />} />
+        <Route path="spending-goals" element={<SpendingTargets />} />
+        <Route path="spending-targets" element={<Navigate to="/spending-goals" replace />} />
+        <Route path="budget" element={<Navigate to="/spending-goals" replace />} />
+        <Route path="recurring" element={<Recurring />} />
+        <Route path="bills" element={<Navigate to="/recurring" replace />} />
+        <Route path="credit-cards" element={<CreditCards />} />
+        <Route path="goals" element={<Goals />} />
+        <Route path="goals/:id" element={<GoalDetail />} />
         <Route path="reconcile" element={<Reconcile />} />
         <Route path="reports" element={<Reports />} />
         <Route path="profile" element={<Profile />} />

@@ -6,6 +6,45 @@ An optional separate **Static Site** is still supported if you prefer a split de
 
 Use HTTPS URLs everywhere for Plaid (Chase OAuth).
 
+---
+
+## Production stack (required for real users)
+
+**Free tier is not suitable for a multi-user app.** Users share one 0.1 CPU web instance that sleeps when idle, and Free Postgres (0.1 CPU / 256 MB) cannot keep up with timeline/forecast queries.
+
+### Minimum viable production on Render
+
+| Resource | Plan | Why |
+|----------|------|-----|
+| **Web Service** | **Standard — $25/mo** | 1 CPU, 2 GB RAM, **always on** (no cold starts). Use `start.sh` with `GUNICORN_WORKERS=2`. |
+| **PostgreSQL** | **Basic-1gb — ~$19/mo** | 0.5 CPU, 1 GB RAM — enough for ~1,500 transactions + concurrent users. |
+| **Key Value (Redis)** | **Starter — ~$7/mo** | Set `REDIS_URL` on the web service. Caches `/api/timeline/` (biggest cost). |
+
+**~$51/mo total** — web + DB + cache in the **same region** (e.g. Oregon). Users hit the API next to Postgres; no cross-country latency.
+
+### Dashboard steps
+
+1. **Web Service** → Settings → Instance Type → **Standard** ($25).
+2. **Postgres** (`budgeter`) → Settings → **Basic-1gb** (or higher if you outgrow it).
+3. **New → Key Value** → name `budget-cache` → Starter → copy **Internal Redis URL**.
+4. **Web Service** → Environment → add `REDIS_URL` = that internal URL (starts with `redis://`).
+5. **Web Service** → Environment → add `GUNICORN_WORKERS=2` (already in `render.yaml` if using Blueprint).
+6. **Deploy** latest code (git push) so bug fixes + timeline cache ship.
+
+### After upgrade
+
+- Cold starts disappear (Standard web).
+- DB queries run on real CPU/RAM (Basic Postgres).
+- Repeat timeline loads served from Redis (~50–200 ms vs multi-second rebuilds).
+- Transaction edits invalidate cache per household automatically.
+
+### If you need cheaper later
+
+- **Starter web ($7)** + **Basic-1gb Postgres ($19)** ≈ $26/mo — usable for a small household; timeline still heavy without Redis.
+- Do **not** run production on Free.
+
+---
+
 ## Project layout
 
 | Piece | Path |
@@ -33,7 +72,7 @@ Use HTTPS URLs everywhere for Plaid (Chase OAuth).
 2. **Root Directory**: `backend`
 3. **Runtime**: Python 3
 4. **Build Command**: `chmod +x build.sh && ./build.sh` (builds React + `collectstatic` + `migrate`)
-5. **Start Command**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
+5. **Start Command**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --threads 4`
 6. Link the Postgres instance (Render sets `DATABASE_URL` automatically) or paste `DATABASE_URL` manually.
 
 **Required:** add environment variable **`NODE_VERSION`** = `20` (or `22`) on the Web Service. Render only auto-installs Node when this is set; with Root Directory `backend/`, the repo-root `package.json` is not detected automatically.
@@ -57,7 +96,7 @@ Set these in the Web Service → **Environment**:
 | `PLAID_ENV` | `production` | Use `sandbox` only for fake institutions |
 | `NODE_VERSION` | `20` | **Required** so `build.sh` can run `npm` (Render Python services) |
 | `PLAID_REDIRECT_URI` | `https://<your-app>.onrender.com/plaid/oauth-return` | Same host as the Web Service |
-| `PLAID_TOKEN_FERNET_KEY` | *(optional)* | Fernet key for token encryption at rest |
+| `PLAID_TOKEN_FERNET_KEY` | *(required after `loaddata`)* | Must match the machine that exported `data.json` — run `python manage.py plaid_fernet_key_for_render` locally and paste the line |
 
 Example block (replace placeholders):
 
@@ -70,8 +109,11 @@ CSRF_TRUSTED_ORIGINS=https://budget-app-api.onrender.com
 PLAID_CLIENT_ID=your_plaid_client_id
 PLAID_PRODUCTION_SECRET=your_production_secret
 PLAID_ENV=production
-PLAID_REDIRECT_URI=https://budget-app-api.onrender.com/plaid/oauth-return
+PLAID_REDIRECT_URI=https://financial-app-1-tu0l.onrender.com/plaid/oauth-return
+PLAID_TOKEN_FERNET_KEY=<from: python manage.py plaid_fernet_key_for_render>
 ```
+
+After import from local SQLite/`data.json`, bank sync fails until `PLAID_TOKEN_FERNET_KEY` matches the export machine. Check `/api/plaid/meta/` → `plaid_token_fernet_key_set` must be `true`. If decrypt still fails, re-link banks on Render instead.
 
 After the first deploy, open your Web Service URL (e.g. `https://budget-app-api.onrender.com`) — that is the app UI and API.
 
@@ -174,8 +216,14 @@ Local dev is unchanged: omit `VITE_API_URL`, use `http://localhost:5173`, Plaid 
 
 ### 502 from Gunicorn
 
+- Usually the worker **timed out** (heavy `/api/timeline/` or huge `/api/transactions/?page_size=5000`). Use the start command with `--timeout 120 --threads 4` (see `render.yaml`).
 - Check **Logs** for import errors or missing env vars.
-- Start command must be run from `backend/`: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
+- Start command must be run from `backend/`: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --threads 4`
+
+### CSS/JS “MIME type text/html” or broken styles after deploy
+
+- Your browser cached an old `index.html` that references deleted hashed files (e.g. `index-CqJkRx2R.css`). **Hard refresh** (Cmd+Shift+R) or open in a private window.
+- After each deploy, `index.html` must match the `assets/*` files in `frontend_dist` (built by `build.sh`).
 - Verify `DATABASE_URL` and migrations completed in build.
 
 ### Database migration failure

@@ -17,6 +17,8 @@ type Props = {
   context: QuickActionsContext;
   onAction: (account: Account, action: QuickActionDef) => void;
   compact?: boolean;
+  /** When true, parent supplies the card footer border/spacing. */
+  embedded?: boolean;
   disabled?: boolean;
   isDefault?: boolean;
   setPrimaryPending?: boolean;
@@ -36,6 +38,7 @@ export default function AccountQuickActions({
   context,
   onAction,
   compact = false,
+  embedded = false,
   disabled,
   isDefault = false,
   setPrimaryPending,
@@ -95,7 +98,9 @@ export default function AccountQuickActions({
 
   return (
     <div
-      className={`flex flex-wrap items-center gap-1.5 ${compact ? "" : "mt-3 pt-3 border-t border-gray-100"}`}
+      className={`flex flex-wrap items-center gap-1.5 ${
+        embedded || compact ? "" : "mt-3 pt-3 border-t border-gray-100"
+      }`}
       data-testid={`account-quick-actions-${account.id}`}
       onClick={(e) => e.stopPropagation()}
     >

@@ -33,7 +33,7 @@ const DESCRIPTIONS: Record<LifecycleAction, string> = {
   close:
     "Marks the account as closed in real life. Future recurring and transfers stop. History is preserved.",
   delete:
-    "Soft-deletes this account: it is hidden from normal lists. All transactions remain in your history.",
+    "Permanently removes this account and all of its transactions, automation schedules, and statement data. This cannot be undone.",
   restore: "Returns this account to active use. You can optionally re-enable Plaid sync and forecasting.",
 };
 

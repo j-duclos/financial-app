@@ -24,6 +24,7 @@ from plaid.model.transactions_sync_request import TransactionsSyncRequest
 
 from accounts.models import Account
 from accounts.services.credit_card import classify_plaid_credit_card_type
+from common.services.cache import invalidate_financial_cache_for_household
 from core.phone_e164 import normalize_to_e164
 from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
@@ -540,6 +541,7 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         logger.exception("reconcile_orphan_matched_plaid_imports failed for plaid_item pk=%s", plaid_item.pk)
 
     totals["skipped_sync_disabled_accounts"] = skipped_accounts
+    invalidate_financial_cache_for_household(plaid_item.household_id)
     return totals
 
 

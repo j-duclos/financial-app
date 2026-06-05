@@ -1,7 +1,7 @@
 import { formatCurrency } from "@budget-app/shared";
 import AccountHealthBadge from "../AccountHealthBadge";
 import { safeToSpendLabel, showSafeToSpendForRole } from "../../lib/safeToSpendLabels";
-import { formatDateDisplay, todayStr } from "./transactionsLedgerUtils";
+import { creditBalanceColorClass, formatDateDisplay, todayStr } from "./transactionsLedgerUtils";
 import BalanceBufferBar from "./BalanceBufferBar";
 import type { Account } from "@budget-app/shared";
 
@@ -12,7 +12,6 @@ type Props = {
   currency: string;
   availableCredit: number | null;
   availableCreditBreakdown: { limit: number; amountOwed: number } | null;
-  onAddClick: () => void;
 };
 
 export default function TodayCard({
@@ -22,12 +21,11 @@ export default function TodayCard({
   currency,
   availableCredit,
   availableCreditBreakdown,
-  onAddClick,
 }: Props) {
   const showSts = showSafeToSpendForRole(account.role, account.account_type ?? "");
   const sts = account.available_to_spend != null ? parseFloat(account.available_to_spend) : null;
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
-  const creditClass = isCredit ? (currentBalance > 0 ? "text-green-600" : "text-red-600") : "text-gray-900";
+  const creditClass = creditBalanceColorClass(isCredit, currentBalance);
 
   return (
     <section className="flex-none border-y-4 border-blue-500 bg-blue-50/40">
@@ -36,13 +34,6 @@ export default function TodayCard({
           <h2 className="text-sm font-bold text-blue-900 uppercase tracking-wide">Today</h2>
           <p className="text-xs text-blue-700">{formatDateDisplay(todayStr())}</p>
         </div>
-        <button
-          type="button"
-          onClick={onAddClick}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          + Add Transaction
-        </button>
       </header>
 
       <div className="px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">

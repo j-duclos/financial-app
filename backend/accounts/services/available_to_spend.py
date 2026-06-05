@@ -7,12 +7,27 @@ lowest projected balance in the window minus minimum_buffer, not ending balance.
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
+from django.core.cache import cache
+
 from accounts.models import Account
+from common.services.cache import (
+    FORECAST_SUMMARY_CACHE_SECONDS,
+    get_forecast_summary_cache_key,
+)
+from common.services.profiler import (
+    PerfTimer,
+    QueryProfiler,
+    log_perf,
+    perf_enabled,
+    phase_end,
+    phase_start,
+)
 from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 
 DEFAULT_FORECAST_DAYS = 30
@@ -198,7 +213,7 @@ def _summarize_future_rows(
     return by_date, inflows, outflows, committed_outflows
 
 
-def calculate_account_forecast_summary(
+def _calculate_account_forecast_summary(
     user,
     account: Account,
     *,
@@ -206,10 +221,7 @@ def calculate_account_forecast_summary(
     days: int = DEFAULT_FORECAST_DAYS,
     timeline_rows: Optional[list[dict]] = None,
 ) -> dict[str, Any]:
-    """
-    Full forecast summary for one account. Pass timeline_rows when batching
-    to avoid multiple build_timeline calls.
-    """
+    """Uncached forecast summary for one account."""
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     window_start = today
@@ -312,6 +324,69 @@ def calculate_account_forecast_summary(
     }
 
 
+def calculate_account_forecast_summary(
+    user,
+    account: Account,
+    *,
+    as_of_date: Optional[date] = None,
+    days: int = DEFAULT_FORECAST_DAYS,
+    timeline_rows: Optional[list[dict]] = None,
+) -> dict[str, Any]:
+    """
+    Full forecast summary for one account. Pass timeline_rows when batching
+    to avoid multiple build_timeline calls (batch callers skip cache).
+    """
+    if timeline_rows is not None:
+        return _calculate_account_forecast_summary(
+            user,
+            account,
+            as_of_date=as_of_date,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    cache_key = get_forecast_summary_cache_key(
+        user_id=user.pk,
+        household_ids=[account.household_id],
+        account_ids=[account.id],
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "forecast_summary",
+            cache="HIT",
+            user=user.pk,
+            accounts=1,
+            account_id=account.id,
+            days=days,
+        )
+        return cached
+
+    wall_start = time.perf_counter()
+    result = _calculate_account_forecast_summary(
+        user,
+        account,
+        as_of_date=today,
+        days=days,
+        timeline_rows=None,
+    )
+    log_perf(
+        "forecast_summary",
+        cache="MISS",
+        user=user.pk,
+        accounts=1,
+        account_id=account.id,
+        days=days,
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(cache_key, result, timeout=FORECAST_SUMMARY_CACHE_SECONDS)
+    return result
+
+
 def calculate_available_to_spend(
     user,
     account: Account,
@@ -332,16 +407,20 @@ def calculate_available_to_spend(
     return _decimal(summary["available_to_spend"])
 
 
-def calculate_forecast_summaries_for_accounts(
+def _calculate_forecast_summaries_for_accounts(
     user,
     accounts: list[Account],
     *,
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
 ) -> dict[int, dict[str, Any]]:
-    """
-    Batch forecast summaries: one build_timeline for all supported accounts in the batch.
-    """
+    """Uncached batch forecast summaries: one build_timeline for supported accounts."""
+    timer = PerfTimer() if perf_enabled() else None
+    query_profiler = QueryProfiler() if perf_enabled() else None
+    wall_start = time.perf_counter() if perf_enabled() else None
+    if query_profiler is not None:
+        query_profiler.start()
+
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     window_end = today + timedelta(days=days)
@@ -357,17 +436,20 @@ def calculate_forecast_summaries_for_accounts(
         }
 
     supported_ids = {a.id for a in supported}
+    _phase_timeline = phase_start(timer, "timeline_build")
     timeline_rows = build_timeline(
         user,
         start_date=today,
         end_date=window_end,
         as_of_date=today,
     )
+    phase_end(timer, _phase_timeline)
 
     result: dict[int, dict[str, Any]] = {}
+    _phase_summaries = phase_start(timer, "account_summaries")
     for account in accounts:
         if account.id in supported_ids:
-            result[account.id] = calculate_account_forecast_summary(
+            result[account.id] = _calculate_account_forecast_summary(
                 user,
                 account,
                 as_of_date=today,
@@ -375,12 +457,81 @@ def calculate_forecast_summaries_for_accounts(
                 timeline_rows=timeline_rows,
             )
         else:
-            result[account.id] = calculate_account_forecast_summary(
+            result[account.id] = _calculate_account_forecast_summary(
                 user,
                 account,
                 as_of_date=today,
                 days=days,
             )
+    phase_end(timer, _phase_summaries)
+
+    if perf_enabled() and wall_start is not None:
+        if query_profiler is not None:
+            query_profiler.stop()
+        log_perf(
+            "forecast_summary_compute",
+            timer=timer,
+            query_profiler=query_profiler,
+            user=user.pk,
+            accounts=len(accounts),
+            supported_accounts=len(supported),
+            days=days,
+            elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+        )
+    return result
+
+
+def calculate_forecast_summaries_for_accounts(
+    user,
+    accounts: list[Account],
+    *,
+    as_of_date: Optional[date] = None,
+    days: int = DEFAULT_FORECAST_DAYS,
+) -> dict[int, dict[str, Any]]:
+    """
+    Batch forecast summaries with Django cache (5-minute TTL).
+
+    Expensive build_timeline() runs once per cache miss; dashboard and account list
+    endpoints hit this path repeatedly.
+    """
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    account_ids = [a.id for a in accounts]
+    household_ids = [a.household_id for a in accounts]
+    cache_key = get_forecast_summary_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        account_ids=account_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "forecast_summary",
+            cache="HIT",
+            user=user.pk,
+            accounts=len(account_ids),
+            days=days,
+        )
+        return cached
+
+    wall_start = time.perf_counter()
+    result = _calculate_forecast_summaries_for_accounts(
+        user,
+        accounts,
+        as_of_date=today,
+        days=days,
+    )
+    log_perf(
+        "forecast_summary",
+        cache="MISS",
+        user=user.pk,
+        accounts=len(account_ids),
+        days=days,
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(cache_key, result, timeout=FORECAST_SUMMARY_CACHE_SECONDS)
     return result
 
 

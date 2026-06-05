@@ -1,2 +1,5 @@
 node_modules
 # backend/frontend_dist — committed so Render can serve React if npm is missing during build
+backend/.env
+backend/.env.render
+backend/.venv

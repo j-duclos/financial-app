@@ -1,22 +1,25 @@
 import { ChevronRight } from "lucide-react";
-import { formatCurrency } from "@budget-app/shared";
 import {
   computeGroupSummary,
-  isDebtAccount,
+  isAtRisk,
   type AccountGroup,
+  type AccountGroupBy,
 } from "../../lib/accountOrganization";
+import { buildAccountForecastAlerts } from "../../lib/accountForecastAlerts";
+import { formatGroupSummaryParts } from "../../lib/accountGroupSummaryDisplay";
 import AccountListItem from "./AccountListItem";
 import type { Account, AccountRole } from "@budget-app/shared";
 import type { AccountLayoutMode } from "../../lib/accountOrganization";
-import type { ForecastDays } from "../../lib/safeToSpendLabels";
+import type { PassiveForecastDays } from "../../lib/safeToSpendLabels";
 import type { QuickActionDef, QuickActionsContext } from "../../lib/accountQuickActions";
 
 type Props = {
   group: AccountGroup;
+  groupBy: AccountGroupBy;
   collapsed: boolean;
   showSummary: boolean;
   layoutMode: AccountLayoutMode;
-  forecastDays: ForecastDays;
+  forecastDays: PassiveForecastDays;
   defaultAccountId?: number | null;
   allowManualOrder: boolean;
   reorderPending: boolean;
@@ -36,10 +39,14 @@ type Props = {
   updatePending: boolean;
   quickActionsContext?: QuickActionsContext;
   onQuickAction?: (account: Account, action: QuickActionDef) => void;
+  onResolveRisk?: (account: Account) => void;
+  highlightedAccountId?: number | null;
+  onFocusAccount?: (accountId: number) => void;
 };
 
 export default function AccountGroupSection({
   group,
+  groupBy,
   collapsed,
   showSummary,
   layoutMode,
@@ -63,15 +70,21 @@ export default function AccountGroupSection({
   updatePending,
   quickActionsContext,
   onQuickAction,
+  onResolveRisk,
+  highlightedAccountId,
+  onFocusAccount,
 }: Props) {
   const summary = computeGroupSummary(group.accounts);
-  const isCreditGroup = group.accounts.some((a) => a.account_type === "CREDIT");
-  const isCashGroup = group.accounts.some(
-    (a) => a.account_type !== "CREDIT" && !isDebtAccount(a)
-  );
+  const summaryParts = formatGroupSummaryParts(group.key, groupBy, summary);
+  const firstAttentionAccountId =
+    group.accounts.find((a) => buildAccountForecastAlerts([a], forecastDays).length > 0)?.id ??
+    group.accounts.find((a) => isAtRisk(a))?.id;
 
   return (
-    <section className="border-b border-gray-200 last:border-b-0">
+    <section
+      className="border-b border-gray-200 last:border-b-0"
+      data-testid={`account-group-${group.key}`}
+    >
       <button
         type="button"
         onClick={onToggleCollapse}
@@ -88,10 +101,16 @@ export default function AccountGroupSection({
           {group.label}
           <span className="font-normal text-gray-500 ml-1.5">({summary.count})</span>
         </span>
-        {showSummary && !collapsed ? (
-          <GroupSummaryLine summary={summary} isCreditGroup={isCreditGroup} isCashGroup={isCashGroup} />
-        ) : showSummary && collapsed ? (
-          <CollapsedSummaryHint summary={summary} isCreditGroup={isCreditGroup} />
+        {showSummary && summaryParts.length > 0 ? (
+          <GroupSummaryLine
+            parts={summaryParts}
+            riskCount={summary.riskCount}
+            onJumpToRisk={
+              summary.riskCount > 0 && firstAttentionAccountId != null && onFocusAccount
+                ? () => onFocusAccount(firstAttentionAccountId)
+                : undefined
+            }
+          />
         ) : null}
       </button>
 
@@ -129,6 +148,8 @@ export default function AccountGroupSection({
                   updatePending={updatePending}
                   quickActionsContext={quickActionsContext}
                   onQuickAction={onQuickAction}
+                  onResolveRisk={onResolveRisk}
+                  isHighlighted={highlightedAccountId === acc.id}
                 />
               </li>
             ))}
@@ -140,62 +161,48 @@ export default function AccountGroupSection({
 }
 
 function GroupSummaryLine({
-  summary,
-  isCreditGroup,
-  isCashGroup,
+  parts,
+  riskCount,
+  onJumpToRisk,
 }: {
-  summary: ReturnType<typeof computeGroupSummary>;
-  isCreditGroup: boolean;
-  isCashGroup: boolean;
+  parts: string[];
+  riskCount: number;
+  onJumpToRisk?: () => void;
 }) {
-  const parts: string[] = [];
-
-  if (isCreditGroup && summary.totalDebt > 0) {
-    parts.push(`Balance owed: ${formatCurrency(String(summary.totalDebt.toFixed(2)), summary.currency)}`);
-    if (summary.avgUtilization != null) {
-      parts.push(`Avg utilization: ${summary.avgUtilization.toFixed(0)}%`);
-    }
-  } else if (isCashGroup && summary.totalSafeToSpend > 0) {
-    parts.push(`Safe to spend: ${formatCurrency(String(summary.totalSafeToSpend.toFixed(2)), summary.currency)}`);
-    if (summary.lowestProjected != null) {
-      parts.push(
-        `Lowest projected: ${formatCurrency(String(summary.lowestProjected.toFixed(2)), summary.currency)}`
-      );
-    }
-  } else if (summary.totalBalance !== 0) {
-    parts.push(`Total: ${formatCurrency(String(summary.totalBalance.toFixed(2)), summary.currency)}`);
-  }
-
-  if (summary.riskCount > 0) {
-    parts.push(
-      `${summary.riskCount} account${summary.riskCount === 1 ? "" : "s"} at risk`
-    );
-  }
-
   if (parts.length === 0) return null;
 
   return (
-    <span className="text-xs text-gray-600 flex flex-wrap gap-x-3 gap-y-0.5 ml-auto">
-      {parts.map((p) => (
-        <span key={p}>{p}</span>
-      ))}
+    <span
+      className="text-xs text-gray-600 flex flex-wrap gap-x-3 gap-y-0.5 ml-auto"
+      data-testid="group-summary-line"
+    >
+      {parts.map((p) => {
+        const isRiskPart = riskCount > 0 && p.includes("at risk");
+        if (isRiskPart && onJumpToRisk) {
+          return (
+            <span
+              key={p}
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onJumpToRisk();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onJumpToRisk();
+                }
+              }}
+              className="text-blue-700 hover:underline font-medium cursor-pointer"
+            >
+              {p}
+            </span>
+          );
+        }
+        return <span key={p}>{p}</span>;
+      })}
     </span>
   );
-}
-
-function CollapsedSummaryHint({
-  summary,
-  isCreditGroup,
-}: {
-  summary: ReturnType<typeof computeGroupSummary>;
-  isCreditGroup: boolean;
-}) {
-  const hint =
-    isCreditGroup && summary.totalDebt > 0
-      ? formatCurrency(String(summary.totalDebt.toFixed(2)), summary.currency)
-      : summary.totalSafeToSpend > 0
-        ? formatCurrency(String(summary.totalSafeToSpend.toFixed(2)), summary.currency)
-        : null;
-  if (!hint) return null;
-  return <span className="text-xs text-gray-500 ml-auto">{hint}</span>;
 }

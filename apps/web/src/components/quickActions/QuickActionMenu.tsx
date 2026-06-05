@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
 import type { QuickActionDef } from "../../lib/accountQuickActions";
 import QuickActionButton from "./QuickActionButton";
@@ -11,6 +12,28 @@ type Props = {
   menuLabel?: string;
 };
 
+function placeMenu(container: HTMLElement, menu: HTMLElement) {
+  const rect = container.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const margin = 4;
+
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  const openUp = spaceBelow < menuRect.height && spaceAbove > spaceBelow;
+
+  const top = openUp
+    ? Math.max(margin, rect.top - menuRect.height - margin)
+    : rect.bottom + margin;
+
+  const left = Math.max(
+    margin,
+    Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin)
+  );
+
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+}
+
 export default function QuickActionMenu({
   actions,
   dangerActions = [],
@@ -19,12 +42,39 @@ export default function QuickActionMenu({
   menuLabel = "More actions",
 }: Props) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const menu = menuRef.current;
+    const container = containerRef.current;
+    if (!menu || !container) return;
+
+    const update = () => {
+      if (menuRef.current && containerRef.current) {
+        placeMenu(containerRef.current, menuRef.current);
+      }
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, actions.length, dangerActions.length]);
 
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -59,8 +109,34 @@ export default function QuickActionMenu({
     </button>
   );
 
+  const menu =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ position: "fixed", top: 0, left: 0 }}
+            className="z-50 min-w-[12rem] max-w-[18rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg max-h-[min(70vh,24rem)] overflow-y-auto"
+          >
+            {actions.map(renderItem)}
+            {dangerActions.length > 0 && actions.length > 0 ? (
+              <div className="my-1 border-t border-gray-200" role="separator" />
+            ) : null}
+            {dangerActions.length > 0 ? (
+              <div role="group" aria-label="Danger zone">
+                <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-red-600">
+                  Danger zone
+                </p>
+                {dangerActions.map(renderItem)}
+              </div>
+            ) : null}
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={containerRef} className="relative">
       <QuickActionButton
         label={menuLabel}
         icon={MoreHorizontal}
@@ -70,25 +146,7 @@ export default function QuickActionMenu({
         onClick={() => setOpen((v) => !v)}
         className="!px-2.5 !py-2"
       />
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-0 z-30 mt-1 min-w-[12rem] max-w-[18rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg max-h-[min(70vh,24rem)] overflow-y-auto"
-        >
-          {actions.map(renderItem)}
-          {dangerActions.length > 0 && actions.length > 0 ? (
-            <div className="my-1 border-t border-gray-200" role="separator" />
-          ) : null}
-          {dangerActions.length > 0 ? (
-            <div role="group" aria-label="Danger zone">
-              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-red-600">
-                Danger zone
-              </p>
-              {dangerActions.map(renderItem)}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {menu}
     </div>
   );
 }

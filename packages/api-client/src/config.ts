@@ -88,7 +88,23 @@ async function requestInner<T>(
     ...((init.headers as Record<string, string>) ?? {}),
   };
   const getOpts = (init.method ?? "GET") === "GET" ? { cache: "no-store" as RequestCache } : {};
-  let res = await fetch(url, { ...init, ...getOpts, headers });
+  const timeoutMs = 90_000;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, ...getOpts, headers, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError(
+        504,
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s — the server may be overloaded. Try again or narrow the date range.`
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   if (res.status === 401 && !didRefresh && !isPublicAuth && getRefreshToken && setAccessToken) {
     const refreshed = await tryRefreshAccessToken();

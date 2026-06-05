@@ -4,6 +4,17 @@ import type {
   AccountRelationship,
   AccountForecastSummary,
   SafeToSpendDashboard,
+  DashboardSummary,
+  DashboardRecommendation,
+  MonthlyBillChecklist,
+  BillsOverviewResponse,
+  BillOccurrenceDetail,
+  FinancialGoal,
+  GoalsAggregateSummary,
+  GoalContributePreview,
+  GoalForecastDetail,
+  GoalDetailResponse,
+  GoalsReport,
   Category,
   Transaction,
   Budget,
@@ -14,10 +25,20 @@ import type {
   Scenario,
   ScenarioRuleOverride,
   TimelineResponse,
+  TimelineCalendarResponse,
   StatementTransaction,
   ReconciliationMatch,
   ReconcileSetupResponse,
   ReconcileCompleteResponse,
+  ReconciliationSessionListResponse,
+  ReconciliationSessionDetail,
+  ReconciliationUndoResponse,
+  PayoffProjection,
+  PayoffStrategy,
+  PayoffStrategyComparison,
+  DebtPayoffPlan,
+  DashboardDebtSummary,
+  CreditCardInterestReport,
   UpcomingChargeNotification,
 } from "@budget-app/shared";
 import { request, requestRequired } from "./config";
@@ -287,7 +308,7 @@ export async function updateAccount(id: number, data: Partial<Account>): Promise
   return requestRequired(`/api/accounts/${id}/`, { method: "PATCH", body: JSON.stringify(data) });
 }
 
-/** Soft-delete account (preserves transaction history). */
+/** Permanently delete account and all related data. */
 export async function deleteAccount(id: number): Promise<void> {
   await request(`/api/accounts/${id}/`, { method: "DELETE" });
 }
@@ -400,19 +421,62 @@ export async function resetPlaidItemSyncCursor(itemId: number): Promise<{ detail
   return requestRequired(`/api/plaid/items/${itemId}/reset-sync-cursor/`, { method: "POST" });
 }
 
-/** Payoff projection for CREDIT accounts: months to pay off with fixed monthly payment. */
-export interface PayoffProjection {
-  months_to_payoff: number;
-  total_interest: string;
-  payoff_date: string | null;
-  current_balance: string;
-}
 export async function getAccountPayoff(
   accountId: number,
-  monthlyPayment: number | string
+  options:
+    | { strategy: PayoffStrategy; custom_amount?: string; fixed_amount?: string }
+    | { monthly_payment: number | string }
 ): Promise<PayoffProjection> {
-  return requestRequired(`/api/accounts/${accountId}/payoff/`, {
-    params: { monthly_payment: String(monthlyPayment) },
+  const params: Record<string, string> = {};
+  if ("monthly_payment" in options) {
+    params.monthly_payment = String(options.monthly_payment);
+  } else {
+    params.strategy = options.strategy;
+    if (options.custom_amount != null) params.custom_amount = options.custom_amount;
+    if (options.fixed_amount != null) params.fixed_amount = options.fixed_amount;
+  }
+  return requestRequired(`/api/accounts/${accountId}/payoff/`, { params });
+}
+
+export async function getDebtPayoffPlan(params?: {
+  strategy?: string;
+  mode?: string;
+  extra_monthly?: string;
+  lump_sum?: string;
+  lump_sum_account?: number;
+  custom_order?: string;
+  household?: number;
+}): Promise<DebtPayoffPlan> {
+  const q: Record<string, string> = {};
+  if (params?.strategy) q.strategy = params.strategy;
+  if (params?.mode) q.mode = params.mode;
+  if (params?.extra_monthly) q.extra_monthly = params.extra_monthly;
+  if (params?.lump_sum) q.lump_sum = params.lump_sum;
+  if (params?.lump_sum_account != null) q.lump_sum_account = String(params.lump_sum_account);
+  if (params?.custom_order) q.custom_order = params.custom_order;
+  if (params?.household != null) q.household = String(params.household);
+  return requestRequired("/api/credit-cards/plan/", {
+    params: Object.keys(q).length ? q : undefined,
+  });
+}
+
+export async function getDebtDashboardSummary(): Promise<DashboardDebtSummary> {
+  return requestRequired("/api/credit-cards/dashboard/");
+}
+
+export async function getAccountPayoffCompare(
+  accountId: number,
+  options?: { fixed_amount?: string; custom_amount?: string }
+): Promise<PayoffStrategyComparison> {
+  const params: Record<string, string> = {};
+  if (options?.fixed_amount) params.fixed_amount = options.fixed_amount;
+  if (options?.custom_amount) params.custom_amount = options.custom_amount;
+  return requestRequired(`/api/accounts/${accountId}/payoff/compare/`, { params });
+}
+
+export async function getCreditCardInterestReport(month?: string): Promise<CreditCardInterestReport> {
+  return requestRequired("/api/credit-cards/interest-report/", {
+    params: month ? { month } : undefined,
   });
 }
 
@@ -542,6 +606,7 @@ export async function createTransaction(data: {
   category_id?: number | null;
   memo?: string;
   cleared?: boolean;
+  is_bill?: boolean;
   tags?: string[];
 }): Promise<Transaction> {
   return requestRequired("/api/transactions/", { method: "POST", body: JSON.stringify(data) });
@@ -644,6 +709,14 @@ export async function deletePlaidItem(itemId: number): Promise<void> {
   await request(`/api/plaid/items/${itemId}/`, { method: "DELETE" });
 }
 
+export async function disconnectPlaidLinkedAccount(
+  linkedAccountId: number
+): Promise<{ detail: string; account_id: number }> {
+  return requestRequired(`/api/plaid/linked-accounts/${linkedAccountId}/disconnect/`, {
+    method: "POST",
+  });
+}
+
 // Transfers
 export async function createTransfer(body: TransferCreateBody): Promise<TransferResponse> {
   return requestRequired("/api/transactions/transfers/", { method: "POST", body: JSON.stringify(body) });
@@ -680,6 +753,73 @@ export async function deleteBudget(id: number): Promise<void> {
   await request(`/api/budgets/${id}/`, { method: "DELETE" });
 }
 
+// Spending limits
+export async function listSpendingTargets(params?: {
+  household?: number;
+  period?: string;
+  active?: boolean;
+  anchor?: string;
+}): Promise<PaginatedResponse<import("@budget-app/shared").SpendingTarget>> {
+  const q: Record<string, string> = {};
+  if (params?.household != null) q.household = String(params.household);
+  if (params?.period) q.period = params.period;
+  if (params?.active != null) q.active = params.active ? "true" : "false";
+  if (params?.anchor) q.anchor = params.anchor;
+  return requestRequired("/api/spending-targets/", { params: q });
+}
+
+export async function getSpendingTargetsSummary(params?: {
+  household?: number;
+  anchor?: string;
+  include_scheduled?: boolean;
+  /** @deprecated use include_scheduled */
+  include_forecast?: boolean;
+}): Promise<import("@budget-app/shared").SpendingTargetsSummary> {
+  const q: Record<string, string> = {};
+  if (params?.household != null) q.household = String(params.household);
+  if (params?.anchor) q.anchor = params.anchor;
+  if (params?.include_scheduled === false || params?.include_forecast === false) {
+    q.include_scheduled = "false";
+  }
+  return requestRequired("/api/spending-targets/summary/", { params: q });
+}
+
+export async function createSpendingTarget(
+  data: Partial<import("@budget-app/shared").SpendingTarget> & {
+    household: number;
+    category: number;
+    target_amount: string;
+  }
+): Promise<import("@budget-app/shared").SpendingTarget> {
+  return requestRequired("/api/spending-targets/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSpendingTarget(
+  id: number,
+  data: Partial<import("@budget-app/shared").SpendingTarget>
+): Promise<import("@budget-app/shared").SpendingTarget> {
+  return requestRequired(`/api/spending-targets/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSpendingTarget(id: number): Promise<void> {
+  await request(`/api/spending-targets/${id}/`, { method: "DELETE" });
+}
+
+export async function suggestSpendingTargetType(categoryId: number): Promise<{
+  target_type: import("@budget-app/shared").SpendingTargetType;
+  reason: string;
+}> {
+  return requestRequired("/api/spending-targets/suggest-type/", {
+    params: { category: String(categoryId) },
+  });
+}
+
 // Insights
 export async function getMonthlySummary(month: string): Promise<MonthlySummary> {
   return requestRequired("/api/insights/monthly-summary/", { params: { month } });
@@ -691,6 +831,380 @@ export async function getCategoryBreakdown(month: string): Promise<{ month: stri
 
 export async function getAccountBalances(): Promise<{ balances: AccountBalance[] }> {
   return requestRequired("/api/insights/account-balances/");
+}
+
+export async function getDashboardSummary(params?: {
+  days?: number;
+  forecast_days?: number;
+}): Promise<DashboardSummary> {
+  const horizon = params?.forecast_days ?? params?.days ?? 30;
+  return requestRequired("/api/insights/dashboard/summary/", {
+    params: { forecast_days: String(horizon) },
+  });
+}
+
+export async function getSubscriptionIntelligence(): Promise<
+  import("@budget-app/shared").SubscriptionIntelligenceResponse
+> {
+  return requestRequired("/api/insights/subscriptions/");
+}
+
+export async function getRecommendations(params?: {
+  days?: number;
+  scenario_id?: number;
+}): Promise<{
+  as_of: string;
+  days: number;
+  scenario_id: number | null;
+  recommendations: DashboardRecommendation[];
+  timeline_hints: { date: string; recommendation_id: string; title: string; severity: string }[];
+}> {
+  const q: Record<string, string> = {};
+  if (params?.days != null) q.days = String(params.days);
+  if (params?.scenario_id != null) q.scenario_id = String(params.scenario_id);
+  return requestRequired("/api/recommendations/", {
+    params: Object.keys(q).length ? q : undefined,
+  });
+}
+
+// Financial goals
+export async function listGoals(params?: {
+  status?: string;
+  household?: number;
+}): Promise<PaginatedResponse<FinancialGoal>> {
+  const q: Record<string, string> = { page_size: "100" };
+  if (params?.status) q.status = params.status;
+  if (params?.household != null) q.household = String(params.household);
+  return requestRequired("/api/goals/", { params: q });
+}
+
+/** Fetch every goal across paginated API responses (all statuses unless filtered). */
+export async function listAllGoals(params?: {
+  status?: string;
+  household?: number;
+}): Promise<FinancialGoal[]> {
+  const all: FinancialGoal[] = [];
+  let page = 1;
+  while (true) {
+    const q: Record<string, string> = { page_size: "100", page: String(page) };
+    if (params?.status) q.status = params.status;
+    if (params?.household != null) q.household = String(params.household);
+    const res = await requestRequired<PaginatedResponse<FinancialGoal>>("/api/goals/", {
+      params: q,
+    });
+    all.push(...res.results);
+    if (!res.next) break;
+    page += 1;
+  }
+  return all;
+}
+
+export async function getGoal(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/`);
+}
+
+export async function createGoal(
+  data: Partial<FinancialGoal> & { household: number; name: string; target_amount: string }
+): Promise<FinancialGoal> {
+  return requestRequired("/api/goals/", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateGoal(
+  id: number,
+  data: Partial<FinancialGoal>
+): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function archiveGoal(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/archive/`, { method: "POST" });
+}
+
+export async function completeGoal(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/complete/`, { method: "POST" });
+}
+
+export async function pauseGoal(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/pause/`, { method: "POST" });
+}
+
+export async function duplicateGoal(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/goals/${id}/duplicate/`, { method: "POST" });
+}
+
+export async function deleteGoal(id: number): Promise<void> {
+  await request(`/api/goals/${id}/`, { method: "DELETE" });
+}
+
+export async function getGoalsSummary(params?: {
+  household?: number;
+}): Promise<GoalsAggregateSummary> {
+  const q: Record<string, string> = {};
+  if (params?.household != null) q.household = String(params.household);
+  return requestRequired("/api/goals/summary/", { params: Object.keys(q).length ? q : undefined });
+}
+
+export async function previewGoalContribution(
+  goalId: number,
+  body: { from_account: number; amount: string; date: string }
+): Promise<GoalContributePreview> {
+  return requestRequired(`/api/goals/${goalId}/contribute/preview/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function contributeToGoal(
+  goalId: number,
+  body: {
+    from_account?: number;
+    amount: string;
+    date: string;
+    method: "transfer" | "manual";
+  }
+): Promise<{ goal: FinancialGoal; goal_progress: Record<string, unknown> }> {
+  return requestRequired(`/api/goals/${goalId}/contribute/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getGoalForecast(
+  goalId: number
+): Promise<GoalForecastDetail> {
+  return requestRequired(`/api/goals/${goalId}/forecast/`);
+}
+
+// Goal buckets (forecast-aware savings)
+export async function listAllBuckets(params?: {
+  status?: string;
+  household?: number;
+}): Promise<FinancialGoal[]> {
+  const all: FinancialGoal[] = [];
+  let page = 1;
+  while (true) {
+    const q: Record<string, string> = { page_size: "100", page: String(page) };
+    if (params?.status) q.status = params.status;
+    if (params?.household != null) q.household = String(params.household);
+    const res = await requestRequired<PaginatedResponse<FinancialGoal>>("/api/buckets/", {
+      params: q,
+    });
+    all.push(...res.results);
+    if (!res.next) break;
+    page += 1;
+  }
+  return all;
+}
+
+export async function getBucket(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/`);
+}
+
+export async function createBucket(
+  data: Partial<FinancialGoal> & { household: number; name: string; target_amount: string; type?: string }
+): Promise<FinancialGoal> {
+  return requestRequired("/api/buckets/", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateBucket(
+  id: number,
+  data: Partial<FinancialGoal>
+): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function archiveBucket(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/archive/`, { method: "POST" });
+}
+
+export async function completeBucket(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/complete/`, { method: "POST" });
+}
+
+export async function pauseBucket(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/pause/`, { method: "POST" });
+}
+
+export async function duplicateBucket(id: number): Promise<FinancialGoal> {
+  return requestRequired(`/api/buckets/${id}/duplicate/`, { method: "POST" });
+}
+
+export async function deleteBucket(id: number): Promise<void> {
+  await request(`/api/buckets/${id}/`, { method: "DELETE" });
+}
+
+export async function getBucketsSummary(params?: {
+  household?: number;
+}): Promise<GoalsAggregateSummary> {
+  const q: Record<string, string> = {};
+  if (params?.household != null) q.household = String(params.household);
+  return requestRequired("/api/buckets/summary/", { params: Object.keys(q).length ? q : undefined });
+}
+
+export async function previewBucketContribution(
+  bucketId: number,
+  body: { from_account: number; amount: string; date: string }
+): Promise<GoalContributePreview> {
+  return requestRequired(`/api/buckets/${bucketId}/contribute/preview/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function contributeToBucket(
+  bucketId: number,
+  body: {
+    from_account?: number;
+    amount: string;
+    date: string;
+    method: "transfer" | "manual";
+  }
+): Promise<{ goal: FinancialGoal; goal_progress: Record<string, unknown> }> {
+  return requestRequired(`/api/buckets/${bucketId}/contribute/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getBucketForecast(bucketId: number): Promise<GoalForecastDetail> {
+  return requestRequired(`/api/buckets/${bucketId}/forecast/`);
+}
+
+export async function getBucketDetail(
+  bucketId: number,
+  params?: { scenario?: number }
+): Promise<GoalDetailResponse> {
+  const q: Record<string, string> = {};
+  if (params?.scenario != null) q.scenario = String(params.scenario);
+  return requestRequired(`/api/buckets/${bucketId}/detail/`, {
+    params: Object.keys(q).length ? q : undefined,
+  });
+}
+
+export async function getGoalsReport(params?: { months?: number; month?: string }): Promise<GoalsReport> {
+  const q: Record<string, string> = {};
+  if (params?.months != null) q.months = String(params.months);
+  if (params?.month) q.month = params.month;
+  return requestRequired("/api/buckets/reports/", { params: Object.keys(q).length ? q : undefined });
+}
+
+export async function listGoalContributions(params?: {
+  bucket?: number;
+  page_size?: number;
+}): Promise<PaginatedResponse<{
+  id: number;
+  bucket: number;
+  bucket_name: string;
+  transaction: number;
+  account: number;
+  amount: string;
+  date: string;
+  source: string;
+  notes: string;
+  created_at: string;
+}>> {
+  const q: Record<string, string> = { page_size: String(params?.page_size ?? 100) };
+  if (params?.bucket != null) q.bucket = String(params.bucket);
+  return requestRequired("/api/goal-contributions/", { params: q });
+}
+
+export async function listRuleAllocations(params?: {
+  rule?: number;
+  bucket?: number;
+}): Promise<PaginatedResponse<{
+  id: number;
+  rule: number;
+  rule_name?: string;
+  rule_direction?: string;
+  bucket: number;
+  bucket_name?: string;
+  percent: string | null;
+  fixed_amount: string | null;
+  active: boolean;
+}>> {
+  const q: Record<string, string> = { page_size: "200" };
+  if (params?.rule != null) q.rule = String(params.rule);
+  if (params?.bucket != null) q.bucket = String(params.bucket);
+  return requestRequired("/api/rule-allocations/", { params: q });
+}
+
+export async function createRuleAllocation(data: {
+  rule: number;
+  bucket: number;
+  percent?: string | null;
+  fixed_amount?: string | null;
+  active?: boolean;
+}): Promise<{ id: number; rule: number; bucket: number; percent: string | null; fixed_amount: string | null; active: boolean }> {
+  return requestRequired("/api/rule-allocations/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateRuleAllocation(
+  id: number,
+  data: Partial<{
+    percent: string | null;
+    fixed_amount: string | null;
+    active: boolean;
+  }>
+): Promise<{ id: number; rule: number; bucket: number; percent: string | null; fixed_amount: string | null; active: boolean }> {
+  return requestRequired(`/api/rule-allocations/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteRuleAllocation(id: number): Promise<void> {
+  await request(`/api/rule-allocations/${id}/`, { method: "DELETE" });
+}
+
+export type BucketFundingConfig = {
+  auto_fund_enabled?: boolean;
+  income_rule_id?: number | null;
+  fixed_amount?: string | null;
+  percent?: string | null;
+  clear_allocation?: boolean;
+};
+
+export async function configureBucketFunding(
+  bucketId: number,
+  data: BucketFundingConfig
+): Promise<FinancialGoal & { auto_fund_transfer_rule_id?: number | null }> {
+  return requestRequired(`/api/buckets/${bucketId}/funding/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function assignGoalContribution(body: {
+  bucket: number;
+  transaction: number;
+  amount: string;
+}): Promise<unknown> {
+  return requestRequired("/api/goal-contributions/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getAccountBucketAllocations(
+  accountId: number
+): Promise<{
+  account_id: number;
+  balance: string;
+  allocated_total: string;
+  available_unallocated: string;
+  bucket_count: number;
+  buckets: Array<{
+    id: number;
+    name: string;
+    allocated_amount: string;
+    target_amount: string;
+    include_in_safe_to_spend: boolean;
+  }>;
+}> {
+  return requestRequired(`/api/accounts/${accountId}/bucket-allocations/`);
 }
 
 // Rules (RecurringRule)
@@ -724,8 +1238,22 @@ export async function getRule(id: number): Promise<RecurringRule> {
   return requestRequired(`/api/rules/${id}/`);
 }
 
-export async function updateRule(id: number, data: Partial<RecurringRule>): Promise<RecurringRule> {
+export async function updateRule(
+  id: number,
+  data: Partial<RecurringRule> & {
+    change_effective_date?: string;
+    cancel_scheduled_change?: boolean;
+  }
+): Promise<RecurringRule> {
   return requestRequired(`/api/rules/${id}/`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function pauseRule(id: number): Promise<RecurringRule> {
+  return requestRequired(`/api/rules/${id}/pause/`, { method: "POST" });
+}
+
+export async function resumeRule(id: number): Promise<RecurringRule> {
+  return requestRequired(`/api/rules/${id}/resume/`, { method: "POST" });
 }
 
 export async function deleteRule(id: number): Promise<void> {
@@ -737,7 +1265,13 @@ export async function listScenarios(): Promise<PaginatedResponse<Scenario>> {
   return requestRequired("/api/scenarios/", { params: { page_size: "100" } });
 }
 
-export async function createScenario(data: { household: number; name: string }): Promise<Scenario> {
+export async function createScenario(data: {
+  household: number;
+  name: string;
+  description?: string;
+  template?: string;
+  horizon_months?: number;
+}): Promise<Scenario> {
   return requestRequired("/api/scenarios/", { method: "POST", body: JSON.stringify(data) });
 }
 
@@ -775,6 +1309,164 @@ export async function deleteScenarioOverride(id: number): Promise<void> {
   await request(`/api/scenario-overrides/${id}/`, { method: "DELETE" });
 }
 
+export async function duplicateScenario(
+  id: number,
+  data?: { name?: string }
+): Promise<Scenario> {
+  return requestRequired(`/api/scenarios/${id}/duplicate/`, {
+    method: "POST",
+    body: JSON.stringify(data ?? {}),
+  });
+}
+
+export async function getScenarioComparison(
+  scenarioId: number,
+  params?: { horizon?: string; household_id?: number }
+): Promise<import("@budget-app/shared").ScenarioComparisonResponse> {
+  const q: Record<string, string> = {};
+  if (params?.horizon) q.horizon = params.horizon;
+  if (params?.household_id != null) q.household_id = String(params.household_id);
+  return requestRequired(`/api/scenarios/${scenarioId}/compare/`, { params: q });
+}
+
+export async function listScenarioAddedRecurring(
+  scenarioId: number
+): Promise<import("@budget-app/shared").ScenarioAddedRecurring[]> {
+  return requestRequired(`/api/scenarios/${scenarioId}/added-recurring/`);
+}
+
+export async function createScenarioAddedRecurring(
+  scenarioId: number,
+  data: {
+    name: string;
+    account_id: number;
+    transfer_to_account_id?: number | null;
+    category_id?: number | null;
+    direction: "INCOME" | "EXPENSE" | "TRANSFER";
+    amount: string;
+    currency?: string;
+    frequency: string;
+    interval?: number;
+    day_of_week?: number | null;
+    day_of_month?: number | null;
+    nth_week?: number | null;
+    start_date: string;
+    end_date?: string | null;
+    notes?: string;
+  }
+): Promise<import("@budget-app/shared").ScenarioAddedRecurring> {
+  return requestRequired(`/api/scenarios/${scenarioId}/added-recurring/`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateScenarioAddedRecurring(
+  id: number,
+  data: Partial<import("@budget-app/shared").ScenarioAddedRecurring>
+): Promise<import("@budget-app/shared").ScenarioAddedRecurring> {
+  return requestRequired(`/api/scenario-added-recurring/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteScenarioAddedRecurring(id: number): Promise<void> {
+  await request(`/api/scenario-added-recurring/${id}/`, { method: "DELETE" });
+}
+
+export async function listScenarioOneTimeEvents(scenarioId: number): Promise<import("@budget-app/shared").ScenarioOneTimeEvent[]> {
+  return requestRequired(`/api/scenarios/${scenarioId}/one-time-events/`);
+}
+
+export async function createScenarioOneTimeEvent(
+  scenarioId: number,
+  data: {
+    account_id: number;
+    transfer_to_account_id?: number | null;
+    date: string;
+    description: string;
+    direction: "INCOME" | "EXPENSE" | "TRANSFER";
+    amount: string;
+    category_id?: number | null;
+    notes?: string;
+  }
+): Promise<import("@budget-app/shared").ScenarioOneTimeEvent> {
+  return requestRequired(`/api/scenarios/${scenarioId}/one-time-events/`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateScenarioOneTimeEvent(
+  id: number,
+  data: Partial<import("@budget-app/shared").ScenarioOneTimeEvent>
+): Promise<import("@budget-app/shared").ScenarioOneTimeEvent> {
+  return requestRequired(`/api/scenario-one-time-events/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteScenarioOneTimeEvent(id: number): Promise<void> {
+  await request(`/api/scenario-one-time-events/${id}/`, { method: "DELETE" });
+}
+
+export async function checkScenarioAffordability(data: {
+  account_id: number;
+  amount: string;
+  date: string;
+  item_name?: string;
+  description?: string;
+  horizon?: string;
+  household_id?: number;
+}): Promise<import("@budget-app/shared").ScenarioAffordabilityResult> {
+  return requestRequired("/api/scenarios/affordability/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listScenarioCategoryShocks(
+  scenarioId: number
+): Promise<import("@budget-app/shared").ScenarioCategoryShock[]> {
+  return requestRequired(`/api/scenarios/${scenarioId}/category-shocks/`);
+}
+
+export async function createScenarioCategoryShock(
+  scenarioId: number,
+  data: {
+    category_id: number;
+    percent_change: string;
+    start_date: string;
+    end_date?: string | null;
+  }
+): Promise<import("@budget-app/shared").ScenarioCategoryShock> {
+  return requestRequired(`/api/scenarios/${scenarioId}/category-shocks/`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateScenarioCategoryShock(
+  id: number,
+  data: {
+    category_id?: number;
+    percent_change?: string;
+    start_date?: string;
+    end_date?: string | null;
+  }
+): Promise<import("@budget-app/shared").ScenarioCategoryShock> {
+  return requestRequired(`/api/scenario-category-shocks/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteScenarioCategoryShock(id: number): Promise<void> {
+  await request(`/api/scenario-category-shocks/${id}/`, { method: "DELETE" });
+}
+
 // Upcoming charge notifications (1 day before a rule charge is due)
 export async function listUpcomingChargeNotifications(params?: {
   unread_only?: boolean;
@@ -797,7 +1489,8 @@ export async function getTimeline(params: {
   start?: string;
   end?: string;
   as_of?: string;
-  horizon?: "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  lookback_months?: number;
   scenario_id?: number | null;
   account_id?: number | null;
   household_id?: number | null;
@@ -807,11 +1500,62 @@ export async function getTimeline(params: {
   if (params.end) q.end = params.end;
   if (params.as_of) q.as_of = params.as_of;
   if (params.horizon) q.horizon = params.horizon;
+  if (params.lookback_months != null) q.lookback_months = String(params.lookback_months);
   if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
   if (params.account_id != null) q.account_id = String(params.account_id);
   if (params.household_id != null) q.household_id = String(params.household_id);
   q._ = String(Date.now());
   return requestRequired("/api/timeline/", { params: q });
+}
+
+export async function getResolveRiskPlan(params: {
+  account_id: number;
+  days?: number;
+}): Promise<import("@budget-app/shared").ResolveRiskPlan> {
+  const q: Record<string, string> = {
+    account_id: String(params.account_id),
+  };
+  if (params.days != null) q.days = String(params.days);
+  return requestRequired("/api/timeline/resolve-risk/", { params: q });
+}
+
+export async function simulateTransferImpact(data: {
+  from_account_id: number;
+  to_account_id: number;
+  amount: string;
+  transfer_date: string;
+  focus_date?: string;
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  household_id?: number;
+  scenario_id?: number | null;
+}): Promise<import("@budget-app/shared").TransferSimulationResult> {
+  return requestRequired("/api/timeline/simulate-transfer/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getTimelineCalendar(params: {
+  start?: string;
+  end?: string;
+  as_of?: string;
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  lookback_months?: number;
+  scenario_id?: number | null;
+  account_id?: number | null;
+  household_id?: number | null;
+}): Promise<TimelineCalendarResponse> {
+  const q: Record<string, string> = {};
+  if (params.start) q.start = params.start;
+  if (params.end) q.end = params.end;
+  if (params.as_of) q.as_of = params.as_of;
+  if (params.horizon) q.horizon = params.horizon;
+  if (params.lookback_months != null) q.lookback_months = String(params.lookback_months);
+  if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
+  if (params.account_id != null) q.account_id = String(params.account_id);
+  if (params.household_id != null) q.household_id = String(params.household_id);
+  q._ = String(Date.now());
+  return requestRequired("/api/timeline/calendar/", { params: q });
 }
 
 // Reconcile
@@ -883,5 +1627,118 @@ export async function completeReconciliation(body: {
   return requestRequired("/api/reconcile/complete/", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+export async function listReconciliationSessions(
+  accountId: number,
+): Promise<ReconciliationSessionListResponse> {
+  return requestRequired("/api/reconcile/sessions/", {
+    params: { account_id: String(accountId) },
+  });
+}
+
+export async function getReconciliationSession(
+  sessionId: number,
+): Promise<ReconciliationSessionDetail> {
+  return requestRequired(`/api/reconcile/sessions/${sessionId}/`);
+}
+
+export async function undoReconciliationSession(
+  sessionId: number,
+): Promise<ReconciliationUndoResponse> {
+  return requestRequired(`/api/reconcile/sessions/${sessionId}/undo/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+// Monthly bill checklist
+export async function getMonthlyBillChecklist(params?: {
+  month?: string;
+  account?: number;
+  status?: string;
+  category?: number;
+}): Promise<MonthlyBillChecklist> {
+  const q: Record<string, string> = {};
+  if (params?.month) q.month = params.month;
+  if (params?.account != null) q.account = String(params.account);
+  if (params?.status) q.status = params.status;
+  if (params?.category != null) q.category = String(params.category);
+  return requestRequired("/api/bills/checklist/", {
+    params: Object.keys(q).length ? q : undefined,
+  });
+}
+
+export async function billMarkPaid(occurrenceId: number): Promise<{ occurrence: unknown; checklist: MonthlyBillChecklist }> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/mark-paid/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function billMarkMissed(occurrenceId: number): Promise<{ occurrence: unknown; checklist: MonthlyBillChecklist }> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/mark-missed/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function billSkipOccurrence(occurrenceId: number): Promise<{ occurrence: unknown; checklist: MonthlyBillChecklist }> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/skip/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function billLinkTransaction(
+  occurrenceId: number,
+  transactionId: number,
+): Promise<{
+  occurrence: BillChecklistItem;
+  checklist: MonthlyBillChecklist;
+  detail: BillOccurrenceDetail;
+}> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/link-transaction/`, {
+    method: "POST",
+    body: JSON.stringify({ transaction_id: transactionId }),
+  });
+}
+
+export async function getBillsOverview(params?: {
+  month?: string;
+  months_before?: number;
+  months_after?: number;
+}): Promise<BillsOverviewResponse> {
+  const q: Record<string, string> = {};
+  if (params?.month) q.month = params.month;
+  if (params?.months_before != null) q.months_before = String(params.months_before);
+  if (params?.months_after != null) q.months_after = String(params.months_after);
+  return requestRequired("/api/bills/overview/", {
+    params: Object.keys(q).length ? q : undefined,
+  });
+}
+
+export async function getBillOccurrenceDetail(occurrenceId: number): Promise<BillOccurrenceDetail> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/detail/`);
+}
+
+export async function billSnoozeWarning(
+  occurrenceId: number,
+  days = 7
+): Promise<{ occurrence: unknown; checklist: MonthlyBillChecklist; detail: BillOccurrenceDetail }> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/snooze-warning/`, {
+    method: "POST",
+    body: JSON.stringify({ days }),
+  });
+}
+
+export async function billSetAutopay(
+  occurrenceId: number,
+  autopay_mode: "manual" | "autopay" | "unknown"
+): Promise<{ occurrence: unknown; checklist: MonthlyBillChecklist; detail: BillOccurrenceDetail }> {
+  return requestRequired(`/api/bills/occurrences/${occurrenceId}/set-autopay/`, {
+    method: "POST",
+    body: JSON.stringify({ autopay_mode }),
   });
 }

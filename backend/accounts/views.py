@@ -63,15 +63,9 @@ from .services.available_to_spend import (
 
 
 def _parse_forecast_days_param(request) -> int:
-    raw = request.query_params.get("days")
-    if raw is None or raw == "":
-        return DEFAULT_FORECAST_DAYS
-    try:
-        return normalize_forecast_days(int(raw))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid days — use one of {sorted(ALLOWED_FORECAST_DAYS)}."
-        ) from exc
+    from common.services.forecast_horizon import parse_forecast_days_param
+
+    return parse_forecast_days_param(request)
 
 
 def _parse_optional_date_param(val):

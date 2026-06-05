@@ -1,6 +1,8 @@
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import type { Account } from "@budget-app/shared";
 import AccountHealthBadge from "../AccountHealthBadge";
+import { buildAccountListHealthReason } from "../../lib/accountHealthDisplay";
+import { formatDateDisplay } from "../../lib/dateDisplay";
 import { safeToSpendLabel, showSafeToSpendForRole } from "../../lib/safeToSpendLabels";
 import type { AccountRole } from "@budget-app/shared";
 import type { ForecastDays } from "../../lib/safeToSpendLabels";
@@ -29,6 +31,12 @@ export default function AccountForecastPanel({
   if (!open || !account) return null;
 
   const health = account.health_status ?? account.risk_status;
+  const healthReason = account.health_reason ?? account.risk_reason;
+  const fullHealthMessage = buildAccountListHealthReason(healthReason, account);
+  const recommendedAction = account.health_recommended_action?.trim();
+  const showSeparateAction =
+    Boolean(recommendedAction) &&
+    (!fullHealthMessage || !fullHealthMessage.includes(recommendedAction));
   const showSafe = showSafeToSpendForRole(role, account.account_type);
   const isCredit = account.account_type === "CREDIT";
 
@@ -51,14 +59,16 @@ export default function AccountForecastPanel({
           {health ? (
             <AccountHealthBadge
               status={health}
-              reason={account.health_reason ?? account.risk_reason}
+              reason={healthReason}
               account={account}
               inline
+              alwaysExpandedInline
+              className="w-full"
             />
           ) : null}
-          {account.health_recommended_action ? (
+          {showSeparateAction ? (
             <p className="text-sm text-amber-800 bg-amber-50 rounded p-2">
-              {account.health_recommended_action}
+              {recommendedAction}
             </p>
           ) : null}
           <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -85,7 +95,9 @@ export default function AccountForecastPanel({
             {(account.health_risk_date ?? account.risk_date) ? (
               <>
                 <dt className="text-gray-500">Risk date</dt>
-                <dd className="text-right">{account.health_risk_date ?? account.risk_date}</dd>
+                <dd className="text-right">
+                  {formatDateDisplay(account.health_risk_date ?? account.risk_date)}
+                </dd>
               </>
             ) : null}
             {isCredit && account.utilization_percent != null ? (

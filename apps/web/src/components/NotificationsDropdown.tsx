@@ -4,6 +4,7 @@ import {
   listUpcomingChargeNotifications,
   markUpcomingChargeNotificationRead,
 } from "@budget-app/api-client";
+import { formatDateDisplay } from "../lib/dateDisplay";
 
 function formatDueDate(iso: string) {
   const d = new Date(iso);
@@ -17,7 +18,7 @@ function formatDueDate(iso: string) {
   if (d.getTime() === today.getTime()) return "today";
   if (d.getTime() === tomorrow.getTime()) return "tomorrow";
   if (d.getTime() === dayAfter.getTime()) return "in 2 days";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return formatDateDisplay(iso.slice(0, 10));
 }
 
 export default function NotificationsDropdown() {

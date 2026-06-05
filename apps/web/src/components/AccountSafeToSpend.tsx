@@ -1,16 +1,7 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { Account, AccountRole } from "@budget-app/shared";
+import { formatDateDisplay } from "../lib/dateDisplay";
 import { riskStatusClass, riskStatusLabel, safeToSpendLabel, showSafeToSpendForRole } from "../lib/safeToSpendLabels";
-
-function formatDateDisplay(isoDate: string): string {
-  const [y, m, d] = isoDate.slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return isoDate;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 type Props = {
   account: Account;

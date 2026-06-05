@@ -2,6 +2,7 @@ from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from accounts.models import Account
+from common.services.cache import invalidate_financial_cache_for_household
 from accounts.services.autopay import sync_autopay_for_account
 from accounts.services.credit_card import (
     apply_transaction_to_credit_card_balance,
@@ -9,6 +10,12 @@ from accounts.services.credit_card import (
     refresh_statement_schedule,
 )
 from transactions.models import Transaction
+
+
+@receiver(post_save, sender=Account)
+@receiver(post_delete, sender=Account)
+def invalidate_forecast_cache_on_account_change(sender, instance: Account, **kwargs):
+    invalidate_financial_cache_for_household(instance.household_id)
 
 
 @receiver(post_save, sender=Account)

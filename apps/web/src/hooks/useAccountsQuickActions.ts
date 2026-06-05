@@ -2,20 +2,21 @@ import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Account } from "@budget-app/shared";
-import { listAccountRelationships, listPlaidItems } from "@budget-app/api-client";
+import { listPlaidItems } from "@budget-app/api-client";
 import {
   accountRoleForQuickActions,
+  inboundTransferAmount,
   type QuickActionDef,
   type QuickActionsContext,
 } from "../lib/accountQuickActions";
 import type { QuickTransactionPreset } from "../components/quickActions/QuickTransactionModal";
 import type { QuickRecurringPreset } from "../components/quickActions/QuickRecurringModal";
-import type { ForecastDays } from "../lib/safeToSpendLabels";
+import type { PassiveForecastDays } from "../lib/safeToSpendLabels";
 
 export function useAccountsQuickActions(
   accounts: Account[],
   householdId: number | undefined,
-  forecastDays: ForecastDays,
+  forecastDays: PassiveForecastDays,
   onEditAccount: (account: Account) => void
 ) {
   const navigate = useNavigate();
@@ -30,16 +31,6 @@ export function useAccountsQuickActions(
       listPlaidItems(householdId != null ? { household: householdId, page_size: 100 } : { page_size: 100 }),
   });
 
-  const { data: relationships } = useQuery({
-    queryKey: ["account-relationships", householdId],
-    queryFn: () =>
-      listAccountRelationships({
-        household: householdId,
-        is_active: true,
-      }),
-    enabled: householdId != null,
-  });
-
   const plaidLinkedAccountIds = useMemo(() => {
     const ids = new Set<number>();
     for (const item of plaidItemsData?.results ?? []) {
@@ -50,14 +41,21 @@ export function useAccountsQuickActions(
     return ids;
   }, [plaidItemsData]);
 
+  const plaidStats = useMemo(
+    () => ({
+      bankLoginCount: plaidItemsData?.results?.length ?? 0,
+      linkedAccountCount: plaidLinkedAccountIds.size,
+    }),
+    [plaidItemsData, plaidLinkedAccountIds]
+  );
+
   const quickActionsContext: QuickActionsContext = useMemo(
     () => ({
       plaidLinkedAccountIds,
       allAccounts: accounts,
-      relationships: relationships ?? [],
       forecastDays,
     }),
-    [plaidLinkedAccountIds, accounts, relationships, forecastDays]
+    [plaidLinkedAccountIds, accounts, forecastDays]
   );
 
   const openTransaction = useCallback((preset: QuickTransactionPreset) => {
@@ -91,46 +89,36 @@ export function useAccountsQuickActions(
           openTransaction({ accountId: account.id, mode: "contribution" });
           return;
         case "transfer":
-        case "transfer_funds": {
-          const from = payload?.transferFromAccountId ?? account.id;
-          openTransaction({
-            accountId: from,
-            mode: "transfer",
-            transferFromAccountId: from,
-            transferToAccountId: payload?.transferToAccountId,
-          });
-          return;
-        }
+        case "transfer_funds":
         case "relationship_transfer":
         case "move_to_savings": {
-          const from = payload?.transferFromAccountId ?? account.id;
-          const to = payload?.transferToAccountId;
           openTransaction({
-            accountId: from,
+            accountId: account.id,
             mode: "transfer",
-            transferFromAccountId: from,
-            transferToAccountId: to,
+            transferFromAccountId: payload?.transferFromAccountId,
+            transferToAccountId: payload?.transferToAccountId,
             defaultAmount: payload?.amount,
           });
           return;
         }
         case "pay_card":
+        case "payment_planner": {
+          navigate(`/credit-cards?account=${account.id}`);
+          return;
+        }
         case "pay_statement":
         case "pay_minimum":
         case "pay_current": {
-          const cardId = payload?.transferToAccountId ?? account.id;
-          const from =
-            payload?.transferFromAccountId ??
-            account.autopay_account ??
-            (account.account_type === "CREDIT" ? undefined : account.id);
-          const sourceId = from ?? account.id;
-          openTransaction({
-            accountId: sourceId,
-            mode: "credit_card_payment",
-            transferFromAccountId: sourceId,
-            transferToAccountId: cardId,
-            defaultAmount: payload?.amount,
-          });
+          const strategy =
+            action.id === "pay_minimum"
+              ? "minimum_payment"
+              : action.id === "pay_statement"
+                ? "statement_balance"
+                : "custom_amount";
+          const amount = payload?.amount ?? "";
+          const params = new URLSearchParams({ account: String(account.id), strategy });
+          if (amount) params.set("amount", amount);
+          navigate(`/credit-cards?${params.toString()}`);
           return;
         }
         case "schedule":
@@ -174,6 +162,8 @@ export function useAccountsQuickActions(
           openTransaction({
             accountId: account.id,
             mode: "transfer",
+            transferToAccountId: account.id,
+            defaultAmount: payload?.amount ?? inboundTransferAmount(account),
             defaultPayee: action.label,
           });
           return;
@@ -186,6 +176,7 @@ export function useAccountsQuickActions(
 
   return {
     quickActionsContext,
+    plaidStats,
     toast,
     setToast,
     txnPreset,

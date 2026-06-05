@@ -129,6 +129,15 @@ class TransactionSerializer(serializers.ModelSerializer):
         has_to = "transfer_to_account_id" in validated_data
         to_account_obj = validated_data.pop("transfer_to_account_id", None) if has_to else None
 
+        # Incoming leg of an existing Transfer — destination is owned by the outflow row; viewset syncs date/amount.
+        if has_to and to_account_obj is not None:
+            try:
+                instance.transfer_in  # noqa: B018 — existence check
+                has_to = False
+                to_account_obj = None
+            except Transfer.DoesNotExist:
+                pass
+
         out_for_link = instance
         if has_to and to_account_obj is not None:
             m = TransactionMatch.objects.filter(imported_transaction=instance).select_related(
@@ -153,7 +162,16 @@ class TransactionSerializer(serializers.ModelSerializer):
                 Transaction.objects.filter(pk=m_plan.imported_transaction_id).update(date=new_date)
 
         if has_to and to_account_obj is not None:
-            out_for_link.refresh_from_db()
+            # Incoming leg of an existing transfer — only the outflow row sets destination.
+            if instance.amount is not None and instance.amount >= 0:
+                try:
+                    instance.transfer_in  # noqa: B018 — existence check
+                    has_to = False
+                    to_account_obj = None
+                except Transfer.DoesNotExist:
+                    pass
+            if has_to and to_account_obj is not None:
+                out_for_link.refresh_from_db()
             if not hasattr(out_for_link, "transfer_out"):
                 if out_for_link.amount is None or out_for_link.amount >= 0:
                     raise ValidationError(

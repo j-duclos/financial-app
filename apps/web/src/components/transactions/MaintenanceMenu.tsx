@@ -40,7 +40,7 @@ export default function MaintenanceMenu({
       {open && (
         <div className="absolute right-0 top-full z-40 mt-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
           <p className="text-xs text-gray-600 mb-3">
-            Remove future dated rows left after a recurring rule was deleted. Past transactions are not removed.
+            Remove future dated rows left after automation was deleted. Past transactions are not removed.
           </p>
           <button
             type="button"
@@ -51,7 +51,7 @@ export default function MaintenanceMenu({
             disabled={cleanupPending}
             className="w-full rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 hover:bg-amber-100 disabled:opacity-50"
           >
-            {cleanupPending ? "Cleaning…" : "Remove orphaned rule projections"}
+            {cleanupPending ? "Cleaning…" : "Remove orphaned automation projections"}
           </button>
         </div>
       )}

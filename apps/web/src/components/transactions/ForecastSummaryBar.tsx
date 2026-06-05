@@ -1,8 +1,8 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { Account } from "@budget-app/shared";
 import AccountHealthBadge from "../AccountHealthBadge";
-import { safeToSpendLabel, showSafeToSpendForRole } from "../../lib/safeToSpendLabels";
-import { formatDateDisplay } from "./transactionsLedgerUtils";
+import { showSafeToSpendForRole } from "../../lib/safeToSpendLabels";
+import { creditBalanceColorClass, formatDateDisplay } from "./transactionsLedgerUtils";
 
 type Props = {
   account: Account;
@@ -10,6 +10,7 @@ type Props = {
   isCredit: boolean;
   currency: string;
   nextRiskDate: string | null;
+  firstNegativeAmount: number | null;
   householdWarnings: { accountName: string; date: string; kind: "negative" | "credit_limit" }[];
   expanded: boolean;
   onToggle: () => void;
@@ -21,36 +22,64 @@ export default function ForecastSummaryBar({
   isCredit,
   currency,
   nextRiskDate,
+  firstNegativeAmount,
   householdWarnings,
   expanded,
   onToggle,
 }: Props) {
-  const showSts = showSafeToSpendForRole(account.role, account.account_type ?? "");
-  const sts = account.available_to_spend != null ? parseFloat(account.available_to_spend) : null;
+  const showForecastMetrics = showSafeToSpendForRole(account.role, account.account_type ?? "");
+  const lowestProjected =
+    account.lowest_projected_balance_30_days != null
+      ? parseFloat(account.lowest_projected_balance_30_days)
+      : null;
+  const lowestProjectedDate = account.lowest_projected_balance_date_30_days ?? null;
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
 
   const earliestWarning = householdWarnings.length
     ? householdWarnings.reduce((a, b) => (a.date <= b.date ? a : b))
     : null;
   const riskDate = nextRiskDate ?? earliestWarning?.date ?? null;
+  const riskValue =
+    riskDate != null
+      ? `${formatDateDisplay(riskDate)}${
+          firstNegativeAmount != null
+            ? ` (${formatCurrency(String(firstNegativeAmount), currency)})`
+            : ""
+        }`
+      : "None";
+  const lowestProjectedValue =
+    lowestProjected != null
+      ? `${formatCurrency(String(lowestProjected), currency)}${
+          lowestProjectedDate != null ? ` on ${formatDateDisplay(lowestProjectedDate)}` : ""
+        }`
+      : "—";
 
   return (
     <div className="rounded-lg border border-slate-200 bg-gradient-to-r from-slate-50 to-white shadow-sm overflow-hidden">
       <div className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <SummaryMetric label="Current Balance" value={fmtBal(currentBalance)} prominent />
-          {showSts && sts != null && (
-            <SummaryMetric
-              label={safeToSpendLabel(account.role)}
-              value={formatCurrency(sts, currency)}
-              valueClass={sts < 0 ? "text-red-700" : "text-emerald-800"}
-            />
-          )}
+          <SummaryMetric
+            label="Current Balance"
+            value={fmtBal(currentBalance)}
+            prominent
+            valueClass={creditBalanceColorClass(isCredit, currentBalance)}
+          />
           <SummaryMetric
             label="Next Risk Date"
-            value={riskDate ? formatDateDisplay(riskDate) : "None"}
+            value={riskValue}
             valueClass={riskDate ? "text-amber-800" : "text-gray-500"}
           />
+          {showForecastMetrics && (
+            <SummaryMetric
+              label="Lowest Projected in Date Range"
+              value={lowestProjectedValue}
+              valueClass={
+                lowestProjected != null && lowestProjected < 0
+                  ? "text-red-700"
+                  : "text-gray-900"
+              }
+            />
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -62,7 +91,7 @@ export default function ForecastSummaryBar({
         </div>
 
         {expanded && (
-          <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Health</div>
               <AccountHealthBadge
@@ -70,14 +99,6 @@ export default function ForecastSummaryBar({
                 reason={account.health_reason ?? account.risk_reason}
                 account={account}
               />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Lowest Projected</div>
-              <div className="text-sm font-semibold text-gray-900">
-                {account.lowest_projected_balance_30_days != null
-                  ? formatCurrency(account.lowest_projected_balance_30_days, currency)
-                  : "—"}
-              </div>
             </div>
             <div>
               <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Recommendation</div>

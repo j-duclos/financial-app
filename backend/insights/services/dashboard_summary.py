@@ -4,13 +4,28 @@ Reuses account forecast, health, and timeline services.
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
+from django.core.cache import cache
 from django.db.models import Sum
 from django.db.models.functions import Coalesce
+
+from common.services.cache import (
+    DASHBOARD_SUMMARY_CACHE_SECONDS,
+    get_dashboard_summary_cache_key,
+)
+from common.services.profiler import (
+    PerfTimer,
+    QueryProfiler,
+    log_perf,
+    perf_enabled,
+    phase_end,
+    phase_start,
+)
 
 from accounts.models import Account
 from accounts.services.balances import compute_net_worth, credit_owed_balance, signed_ledger_balance
@@ -895,12 +910,19 @@ def build_upcoming_events(
     return events
 
 
-def build_dashboard_summary(
+def _build_dashboard_summary(
     user,
     *,
     days: int = 30,
     as_of_date: date | None = None,
 ) -> dict[str, Any]:
+    """Uncached dashboard aggregation (forecast, health, upcoming, bills, recommendations)."""
+    timer = PerfTimer() if perf_enabled() else None
+    query_profiler = QueryProfiler() if perf_enabled() else None
+    wall_start = time.perf_counter() if perf_enabled() else None
+    if query_profiler is not None:
+        query_profiler.start()
+
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     window_end = today + timedelta(days=days)
@@ -914,14 +936,17 @@ def build_dashboard_summary(
     accounts_by_id = {a.id: a for a in accounts}
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
+    _phase_forecast = phase_start(timer, "forecast")
     forecasts = calculate_forecast_summaries_for_accounts(
         user, forecast_accounts, as_of_date=today, days=days
     )
-    st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
     health_by_id = calculate_account_health_for_accounts(
         user, accounts, as_of_date=today, days=days
     )
+    phase_end(timer, _phase_forecast)
 
+    _phase_sts = phase_start(timer, "safe_to_spend")
+    st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
     attention_all = build_attention_items(
         health_by_id, accounts_by_id, forecasts, limit=999, today=today
     )
@@ -930,7 +955,9 @@ def build_dashboard_summary(
     total_sts = _decimal(st_aggregate.get("total_safe_to_spend") or 0)
     sts_status = _safe_to_spend_status(total_sts, st_aggregate)
     next_issue = _next_safe_to_spend_issue(st_aggregate, forecasts)
+    phase_end(timer, _phase_sts)
 
+    _phase_upcoming = phase_start(timer, "upcoming")
     timeline_rows = build_timeline(
         user,
         start_date=today,
@@ -956,7 +983,9 @@ def build_dashboard_summary(
         today=today,
         max_transactions=UPCOMING_MAX_TRANSACTIONS,
     )
+    phase_end(timer, _phase_upcoming)
 
+    _phase_widgets = phase_start(timer, "widgets")
     net_worth_accounts = list(
         Account.objects.for_net_worth()
         .filter(household__in=households, is_hidden=False)
@@ -998,6 +1027,7 @@ def build_dashboard_summary(
         )
     )
     debt_summary = build_dashboard_debt_summary(debt_cards, as_of=today)
+    phase_end(timer, _phase_widgets)
 
     from insights.services.dashboard_insights import build_dashboard_insights
     from recommendations.services.engine import (
@@ -1006,6 +1036,7 @@ def build_dashboard_summary(
         recommendation_timeline_hints,
     )
 
+    _phase_insights = phase_start(timer, "insights")
     insights = build_dashboard_insights(
         user=user,
         attention=attention,
@@ -1024,7 +1055,9 @@ def build_dashboard_summary(
         debt_summary=debt_summary,
         today=today,
     )
+    phase_end(timer, _phase_insights)
 
+    _phase_recommendations = phase_start(timer, "recommendations")
     rec_ctx = build_recommendation_context(
         user,
         days=days,
@@ -1046,7 +1079,9 @@ def build_dashboard_summary(
         insights=insights,
     )
     recommendation_hints = recommendation_timeline_hints(recommendations)
+    phase_end(timer, _phase_recommendations)
 
+    _phase_snapshot = phase_start(timer, "snapshot")
     snapshot_goal_rows = [
         {
             "id": b.id,
@@ -1066,6 +1101,25 @@ def build_dashboard_summary(
     )
 
     top_summary = _compute_top_summary(snapshot_accounts, snapshot, today=today)
+    phase_end(timer, _phase_snapshot)
+
+    if perf_enabled() and wall_start is not None:
+        if query_profiler is not None:
+            query_profiler.stop()
+        phases = timer.phases if timer is not None else {}
+        log_perf(
+            "dashboard_summary_compute",
+            timer=timer,
+            query_profiler=query_profiler,
+            user=user.pk,
+            days=days,
+            accounts=len(accounts),
+            elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+            forecast_ms=f"{phases.get('forecast', 0):.0f}",
+            safe_to_spend_ms=f"{phases.get('safe_to_spend', 0):.0f}",
+            upcoming_ms=f"{phases.get('upcoming', 0):.0f}",
+            recommendations_ms=f"{phases.get('recommendations', 0):.0f}",
+        )
 
     return {
         "safe_to_spend": {
@@ -1094,3 +1148,50 @@ def build_dashboard_summary(
         "recommendations": recommendations,
         "recommendation_hints": recommendation_hints,
     }
+
+
+def build_dashboard_summary(
+    user,
+    *,
+    days: int = 30,
+    as_of_date: date | None = None,
+) -> dict[str, Any]:
+    """
+    Full dashboard summary with Django cache (90-second TTL).
+
+    Cached for repeat dashboard loads; invalidated on financial mutations and Plaid sync.
+    Response shape is identical to the uncached path.
+    """
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    households = get_households_for_user(user)
+    household_ids = list(households.values_list("id", flat=True))
+    cache_key = get_dashboard_summary_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "dashboard_summary",
+            cache="HIT",
+            user=user.pk,
+            days=days,
+            households=len(household_ids),
+        )
+        return cached
+
+    wall_start = time.perf_counter()
+    result = _build_dashboard_summary(user, days=days, as_of_date=today)
+    log_perf(
+        "dashboard_summary",
+        cache="MISS",
+        user=user.pk,
+        days=days,
+        households=len(household_ids),
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+    return result

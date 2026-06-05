@@ -12,3 +12,4 @@ whitenoise>=6.6
 pytest-django>=4.8
 plaid-python>=39,<40
 cryptography>=42
+django-redis>=5.4

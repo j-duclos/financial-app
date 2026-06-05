@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatMonth, currentMonthStr } from "@budget-app/shared";
+import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import {
   listBudgets,
   listHouseholds,
@@ -54,7 +55,7 @@ export default function Budget() {
   const householdId = (categories[0] as { household?: number } | undefined)?.household ?? households?.[0]?.id;
 
   return (
-    <div className="p-6">
+    <div className={PAGE_SHELL_PY_LOOSE}>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Budget</h1>
         <input

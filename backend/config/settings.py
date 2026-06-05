@@ -206,6 +206,31 @@ if not DEBUG:
     }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Optional Redis cache (Render Key Value / Redis) — speeds timeline for all users in production.
+_REDIS_URL = (
+    os.environ.get("REDIS_URL", "").strip()
+    or os.environ.get("REDISCLOUD_URL", "").strip()
+)
+if _REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": _REDIS_URL,
+            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+            "KEY_PREFIX": "budget",
+        }
+    }
+    TIMELINE_CACHE_ENABLED = True
+    TIMELINE_CACHE_SECONDS = int(os.environ.get("TIMELINE_CACHE_SECONDS", "120"))
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "budget-local",
+        }
+    }
+    TIMELINE_CACHE_ENABLED = False
+
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/login/"

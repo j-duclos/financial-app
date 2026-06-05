@@ -37,6 +37,9 @@ export type HealthStatus = "healthy" | "watch" | "risk" | "critical";
 
 export type AccountLifecycleStatus = "active" | "archived" | "closed" | "deleted";
 
+export type PlaidSourceFilter = "all" | "plaid" | "manual";
+export type ForecastInclusionFilter = "all" | "included" | "excluded";
+
 export interface AccountOrganizationFilters {
   riskOnly: boolean;
   /** @deprecated Use showArchived — when true without show* toggles, only active accounts */
@@ -46,10 +49,17 @@ export interface AccountOrganizationFilters {
   showDeleted: boolean;
   spendingOnly: boolean;
   debtOnly: boolean;
+  /** @deprecated Use forecastInclusion */
   forecastOnly: boolean;
+  forecastInclusion: ForecastInclusionFilter;
+  plaidSource: PlaidSourceFilter;
   institutions: string[];
   roles: AccountRole[];
   healthStatuses: HealthStatus[];
+}
+
+export interface FilterAccountsOptions {
+  plaidLinkedAccountIds?: Set<number>;
 }
 
 export interface AccountOrganizationPreferences {
@@ -125,6 +135,8 @@ export const DEFAULT_ACCOUNT_ORG_PREFERENCES: AccountOrganizationPreferences = {
     spendingOnly: false,
     debtOnly: false,
     forecastOnly: false,
+    forecastInclusion: "all",
+    plaidSource: "all",
     institutions: [],
     roles: [],
     healthStatuses: [],
@@ -137,9 +149,25 @@ export function accountRole(acc: Account): AccountRole {
 
 export function accountLifecycleStatus(acc: Account): AccountLifecycleStatus {
   if (acc.status) return acc.status;
+  if (acc.deleted_at) return "deleted";
   if (acc.archived === true) return "archived";
   if (acc.is_active === false) return "closed";
   return "active";
+}
+
+/** Accounts included in page header stats (excludes deleted; archived/closed unless shown). */
+export function accountsForPageStats(
+  accounts: Account[],
+  filters: Pick<AccountOrganizationFilters, "showArchived" | "showClosed" | "showDeleted">
+): Account[] {
+  return accounts.filter((acc) => {
+    const lifecycle = accountLifecycleStatus(acc);
+    if (lifecycle === "deleted" && !filters.showDeleted) return false;
+    if (acc.deleted_at && !filters.showDeleted) return false;
+    if (lifecycle === "archived" && !filters.showArchived) return false;
+    if (lifecycle === "closed" && !filters.showClosed) return false;
+    return true;
+  });
 }
 
 export function accountHealthStatus(acc: Account): HealthStatus {
@@ -210,8 +238,14 @@ export function saveAccountOrgPreferences(prefs: AccountOrganizationPreferences)
 
 export function filterAccounts(
   accounts: Account[],
-  filters: AccountOrganizationFilters
+  filters: AccountOrganizationFilters,
+  options: FilterAccountsOptions = {}
 ): Account[] {
+  const { plaidLinkedAccountIds } = options;
+  const forecastInclusion =
+    filters.forecastInclusion ??
+    (filters.forecastOnly ? "included" : "all");
+
   return accounts.filter((acc) => {
     const lifecycle = accountLifecycleStatus(acc);
     if (lifecycle !== "active") {
@@ -222,7 +256,13 @@ export function filterAccounts(
     if (filters.riskOnly && !isAtRisk(acc)) return false;
     if (filters.spendingOnly && !isSpendingAccount(acc)) return false;
     if (filters.debtOnly && !isDebtAccount(acc)) return false;
-    if (filters.forecastOnly && acc.include_in_forecast === false) return false;
+    if (forecastInclusion === "included" && acc.include_in_forecast === false) return false;
+    if (forecastInclusion === "excluded" && acc.include_in_forecast !== false) return false;
+    if (filters.plaidSource !== "all" && plaidLinkedAccountIds) {
+      const isPlaid = plaidLinkedAccountIds.has(acc.id);
+      if (filters.plaidSource === "plaid" && !isPlaid) return false;
+      if (filters.plaidSource === "manual" && isPlaid) return false;
+    }
     if (filters.institutions.length > 0) {
       const inst = (acc.institution || "").trim() || "Unknown";
       if (!filters.institutions.includes(inst)) return false;

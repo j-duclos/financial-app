@@ -1,22 +1,30 @@
-import type { RefObject } from "react";
+import { useRef, useEffect } from "react";
 import { formatCurrency } from "@budget-app/shared";
 import TransactionRow, { timelineRowToData, transactionToData } from "./TransactionRow";
-import type { LedgerRow, ViewMode } from "./transactionsLedgerUtils";
+import {
+  COLLAPSED_LEDGER_ROWS,
+  LEDGER_TABLE_GRID,
+  LedgerColumnHeader,
+  LedgerSectionHeader,
+} from "./ledgerTableLayout";
+import { creditBalanceColorClass, type LedgerRow } from "./transactionsLedgerUtils";
+
+export const PAST_SCROLL_MIN_ROWS = COLLAPSED_LEDGER_ROWS;
+
+const ROW_REM = 2.5;
+const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
 
 type Props = {
   start: LedgerRow | null;
   past: LedgerRow[];
-  viewMode: ViewMode;
   currency: string;
   isCredit: boolean;
-  scrollRef: RefObject<HTMLDivElement | null>;
-  collapsed: boolean;
+  /** Full-height scroll panel */
   expanded: boolean;
-  hasFuture: boolean;
-  panelFocus: "split" | "past" | "future";
-  onExpandFuture: () => void;
-  onBalancedLayout: () => void;
-  onShowPast: () => void;
+  /** Forecast is open — show header only */
+  minimized: boolean;
+  onToggleExpanded: () => void;
+  accountId: number | "";
   onEditTimeline: (transactionId: number) => void;
   onEditTransaction: (txn: import("@budget-app/shared").Transaction) => void;
   onDuplicateById: (transactionId: number) => void;
@@ -28,17 +36,12 @@ type Props = {
 export default function PastSection({
   start,
   past,
-  viewMode,
   currency,
   isCredit,
-  scrollRef,
-  collapsed,
   expanded,
-  hasFuture,
-  panelFocus,
-  onExpandFuture,
-  onBalancedLayout,
-  onShowPast,
+  minimized,
+  onToggleExpanded,
+  accountId,
   onEditTimeline,
   onEditTransaction,
   onDuplicateById,
@@ -46,145 +49,146 @@ export default function PastSection({
   onDelete,
   deletePending,
 }: Props) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
-  const creditClass = (bal: number) => (isCredit ? (bal > 0 ? "text-green-600" : "text-red-600") : "");
+  const creditClass = (bal: number) => creditBalanceColorClass(isCredit, bal);
 
-  if (collapsed) {
-    return (
-      <section className="flex-none border-b-4 border-gray-300">
-        <button
-          type="button"
-          onClick={onShowPast}
-          className="w-full px-4 py-2 bg-gray-100 text-sm font-semibold text-gray-700 flex items-center justify-between hover:bg-gray-200/70"
-        >
-          Past (hidden)
-          <ChevronDown />
-        </button>
-      </section>
-    );
-  }
+  const showBody = !minimized;
+
+  useEffect(() => {
+    if (!showBody) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const scrollToBottom = () => {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    };
+    scrollToBottom();
+    const raf = requestAnimationFrame(scrollToBottom);
+    const t = setTimeout(scrollToBottom, 50);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
+  }, [accountId, past.length, expanded, minimized, showBody]);
+
+  const sectionClass = minimized ? "flex-none shrink-0" : "flex-1 min-h-0";
+
+  // #region agent log
+  useEffect(() => {
+    if (!showBody) return;
+    const el = scrollRef.current;
+    const sectionEl = el?.parentElement?.parentElement;
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "55db24" },
+      body: JSON.stringify({
+        sessionId: "55db24",
+        location: "PastSection.tsx:layout",
+        message: "past section scroll metrics",
+        data: {
+          expanded,
+          minimized,
+          pastCount: past.length,
+          sectionClass,
+          scrollClientHeight: el?.clientHeight ?? null,
+          scrollScrollHeight: el?.scrollHeight ?? null,
+          scrollGap: el ? el.clientHeight - el.scrollHeight : null,
+          sectionClientHeight: sectionEl?.clientHeight ?? null,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "A-B",
+      }),
+    }).catch(() => {});
+  }, [expanded, minimized, past.length, showBody, sectionClass]);
+  // #endregion
 
   return (
-    <section
-      className={`flex flex-col border-b-4 border-gray-300 ${expanded ? "flex-1 min-h-0" : "flex-none"}`}
-    >
-      <header className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between gap-2 shrink-0">
-        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Past</h2>
-        <div className="flex items-center gap-1">
-          {hasFuture && panelFocus === "split" && (
-            <IconButton label="Expand future" onClick={onExpandFuture}>
-              <ChevronUp />
-            </IconButton>
-          )}
-          {hasFuture && panelFocus === "past" && (
-            <IconButton label="Balanced layout" onClick={onBalancedLayout}>
-              <ChevronDown />
-            </IconButton>
-          )}
-        </div>
-      </header>
+    <section className={`flex flex-col overflow-hidden border-b-4 border-gray-300 ${sectionClass}`}>
+      <LedgerSectionHeader
+        title="Past"
+        expanded={showBody && expanded}
+        onToggleExpanded={onToggleExpanded}
+        totalCount={past.length}
+        tone="past"
+        expandChevron="past"
+      />
+      {showBody && (
+        <>
+          <LedgerColumnHeader className="shrink-0" />
+          <div
+            ref={scrollRef}
+            className="ledger-scroll flex-1 min-h-0 overflow-y-auto overscroll-y-contain border-b border-gray-100"
+            style={expanded ? undefined : { minHeight: compactScrollHeight }}
+          >
+            {start?.type === "starting_balance" && (
+              <div className={`${LEDGER_TABLE_GRID} px-4 py-2 bg-gray-50 border-b border-gray-100 text-sm`}>
+                <span className="text-gray-400 text-xs">—</span>
+                <span aria-hidden />
+                <span className="font-medium text-gray-600">Starting Balance</span>
+                <span aria-hidden />
+                <span aria-hidden />
+                <span aria-hidden />
+                <span className={`text-right font-semibold tabular-nums ${creditClass(start.balance)}`}>
+                  {fmtBal(start.balance)}
+                </span>
+                <span aria-hidden />
+              </div>
+            )}
 
-      <div
-        ref={scrollRef}
-        className={expanded ? "flex-1 min-h-0 overflow-auto" : "overflow-auto max-h-64"}
-      >
-        {start?.type === "starting_balance" && (
-          <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex justify-between text-sm">
-            <span className="font-medium text-gray-600">Starting Balance</span>
-            <span className={`font-semibold tabular-nums ${creditClass(start.balance)}`}>
-              {fmtBal(start.balance)}
-            </span>
+            {past.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500 text-center">No past transactions in this range.</p>
+            ) : (
+              past.map((row) => {
+                if (row.type === "transaction_from_timeline") {
+                  const data = timelineRowToData(row.row, row.balance, "past");
+                  return (
+                    <TransactionRow
+                      key={data.id}
+                      row={data}
+                      variant="past"
+                      currency={currency}
+                      isCredit={isCredit}
+                      onEdit={
+                        row.row.transaction_id != null
+                          ? () => onEditTimeline(row.row.transaction_id!)
+                          : undefined
+                      }
+                      onDuplicate={
+                        row.row.transaction_id != null
+                          ? () => onDuplicateById(row.row.transaction_id!)
+                          : undefined
+                      }
+                      onDelete={
+                        row.row.transaction_id != null
+                          ? () => onDelete(row.row.transaction_id!, row.row.description)
+                          : undefined
+                      }
+                      actionsDisabled={deletePending}
+                    />
+                  );
+                }
+                if (row.type === "transaction") {
+                  const data = transactionToData(row.txn, row.balance);
+                  return (
+                    <TransactionRow
+                      key={data.id}
+                      row={data}
+                      variant="past"
+                      currency={currency}
+                      isCredit={isCredit}
+                      onEdit={() => onEditTransaction(row.txn)}
+                      onDuplicate={() => onDuplicate(row.txn)}
+                      onDelete={() => onDelete(row.txn.id, row.txn.payee)}
+                      actionsDisabled={deletePending}
+                    />
+                  );
+                }
+                return null;
+              })
+            )}
           </div>
-        )}
-
-        {past.map((row) => {
-          if (row.type === "transaction_from_timeline") {
-            const data = timelineRowToData(row.row, row.balance, "past");
-            return (
-              <TransactionRow
-                key={data.id}
-                row={data}
-                variant="past"
-                viewMode={viewMode}
-                currency={currency}
-                isCredit={isCredit}
-                onEdit={
-                  row.row.transaction_id != null
-                    ? () => onEditTimeline(row.row.transaction_id!)
-                    : undefined
-                }
-                onDuplicate={
-                  row.row.transaction_id != null
-                    ? () => onDuplicateById(row.row.transaction_id!)
-                    : undefined
-                }
-                onDelete={
-                  row.row.transaction_id != null
-                    ? () => onDelete(row.row.transaction_id!, row.row.description)
-                    : undefined
-                }
-                actionsDisabled={deletePending}
-              />
-            );
-          }
-          if (row.type === "transaction") {
-            const data = transactionToData(row.txn, row.balance);
-            return (
-              <TransactionRow
-                key={data.id}
-                row={data}
-                variant="past"
-                viewMode={viewMode}
-                currency={currency}
-                isCredit={isCredit}
-                onEdit={() => onEditTransaction(row.txn)}
-                onDuplicate={() => onDuplicate(row.txn)}
-                onDelete={() => onDelete(row.txn.id, row.txn.payee)}
-                actionsDisabled={deletePending}
-              />
-            );
-          }
-          return null;
-        })}
-      </div>
+        </>
+      )}
     </section>
-  );
-}
-
-function IconButton({
-  children,
-  label,
-  onClick,
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="p-1 rounded-md hover:bg-gray-200/80 border border-transparent hover:border-gray-300"
-    >
-      {children}
-    </button>
-  );
-}
-
-function ChevronUp() {
-  return (
-    <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-      <path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
-function ChevronDown() {
-  return (
-    <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-    </svg>
   );
 }

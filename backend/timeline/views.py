@@ -38,6 +38,11 @@ from .serializers import (
 from .services.scenario_comparison import build_scenario_comparison, evaluate_affordability
 from .services.calendar import build_timeline_calendar
 from .services.ledger import build_timeline
+from core.timeline_cache import (
+    get_cached_timeline_response,
+    set_cached_timeline_response,
+    timeline_response_cache_key,
+)
 from .services.resolve_risk import build_resolve_risk_plan
 from .services.transfer_simulation import simulate_transfer_impact
 from .services.rule_cleanup import (
@@ -353,9 +358,16 @@ class ScenarioViewSet(ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_404_NOT_FOUND)
         from recommendations.services.engine import build_scenario_recommendations
 
+        from common.services.forecast_horizon import horizon_span_days, snap_span_to_forecast_days
+        from timeline.services.scenario_comparison import _horizon_to_end
+
+        today = timezone.localdate()
+        rec_days = snap_span_to_forecast_days(
+            min(horizon_span_days(today, _horizon_to_end(today, horizon)), 90)
+        )
         try:
             payload["recommendations"] = build_scenario_recommendations(
-                request.user, scenario.id, days=90
+                request.user, scenario.id, days=rec_days
             )
         except Exception:
             payload["recommendations"] = []
@@ -552,6 +564,23 @@ class TimelineView(APIView):
             account_id = int(account_id) if account_id else None
             household_id = int(household_id) if household_id else None
 
+            cache_key = timeline_response_cache_key(
+                household_id=household_id,
+                user_id=request.user.pk,
+                start=start,
+                end=end,
+                account_id=account_id,
+                scenario_id=scenario_id,
+                as_of_date=as_of_date,
+            )
+            cached = get_cached_timeline_response(cache_key)
+            if cached is not None:
+                resp = Response(cached)
+                resp["Cache-Control"] = "private, max-age=60"
+                resp["X-Timeline-Cache"] = "hit"
+                resp["X-Timeline-Skip-Logic"] = "1"
+                return resp
+
             rows = build_timeline(
                 request.user,
                 start_date=start,
@@ -577,7 +606,9 @@ class TimelineView(APIView):
                 "timeline": rows,
                 "account_summary": list(account_balances.values()),
             })
+            set_cached_timeline_response(cache_key, resp.data)
             resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            resp["X-Timeline-Cache"] = "miss"
             resp["X-Timeline-Skip-Logic"] = "1"
             return resp
         except Exception as e:

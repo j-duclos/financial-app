@@ -1,7 +1,21 @@
 import type { AccountRole } from "@budget-app/shared";
+import { normalizeSeverity, severityLabel, severityTokens } from "./severity";
 
-export const FORECAST_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
+/** Default windows for dashboard, accounts, and other passive loads. */
+export const PASSIVE_FORECAST_DAY_OPTIONS = [7, 14, 30] as const;
+
+/** Extended windows for timeline, scenarios, and advanced tools (explicit user choice). */
+export const EXTENDED_FORECAST_DAY_OPTIONS = [60, 90] as const;
+
+export const FORECAST_DAY_OPTIONS = [
+  ...PASSIVE_FORECAST_DAY_OPTIONS,
+  ...EXTENDED_FORECAST_DAY_OPTIONS,
+] as const;
+
+export type PassiveForecastDays = (typeof PASSIVE_FORECAST_DAY_OPTIONS)[number];
 export type ForecastDays = (typeof FORECAST_DAY_OPTIONS)[number];
+
+export const DEFAULT_PASSIVE_FORECAST_DAYS: PassiveForecastDays = 30;
 
 export function safeToSpendLabel(role: AccountRole | undefined): string {
   switch (role) {
@@ -18,33 +32,13 @@ export function safeToSpendLabel(role: AccountRole | undefined): string {
 }
 
 export function riskStatusLabel(status: string | null | undefined): string {
-  switch (status) {
-    case "healthy":
-      return "Healthy";
-    case "watch":
-      return "Watch";
-    case "risk":
-      return "At risk";
-    case "critical":
-      return "Critical";
-    default:
-      return "—";
-  }
+  if (!status) return "—";
+  return severityLabel(normalizeSeverity(status));
 }
 
 export function riskStatusClass(status: string | null | undefined): string {
-  switch (status) {
-    case "healthy":
-      return "bg-green-100 text-green-800";
-    case "watch":
-      return "bg-amber-100 text-amber-800";
-    case "risk":
-      return "bg-orange-100 text-orange-800";
-    case "critical":
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-gray-100 text-gray-600";
-  }
+  if (!status) return "bg-gray-100 text-gray-600";
+  return severityTokens(status).badgeClass;
 }
 
 export function showSafeToSpendForRole(role: AccountRole | undefined, accountType: string): boolean {
