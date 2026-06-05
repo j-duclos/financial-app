@@ -1,0 +1,29 @@
+# Git and local env
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+
+# Node (rebuilt in image)
+node_modules
+apps/web/node_modules
+apps/mobile/node_modules
+packages/*/node_modules
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+
+# Local DB / dev artifacts
+backend/db.sqlite3
+backend/*.sqlite3
+
+# IDE
+.cursor
+.vscode
+
+# Docs not needed at runtime
+Other Docs

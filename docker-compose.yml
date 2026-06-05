@@ -21,15 +21,12 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # Local dev uses Docker Postgres (fast). Sync with Render via scripts/sync-db-*.sh when needed.
+    # DATABASE_URL comes from backend/.env (Render external by default). Local postgres service is
+    # optional — only needed for scripts/sync-db-*.sh mirror workflows.
     # Web UI: npm run dev:web → http://localhost:5173 (API proxied to this service on :8000).
     env_file:
       - ./backend/.env
     environment:
-      DATABASE_URL: postgres://budget:budget@postgres:5432/budget
       DJANGO_SECRET_KEY: dev-secret-change-in-production
       DEBUG: "true"
       ALLOWED_HOSTS: "*"

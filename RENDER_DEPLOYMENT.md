@@ -70,7 +70,7 @@ Use HTTPS URLs everywhere for Plaid (Chase OAuth).
 
 1. **New** → **Web Service** → connect your repo.
 2. **Root Directory**: `backend`
-3. **Runtime**: Python 3
+3. **Runtime**: **Python 3** (not Docker — see troubleshooting below if build looks for `Dockerfile`)
 4. **Build Command**: `chmod +x build.sh && ./build.sh` (builds React + `collectstatic` + `migrate`)
 5. **Start Command**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --threads 4`
 6. Link the Postgres instance (Render sets `DATABASE_URL` automatically) or paste `DATABASE_URL` manually.
@@ -274,6 +274,28 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 ### Plaid Dashboard
 - [ ] Allowed redirect URI: `https://<static-site>/plaid/oauth-return` (exact match, no query string)
 - [ ] Chase / production OAuth registration approved (for live banks)
+
+### Troubleshooting: `open Dockerfile: no such file or directory`
+
+Render (or another host) is using **Docker** mode and expects a `Dockerfile` at the **repository root**.
+
+**Fix A — recommended (matches `render.yaml`):**
+
+1. Web Service → **Settings** → **Runtime** → **Python 3** (not Docker).
+2. **Root Directory** → `backend`
+3. **Build Command** → `chmod +x build.sh && ./build.sh`
+4. **Start Command** → `chmod +x start.sh && ./start.sh` (or the `gunicorn` line in section 2)
+5. Environment → **`NODE_VERSION`** = `20`
+6. **Manual Deploy** → Deploy latest commit
+
+**Fix B — keep Docker runtime:**
+
+1. Leave **Root Directory** empty (repo root).
+2. Runtime → **Docker**.
+3. Use the root `Dockerfile` (builds React + Django in one image).
+4. Set the same env vars as section 2 (`DATABASE_URL`, `DJANGO_SECRET_KEY`, Plaid, etc.).
+
+Local dev still uses `docker-compose.yml`, which builds from `backend/Dockerfile` (API only; run Vite separately).
 
 ### Smoke test
 - [ ] Log in on the static site URL (HTTPS)
