@@ -7,6 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/scripts/.render-env-export"
 ENV_LOCAL="$ROOT/backend/.env"
 ENV_RENDER="$ROOT/backend/.env.render"
+# Your live app URL — must match the Web Service you configure in Render (not a stale/other service).
+RENDER_APP_HOST="${RENDER_APP_HOST:-financial-app-5ywr.onrender.com}"
 
 if [[ ! -f "$ENV_LOCAL" ]]; then
   echo "Missing $ENV_LOCAL"
@@ -22,18 +24,18 @@ fi
   if [[ -f "$ENV_RENDER" ]]; then
     grep -E '^DATABASE_URL=' "$ENV_RENDER" || true
   fi
-  grep -E '^(DJANGO_SECRET_KEY|ALLOWED_HOSTS|CSRF_TRUSTED_ORIGINS|CORS_ALLOWED_ORIGINS|PLAID_[A-Z0-9_]+|REDIS_URL|GUNICORN_[A-Z0-9_]+)=' "$ENV_LOCAL" \
-    | grep -v '^DEBUG=' || true
-  # PLAID_REDIRECT_URI is often commented in .env — set explicitly for Render
-  if ! grep -q '^PLAID_REDIRECT_URI=' "$OUT" 2>/dev/null; then
-    echo "PLAID_REDIRECT_URI=https://financial-app-1-tu0l.onrender.com/plaid/oauth-return"
-  fi
+  grep -E '^(DJANGO_SECRET_KEY|PLAID_[A-Z0-9_]+|REDIS_URL)=' "$ENV_LOCAL" \
+    | grep -v '^DEBUG=' \
+    | grep -v '^PLAID_TOKEN_FERNET_KEY=$' || true
+  echo "ALLOWED_HOSTS=${RENDER_APP_HOST},.onrender.com"
+  echo "CSRF_TRUSTED_ORIGINS=https://${RENDER_APP_HOST}"
+  echo "PLAID_REDIRECT_URI=https://${RENDER_APP_HOST}/plaid/oauth-return"
 } > "$OUT"
 
 echo "Wrote $OUT"
 echo "Next:"
 echo "  1. Edit DJANGO_SECRET_KEY in that file (use a NEW production secret, not change-me-in-production)"
 echo "  2. Set ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS / PLAID_REDIRECT_URI to your *.onrender.com host"
-echo "  3. Render Dashboard → your Web Service → Environment → Add from .env → paste file contents"
+echo "  3. Render Dashboard → Web Service ${RENDER_APP_HOST} → Environment → Add from .env"
 echo "  4. Link Postgres if DATABASE_URL is empty"
 echo "  5. Save → Manual Deploy"

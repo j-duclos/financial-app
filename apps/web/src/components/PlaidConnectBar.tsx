@@ -208,10 +208,20 @@ export function PlaidConnectBar({
     queryKey: ["plaid-meta"],
     queryFn: () => getPlaidMeta(),
     enabled: householdId != null,
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const plaidCredentialsMissing = Boolean(plaidMeta && !plaidMeta.plaid_configured);
+
+  // Drop stale sync/link errors after server env vars are fixed (error text stays in state until cleared).
+  useEffect(() => {
+    if (plaidMeta?.plaid_configured) {
+      setPlaidError((prev) =>
+        prev?.includes("Plaid API keys are not set") ? null : prev
+      );
+    }
+  }, [plaidMeta?.plaid_configured]);
 
   const items = itemsData?.results ?? [];
   const totalLinkedAccounts = items.reduce((n, it) => n + (it.linked_accounts?.length ?? 0), 0);
