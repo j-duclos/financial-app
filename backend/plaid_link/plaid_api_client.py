@@ -132,3 +132,18 @@ def plaid_credential_diagnostics() -> dict[str, str | int | None]:
         "secret_length": len(sec),
         "secret_loaded_from_env_var": resolved_secret_env_var_name(),
     }
+
+
+def plaid_env_var_presence() -> dict[str, bool]:
+    """Which Plaid-related env var names are set (values never exposed)."""
+    keys = (
+        "PLAID_CLIENT_ID",
+        "PLAID_ENV",
+        "PLAID_SECRET",
+        "PLAID_SANDBOX_SECRET",
+        "PLAID_DEVELOPMENT_SECRET",
+        "PLAID_PRODUCTION_SECRET",
+        "PLAID_REDIRECT_URI",
+        "PLAID_TOKEN_FERNET_KEY",
+    )
+    return {key: bool(_clean_cred(os.environ.get(key))) for key in keys}

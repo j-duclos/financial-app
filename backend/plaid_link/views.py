@@ -1,7 +1,7 @@
 from plaid import ApiException
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,9 +11,11 @@ from core.utils import get_households_for_user, get_user_profile
 from .models import PlaidItem, PlaidLinkedAccount
 from .plaid_api_client import (
     plaid_api_env,
+    plaid_config_location_hint,
     plaid_configured,
     plaid_credential_diagnostics,
     plaid_env_configured_explicitly,
+    plaid_env_var_presence,
     plaid_token_fernet_key_set,
     plaid_unconfigured_detail,
 )
@@ -195,6 +197,25 @@ class PlaidLinkedAccountDisconnectView(APIView):
             {
                 "detail": "Plaid disconnected from this account. Transactions already imported are unchanged.",
                 "account_id": account_id,
+            }
+        )
+
+
+class PlaidConfigCheckView(APIView):
+    """Public, non-secret Plaid config check (verify Render env vars after deploy)."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "plaid_configured": plaid_configured(),
+                "plaid_env": plaid_api_env(),
+                "plaid_env_explicit": plaid_env_configured_explicitly(),
+                "config_location_hint": plaid_config_location_hint(),
+                "env_vars_set": plaid_env_var_presence(),
+                "diagnostics": plaid_credential_diagnostics(),
+                "plaid_token_fernet_key_set": plaid_token_fernet_key_set(),
             }
         )
 

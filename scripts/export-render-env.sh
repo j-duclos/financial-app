@@ -22,8 +22,12 @@ fi
   if [[ -f "$ENV_RENDER" ]]; then
     grep -E '^DATABASE_URL=' "$ENV_RENDER" || true
   fi
-  grep -E '^(DJANGO_SECRET_KEY|ALLOWED_HOSTS|CSRF_TRUSTED_ORIGINS|CORS_ALLOWED_ORIGINS|PLAID_|REDIS_URL|GUNICORN_)=' "$ENV_LOCAL" \
+  grep -E '^(DJANGO_SECRET_KEY|ALLOWED_HOSTS|CSRF_TRUSTED_ORIGINS|CORS_ALLOWED_ORIGINS|PLAID_[A-Z0-9_]+|REDIS_URL|GUNICORN_[A-Z0-9_]+)=' "$ENV_LOCAL" \
     | grep -v '^DEBUG=' || true
+  # PLAID_REDIRECT_URI is often commented in .env — set explicitly for Render
+  if ! grep -q '^PLAID_REDIRECT_URI=' "$OUT" 2>/dev/null; then
+    echo "PLAID_REDIRECT_URI=https://financial-app-1-tu0l.onrender.com/plaid/oauth-return"
+  fi
 } > "$OUT"
 
 echo "Wrote $OUT"
