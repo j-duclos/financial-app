@@ -38,6 +38,7 @@ from accounts.services.account_health_constants import (
     HEALTH_STATUS_CRITICAL,
     HEALTH_STATUS_HEALTHY,
     HEALTH_STATUS_RISK,
+    HEALTH_STATUS_WATCH,
     PAYMENT_DUE_RISK_DAYS,
     STATUS_SEVERITY,
 )

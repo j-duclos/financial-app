@@ -3,3 +3,4 @@ node_modules
 backend/.env
 backend/.env.render
 backend/.venv
+scripts/.render-env-export

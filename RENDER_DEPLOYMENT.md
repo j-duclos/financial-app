@@ -275,6 +275,45 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 - [ ] Allowed redirect URI: `https://<static-site>/plaid/oauth-return` (exact match, no query string)
 - [ ] Chase / production OAuth registration approved (for live banks)
 
+### Restore environment variables (if Dashboard shows none)
+
+This usually happens after **Blueprint sync** or **switching runtime** (Python ↔ Docker), which can reset or replace service configuration. Render does not keep a history of deleted env vars — you must re-enter them.
+
+**Fastest restore:**
+
+1. Open **the correct Web Service** (check the service URL matches your app — you may have two services after a Docker switch).
+2. **Environment** → **Add from .env** (bulk import).
+3. Paste from your local files (never commit these):
+   - `backend/.env` — Plaid keys, `DJANGO_SECRET_KEY` (generate a **new** one for production), hosts
+   - `backend/.env.render` — `DATABASE_URL` (or link Postgres in Render instead)
+4. Set **`DEBUG`** = `false`, **`NODE_VERSION`** = `20`
+5. **Save** → **Manual Deploy**
+
+Checklist template: `scripts/render-env-restore.env.example`
+
+**Prevent this again:**
+
+- Do **not** sync `render.yaml` Blueprint with an `envVars` block on a service that already has dashboard secrets.
+- In Blueprint → **Settings**, set **Auto Sync** = **No** if you manage env vars only in the Dashboard.
+- Prefer **Python 3** + Root Directory `backend` (see `render.yaml`) — avoid recreating the service when fixing Docker errors.
+
+### Troubleshooting: `Set DJANGO_SECRET_KEY to a unique secret when DEBUG is False`
+
+Render sets `RENDER=true`, so `DEBUG` defaults to **False**. Django refuses to start with the dev placeholder secret.
+
+**Fix (Dashboard — required for existing services):**
+
+1. Web Service → **Environment**
+2. Add **`DJANGO_SECRET_KEY`** = a long random string (50+ chars). Generate locally:
+   ```bash
+   cd backend && python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+   ```
+3. **Save** → **Manual Deploy**
+
+Do **not** use `dev-secret-key-change-in-production` or `change-me-in-production`.
+
+If you deploy from `render.yaml` Blueprint, `DJANGO_SECRET_KEY` with `generateValue: true` is created automatically on first provision.
+
 ### Troubleshooting: `open Dockerfile: no such file or directory`
 
 Render (or another host) is using **Docker** mode and expects a `Dockerfile` at the **repository root**.
