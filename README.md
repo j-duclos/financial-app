@@ -134,8 +134,8 @@ https://dashboard.plaid.com/developers/api
 Two terminals:
 
 ```bash
-# Terminal 1 — API + Postgres (from repo root)
-docker compose up -d postgres && docker compose up backend
+# Terminal 1 — API + Postgres + Redis (from repo root)
+docker compose up -d postgres redis && docker compose up backend
 ```
 
 ```bash
@@ -144,6 +144,18 @@ npm run dev:web
 ```
 
 Docker uses **Postgres** (`postgres://budget:budget@postgres:5432/budget`). Your SQLite file **`backend/db.sqlite3`** is kept for backup; import with `loaddata data.json` after switching (see `backend/migrate_sqlite_to_postgres.sh`).
+
+### Redis (timeline cache)
+
+Repeat dashboard/timeline loads are much faster with Redis. Local:
+
+```bash
+docker compose up -d redis
+# backend/.env: REDIS_URL=redis://localhost:6379/0
+cd backend && python manage.py redis_verify
+```
+
+On **Render**: Dashboard → **New → Key Value** (Starter) → copy **Internal Redis URL** → Web Service → Environment → `REDIS_URL` → redeploy. Verify: `GET /health/` should show `"timeline_cache_enabled": true`.
 
 > **Tip:** With `frontend_dist` in the repo, http://localhost:8000/ also serves the React build from Django. Day-to-day UI work still uses **:5173** (Vite) for hot reload.
 

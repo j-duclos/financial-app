@@ -661,9 +661,41 @@ export interface PlaidItem {
   institution_id: string;
   institution_name: string;
   linked_accounts: PlaidLinkedAccountRow[];
+  last_sync_at?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export type PlaidSyncCounts = {
+  added: number;
+  modified: number;
+  removed: number;
+  merged?: number;
+  skipped?: boolean;
+  reason?: string;
+};
+
+export type PlaidSyncAllResult = {
+  items: Array<
+    PlaidSyncCounts & {
+      id: number;
+      institution_name: string;
+      skipped?: boolean;
+      reason?: string;
+      error?: string;
+      last_sync_at?: string | null;
+    }
+  >;
+  totals: {
+    added: number;
+    modified: number;
+    removed: number;
+    merged: number;
+    skipped_items: number;
+    synced_items: number;
+    failed_items: number;
+  };
+};
 
 export async function createPlaidLinkToken(
   householdId: number,
@@ -700,9 +732,31 @@ export async function listPlaidItems(params?: {
 }
 
 export async function syncPlaidItem(
-  itemId: number
-): Promise<{ added: number; modified: number; removed: number; merged?: number }> {
-  return requestRequired(`/api/plaid/items/${itemId}/sync/`, { method: "POST" });
+  itemId: number,
+  options?: { force?: boolean }
+): Promise<PlaidSyncCounts> {
+  const q: Record<string, string> = {};
+  if (options?.force === false) q.force = "false";
+  // Manual import defaults to force=true (bypass recent-sync throttle).
+  return requestRequired(`/api/plaid/items/${itemId}/sync/`, {
+    method: "POST",
+    params: Object.keys(q).length ? q : undefined,
+    timeoutMs: 240_000,
+  });
+}
+
+export async function syncAllPlaidItems(options?: {
+  household?: number;
+  force?: boolean;
+}): Promise<PlaidSyncAllResult> {
+  const q: Record<string, string> = {};
+  if (options?.household != null) q.household = String(options.household);
+  if (options?.force) q.force = "true";
+  return requestRequired("/api/plaid/sync-all/", {
+    method: "POST",
+    params: Object.keys(q).length ? q : undefined,
+    timeoutMs: 480_000,
+  });
 }
 
 export async function deletePlaidItem(itemId: number): Promise<void> {

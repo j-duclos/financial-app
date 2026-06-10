@@ -5,12 +5,20 @@ import { usePlaidLink } from "react-plaid-link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getPlaidRedirectUri } from "../lib/plaidRedirectUri";
 import {
+  formatPlaidSyncSummary,
+  invalidateQueriesAfterPlaidSync,
+  markPlaidAutoSyncRan,
+} from "../lib/plaidSyncUtils";
+import {
   ApiError,
   createPlaidLinkToken,
+  deletePlaidItem,
   disconnectPlaidLinkedAccount,
   exchangePlaidPublicToken,
   getPlaidMeta,
+  getProfile,
   listPlaidItems,
+  syncAllPlaidItems,
   syncPlaidItem,
 } from "@budget-app/api-client";
 
@@ -169,6 +177,7 @@ export function PlaidConnectBar({
   const [plaidError, setPlaidError] = useState<string | null>(null);
   const [fetchingLink, setFetchingLink] = useState(false);
   const [syncingItemId, setSyncingItemId] = useState<number | null>(null);
+  const [syncingAll, setSyncingAll] = useState(false);
   /** Which account row triggered import (same item sync may cover sibling accounts on one login). */
   const [syncingLinkedId, setSyncingLinkedId] = useState<number | null>(null);
   const [disconnectingLinkedId, setDisconnectingLinkedId] = useState<number | null>(null);
@@ -226,7 +235,39 @@ export function PlaidConnectBar({
   const items = itemsData?.results ?? [];
   const totalLinkedAccounts = items.reduce((n, it) => n + (it.linked_accounts?.length ?? 0), 0);
 
-  const busy = syncingItemId != null || disconnectingLinkedId != null;
+  const busy = syncingItemId != null || syncingAll || disconnectingLinkedId != null || removingItemId != null;
+
+  const applySyncStatus = useCallback((summary: string | null, emptyMessage: string) => {
+    if (summary) {
+      setStatusLine(`Import: ${summary}.`);
+    } else {
+      setStatusLine(emptyMessage);
+    }
+  }, []);
+
+  const runImportAll = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (householdId == null) return;
+      setPlaidError(null);
+      setSyncingAll(true);
+      try {
+        const result = await syncAllPlaidItems({
+          household: householdId,
+          force: opts?.force ?? true,
+        });
+        applySyncStatus(
+          formatPlaidSyncSummary(result.totals),
+          "Import finished — no new posted transactions from Plaid (often already imported). Pending charges are skipped until they post."
+        );
+        await invalidateQueriesAfterPlaidSync(queryClient);
+      } catch (e) {
+        setPlaidError(formatPlaidError(e));
+      } finally {
+        setSyncingAll(false);
+      }
+    },
+    [applySyncStatus, householdId, queryClient]
+  );
 
   const runImport = useCallback(
     async (itemId: number, linkedAccountId: number) => {
@@ -234,28 +275,45 @@ export function PlaidConnectBar({
       setSyncingItemId(itemId);
       setSyncingLinkedId(linkedAccountId);
       try {
-        const r = await syncPlaidItem(itemId);
-        const parts = [
-          r.added ? `${r.added} new` : null,
-          r.merged ? `${r.merged} linked to your manual entries` : null,
-          r.modified ? `${r.modified} updated` : null,
-          r.removed ? `${r.removed} removed` : null,
-        ].filter(Boolean);
-        if (parts.length) {
-          setStatusLine(`Import: ${parts.join(", ")}.`);
-        } else {
-          setStatusLine(
-            "Import finished — no new posted transactions from Plaid (often already imported). Pending charges are skipped until they post. Try Import again in a few minutes if you just linked."
-          );
+        const r = await syncPlaidItem(itemId, { force: true });
+        if (r.skipped && r.reason === "recently_synced") {
+          setStatusLine("Import skipped — this bank was synced recently. Try again in a few minutes.");
+          return;
         }
-        await queryClient.invalidateQueries({ queryKey: ["transactions"] });
-        await queryClient.invalidateQueries({ queryKey: ["accounts"] });
-        await queryClient.invalidateQueries({ queryKey: ["timeline"] });
+        applySyncStatus(
+          formatPlaidSyncSummary(r),
+          "Import finished — no new posted transactions from Plaid (often already imported). Pending charges are skipped until they post. Try Import again in a few minutes if you just linked."
+        );
+        await invalidateQueriesAfterPlaidSync(queryClient);
       } catch (e) {
         setPlaidError(formatPlaidError(e));
       } finally {
         setSyncingItemId(null);
         setSyncingLinkedId(null);
+      }
+    },
+    [applySyncStatus, queryClient]
+  );
+
+  const runRemoveLogin = useCallback(
+    async (itemId: number, bank: string) => {
+      if (
+        !window.confirm(
+          `Remove this ${bank} login from the app? This deletes the orphaned Plaid connection (no accounts mapped).`
+        )
+      ) {
+        return;
+      }
+      setPlaidError(null);
+      setRemovingItemId(itemId);
+      try {
+        await deletePlaidItem(itemId);
+        setStatusLine(`Removed unused ${bank} login.`);
+        await queryClient.invalidateQueries({ queryKey: ["plaid-items"] });
+      } catch (e) {
+        setPlaidError(formatPlaidError(e));
+      } finally {
+        setRemovingItemId(null);
       }
     },
     [queryClient]
@@ -301,11 +359,18 @@ export function PlaidConnectBar({
         setReceivedRedirectUri(null);
         clearPendingLinkToken();
         stripOAuthParamsFromLocation();
-        setStatusLine("Bank linked. Use Import on each account below to pull transactions.");
+        setStatusLine("Bank linked. Importing transactions in the background…");
         await queryClient.invalidateQueries({ queryKey: ["accounts"] });
         await queryClient.invalidateQueries({ queryKey: ["plaid-items"] });
-        await queryClient.invalidateQueries({ queryKey: ["transactions"] });
-        await queryClient.invalidateQueries({ queryKey: ["timeline"] });
+        try {
+          const profile = await getProfile();
+          markPlaidAutoSyncRan(profile.id);
+        } catch {
+          /* ignore */
+        }
+        void runImportAll({ force: true }).catch(() => {
+          /* runImportAll sets plaidError */
+        });
         if (redirectAfterLink) {
           navigate(redirectAfterLink, { replace: true });
         }
@@ -313,7 +378,7 @@ export function PlaidConnectBar({
         setPlaidError(formatPlaidError(e));
       }
     },
-    [householdId, queryClient, redirectAfterLink, navigate]
+    [householdId, queryClient, redirectAfterLink, navigate, runImportAll]
   );
 
   const closeLinkSession = useCallback(() => {
@@ -456,6 +521,16 @@ export function PlaidConnectBar({
           >
             {fetchingLink ? "Starting…" : "Link a bank"}
           </button>
+          {items.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => void runImportAll({ force: true })}
+              disabled={busy || householdId == null}
+              className="shrink-0 rounded-md border border-emerald-700 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm hover:bg-emerald-100 disabled:opacity-60"
+            >
+              {syncingAll ? "Syncing…" : "Sync all"}
+            </button>
+          ) : null}
         </div>
 
         {collapsedBanner}
@@ -488,7 +563,17 @@ export function PlaidConnectBar({
                       {bank}
                     </div>
                     {accounts.length === 0 ? (
-                      <p className="px-3 py-2 text-xs text-slate-600">No accounts mapped for this login.</p>
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                        <p className="text-xs text-slate-600">No accounts mapped for this login.</p>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className="text-sm font-medium text-red-700 hover:underline disabled:opacity-50"
+                          onClick={() => void runRemoveLogin(it.id, bank)}
+                        >
+                          {removingItemId === it.id ? "Removing…" : "Remove login"}
+                        </button>
+                      </div>
                     ) : (
                       <ul className="divide-y divide-slate-100">
                         {accounts.map((la) => {

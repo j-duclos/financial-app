@@ -8,6 +8,7 @@ from .views import (
     PlaidLinkTokenView,
     PlaidLinkedAccountDisconnectView,
     PlaidMetaView,
+    PlaidSyncAllView,
 )
 
 router = DefaultRouter()
@@ -18,6 +19,7 @@ urlpatterns = [
     path("plaid/meta/", PlaidMetaView.as_view(), name="plaid-meta"),
     path("plaid/link-token/", PlaidLinkTokenView.as_view(), name="plaid-link-token"),
     path("plaid/exchange/", PlaidExchangeView.as_view(), name="plaid-exchange"),
+    path("plaid/sync-all/", PlaidSyncAllView.as_view(), name="plaid-sync-all"),
     path(
         "plaid/linked-accounts/<int:pk>/disconnect/",
         PlaidLinkedAccountDisconnectView.as_view(),

@@ -32,6 +32,8 @@ from .services import (
     exchange_public_token,
     remove_plaid_item_from_plaid,
     resolve_plaid_link_redirect_uri,
+    should_skip_plaid_item_sync,
+    sync_all_plaid_items_for_user,
     sync_transactions_for_item,
 )
 
@@ -164,6 +166,19 @@ class PlaidItemViewSet(
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        force = request.query_params.get("force", "true").lower() in ("true", "1", "yes")
+        if not force and should_skip_plaid_item_sync(item, force=False):
+            return Response(
+                {
+                    "skipped": True,
+                    "reason": "recently_synced",
+                    "last_sync_at": item.last_sync_at.isoformat() if item.last_sync_at else None,
+                    "added": 0,
+                    "modified": 0,
+                    "removed": 0,
+                    "merged": 0,
+                }
+            )
         try:
             counts = sync_transactions_for_item(item)
         except PlaidTokenDecryptError as e:
@@ -175,6 +190,46 @@ class PlaidItemViewSet(
             payload = format_plaid_api_exception(e, plaid_env=plaid_api_env())
             return Response(payload, status=status.HTTP_400_BAD_REQUEST)
         return Response(counts)
+
+
+class PlaidSyncAllView(APIView):
+    """
+    Background-friendly import for all linked bank logins (one Plaid Item each).
+
+    POST /api/plaid/sync-all/?household=<id>&force=false
+    Auto-sync on app load uses force=false and skips logins synced within ~5 minutes.
+    """
+
+    permission_classes = [IsAuthenticated, IsHouseholdMember]
+
+    def post(self, request):
+        if not plaid_configured():
+            return Response(
+                {
+                    "detail": plaid_unconfigured_detail(),
+                    "plaid_env": plaid_api_env(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        household_raw = (request.query_params.get("household") or "").strip()
+        household_id = int(household_raw) if household_raw.isdigit() else None
+        if household_id is not None:
+            households = get_households_for_user(request.user)
+            if not households.filter(pk=household_id).exists():
+                return Response({"detail": "Not a member of this household."}, status=status.HTTP_403_FORBIDDEN)
+        force = request.query_params.get("force", "false").lower() in ("true", "1", "yes")
+        try:
+            payload = sync_all_plaid_items_for_user(
+                request.user,
+                household_id=household_id,
+                force=force,
+            )
+        except PlaidTokenDecryptError as e:
+            return Response(
+                {"detail": str(e), "plaid_env": plaid_api_env()},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(payload)
 
 
 class PlaidLinkedAccountDisconnectView(APIView):

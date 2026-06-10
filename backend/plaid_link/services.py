@@ -11,6 +11,7 @@ from urllib.parse import urlparse, urlunparse
 
 from django.db import transaction as db_transaction
 from django.db.models import Max, Q
+from django.utils import timezone
 from plaid import ApiException
 from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.country_code import CountryCode
@@ -34,11 +35,127 @@ from transactions.services.matching import (
     reconcile_orphan_matched_plaid_imports,
 )
 
-from .crypto import decrypt_plaid_access_token, decrypt_secret, encrypt_secret
+from .crypto import (
+    PlaidTokenDecryptError,
+    decrypt_plaid_access_token,
+    decrypt_secret,
+    encrypt_secret,
+)
 from .models import PlaidItem, PlaidLinkedAccount
 from .plaid_api_client import _clean_cred, get_plaid_client, plaid_api_env
 
 logger = logging.getLogger(__name__)
+
+PLAID_SYNC_MIN_INTERVAL_SECONDS = int(os.environ.get("PLAID_SYNC_MIN_INTERVAL_SECONDS", "300"))
+
+
+def plaid_sync_min_interval_seconds() -> int:
+    return max(0, PLAID_SYNC_MIN_INTERVAL_SECONDS)
+
+
+def should_skip_plaid_item_sync(plaid_item: PlaidItem, *, force: bool = False) -> bool:
+    """Skip auto-sync when this login was synced recently (manual sync passes force=True)."""
+    if force or not plaid_item.last_sync_at:
+        return False
+    elapsed = (timezone.now() - plaid_item.last_sync_at).total_seconds()
+    return elapsed < plaid_sync_min_interval_seconds()
+
+
+def _item_has_syncable_accounts(plaid_item: PlaidItem) -> bool:
+    for la in plaid_item.linked_accounts.select_related("account"):
+        if la.account.allows_plaid_sync():
+            return True
+    return False
+
+
+def sync_all_plaid_items_for_user(
+    user,
+    *,
+    household_id: int | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """
+    Import transactions for every linked Plaid login the user can access.
+
+    Skips logins synced within PLAID_SYNC_MIN_INTERVAL_SECONDS unless force=True.
+    """
+    from core.utils import get_households_for_user
+
+    households = get_households_for_user(user)
+    if household_id is not None:
+        households = households.filter(pk=household_id)
+    items = list(
+        PlaidItem.objects.filter(household__in=households)
+        .prefetch_related("linked_accounts__account")
+        .order_by("pk")
+    )
+
+    item_results: list[dict[str, Any]] = []
+    totals: dict[str, int] = {
+        "added": 0,
+        "modified": 0,
+        "removed": 0,
+        "merged": 0,
+        "skipped_items": 0,
+        "synced_items": 0,
+        "failed_items": 0,
+    }
+
+    for item in items:
+        label = (item.institution_name or "Bank").strip() or "Bank"
+        if not item.linked_accounts.exists():
+            continue
+        if not _item_has_syncable_accounts(item):
+            item_results.append(
+                {
+                    "id": item.id,
+                    "institution_name": label,
+                    "skipped": True,
+                    "reason": "sync_disabled",
+                }
+            )
+            totals["skipped_items"] += 1
+            continue
+        if should_skip_plaid_item_sync(item, force=force):
+            item_results.append(
+                {
+                    "id": item.id,
+                    "institution_name": label,
+                    "skipped": True,
+                    "reason": "recently_synced",
+                    "last_sync_at": item.last_sync_at.isoformat() if item.last_sync_at else None,
+                }
+            )
+            totals["skipped_items"] += 1
+            continue
+
+        try:
+            counts = sync_transactions_for_item(item)
+        except (ApiException, PlaidTokenDecryptError, RuntimeError) as exc:
+            logger.exception("sync_all failed for plaid_item pk=%s", item.pk)
+            item_results.append(
+                {
+                    "id": item.id,
+                    "institution_name": label,
+                    "error": str(exc),
+                }
+            )
+            totals["failed_items"] += 1
+            continue
+
+        totals["synced_items"] += 1
+        for key in ("added", "modified", "removed", "merged"):
+            totals[key] += int(counts.get(key) or 0)
+        item_results.append(
+            {
+                "id": item.id,
+                "institution_name": label,
+                "skipped": False,
+                **counts,
+            }
+        )
+
+    return {"items": item_results, "totals": totals}
 
 
 def _safe_match_imported_transaction(row: Transaction) -> None:
@@ -223,16 +340,12 @@ def find_manual_account_for_plaid(
     if len(norm) != 4:
         return None
 
-    linked_ids = PlaidLinkedAccount.objects.values_list("account_id", flat=True)
-    qs = (
-        Account.objects.plaid_linkable().filter(
-            household_id=household_id,
-            account_type=account_type,
-            last_four=norm,
-        )
-        .exclude(id__in=linked_ids)
-        .order_by("id")
-    )
+    # Include accounts already linked to Plaid — re-link must reuse the same row, not create duplicates.
+    qs = Account.objects.plaid_linkable().filter(
+        household_id=household_id,
+        account_type=account_type,
+        last_four=norm,
+    ).order_by("id")
     count = qs.count()
     if count == 0:
         return None
@@ -246,6 +359,21 @@ def find_manual_account_for_plaid(
             if hay and (hay == needle or needle in hay or hay in needle):
                 return acct
     return qs.first()
+
+
+def _detach_stale_plaid_link(acct: Account, *, for_item: PlaidItem) -> None:
+    """Remove an account's Plaid mapping when re-attaching to a new Item."""
+    try:
+        la = acct.plaid_link
+    except PlaidLinkedAccount.DoesNotExist:
+        return
+    if la.item_id == for_item.pk:
+        return
+    old_item = la.item
+    la.delete()
+    if not old_item.linked_accounts.exists():
+        remove_plaid_item_from_plaid(old_item)
+        old_item.delete()
 
 
 def exchange_public_token(
@@ -308,6 +436,7 @@ def exchange_public_token(
             )
             if matched:
                 acct = matched
+                _detach_stale_plaid_link(acct, for_item=plaid_item)
                 if not (acct.institution or "").strip() and institution_name:
                     acct.institution = institution_name[:255]
                     acct.save(update_fields=["institution", "updated_at"])
@@ -541,6 +670,8 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         logger.exception("reconcile_orphan_matched_plaid_imports failed for plaid_item pk=%s", plaid_item.pk)
 
     totals["skipped_sync_disabled_accounts"] = skipped_accounts
+    plaid_item.last_sync_at = timezone.now()
+    plaid_item.save(update_fields=["last_sync_at", "updated_at"])
     invalidate_financial_cache_for_household(plaid_item.household_id)
     return totals
 
@@ -560,5 +691,5 @@ def remove_plaid_item_from_plaid(plaid_item: PlaidItem) -> None:
         client = get_plaid_client()
         token = decrypt_plaid_access_token(plaid_item.access_token_cipher)
         client.item_remove(ItemRemoveRequest(access_token=token))
-    except ApiException:
+    except (ApiException, PlaidTokenDecryptError):
         pass

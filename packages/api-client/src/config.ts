@@ -61,19 +61,25 @@ async function tryRefreshAccessToken(): Promise<boolean> {
   return refreshPromise;
 }
 
+export type ApiRequestOptions = RequestInit & {
+  params?: Record<string, string>;
+  /** Default 90s. Plaid import/sync may need longer on Render. */
+  timeoutMs?: number;
+};
+
 export async function request<T>(
   path: string,
-  options: RequestInit & { params?: Record<string, string> } = {}
+  options: ApiRequestOptions = {}
 ): Promise<T | undefined> {
   return requestInner<T>(path, options, false);
 }
 
 async function requestInner<T>(
   path: string,
-  options: RequestInit & { params?: Record<string, string> },
+  options: ApiRequestOptions,
   didRefresh: boolean
 ): Promise<T | undefined> {
-  const { params, ...init } = options;
+  const { params, timeoutMs: timeoutOverride, ...init } = options;
   let url = baseUrl + path;
   if (params && Object.keys(params).length > 0) {
     const search = new URLSearchParams(params).toString();
@@ -88,7 +94,7 @@ async function requestInner<T>(
     ...((init.headers as Record<string, string>) ?? {}),
   };
   const getOpts = (init.method ?? "GET") === "GET" ? { cache: "no-store" as RequestCache } : {};
-  const timeoutMs = 90_000;
+  const timeoutMs = timeoutOverride ?? 90_000;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
@@ -155,7 +161,7 @@ async function requestInner<T>(
 /** Like request() but throws if response is 204/empty (use for endpoints that return JSON). */
 export async function requestRequired<T>(
   path: string,
-  options: RequestInit & { params?: Record<string, string> } = {}
+  options: ApiRequestOptions = {}
 ): Promise<T> {
   const r = await request<T>(path, options);
   if (r === undefined) throw new ApiError(204, "No content");

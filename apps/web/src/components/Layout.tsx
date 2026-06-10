@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import NotificationsDropdown from "./NotificationsDropdown";
+import { PlaidAutoSync } from "./PlaidAutoSync";
 import { AUTOMATION_NAV_LABEL, AUTOMATION_PATH } from "../lib/automationDisplay";
 
 export default function Layout() {
@@ -39,6 +40,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <PlaidAutoSync />
       <header className="flex-none sticky top-0 z-30 bg-white border-b border-gray-200">
         <div className="px-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 min-h-14 py-2">
           <nav className="flex flex-wrap items-center gap-x-1 gap-y-1 min-w-0 flex-1">

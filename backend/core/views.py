@@ -21,6 +21,9 @@ from .serializers import (
 from .utils import get_user_profile, get_households_for_user
 
 
+from common.services.redis_config import redis_diagnostics, verify_redis_cache
+
+
 def home(request):
     return JsonResponse({
         "status": "ok",
@@ -31,7 +34,18 @@ def home(request):
 
 
 def health(request):
-    return JsonResponse({"status": "ok"})
+    payload: dict = {"status": "ok"}
+    diag = redis_diagnostics()
+    payload["redis"] = {
+        "configured": diag["redis_configured"],
+        "timeline_cache_enabled": diag["timeline_cache_enabled"],
+    }
+    if diag["redis_configured"]:
+        ok, _ = verify_redis_cache()
+        payload["redis"]["connected"] = ok
+        if not ok:
+            payload["status"] = "degraded"
+    return JsonResponse(payload)
 
 
 class DatabaseInfoView(APIView):

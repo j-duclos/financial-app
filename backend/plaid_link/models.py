@@ -13,6 +13,11 @@ class PlaidItem(models.Model):
     transactions_cursor = models.CharField(max_length=768, blank=True, default="")
     institution_id = models.CharField(max_length=64, blank=True)
     institution_name = models.CharField(max_length=255, blank=True)
+    last_sync_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When transactions were last imported from Plaid for this login.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

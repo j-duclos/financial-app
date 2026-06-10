@@ -207,10 +207,9 @@ if not DEBUG:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Optional Redis cache (Render Key Value / Redis) — speeds timeline for all users in production.
-_REDIS_URL = (
-    os.environ.get("REDIS_URL", "").strip()
-    or os.environ.get("REDISCLOUD_URL", "").strip()
-)
+from common.services.redis_config import resolve_redis_url
+
+_REDIS_URL = resolve_redis_url()
 if _REDIS_URL:
     CACHES = {
         "default": {
