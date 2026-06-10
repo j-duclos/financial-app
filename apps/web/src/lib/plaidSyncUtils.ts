@@ -42,12 +42,20 @@ export function formatPlaidSyncSummary(totals: {
   modified?: number;
   removed?: number;
   merged?: number;
+  skipped_sync_disabled_accounts?: number;
+  reason?: string;
 }): string | null {
+  if (totals.reason === "sync_disabled") {
+    return "skipped — no linked accounts are eligible for import (check account status)";
+  }
   const parts = [
     totals.added ? `${totals.added} new` : null,
     totals.merged ? `${totals.merged} linked to your manual entries` : null,
     totals.modified ? `${totals.modified} updated` : null,
     totals.removed ? `${totals.removed} removed` : null,
+    totals.skipped_sync_disabled_accounts
+      ? `${totals.skipped_sync_disabled_accounts} account(s) skipped (import paused or inactive)`
+      : null,
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : null;
 }

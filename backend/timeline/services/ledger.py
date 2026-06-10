@@ -331,14 +331,17 @@ def _timeline_row_meta(txn: Optional[Transaction]) -> dict[str, Any]:
         return {
             "reconciled": False,
             "txn_source": None,
+            "import_match_status": None,
             "transaction_type": None,
             "transfer_group_id": None,
         }
     src = txn.source
     txn_type = getattr(txn, "transaction_type", None)
+    ims = getattr(txn, "import_match_status", None) or ""
     return {
         "reconciled": bool(txn.reconciled),
         "txn_source": src.lower() if src else None,
+        "import_match_status": ims.lower() if ims else None,
         "transaction_type": txn_type.lower() if txn_type else None,
         "transfer_group_id": getattr(txn, "transfer_group_id", None),
     }

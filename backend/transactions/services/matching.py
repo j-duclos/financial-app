@@ -632,6 +632,37 @@ def _refresh_transfer_group_status(tg: TransferGroup) -> None:
     tg.save(update_fields=["status", "updated_at"])
 
 
+def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Transaction) -> list[str]:
+    """
+    After a match, the planned row becomes the ledger line — use bank date/payee so imports
+    replace hand-entered rows (authorization vs posting date, POS DEBIT vs merchant name).
+    """
+    update_fields: list[str] = []
+    bank_date = imported.posted_date or imported.date
+    if bank_date and planned.date != bank_date:
+        planned.date = bank_date
+        update_fields.append("date")
+    if imported.posted_date or imported.date:
+        posted = imported.posted_date or imported.date
+        if planned.posted_date != posted:
+            planned.posted_date = posted
+            update_fields.append("posted_date")
+    bank_desc = (imported.imported_description or imported.memo or imported.payee or "").strip()
+    if bank_desc and not (planned.imported_description or "").strip():
+        planned.imported_description = bank_desc[:2000]
+        update_fields.append("imported_description")
+    np = normalize_description(imported.payee or bank_desc or "")[:512]
+    if np and planned.normalized_payee != np:
+        planned.normalized_payee = np
+        update_fields.append("normalized_payee")
+    if planned.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        bank_payee = (imported.payee or bank_desc or "").strip()
+        if bank_payee and planned.payee != bank_payee[:255]:
+            planned.payee = bank_payee[:255]
+            update_fields.append("payee")
+    return update_fields
+
+
 def _create_match_record(
     *,
     planned: Transaction,
@@ -651,18 +682,11 @@ def _create_match_record(
         )
         planned.import_match_status = Transaction.ImportMatchStatus.MATCHED
         imported.import_match_status = Transaction.ImportMatchStatus.MATCHED
-        # Enrich planned row with bank metadata without replacing user payee.
-        if not (planned.imported_description or "").strip() and (imported.imported_description or imported.memo):
-            planned.imported_description = (imported.imported_description or imported.memo or "")[:2000]
-        if imported.posted_date or imported.date:
-            planned.posted_date = imported.posted_date or imported.date
-        planned.normalized_payee = normalize_description(imported.payee or "")[:512]
+        bank_fields = apply_bank_fields_to_planned_from_import(planned, imported)
         planned.save(
             update_fields=[
                 "import_match_status",
-                "imported_description",
-                "posted_date",
-                "normalized_payee",
+                *bank_fields,
                 "updated_at",
             ]
         )

@@ -671,6 +671,7 @@ export type PlaidSyncCounts = {
   modified: number;
   removed: number;
   merged?: number;
+  skipped_sync_disabled_accounts?: number;
   skipped?: boolean;
   reason?: string;
 };

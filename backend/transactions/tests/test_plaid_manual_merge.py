@@ -60,6 +60,8 @@ class TestPlaidMatching(TestCase):
         imp.refresh_from_db()
         manual.refresh_from_db()
         self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(manual.date, d_bank)
+        self.assertEqual(manual.payee, "STARBUCKS STORE 123")
 
     def test_no_match_wrong_account(self):
         other = Account.objects.create(household=self.h, account_type=Account.AccountType.SAVINGS, name="Sav", currency="USD")

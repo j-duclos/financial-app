@@ -18,6 +18,7 @@ import {
   getPlaidMeta,
   getProfile,
   listPlaidItems,
+  resetPlaidItemSyncCursor,
   syncAllPlaidItems,
   syncPlaidItem,
 } from "@budget-app/api-client";
@@ -182,6 +183,7 @@ export function PlaidConnectBar({
   const [syncingLinkedId, setSyncingLinkedId] = useState<number | null>(null);
   const [disconnectingLinkedId, setDisconnectingLinkedId] = useState<number | null>(null);
   const [removingItemId, setRemovingItemId] = useState<number | null>(null);
+  const [resettingItemId, setResettingItemId] = useState<number | null>(null);
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(defaultExpanded);
 
@@ -236,7 +238,7 @@ export function PlaidConnectBar({
   const items = itemsData?.results ?? [];
   const totalLinkedAccounts = items.reduce((n, it) => n + (it.linked_accounts?.length ?? 0), 0);
 
-  const busy = syncingItemId != null || syncingAll || disconnectingLinkedId != null || removingItemId != null;
+  const busy = syncingItemId != null || syncingAll || disconnectingLinkedId != null || removingItemId != null || resettingItemId != null;
 
   const applySyncStatus = useCallback((summary: string | null, emptyMessage: string) => {
     if (summary) {
@@ -283,7 +285,9 @@ export function PlaidConnectBar({
         }
         applySyncStatus(
           formatPlaidSyncSummary(r),
-          "Import finished — no new posted transactions from Plaid (often already imported). Pending charges are skipped until they post. Try Import again in a few minutes if you just linked."
+          r.skipped_sync_disabled_accounts
+            ? "Import finished but some linked accounts were skipped — they may be archived or disconnected."
+            : "Import finished — no new posted transactions from Plaid. If you expected missing rows, use Reload history below (cursor may have passed them while import was paused)."
         );
         await invalidateQueriesAfterPlaidSync(queryClient);
       } catch (e) {
@@ -291,6 +295,38 @@ export function PlaidConnectBar({
       } finally {
         setSyncingItemId(null);
         setSyncingLinkedId(null);
+      }
+    },
+    [applySyncStatus, queryClient]
+  );
+
+  const runReloadHistory = useCallback(
+    async (itemId: number, bank: string) => {
+      if (
+        !window.confirm(
+          `Reload all posted transactions for ${bank}? This re-downloads history from Plaid (can take a minute). Use this if imports ran but your checking account stayed empty.`
+        )
+      ) {
+        return;
+      }
+      setPlaidError(null);
+      setResettingItemId(itemId);
+      try {
+        await resetPlaidItemSyncCursor(itemId);
+        setSyncingItemId(itemId);
+        const r = await syncPlaidItem(itemId, { force: true });
+        applySyncStatus(
+          formatPlaidSyncSummary(r),
+          r.added || r.modified
+            ? `Reloaded ${bank} history.`
+            : "Reload finished — Plaid returned no new rows (they may already be stored)."
+        );
+        await invalidateQueriesAfterPlaidSync(queryClient);
+      } catch (e) {
+        setPlaidError(formatPlaidError(e));
+      } finally {
+        setResettingItemId(null);
+        setSyncingItemId(null);
       }
     },
     [applySyncStatus, queryClient]
@@ -560,8 +596,16 @@ export function PlaidConnectBar({
                 const accounts = it.linked_accounts ?? [];
                 return (
                   <li key={it.id} className="rounded-md border border-slate-200 bg-white overflow-hidden">
-                    <div className="px-3 py-1.5 bg-slate-100 border-b border-slate-200 text-sm font-semibold text-slate-800">
-                      {bank}
+                    <div className="px-3 py-1.5 bg-slate-100 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-800">{bank}</span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="text-xs font-medium text-slate-600 hover:underline disabled:opacity-50"
+                        onClick={() => void runReloadHistory(it.id, bank)}
+                      >
+                        {resettingItemId === it.id || syncingItemId === it.id ? "Reloading…" : "Reload history"}
+                      </button>
                     </div>
                     {accounts.length === 0 ? (
                       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">

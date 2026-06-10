@@ -952,6 +952,7 @@ export interface Transaction {
   linked_transaction_id?: number | null;
   /** Plaid server transaction id when source is PLAID (dedupe / sync). */
   plaid_transaction_id?: string | null;
+  import_match_status?: string | null;
   is_bill?: boolean;
   created_at: string;
   updated_at: string;
@@ -1535,6 +1536,7 @@ export interface TimelineRow {
   reconciled?: boolean;
   /** Raw Transaction.source (plaid, actual, rule, …). */
   txn_source?: string | null;
+  import_match_status?: string | null;
 }
 
 export interface TimelineResponse {

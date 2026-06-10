@@ -41,6 +41,16 @@ describe("resolveTransactionStatusIcons", () => {
     ).toEqual(["manual"]);
   });
 
+  it("shows imported icon when manual row is matched to bank", () => {
+    expect(
+      resolveTransactionStatusIcons({
+        txnSource: "actual",
+        importMatchStatus: "matched",
+        transactionId: 3,
+      })
+    ).toEqual(["plaid"]);
+  });
+
   it("skips origin icons for projected interest", () => {
     expect(
       resolveTransactionStatusIcons({

@@ -6,6 +6,8 @@ export type TransactionStatusInput = SourceBadgeInput & {
   reconciled?: boolean;
   /** Raw Transaction.source from API / timeline (plaid, actual, rule, …). */
   txnSource?: string | null;
+  /** MATCHED when a manual row is linked to a bank import. */
+  importMatchStatus?: string | null;
   /** Timeline ledger layer: actual | rule | interest. */
   ledgerSource?: string | null;
   ruleId?: number | null;
@@ -29,8 +31,9 @@ export function resolveTransactionStatusIcons(
 
   const txnSrc = (input.txnSource ?? "").toLowerCase();
   const ledgerSrc = (input.ledgerSource ?? "").toLowerCase();
+  const importMatched = (input.importMatchStatus ?? "").toLowerCase() === "matched";
 
-  if (txnSrc === "plaid") {
+  if (txnSrc === "plaid" || importMatched) {
     icons.push("plaid");
   } else if (
     input.ruleId != null ||

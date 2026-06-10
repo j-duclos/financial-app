@@ -461,6 +461,9 @@ def exchange_public_token(
                 mask=mask,
                 account=acct,
             )
+            if acct.status == Account.Status.ACTIVE and not acct.plaid_sync_enabled:
+                acct.plaid_sync_enabled = True
+                acct.save(update_fields=["plaid_sync_enabled", "updated_at"])
 
     return plaid_item
 

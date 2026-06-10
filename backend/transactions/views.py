@@ -225,8 +225,12 @@ class TransactionViewSet(ModelViewSet):
     ordering = ["-date", "-id"]
 
     def get_queryset(self):
+        from .services.matching import ledger_visible_transactions
+
         households = get_households_for_user(self.request.user)
-        qs = Transaction.objects.filter(account__household__in=households).select_related(
+        qs = ledger_visible_transactions(
+            Transaction.objects.filter(account__household__in=households)
+        ).select_related(
             "account", "category", "account__household"
         ).select_related(
             "transfer_out", "transfer_out__to_transaction", "transfer_out__to_transaction__account"

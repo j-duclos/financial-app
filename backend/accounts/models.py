@@ -263,7 +263,14 @@ class Account(models.Model):
         )
 
     def allows_plaid_sync(self) -> bool:
-        return self.status == self.Status.ACTIVE and self.plaid_sync_enabled
+        if self.status != self.Status.ACTIVE:
+            return False
+        # Active Plaid link → import runs. ``plaid_sync_enabled`` only applies after disconnect.
+        from plaid_link.models import PlaidLinkedAccount
+
+        if PlaidLinkedAccount.objects.filter(account_id=self.pk).exists():
+            return True
+        return self.plaid_sync_enabled
 
     def allows_new_transactions(self, on_date: date | None = None) -> bool:
         if self.status != self.Status.ACTIVE:
