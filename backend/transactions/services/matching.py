@@ -940,3 +940,99 @@ def mark_import_duplicate(txn: Transaction) -> None:
         raise ValueError("Only imported transactions can be marked duplicate.")
     txn.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
     txn.save(update_fields=["import_match_status", "updated_at"])
+
+
+def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
+    """
+    Restore DUPLICATE → UNMATCHED when Plaid sent multiple distinct charges for the same amount
+    (e.g. four $20 donations) but dedup logic hid one. Skips transfer/rule payments where a
+    second Plaid id really is the same bank movement.
+    """
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.DUPLICATE,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    restored = 0
+    for dup in qs:
+        if dup.amount is None:
+            continue
+        low = dup.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+        high = dup.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+        matches = list(
+            TransactionMatch.objects.filter(
+                planned_transaction__account_id=dup.account_id,
+                planned_transaction__date__gte=low,
+                planned_transaction__date__lte=high,
+                planned_transaction__amount=dup.amount,
+            ).select_related("planned_transaction")
+        )
+        if any(_planned_match_allows_import_dedup(m.planned_transaction) for m in matches):
+            continue
+        distinct_ids = (
+            Transaction.objects.filter(
+                account_id=dup.account_id,
+                source=Transaction.Source.PLAID,
+                date__gte=low,
+                date__lte=high,
+                amount=dup.amount,
+            )
+            .exclude(plaid_transaction_id__isnull=True)
+            .exclude(plaid_transaction_id="")
+            .exclude(import_match_status=Transaction.ImportMatchStatus.IGNORED)
+            .values("plaid_transaction_id")
+            .distinct()
+            .count()
+        )
+        visible_imports = (
+            Transaction.objects.filter(
+                account_id=dup.account_id,
+                source=Transaction.Source.PLAID,
+                date__gte=low,
+                date__lte=high,
+                amount=dup.amount,
+            )
+            .exclude(import_match_status__in=[
+                Transaction.ImportMatchStatus.DUPLICATE,
+                Transaction.ImportMatchStatus.IGNORED,
+            ])
+            .exclude(pk__in=TransactionMatch.objects.values("imported_transaction_id"))
+            .count()
+        )
+        if distinct_ids > len(matches) + visible_imports:
+            dup.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+            dup.save(update_fields=["import_match_status", "updated_at"])
+            restored += 1
+    return restored
+
+
+def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int:
+    """
+    Bank charges with no forecast/manual row to match become ACTUAL ledger lines (keep plaid id).
+    Avoids orphan PLAID rows that never surface like matched imports in the UI.
+    """
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    qs = qs.exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+    materialized = 0
+    for imp in qs:
+        imp.source = Transaction.Source.ACTUAL
+        imp.import_match_status = Transaction.ImportMatchStatus.NONE
+        imp.cleared = True
+        imp.status = Transaction.Status.CLEARED
+        imp.save(
+            update_fields=[
+                "source",
+                "import_match_status",
+                "cleared",
+                "status",
+                "updated_at",
+            ]
+        )
+        materialized += 1
+    return materialized

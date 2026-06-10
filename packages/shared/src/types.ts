@@ -1537,6 +1537,7 @@ export interface TimelineRow {
   /** Raw Transaction.source (plaid, actual, rule, …). */
   txn_source?: string | null;
   import_match_status?: string | null;
+  plaid_transaction_id?: string | null;
 }
 
 export interface TimelineResponse {

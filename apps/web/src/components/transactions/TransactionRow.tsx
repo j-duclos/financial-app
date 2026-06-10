@@ -19,6 +19,7 @@ export type TransactionRowData = {
   reconciled?: boolean;
   txnSource?: string | null;
   importMatchStatus?: string | null;
+  plaidTransactionId?: string | null;
   transactionId?: number | null;
   linkedTransactionId?: number | null;
   hasTransferDestination?: boolean;
@@ -63,6 +64,7 @@ export function timelineRowToData(
     reconciled: row.reconciled ?? false,
     txnSource: row.txn_source ?? null,
     importMatchStatus: row.import_match_status ?? null,
+    plaidTransactionId: row.plaid_transaction_id ?? null,
     transactionId: row.transaction_id,
     readOnly: row.source === "interest",
     linkedTransactionId: null,
@@ -90,6 +92,7 @@ export function transactionToData(txn: Transaction, balance: number): Transactio
     reconciled: txn.reconciled ?? false,
     txnSource: txn.source ?? null,
     importMatchStatus: txn.import_match_status ?? null,
+    plaidTransactionId: txn.plaid_transaction_id ?? null,
     transactionId: txn.id,
     linkedTransactionId: txn.linked_transaction_id ?? null,
     hasTransferDestination: Boolean(txn.transfer_to_account),
@@ -150,6 +153,7 @@ export default function TransactionRow({
           reconciled={row.reconciled}
           txnSource={row.txnSource}
           importMatchStatus={row.importMatchStatus}
+          plaidTransactionId={row.plaidTransactionId}
           ledgerSource={row.source.source}
           ruleId={row.source.rule_id}
           transactionId={row.transactionId}

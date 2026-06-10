@@ -8,6 +8,8 @@ export type TransactionStatusInput = SourceBadgeInput & {
   txnSource?: string | null;
   /** MATCHED when a manual row is linked to a bank import. */
   importMatchStatus?: string | null;
+  /** Set on ACTUAL rows imported from Plaid (including materialized orphans). */
+  plaidTransactionId?: string | null;
   /** Timeline ledger layer: actual | rule | interest. */
   ledgerSource?: string | null;
   ruleId?: number | null;
@@ -32,8 +34,9 @@ export function resolveTransactionStatusIcons(
   const txnSrc = (input.txnSource ?? "").toLowerCase();
   const ledgerSrc = (input.ledgerSource ?? "").toLowerCase();
   const importMatched = (input.importMatchStatus ?? "").toLowerCase() === "matched";
+  const fromPlaid = Boolean((input.plaidTransactionId ?? "").trim());
 
-  if (txnSrc === "plaid" || importMatched) {
+  if (txnSrc === "plaid" || importMatched || fromPlaid) {
     icons.push("plaid");
   } else if (
     input.ruleId != null ||

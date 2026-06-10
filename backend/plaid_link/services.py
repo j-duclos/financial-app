@@ -31,8 +31,10 @@ from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
 from transactions.services.matching import (
     match_imported_transaction,
+    materialize_unmatched_plaid_imports,
     normalize_description,
     reconcile_orphan_matched_plaid_imports,
+    release_excess_duplicate_plaid_imports,
 )
 
 from .crypto import (
@@ -669,12 +671,19 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         account_pks = list(plaid_item.linked_accounts.values_list("account_id", flat=True))
         for aid in account_pks:
             reconcile_orphan_matched_plaid_imports(account_id=aid)
+            release_excess_duplicate_plaid_imports(account_id=aid)
+            materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            totals.setdefault("materialized", 0)
+            totals["materialized"] += materialized
     except Exception:
-        logger.exception("reconcile_orphan_matched_plaid_imports failed for plaid_item pk=%s", plaid_item.pk)
+        logger.exception("post-sync import repair failed for plaid_item pk=%s", plaid_item.pk)
 
     totals["skipped_sync_disabled_accounts"] = skipped_accounts
     plaid_item.last_sync_at = timezone.now()
     plaid_item.save(update_fields=["last_sync_at", "updated_at"])
+    from core.timeline_cache import bump_timeline_cache_for_household
+
+    bump_timeline_cache_for_household(plaid_item.household_id)
     invalidate_financial_cache_for_household(plaid_item.household_id)
     return totals
 

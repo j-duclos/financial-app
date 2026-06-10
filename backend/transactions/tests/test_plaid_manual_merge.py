@@ -546,3 +546,42 @@ class TestPlaidMatching(TestCase):
             self.assertIn(manual.pk, visible_pks)
         self.assertIn(imports[3].pk, visible_pks)
         self.assertEqual(TransactionMatch.objects.filter(imported_transaction__in=imports).count(), 3)
+
+    def test_orphan_plaid_import_materialized_when_no_manual_row(self):
+        """Fourth bank charge with no manual entry must still appear in the ledger."""
+        d_bank = date(2026, 6, 2)
+        amt = Decimal("-20.00")
+        for i in range(3):
+            Transaction.objects.create(
+                account=self.acc,
+                date=d_bank,
+                payee="Manual",
+                amount=amt,
+                source=Transaction.Source.ACTUAL,
+            )
+        imports = []
+        for i in range(4):
+            imp = Transaction.objects.create(
+                account=self.acc,
+                date=d_bank,
+                payee="ARIZONA HUMANE SOCIET",
+                amount=amt,
+                source=Transaction.Source.PLAID,
+                plaid_transaction_id=f"pl-orphan-{i}",
+                imported_description="ARIZONA HUMANE SOCIET",
+                import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+            )
+            imports.append(imp)
+            match_imported_transaction(imp)
+
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        imports[3].refresh_from_db()
+        self.assertEqual(imports[3].source, Transaction.Source.ACTUAL)
+        self.assertEqual(imports[3].import_match_status, Transaction.ImportMatchStatus.NONE)
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, amount=amt, date=d_bank)
+        )
+        self.assertEqual(visible.count(), 4)
