@@ -497,3 +497,50 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(out.amount, Decimal("-25.00"))
         in_leg.refresh_from_db()
         self.assertEqual(in_leg.transfer_group_id, out.transfer_group_id)
+
+    def test_multiple_same_amount_actual_imports_match_one_to_one(self):
+        """Four bank posts of the same amount must not collapse into one visible row."""
+        d_manual = date(2026, 6, 1)
+        d_bank = date(2026, 6, 2)
+        amt = Decimal("-20.00")
+        manuals = [
+            Transaction.objects.create(
+                account=self.acc,
+                date=d_manual,
+                payee="POS DEBIT ARIZONA HUMANE SOCIETY PHOENIX AZ",
+                amount=amt,
+                source=Transaction.Source.ACTUAL,
+            )
+            for _ in range(3)
+        ]
+        imports = []
+        for i in range(4):
+            imp = Transaction.objects.create(
+                account=self.acc,
+                date=d_bank,
+                payee="ARIZONA HUMANE SOCIET",
+                amount=amt,
+                source=Transaction.Source.PLAID,
+                plaid_transaction_id=f"plaid-humane-{i}",
+                imported_description="ARIZONA HUMANE SOCIET 602-997-7585 AZ 06/01 (...2404)",
+                import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+            )
+            imports.append(imp)
+            match_imported_transaction(imp)
+
+        for imp in imports[:3]:
+            imp.refresh_from_db()
+            self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+
+        imports[3].refresh_from_db()
+        self.assertEqual(imports[3].import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, amount=amt, date__gte=d_manual)
+        )
+        visible_pks = set(visible.values_list("pk", flat=True))
+        self.assertEqual(len(visible_pks), 4)
+        for manual in manuals:
+            self.assertIn(manual.pk, visible_pks)
+        self.assertIn(imports[3].pk, visible_pks)
+        self.assertEqual(TransactionMatch.objects.filter(imported_transaction__in=imports).count(), 3)

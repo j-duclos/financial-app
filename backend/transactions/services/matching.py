@@ -477,6 +477,32 @@ def find_candidate_matches(
     return out
 
 
+def _unmatched_planned_same_amount_count(imported: Transaction) -> int:
+    """How many still-unmatched forecast/manual rows could absorb this import amount."""
+    if imported.amount is None:
+        return 0
+    count = 0
+    for planned in _planned_candidate_base_qs(imported):
+        if planned.amount is None:
+            continue
+        if abs(planned.amount - imported.amount) <= AMOUNT_TOLERANCE:
+            count += 1
+    return count
+
+
+def _planned_match_allows_import_dedup(planned: Transaction) -> bool:
+    """
+    When a planned row is already matched, only auto-hide extra Plaid rows for patterns that
+    should have a single bank post (transfers / rule materializations). Repeated ACTUAL entries
+    with the same amount (e.g. four identical donations) must not suppress extra imports.
+    """
+    if planned.transfer_group_id:
+        return True
+    if planned.source == Transaction.Source.RULE and planned.rule_id:
+        return True
+    return False
+
+
 def _plaid_sibling_imports_qs(anchor: Transaction) -> QuerySet[Transaction]:
     """Other Plaid rows on the same account with the same amount in the match date window."""
     if anchor.amount is None:
@@ -511,11 +537,21 @@ def mark_redundant_plaid_imports_after_match(anchor_import: Transaction) -> int:
         return 0
     if not TransactionMatch.objects.filter(imported_transaction_id=anchor_import.pk).exists():
         return 0
+    anchor_match = TransactionMatch.objects.filter(imported_transaction_id=anchor_import.pk).select_related(
+        "planned_transaction"
+    ).first()
+    if anchor_match is None:
+        return 0
+    if not _planned_match_allows_import_dedup(anchor_match.planned_transaction):
+        return 0
+
     marked = 0
     for sibling in _plaid_sibling_imports_qs(anchor_import):
         if TransactionMatch.objects.filter(imported_transaction_id=sibling.pk).exists():
             continue
         if abs(sibling.amount - anchor_import.amount) > AMOUNT_TOLERANCE:
+            continue
+        if _unmatched_planned_same_amount_count(sibling) > 0:
             continue
         mark_import_duplicate(sibling)
         marked += 1
@@ -553,6 +589,10 @@ def try_mark_plaid_import_as_duplicate_of_existing_match(imported: Transaction) 
     if imported.amount is None or matched_peer.planned_transaction.amount is None:
         return False
     if abs(imported.amount - matched_peer.planned_transaction.amount) > AMOUNT_TOLERANCE:
+        return False
+    if _unmatched_planned_same_amount_count(imported) > 0:
+        return False
+    if not _planned_match_allows_import_dedup(matched_peer.planned_transaction):
         return False
     mark_import_duplicate(imported)
     return True

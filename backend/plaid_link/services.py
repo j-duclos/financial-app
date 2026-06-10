@@ -252,7 +252,7 @@ def resolve_plaid_link_redirect_uri(client_supplied: str | None) -> str | None:
     return _link_redirect_uri()
 
 # Posted date vs manual entry date often differ by a few days (authorization vs settlement).
-MANUAL_MERGE_DATE_WINDOW_DAYS = 4
+MANUAL_MERGE_DATE_WINDOW_DAYS = 5
 
 
 def _phone_from_env() -> str | None:

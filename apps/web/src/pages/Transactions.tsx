@@ -53,6 +53,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
+import {
+  loadStoredTransactionsAccountId,
+  loadStoredTransactionsTimeFilter,
+  saveStoredTransactionsAccountId,
+  saveStoredTransactionsTimeFilter,
+} from "../lib/transactionsPageState";
 
 export type { TimeFilter };
 
@@ -71,8 +77,8 @@ export default function Transactions() {
   const location = useLocation();
   const navState = (location.state as TransactionsLocationState | null) ?? null;
   const isPlaidOAuthReturn = searchParams.has("oauth_state_id") || navState?.focusPlaid === true;
-  const [accountId, setAccountId] = useState<number | "">("");
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>("3m");
+  const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const hasSetInitialAccount = useRef(false);
   const hasAppliedBillPrefill = useRef(false);
 
@@ -176,8 +182,8 @@ export default function Transactions() {
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "transactions-picker"],
     queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
   const { data: categoriesData } = useQuery({
     queryKey: ["categories", "transactions", accountData?.household?.id ?? "all"],
@@ -187,7 +193,8 @@ export default function Transactions() {
         ...(accountData?.household?.id ? { household: accountData.household.id } : {}),
       }),
     enabled: !!accountId,
-    refetchOnMount: "always",
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const transactions = txnsData?.results ?? [];
@@ -208,6 +215,14 @@ export default function Transactions() {
   }, [accountsData?.results]);
 
   useEffect(() => {
+    saveStoredTransactionsAccountId(accountId);
+  }, [accountId]);
+
+  useEffect(() => {
+    saveStoredTransactionsTimeFilter(timeFilter);
+  }, [timeFilter]);
+
+  useEffect(() => {
     if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {
       setAccountId("");
       hasSetInitialAccount.current = false;
@@ -215,7 +230,7 @@ export default function Transactions() {
   }, [accountId, accounts]);
 
   useEffect(() => {
-    if (hasSetInitialAccount.current || accounts.length === 0) return;
+    if (accounts.length === 0) return;
     if (navState?.accountId != null) {
       const navId = Number(navState.accountId);
       if (accounts.some((a) => a.id === navId)) {
@@ -228,6 +243,11 @@ export default function Transactions() {
       }
       return;
     }
+    if (hasSetInitialAccount.current) return;
+    if (typeof accountId === "number" && accounts.some((a) => a.id === accountId)) {
+      hasSetInitialAccount.current = true;
+      return;
+    }
     const defaultId = profile?.default_account;
     const defaultActive =
       defaultId != null && accounts.some((a) => a.id === Number(defaultId))
@@ -235,7 +255,7 @@ export default function Transactions() {
         : null;
     setAccountId(defaultActive ?? accounts[0].id);
     hasSetInitialAccount.current = true;
-  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts]);
+  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts, accountId]);
 
   useEffect(() => {
     if (hasAppliedBillPrefill.current || accountId === "") return;
