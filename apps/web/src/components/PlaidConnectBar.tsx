@@ -181,6 +181,7 @@ export function PlaidConnectBar({
   /** Which account row triggered import (same item sync may cover sibling accounts on one login). */
   const [syncingLinkedId, setSyncingLinkedId] = useState<number | null>(null);
   const [disconnectingLinkedId, setDisconnectingLinkedId] = useState<number | null>(null);
+  const [removingItemId, setRemovingItemId] = useState<number | null>(null);
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(defaultExpanded);
 
