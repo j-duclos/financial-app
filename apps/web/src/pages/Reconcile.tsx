@@ -22,6 +22,8 @@ import ReconcileVarianceLine, {
   reconcileVarianceHint,
 } from "../components/reconcile/ReconcileVarianceLine";
 import ReconcileHistoryModal from "../components/reconcile/ReconcileHistoryModal";
+import ReconcileRemainingPanel from "../components/reconcile/ReconcileRemainingPanel";
+import { reconcileBalanceAfterChecks } from "../lib/reconcileCheckedBalance";
 import { reconcileVarianceDisplay } from "../lib/reconcileVarianceDisplay";
 import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
@@ -65,7 +67,12 @@ export default function Reconcile() {
   const [editOriginalAmount, setEditOriginalAmount] = useState(0);
   const [editError, setEditError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [remainingAfterComplete, setRemainingAfterComplete] = useState<{
+    transactions: ReconcileTransactionRow[];
+    periodLabel: string;
+  } | null>(null);
   const hasSetInitialAccount = useRef(false);
+  const hasSetInitialPeriod = useRef(false);
   const queryClient = useQueryClient();
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
@@ -93,6 +100,8 @@ export default function Reconcile() {
     setCompleteError(null);
     setPeriodStart("");
     setPeriodEnd("");
+    setRemainingAfterComplete(null);
+    hasSetInitialPeriod.current = false;
   }, [accountId]);
 
   const { data: metaData, isLoading: metaLoading } = useQuery({
@@ -104,12 +113,10 @@ export default function Reconcile() {
   });
 
   useEffect(() => {
-    if (!metaData || accountId === "") return;
+    if (!metaData || accountId === "" || hasSetInitialPeriod.current) return;
     setPeriodStart(metaData.min_start_date);
-    setPeriodEnd((prev) => {
-      if (!prev || prev < metaData.min_start_date) return metaData.max_end_date;
-      return prev;
-    });
+    setPeriodEnd(metaData.max_end_date);
+    hasSetInitialPeriod.current = true;
   }, [metaData?.min_start_date, metaData?.max_end_date, accountId]);
 
   const minStartDate = metaData?.min_start_date ?? null;
@@ -274,16 +281,13 @@ export default function Reconcile() {
     ? setupData?.unreconciled_transactions ?? []
     : [];
 
-  const checkedSum = useMemo(() => {
-    let sum = 0;
-    for (const t of transactions) {
-      if (checkedIds.has(t.id)) sum += parseAmount(t.amount);
-    }
-    return sum;
-  }, [transactions, checkedIds]);
+  const balanceAfterChecks = useMemo(
+    () => reconcileBalanceAfterChecks(transactions, checkedIds, periodOpeningBalance),
+    [transactions, checkedIds, periodOpeningBalance]
+  );
 
   const offBy =
-    bankPeriodEndBalance != null ? bankPeriodEndBalance - (periodOpeningBalance + checkedSum) : null;
+    bankPeriodEndBalance != null ? bankPeriodEndBalance - balanceAfterChecks : null;
   const isBalanced =
     reconcileVarianceDisplay(offBy, { tolerance: BALANCE_TOLERANCE })?.tone === "balanced";
 
@@ -420,6 +424,7 @@ export default function Reconcile() {
         next.delete(deletedId);
         return next;
       });
+      removeRemainingTransactions([deletedId]);
       invalidateReconcileQueries();
     },
     onError: (err: unknown) => {
@@ -540,6 +545,16 @@ export default function Reconcile() {
     }
   }
 
+  function removeRemainingTransactions(ids: number[]) {
+    const idSet = new Set(ids);
+    setRemainingAfterComplete((prev) => {
+      if (!prev) return prev;
+      const nextTxns = prev.transactions.filter((t) => !idSet.has(t.id));
+      if (nextTxns.length === 0) return null;
+      return { ...prev, transactions: nextTxns };
+    });
+  }
+
   const completeMu = useMutation({
     mutationFn: () =>
       completeReconciliation({
@@ -550,6 +565,18 @@ export default function Reconcile() {
         period_end_date: periodEnd,
       }),
     onSuccess: async () => {
+      const start = setupData?.period_start_date ?? periodStart;
+      const end = setupData?.period_end_date ?? periodEnd;
+      const completedPeriodLabel =
+        start && end ? `${formatDateDisplay(start)} — ${formatDateDisplay(end)}` : "";
+      const unchecked = transactions.filter((t) => !checkedIds.has(t.id));
+      if (unchecked.length > 0) {
+        setRemainingAfterComplete({
+          transactions: unchecked,
+          periodLabel: completedPeriodLabel,
+        });
+      }
+
       setCompleteError(null);
       setCheckedIds(new Set());
       setBankBalanceInput("");
@@ -589,9 +616,11 @@ export default function Reconcile() {
   const showChecklist =
     !!accountId && setupSuccess && setupData != null && periodDatesValid;
   const showPeriodTools = !!accountId && periodDatesValid && !!periodStart && !!periodEnd;
+  const effectivePeriodStart = setupData?.period_start_date ?? periodStart;
+  const effectivePeriodEnd = setupData?.period_end_date ?? periodEnd;
   const periodLabel =
-    periodStart && periodEnd
-      ? `${formatDateDisplay(periodStart)} — ${formatDateDisplay(periodEnd)}`
+    effectivePeriodStart && effectivePeriodEnd
+      ? `${formatDateDisplay(effectivePeriodStart)} — ${formatDateDisplay(effectivePeriodEnd)}`
       : "";
 
   return (
@@ -944,7 +973,7 @@ export default function Reconcile() {
               <div>
                 <p className="text-xs font-medium text-gray-500 mb-1">
                   {isFirstReconciliation ? "Opening balance" : "Period opening balance"} (
-                  {formatDateDisplay(periodStart)})
+                  {formatDateDisplay(effectivePeriodStart)})
                 </p>
                 <p className="text-xl font-semibold tabular-nums">{formatCurrency(periodOpeningBalance)}</p>
                 <p className="text-xs text-gray-500 mt-1">
@@ -983,7 +1012,7 @@ export default function Reconcile() {
       )}
 
       {editingTxn && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-30 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-xl">
             <h2 className="text-lg font-semibold mb-1">Edit transaction</h2>
             <p className="text-xs text-gray-500 mb-4">
@@ -1176,6 +1205,16 @@ export default function Reconcile() {
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}
           onUndoSuccess={refreshReconcileSetupAfterUndo}
+        />
+      )}
+
+      {remainingAfterComplete && (
+        <ReconcileRemainingPanel
+          transactions={remainingAfterComplete.transactions}
+          periodLabel={remainingAfterComplete.periodLabel}
+          onClose={() => setRemainingAfterComplete(null)}
+          onEdit={openEdit}
+          onRemoved={removeRemainingTransactions}
         />
       )}
     </div>

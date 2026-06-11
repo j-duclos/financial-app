@@ -27,6 +27,8 @@ type SectionHeaderProps = {
   expanded: boolean;
   onToggleExpanded: () => void;
   totalCount: number;
+  /** Override default "{totalCount} total — scroll to browse" label. */
+  countLabel?: string;
   tone?: "past" | "entry" | "forecast";
   showExpand?: boolean;
   /** Past: › collapsed / ˅ expanded. Forecast: ˄ collapsed / ˅ expanded. */
@@ -46,6 +48,7 @@ export function LedgerSectionHeader({
   expanded,
   onToggleExpanded,
   totalCount,
+  countLabel,
   tone = "past",
   showExpand = true,
   expandChevron,
@@ -63,9 +66,9 @@ export function LedgerSectionHeader({
     >
       <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <h2 className="text-sm font-bold uppercase tracking-wide shrink-0">{title}</h2>
-        {tone !== "entry" && totalCount > 0 && (
+        {tone !== "entry" && (totalCount > 0 || countLabel) && (
           <span className="text-xs opacity-70 whitespace-nowrap">
-            {totalCount} total — scroll to browse
+            {countLabel ?? `${totalCount} total — scroll to browse`}
           </span>
         )}
         {subtitle && (

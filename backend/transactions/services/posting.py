@@ -64,6 +64,9 @@ def post_transaction(
             tags=tags,
             transaction_type=txn_type,
         )
+    from .matching import try_match_pending_imports_to_manual
+
+    try_match_pending_imports_to_manual(txn)
     return txn
 
 

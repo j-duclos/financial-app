@@ -38,6 +38,27 @@ ORPHAN_REPAIR_MIN_SCORE = 70
 ORPHAN_REPAIR_SCORE_GAP = 10
 RELATIONSHIP_SINGLE_LEG_BOOST = 20
 RELATIONSHIP_BOTH_LEGS_BOOST = 30
+_MERCHANT_TOKEN_STOPWORDS = frozenset(
+    {
+        "debit",
+        "credit",
+        "pos",
+        "payment",
+        "paypal",
+        "ach",
+        "web",
+        "store",
+        "online",
+        "transfer",
+        "purchase",
+        "transaction",
+        "pending",
+        "authorized",
+        "auth",
+        "from",
+        "with",
+    }
+)
 
 
 def normalize_description(text: str) -> str:
@@ -55,6 +76,31 @@ def _plaid_description(txn: Transaction) -> str:
     return normalize_description(
         (txn.imported_description or txn.payee or txn.memo or "").strip()
     )
+
+
+def _merchant_token_overlap_score(imported: Transaction, planned: Transaction) -> int:
+    """
+    Boost when a merchant token from the cleaner import label appears in a long manual payee
+    (e.g. import "Chewy" vs manual "POS DEBIT PAYPAL *CHEWY INC …").
+    """
+    np = normalize_description(planned.payee or "")
+    ni = normalize_description(imported.imported_description or imported.payee or "")
+    if not np or not ni:
+        return 0
+    short, long = (ni, np) if len(ni.split()) <= len(np.split()) else (np, ni)
+    tokens = [
+        w
+        for w in short.split()
+        if len(w) >= 4 and w not in _MERCHANT_TOKEN_STOPWORDS
+    ]
+    if not tokens:
+        return 0
+    hits = sum(1 for token in tokens if token in long)
+    if hits == 0:
+        return 0
+    if len(tokens) == 1:
+        return 20
+    return min(16, hits * 8)
 
 
 def _plaid_imports_likely_same_bank_movement(a: Transaction, b: Transaction) -> bool:
@@ -271,6 +317,11 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
     desc_pts = min(12, int(round(max(ratios) * 10))) if ratios else 0
     score += desc_pts
     parts["description_sim"] = desc_pts
+
+    merchant_pts = _merchant_token_overlap_score(imported, planned)
+    score += merchant_pts
+    if merchant_pts:
+        parts["merchant_token"] = merchant_pts
 
     # Transfer-group coherence: planned leg aligns with scheduled payment/transfer plan.
     if planned.transfer_group_id:
@@ -790,6 +841,79 @@ def _refresh_transfer_group_status(tg: TransferGroup) -> None:
     tg.save(update_fields=["status", "updated_at"])
 
 
+def _best_manual_twin_for_import(imported: Transaction) -> Optional[Transaction]:
+    """Find the hand-entered row that represents the same bank charge as an import (or materialized duplicate)."""
+    if imported.amount is None:
+        return None
+    low = imported.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = imported.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    candidates = (
+        Transaction.objects.filter(
+            account_id=imported.account_id,
+            date__gte=low,
+            date__lte=high,
+            amount=imported.amount,
+            source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME],
+            rule__isnull=True,
+            plaid_transaction_id__isnull=True,
+            scenario__isnull=True,
+        )
+        .exclude(pk=imported.pk)
+        .filter(transfer_out__isnull=True, transfer_in__isnull=True, transfer_group__isnull=True)
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    )
+    best: Optional[Transaction] = None
+    best_score = -1
+    for manual in candidates:
+        sc, _parts = score_candidate(imported, manual)
+        if sc > best_score:
+            best_score = sc
+            best = manual
+    if best is None or best_score < AUTO_MATCH_THRESHOLD:
+        return None
+    return best
+
+
+def collapse_materialized_actual_duplicates(*, account_id: int | None = None) -> int:
+    """
+    Remove ACTUAL rows created by materialize_unmatched_plaid_imports when a hand-entered twin exists.
+
+    Orphan materialized rows duplicate the manual entry (both ACTUAL, both visible). Keep the manual
+    row, merge bank payee/plaid id onto it, delete the materialized clone.
+    """
+    qs = (
+        Transaction.objects.filter(
+            source=Transaction.Source.ACTUAL,
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .filter(scenario__isnull=True)
+    )
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    collapsed = 0
+    for dup in qs.order_by("date", "id"):
+        if not Transaction.objects.filter(pk=dup.pk).exists():
+            continue
+        manual = _best_manual_twin_for_import(dup)
+        if manual is None:
+            continue
+        pid = (dup.plaid_transaction_id or "").strip()
+        dup.plaid_transaction_id = None
+        dup.save(update_fields=["plaid_transaction_id", "updated_at"])
+        update_fields = apply_bank_fields_to_planned_from_import(manual, dup)
+        if pid and not (manual.plaid_transaction_id or "").strip():
+            manual.plaid_transaction_id = pid[:255]
+            update_fields.append("plaid_transaction_id")
+        manual.import_match_status = Transaction.ImportMatchStatus.MATCHED
+        update_fields.extend(["import_match_status", "updated_at"])
+        manual.save(update_fields=list(dict.fromkeys(update_fields)))
+        dup.delete()
+        collapsed += 1
+    return collapsed
+
+
 def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Transaction) -> list[str]:
     """
     After a match, the planned row becomes the ledger line — use bank date/payee so imports
@@ -819,7 +943,13 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
             planned.payee = bank_payee[:255]
             update_fields.append("payee")
     pid = (imported.plaid_transaction_id or "").strip()
-    if pid and not (planned.plaid_transaction_id or "").strip():
+    # Plaid import rows keep the unique plaid_transaction_id; only copy when the import side is
+    # being absorbed (e.g. materialized ACTUAL duplicate deleted after collapse).
+    if (
+        pid
+        and not (planned.plaid_transaction_id or "").strip()
+        and imported.source != Transaction.Source.PLAID
+    ):
         planned.plaid_transaction_id = pid[:255]
         update_fields.append("plaid_transaction_id")
     return update_fields
@@ -893,24 +1023,10 @@ def _planned_row_eligible_as_import_match_candidate(planned: Transaction) -> boo
     return True
 
 
-def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[TransactionMatch]:
-    """
-    Link an existing unmatched Plaid row to a rule transaction when the rule row was created or
-    surfaced after Plaid sync (match_imported_transaction only runs on import).
-
-    Keeps the forecast-side row as canonical and hides the import leg from balances — same as a
-    successful match_imported_transaction.
-    """
-    if planned.source != Transaction.Source.RULE or not planned.rule_id:
-        return None
-    if not _planned_row_eligible_as_import_match_candidate(planned):
-        return None
-    if TransactionMatch.objects.filter(planned_transaction_id=planned.pk).exists():
-        return None
-
+def _unmatched_plaid_imports_for_planned(planned: Transaction) -> QuerySet[Transaction]:
     low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
     high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
-    unmatched_imports = (
+    return (
         Transaction.objects.filter(
             account_id=planned.account_id,
             date__gte=low,
@@ -928,9 +1044,12 @@ def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[Transact
         )
         .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
     )
+
+
+def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction], int]:
     best_imp: Optional[Transaction] = None
     best_score = -1
-    for imp in unmatched_imports.select_related("account"):
+    for imp in _unmatched_plaid_imports_for_planned(planned).select_related("account"):
         if imp.amount is None or planned.amount is None:
             continue
         if abs(imp.amount - planned.amount) > AMOUNT_TOLERANCE:
@@ -939,6 +1058,25 @@ def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[Transact
         if sc > best_score:
             best_score = sc
             best_imp = imp
+    return best_imp, best_score
+
+
+def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[TransactionMatch]:
+    """
+    Link an existing unmatched Plaid row to a rule transaction when the rule row was created or
+    surfaced after Plaid sync (match_imported_transaction only runs on import).
+
+    Keeps the forecast-side row as canonical and hides the import leg from balances — same as a
+    successful match_imported_transaction.
+    """
+    if planned.source != Transaction.Source.RULE or not planned.rule_id:
+        return None
+    if not _planned_row_eligible_as_import_match_candidate(planned):
+        return None
+    if TransactionMatch.objects.filter(planned_transaction_id=planned.pk).exists():
+        return None
+
+    best_imp, best_score = _best_match_for_planned(planned)
     if best_imp is None or best_score < AUTO_MATCH_THRESHOLD:
         return None
 
@@ -950,6 +1088,54 @@ def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[Transact
         score=best_score,
         confidence=TransactionMatch.Confidence.AUTO,
     )
+
+
+def try_match_pending_imports_to_manual(planned: Transaction) -> Optional[TransactionMatch]:
+    """
+    Link a manual ACTUAL row to an existing unmatched Plaid import when the user entered the
+    charge before/after sync without an explicit match (mirror of try_match_rule_to_pending_imports).
+    """
+    if planned.source not in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        return None
+    if planned.rule_id:
+        return None
+    if not _planned_row_eligible_as_import_match_candidate(planned):
+        return None
+    if TransactionMatch.objects.filter(planned_transaction_id=planned.pk).exists():
+        return None
+
+    best_imp, best_score = _best_match_for_planned(planned)
+    if best_imp is None or best_score < AUTO_MATCH_THRESHOLD:
+        return None
+
+    MatchSuggestion.objects.filter(imported_transaction=best_imp).delete()
+    return _create_match_record(
+        planned=planned,
+        imported=best_imp,
+        match_type=TransactionMatch.MatchType.SAME_ACCOUNT,
+        score=best_score,
+        confidence=TransactionMatch.Confidence.AUTO,
+    )
+
+
+def rematch_unmatched_manual_actuals(*, account_id: int | None = None) -> int:
+    """Retry linking manual rows to pending Plaid imports (e.g. after user hand-enters a charge)."""
+    qs = (
+        Transaction.objects.filter(
+            source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME],
+            rule__isnull=True,
+            scenario__isnull=True,
+        )
+        .filter(transfer_out__isnull=True, transfer_in__isnull=True, transfer_group__isnull=True)
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    )
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    matched = 0
+    for planned in qs.order_by("date", "id").iterator(chunk_size=200):
+        if try_match_pending_imports_to_manual(planned):
+            matched += 1
+    return matched
 
 
 def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) -> Optional[TransactionMatch]:
@@ -1197,6 +1383,17 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
     materialized = 0
     for imp in qs:
         if try_mark_resync_import_duplicate(imp) or try_mark_plaid_import_as_duplicate_of_existing_match(imp):
+            continue
+        match_imported_transaction(imp)
+        imp.refresh_from_db()
+        if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
+            continue
+        if _best_manual_twin_for_import(imp) is not None:
+            rematch_unmatched_manual_actuals(account_id=imp.account_id)
+            match_imported_transaction(imp)
+            imp.refresh_from_db()
+            if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
+                continue
             continue
         imp.source = Transaction.Source.ACTUAL
         imp.import_match_status = Transaction.ImportMatchStatus.NONE

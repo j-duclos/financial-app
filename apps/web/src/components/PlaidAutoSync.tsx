@@ -1,52 +1,74 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getPlaidMeta, getProfile, syncAllPlaidItems } from "@budget-app/api-client";
+import { getPlaidMeta, syncAllPlaidItems } from "@budget-app/api-client";
 import { useAuth } from "../context/AuthContext";
 import {
+  canRunPlaidAutoSync,
+  dispatchPlaidAutoSyncEvent,
   invalidateQueriesAfterPlaidSync,
-  markPlaidAutoSyncRan,
-  shouldSkipPlaidAutoSync,
+  markPlaidAutoSyncAttempt,
+  msSinceLastPlaidAutoSync,
+  PLAID_AUTO_SYNC_VISIBILITY_MS,
+  plaidAutoSyncSummary,
 } from "../lib/plaidSyncUtils";
 
 /**
- * Fire-and-forget Plaid import when the app loads (authenticated users with Plaid configured).
- * Does not block rendering; skips if synced within the last ~5 minutes (session + server throttle).
+ * Import from every linked Plaid login when the app opens or the tab becomes visible again.
+ * Uses force=true so server-side "synced 5 minutes ago" throttling cannot skip new bank posts.
  */
 export function usePlaidAutoSync() {
   const { auth } = useAuth();
   const queryClient = useQueryClient();
-  const startedRef = useRef(false);
+  const inFlightRef = useRef(false);
 
-  useEffect(() => {
-    if (auth.loading || !auth.access || startedRef.current) return;
-    startedRef.current = true;
+  const runAutoSync = useCallback(
+    async (reason: "app_open" | "tab_visible") => {
+      if (inFlightRef.current) return;
+      if (!canRunPlaidAutoSync()) return;
 
-    void (async () => {
+      inFlightRef.current = true;
+      markPlaidAutoSyncAttempt();
+
       try {
         const meta = await getPlaidMeta();
         if (!meta.plaid_configured) return;
 
-        const profile = await getProfile();
-        if (shouldSkipPlaidAutoSync(profile.id)) return;
+        const result = await syncAllPlaidItems({ force: true });
+        await invalidateQueriesAfterPlaidSync(queryClient);
 
-        const result = await syncAllPlaidItems({
-          household: profile.default_household ?? undefined,
-          force: false,
-        });
-        markPlaidAutoSyncRan(profile.id);
-
-        const totals = result.totals;
-        const hadActivity =
-          (totals.synced_items ?? 0) > 0 ||
-          (totals.added ?? 0) + (totals.modified ?? 0) + (totals.removed ?? 0) > 0;
-        if (hadActivity) {
-          await invalidateQueriesAfterPlaidSync(queryClient);
+        const summary = plaidAutoSyncSummary(result);
+        dispatchPlaidAutoSyncEvent({ ok: true, summary });
+        if (import.meta.env.DEV && summary) {
+          console.info(`[Plaid auto-sync ${reason}] ${summary}`);
         }
-      } catch {
-        /* background — cold starts and Plaid delays should not surface as errors on load */
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Bank import failed";
+        dispatchPlaidAutoSyncEvent({ ok: false, summary: null, error: message });
+        console.warn(`[Plaid auto-sync ${reason}]`, err);
+      } finally {
+        inFlightRef.current = false;
       }
-    })();
-  }, [auth.access, auth.loading, queryClient]);
+    },
+    [queryClient]
+  );
+
+  useEffect(() => {
+    if (auth.loading || !auth.access) return;
+    void runAutoSync("app_open");
+  }, [auth.access, auth.loading, runAutoSync]);
+
+  useEffect(() => {
+    if (auth.loading || !auth.access) return;
+
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      if (msSinceLastPlaidAutoSync() < PLAID_AUTO_SYNC_VISIBILITY_MS) return;
+      void runAutoSync("tab_visible");
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [auth.access, auth.loading, runAutoSync]);
 }
 
 export function PlaidAutoSync() {

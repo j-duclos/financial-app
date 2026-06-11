@@ -11,6 +11,7 @@ from core.models import Household, HouseholdMembership
 from timeline.models import RecurringRule
 from transactions.models import Transaction, TransactionMatch
 from transactions.services import create_transfer
+from transactions.services.posting import post_transaction
 from transactions.services.matching import (
     ledger_visible_transactions,
     manual_match_transactions,
@@ -20,7 +21,10 @@ from transactions.services.matching import (
     repair_materialized_plaid_resync_duplicates,
     try_mark_plaid_import_as_duplicate_of_existing_match,
     try_mark_resync_import_duplicate,
+    try_match_pending_imports_to_manual,
     try_match_rule_to_pending_imports,
+    rematch_unmatched_manual_actuals,
+    score_candidate,
 )
 
 User = get_user_model()
@@ -66,6 +70,157 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
         self.assertEqual(manual.date, d_bank)
         self.assertEqual(manual.payee, "STARBUCKS STORE 123")
+
+    def test_manual_entered_after_plaid_import_links_and_hides_import(self):
+        d = date(2026, 6, 10)
+        amt = Decimal("-77.65")
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Chewy",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-chewy-jun10",
+            imported_description="CHEWY INC",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        manual = post_transaction(
+            user=self.user,
+            account_id=self.acc.id,
+            date=d,
+            payee="POS DEBIT PAYPAL *CHEWY INC DANIA BEACH FL",
+            amount=amt,
+        )
+        imp.refresh_from_db()
+        manual.refresh_from_db()
+        self.assertEqual(manual.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertIn(manual.pk, visible)
+        self.assertNotIn(imp.pk, visible)
+
+    def test_rematch_unmatched_manual_actuals_links_existing_rows(self):
+        d = date(2026, 6, 10)
+        amt = Decimal("-24.42")
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Fry's Food and Drug",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-frys-jun10",
+            imported_description="FRYS FOOD AND DRUG",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        manual = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="POS DEBIT FRYS-FOOD-DRG #0672 MARICOPA AZ",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        self.assertEqual(rematch_unmatched_manual_actuals(account_id=self.acc.id), 1)
+        imp.refresh_from_db()
+        manual.refresh_from_db()
+        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=imp).exists())
+        self.assertEqual(manual.payee, "Fry's Food and Drug")
+
+    def test_collapse_materialized_actual_duplicate_merges_onto_manual(self):
+        d = date(2026, 6, 10)
+        amt = Decimal("-77.65")
+        manual = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="POS DEBIT PAYPAL *CHEWY INC DANIA BEACH FL",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        materialized = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Chewy",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-chewy-mat",
+            imported_description="CHEWY INC",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+        )
+        from transactions.services.matching import collapse_materialized_actual_duplicates
+
+        self.assertEqual(collapse_materialized_actual_duplicates(account_id=self.acc.id), 1)
+        self.assertFalse(Transaction.objects.filter(pk=materialized.pk).exists())
+        manual.refresh_from_db()
+        self.assertEqual(manual.payee, "Chewy")
+        self.assertEqual(manual.plaid_transaction_id, "pl-chewy-mat")
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertEqual(visible, {manual.pk})
+
+    def test_materialize_skips_when_manual_twin_exists(self):
+        d = date(2026, 6, 10)
+        amt = Decimal("-24.42")
+        manual = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="POS DEBIT FRYS-FOOD-DRG #0672 MARICOPA AZ",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Fry's Food and Drug",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-frys-skip-mat",
+            imported_description="FRYS FOOD AND DRUG",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        imp.refresh_from_db()
+        manual.refresh_from_db()
+        self.assertEqual(imp.source, Transaction.Source.PLAID)
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=imp).exists())
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertEqual(visible, {manual.pk})
+
+    def test_merchant_token_overlap_scores_long_manual_payee(self):
+        d = date(2026, 6, 10)
+        amt = Decimal("-77.65")
+        manual = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="POS DEBIT PAYPAL *CHEWY INC DANIA BEACH FL",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Chewy",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-score-chewy",
+            imported_description="CHEWY INC",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        score, parts = score_candidate(imp, manual)
+        self.assertGreaterEqual(score, 85)
+        self.assertGreater(parts.get("merchant_token", 0), 0)
 
     def test_no_match_wrong_account(self):
         other = Account.objects.create(household=self.h, account_type=Account.AccountType.SAVINGS, name="Sav", currency="USD")

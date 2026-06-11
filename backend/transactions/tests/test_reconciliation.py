@@ -12,9 +12,12 @@ from transactions.services.reconciliation import (
     BALANCE_TOLERANCE,
     app_current_balance,
     balances_within_tolerance,
+    calculated_balance_for_checked,
     calculating_balance,
     complete_reconciliation,
     difference_remaining,
+    filter_superseded_planned_transactions,
+    get_setup_data,
     last_completed_reconciliation,
     last_reconcile_period_end,
     last_reconciled_balance,
@@ -193,6 +196,111 @@ class TestReconciliationCalculations:
         )
         balances = transaction_running_balances(account, txns)
         assert balances[payroll.pk] == Decimal("3072.04")
+
+    def test_calculated_balance_for_checked_uses_running_balance(self, account, user):
+        """After a prior reconcile, opening + raw sum can disagree with running balances."""
+        from transactions.services.reconciliation import (
+            calculated_balance_for_checked,
+            transaction_running_balances,
+            unreconciled_transactions_qs,
+        )
+
+        post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 10),
+            payee="Old",
+            amount=Decimal("-5000.00"),
+        )
+        adj = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 13),
+            payee="Adjust",
+            amount=Decimal("236.52"),
+        )
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("1236.52"),
+            checked_transaction_ids=[adj.pk],
+            period_start=date(2026, 5, 10),
+            period_end=date(2026, 5, 13),
+        )
+        payroll = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 14),
+            payee="Payroll",
+            amount=Decimal("1835.52"),
+        )
+        fee = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 14),
+            payee="Fee",
+            amount=Decimal("-21.21"),
+        )
+        txns = list(
+            unreconciled_transactions_qs(
+                account, start=date(2026, 5, 14), end=date(2026, 5, 14)
+            )
+        )
+        opening = Decimal("1236.52")
+        checked = Transaction.objects.filter(pk__in=[payroll.pk, fee.pk])
+        raw_sum = calculating_balance(opening, checked)
+        assert raw_sum == Decimal("3050.83")
+        assert calculated_balance_for_checked(account, opening, checked) == Decimal("3050.83")
+        running = transaction_running_balances(account, txns)
+        assert running[fee.pk] == Decimal("3050.83")
+
+    def test_complete_reconciliation_after_prior_session_uses_running_balance(self, account, user):
+        post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 10),
+            payee="Old",
+            amount=Decimal("-5000.00"),
+        )
+        adj = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 13),
+            payee="Adjust",
+            amount=Decimal("236.52"),
+        )
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("1236.52"),
+            checked_transaction_ids=[adj.pk],
+            period_start=date(2026, 5, 10),
+            period_end=date(2026, 5, 13),
+        )
+        payroll = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 14),
+            payee="Payroll",
+            amount=Decimal("1835.52"),
+        )
+        fee = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 14),
+            payee="Fee",
+            amount=Decimal("-21.21"),
+        )
+        bank = Decimal("3050.83")
+        rec = complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=bank,
+            checked_transaction_ids=[payroll.pk, fee.pk],
+            period_start=date(2026, 5, 14),
+            period_end=date(2026, 5, 14),
+        )
+        assert rec.final_reconciled_balance == bank
 
     def test_complete_reconciliation_rejects_imbalance(self, account, user):
         t1 = post_transaction(
@@ -543,3 +651,93 @@ def test_reconcile_session_undo_api(auth_client, account, user):
     assert body["transactions_unreconciled_count"] == 1
     t1.refresh_from_db()
     assert t1.reconciled is False
+
+
+def test_reconcile_setup_hides_superseded_planned_when_bank_row_exists(account, user):
+    """Recurring forecast + same-day Plaid deposit should not both appear in reconcile."""
+    d = date(2026, 6, 3)
+    amt = Decimal("1800.00")
+    planned = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Gen's Rent",
+        amount=amt,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+    )
+    bank = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Zelle payment from GENEVIEVE DUCLOS WFCT128CLCFF",
+        amount=amt,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="pl-gens-rent-jun3",
+        imported_description="Zelle payment from GENEVIEVE DUCLOS WFCT128CLCFF",
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    data = get_setup_data(account, start=d, end=d)
+    ids = [t.pk for t in data["unreconciled_transactions"]]
+    assert planned.pk not in ids
+    assert bank.pk in ids
+
+
+def test_reconcile_running_balance_excludes_superseded_planned_duplicate(account, user):
+    """Gen's Rent forecast must not inflate running balances when the Zelle deposit cleared same day."""
+    from transactions.services.reconciliation import transaction_running_balances
+
+    d = date(2026, 6, 3)
+    amt = Decimal("1800.00")
+    opening = Decimal("1499.82")
+    account.starting_balance = opening
+    account.save(update_fields=["starting_balance", "updated_at"])
+    planned = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Gen's Rent",
+        amount=amt,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+    )
+    bank = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Zelle payment from GENEVIEVE DUCLOS WFCT128CLCFF",
+        amount=amt,
+        source=Transaction.Source.ACTUAL,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    data = get_setup_data(account, start=d, end=d)
+    assert planned.pk not in {t.pk for t in data["unreconciled_transactions"]}
+    assert bank.pk in data["running_balances"]
+    assert data["running_balances"][bank.pk] == opening + amt
+    rb = transaction_running_balances(account, data["unreconciled_transactions"], d)
+    assert rb[bank.pk] == opening + amt
+
+
+def test_filter_superseded_planned_transactions(account):
+    d = date(2026, 6, 3)
+    amt = Decimal("1800.00")
+    planned = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Gen's Rent",
+        amount=amt,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+    )
+    bank = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Zelle payment from GENEVIEVE DUCLOS",
+        amount=amt,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="pl-dup-test",
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    filtered = filter_superseded_planned_transactions([planned, bank])
+    assert [t.pk for t in filtered] == [bank.pk]

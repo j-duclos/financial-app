@@ -7,7 +7,7 @@ import { getPlaidRedirectUri } from "../lib/plaidRedirectUri";
 import {
   formatPlaidSyncSummary,
   invalidateQueriesAfterPlaidSync,
-  markPlaidAutoSyncRan,
+  markPlaidAutoSyncAttempt,
 } from "../lib/plaidSyncUtils";
 import {
   ApiError,
@@ -16,7 +16,6 @@ import {
   disconnectPlaidLinkedAccount,
   exchangePlaidPublicToken,
   getPlaidMeta,
-  getProfile,
   listPlaidItems,
   resetPlaidItemSyncCursor,
   syncAllPlaidItems,
@@ -399,12 +398,7 @@ export function PlaidConnectBar({
         setStatusLine("Bank linked. Importing transactions in the background…");
         await queryClient.invalidateQueries({ queryKey: ["accounts"] });
         await queryClient.invalidateQueries({ queryKey: ["plaid-items"] });
-        try {
-          const profile = await getProfile();
-          markPlaidAutoSyncRan(profile.id);
-        } catch {
-          /* ignore */
-        }
+        markPlaidAutoSyncAttempt();
         void runImportAll({ force: true }).catch(() => {
           /* runImportAll sets plaidError */
         });

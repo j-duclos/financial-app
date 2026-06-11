@@ -15,8 +15,14 @@ from accounts.models import Account
 from common.services.cache import invalidate_user_financial_cache
 from timeline.services.ledger import _balance_at_end_of_date, _opening_balance
 
-from ..models import Reconciliation, ReconciliationEntry, Transaction
-from .matching import ledger_visible_transactions
+from ..models import Reconciliation, ReconciliationEntry, Transaction, TransactionMatch
+from .matching import (
+    collapse_materialized_actual_duplicates,
+    ledger_visible_transactions,
+    match_imported_transaction,
+    rematch_unmatched_manual_actuals,
+    try_match_rule_to_pending_imports,
+)
 
 BALANCE_TOLERANCE = Decimal("0.01")
 
@@ -211,6 +217,76 @@ def unreconciled_transactions_qs(
     return ledger_visible_transactions(base).select_related("category").order_by("date", "id")
 
 
+def filter_superseded_planned_transactions(txns: list[Transaction]) -> list[Transaction]:
+    """
+    Drop forecast PLANNED rows when the same day already has a cleared bank posting for the same amount.
+
+    Matches the transactions ledger so reconcile does not list both "Gen's Rent" and the Zelle deposit.
+    """
+    if len(txns) < 2:
+        return txns
+    from timeline.services.ledger import is_superseded_planned_row
+
+    compare_rows = [
+        {
+            "date": t.date,
+            "amount": t.amount,
+            "status": t.status,
+            "rule_id": t.rule_id,
+            "account_id": t.account_id,
+        }
+        for t in txns
+    ]
+    return [
+        txn
+        for txn, row in zip(txns, compare_rows)
+        if not is_superseded_planned_row(row, compare_rows)
+    ]
+
+
+def _heal_unmatched_rule_and_import_links(txns: list[Transaction]) -> None:
+    """Link rule rows to pending Plaid imports (and vice versa) before building reconcile lists."""
+    seen_planned: set[int] = set()
+    seen_imports: set[int] = set()
+    for txn in txns:
+        if txn.source == Transaction.Source.RULE and txn.rule_id and txn.pk not in seen_planned:
+            if not TransactionMatch.objects.filter(planned_transaction_id=txn.pk).exists():
+                try_match_rule_to_pending_imports(txn)
+            seen_planned.add(txn.pk)
+        elif (
+            txn.source == Transaction.Source.PLAID
+            and txn.pk not in seen_imports
+            and txn.import_match_status
+            in (
+                Transaction.ImportMatchStatus.UNMATCHED,
+                Transaction.ImportMatchStatus.SUGGESTED,
+            )
+            and not TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists()
+        ):
+            match_imported_transaction(txn)
+            seen_imports.add(txn.pk)
+
+
+def _load_reconcile_period_transactions(
+    account: Account,
+    as_of: date,
+    *,
+    period_start: date,
+    period_end: date,
+) -> list[Transaction]:
+    """Unreconciled rows for a reconcile period, with import healing and superseded PLANNED removed."""
+    collapse_materialized_actual_duplicates(account_id=account.pk)
+    rematch_unmatched_manual_actuals(account_id=account.pk)
+    txns = list(
+        unreconciled_transactions_qs(account, as_of, start=period_start, end=period_end)
+    )
+    _heal_unmatched_rule_and_import_links(txns)
+    txns = list(
+        unreconciled_transactions_qs(account, as_of, start=period_start, end=period_end)
+    )
+    return filter_superseded_planned_transactions(txns)
+
+
 def transaction_running_balances(
     account: Account,
     txns: list[Transaction],
@@ -238,7 +314,8 @@ def transaction_running_balances(
         running = period_opening_balance(account, walk_from)
 
     result: dict[int, Decimal] = {}
-    for txn in unreconciled_transactions_qs(account, as_of).filter(date__gte=walk_from):
+    walk_txns = list(unreconciled_transactions_qs(account, as_of).filter(date__gte=walk_from))
+    for txn in filter_superseded_planned_transactions(walk_txns):
         running += txn.amount
         if txn.pk in unreconciled_ids:
             result[txn.pk] = _normalize_credit_balance(account, running)
@@ -252,6 +329,28 @@ def sum_checked_amounts(checked: QuerySet[Transaction]) -> Decimal:
 
 def calculating_balance(last_balance: Decimal, checked: QuerySet[Transaction]) -> Decimal:
     return last_balance + sum_checked_amounts(checked)
+
+
+def calculated_balance_for_checked(
+    account: Account,
+    opening_bal: Decimal,
+    checked_qs: QuerySet[Transaction],
+    as_of: Optional[date] = None,
+) -> Decimal:
+    """
+    Balance after the checked rows, aligned with reconcile running-balance column.
+
+    Uses cumulative running balances (same walk as the UI) rather than opening + raw sum,
+    which can disagree when the period opening anchor differs from the running-balance anchor.
+    """
+    checked_list = list(checked_qs.order_by("date", "id"))
+    if not checked_list:
+        return opening_bal
+    running = transaction_running_balances(account, checked_list, as_of)
+    last = checked_list[-1]
+    if last.pk in running:
+        return running[last.pk]
+    return calculating_balance(opening_bal, checked_qs)
 
 
 def difference_remaining(bank_balance: Decimal, calc_balance: Decimal) -> Decimal:
@@ -281,10 +380,8 @@ def get_setup_data(
         opening_bal = period_opening_balance(account, period_start)
 
     app_bal_period_end = app_current_balance(account, period_end)
-    txns = list(
-        unreconciled_transactions_qs(
-            account, as_of, start=period_start, end=period_end
-        )
+    txns = _load_reconcile_period_transactions(
+        account, as_of, period_start=period_start, period_end=period_end
     )
     running = transaction_running_balances(account, txns, as_of)
     starting = (
@@ -334,18 +431,21 @@ def complete_reconciliation(
         opening_bal = period_opening_balance(account, period_start)
     app_bal = app_current_balance(account, period_end)
 
-    allowed_ids = set(
-        unreconciled_transactions_qs(
-            account, as_of, start=period_start, end=period_end
-        ).values_list("pk", flat=True)
-    )
+    allowed_ids = {
+        t.pk
+        for t in _load_reconcile_period_transactions(
+            account, as_of, period_start=period_start, period_end=period_end
+        )
+    }
     checked_ids = list(dict.fromkeys(checked_transaction_ids))
     invalid = [pk for pk in checked_ids if pk not in allowed_ids]
     if invalid:
         raise ValueError(f"Invalid or already reconciled transaction ids: {invalid}")
 
     checked_qs = Transaction.objects.filter(pk__in=checked_ids, account=account)
-    final_bal = calculating_balance(opening_bal, checked_qs)
+    final_bal = calculated_balance_for_checked(
+        account, opening_bal, checked_qs, period_end
+    )
     diff_remaining = difference_remaining(bank_current_balance, final_bal)
     if not balances_within_tolerance(diff_remaining):
         raise ValueError(

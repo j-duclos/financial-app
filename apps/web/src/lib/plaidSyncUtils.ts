@@ -1,30 +1,24 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { PlaidSyncAllResult } from "@budget-app/api-client";
 
-const SESSION_KEY_PREFIX = "budget-app.plaid.auto-sync.at";
-/** Match backend PLAID_SYNC_MIN_INTERVAL_SECONDS default (5 minutes). */
-export const PLAID_AUTO_SYNC_MIN_MS = 5 * 60 * 1000;
+/** Minimum gap between automatic background sync attempts (avoids Plaid hammering on refresh spam). */
+export const PLAID_AUTO_SYNC_DEBOUNCE_MS = 45_000;
 
-export function plaidAutoSyncSessionKey(userId: number): string {
-  return `${SESSION_KEY_PREFIX}:${userId}`;
+/** When returning to the tab, sync again if last attempt was longer ago than this. */
+export const PLAID_AUTO_SYNC_VISIBILITY_MS = 10 * 60 * 1000;
+
+let lastAutoSyncAttemptAt = 0;
+
+export function canRunPlaidAutoSync(now = Date.now()): boolean {
+  return now - lastAutoSyncAttemptAt >= PLAID_AUTO_SYNC_DEBOUNCE_MS;
 }
 
-export function shouldSkipPlaidAutoSync(userId: number, now = Date.now()): boolean {
-  try {
-    const raw = sessionStorage.getItem(plaidAutoSyncSessionKey(userId));
-    if (!raw) return false;
-    const last = Number(raw);
-    return Number.isFinite(last) && now - last < PLAID_AUTO_SYNC_MIN_MS;
-  } catch {
-    return false;
-  }
+export function markPlaidAutoSyncAttempt(now = Date.now()): void {
+  lastAutoSyncAttemptAt = now;
 }
 
-export function markPlaidAutoSyncRan(userId: number, now = Date.now()): void {
-  try {
-    sessionStorage.setItem(plaidAutoSyncSessionKey(userId), String(now));
-  } catch {
-    /* ignore */
-  }
+export function msSinceLastPlaidAutoSync(now = Date.now()): number {
+  return now - lastAutoSyncAttemptAt;
 }
 
 export async function invalidateQueriesAfterPlaidSync(queryClient: QueryClient): Promise<void> {
@@ -37,12 +31,22 @@ export async function invalidateQueriesAfterPlaidSync(queryClient: QueryClient):
   ]);
 }
 
+export function plaidAutoSyncSummary(result: PlaidSyncAllResult): string | null {
+  const totals = result.totals;
+  if ((totals.failed_items ?? 0) > 0 && (totals.synced_items ?? 0) === 0) {
+    return "Bank import failed — use Sync now on Accounts.";
+  }
+  return formatPlaidSyncSummary(totals);
+}
+
 export function formatPlaidSyncSummary(totals: {
   added?: number;
   modified?: number;
   removed?: number;
   merged?: number;
   skipped_sync_disabled_accounts?: number;
+  skipped_items?: number;
+  synced_items?: number;
   reason?: string;
 }): string | null {
   if (totals.reason === "sync_disabled") {
@@ -58,4 +62,15 @@ export function formatPlaidSyncSummary(totals: {
       : null,
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : null;
+}
+
+export const PLAID_AUTO_SYNC_EVENT = "budget-app:plaid-auto-sync";
+
+export function dispatchPlaidAutoSyncEvent(detail: {
+  ok: boolean;
+  summary: string | null;
+  error?: string;
+}): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(PLAID_AUTO_SYNC_EVENT, { detail }));
 }

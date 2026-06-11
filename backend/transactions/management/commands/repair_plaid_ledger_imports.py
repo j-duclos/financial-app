@@ -16,8 +16,10 @@ from accounts.models import Account
 from common.services.cache import invalidate_financial_cache_for_household
 from core.timeline_cache import bump_timeline_cache_for_household
 from transactions.services.matching import (
+    collapse_materialized_actual_duplicates,
     materialize_unmatched_plaid_imports,
     release_excess_duplicate_plaid_imports,
+    rematch_unmatched_manual_actuals,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
@@ -79,6 +81,8 @@ class Command(BaseCommand):
 
         released = 0
         materialized = 0
+        manual_linked = 0
+        collapsed = 0
         invalid_matches = 0
         resync_dupes = 0
         orphan_resync = 0
@@ -87,17 +91,22 @@ class Command(BaseCommand):
             n_orphan = repair_orphan_absorbed_resync_matches(account_id=aid)
             n_resync = repair_materialized_plaid_resync_duplicates(account_id=aid)
             n_released = release_excess_duplicate_plaid_imports(account_id=aid)
+            n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
+            n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)
             invalid_matches += n_invalid
             orphan_resync += n_orphan
             resync_dupes += n_resync
             released += n_released
+            collapsed += n_collapsed
+            manual_linked += n_manual
             materialized += n_materialized
             acct = Account.objects.filter(pk=aid).first()
             label = f"{acct.name} #{aid}" if acct else f"account #{aid}"
             self.stdout.write(
                 f"  {label}: invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
-                f"released={n_released} materialized={n_materialized}"
+                f"released={n_released} collapsed={n_collapsed} manual_linked={n_manual} "
+                f"materialized={n_materialized}"
             )
 
         for hid in {h for h in household_ids if h is not None}:
@@ -108,6 +117,8 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"Done — removed {invalid_matches} invalid match(es), fixed {orphan_resync} orphan re-sync "
                 f"match(es), dropped {resync_dupes} re-sync "
-                f"duplicate(s), restored {released} DUPLICATE row(s), materialized {materialized} orphan import(s)."
+                f"duplicate(s), restored {released} DUPLICATE row(s), collapsed {collapsed} materialized "
+                f"duplicate(s), linked {manual_linked} manual row(s) to "
+                f"imports, materialized {materialized} orphan import(s)."
             )
         )

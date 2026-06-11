@@ -27,6 +27,13 @@ import PastSection from "../components/transactions/PastSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow from "../components/transactions/InlineAddRow";
 import MaintenanceMenu from "../components/transactions/MaintenanceMenu";
+import TransactionsFilterBar from "../components/transactions/TransactionsFilterBar";
+import {
+  filterLedgerPastRows,
+  hasActiveLedgerRowFilters,
+  parseAmountFilterInput,
+} from "../components/transactions/ledgerRowFilters";
+import type { TransactionKind } from "../components/transactions/transactionKindUtils";
 import {
   todayStr,
   formatDateDisplay,
@@ -53,12 +60,17 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
-import { refreshAfterTransactionEdit, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
+import { patchTimelineCachesForTransaction, refreshAfterTransactionEdit, scheduleTimelineRefresh, type TimelinePatchScope } from "../lib/financialQueryRefresh";
 import {
   loadStoredTransactionsAccountId,
   loadStoredTransactionsTimeFilter,
   saveStoredTransactionsAccountId,
   saveStoredTransactionsTimeFilter,
+  loadStoredTransactionsKindFilter,
+  saveStoredTransactionsKindFilter,
+  loadStoredTransactionsAmountMin,
+  loadStoredTransactionsAmountMax,
+  saveStoredTransactionsAmountRange,
 } from "../lib/transactionsPageState";
 
 export type { TimeFilter };
@@ -80,6 +92,9 @@ export default function Transactions() {
   const isPlaidOAuthReturn = searchParams.has("oauth_state_id") || navState?.focusPlaid === true;
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
+  const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
+  const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
+  const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
   const hasAppliedBillPrefill = useRef(false);
 
@@ -117,6 +132,8 @@ export default function Transactions() {
   });
   const debouncedInlineDate = useDebouncedValue(inlineRow.date, 450);
   const debouncedEditDate = useDebouncedValue(editForm.date, 450);
+  const debouncedAmountMinInput = useDebouncedValue(amountMinInput, 350);
+  const debouncedAmountMaxInput = useDebouncedValue(amountMaxInput, 350);
   const queryClient = useQueryClient();
 
   const { start: timelineStart, end: timelineEnd } = useMemo(
@@ -222,6 +239,14 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsTimeFilter(timeFilter);
   }, [timeFilter]);
+
+  useEffect(() => {
+    saveStoredTransactionsKindFilter(kindFilter);
+  }, [kindFilter]);
+
+  useEffect(() => {
+    saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
+  }, [amountMinInput, amountMaxInput]);
 
   useEffect(() => {
     if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {
@@ -617,6 +642,17 @@ export default function Transactions() {
 
   const plaidHouseholdId = householdId ?? profile?.default_household ?? null;
 
+  const timelinePatchScope = useMemo((): TimelinePatchScope | null => {
+    if (typeof accountId !== "number") return null;
+    return {
+      timelineStart,
+      timelineEnd,
+      accountId,
+      today: todayStr(),
+      householdId,
+    };
+  }, [timelineStart, timelineEnd, accountId, householdId]);
+
   const accountsForHousehold = useMemo(() => {
     if (householdId == null) return [];
     return accounts.filter((a) => {
@@ -717,6 +753,22 @@ export default function Transactions() {
 
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
+
+  const pastRowFilters = useMemo(
+    () => ({
+      kind: kindFilter,
+      amountMin: parseAmountFilterInput(debouncedAmountMinInput),
+      amountMax: parseAmountFilterInput(debouncedAmountMaxInput),
+    }),
+    [kindFilter, debouncedAmountMinInput, debouncedAmountMaxInput]
+  );
+
+  const filteredPastRows = useMemo(
+    () => filterLedgerPastRows(ledgerSections.past, pastRowFilters),
+    [ledgerSections.past, pastRowFilters]
+  );
+
+  const pastFiltersActive = hasActiveLedgerRowFilters(pastRowFilters);
   const firstNegativeForecastBalance = useMemo(() => {
     const firstNegative = ledgerSections.future.find(
       (row): row is Extract<(typeof ledgerSections.future)[number], { type: "recurring" }> =>
@@ -748,7 +800,7 @@ export default function Transactions() {
   const createMu = useMutation({
     mutationFn: createTransaction,
     onSuccess: () => {
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
       resetInlineRow();
     },
   });
@@ -756,9 +808,9 @@ export default function Transactions() {
   const createTransferMu = useMutation({
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
     onSuccess: (_data, variables) => {
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
-      void queryClient.invalidateQueries({ queryKey: ["account", variables.from_account] });
-      void queryClient.invalidateQueries({ queryKey: ["account", variables.to_account] });
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      void queryClient.refetchQueries({ queryKey: ["account", variables.from_account], type: "active" });
+      void queryClient.refetchQueries({ queryKey: ["account", variables.to_account], type: "active" });
       resetInlineRow();
     },
   });
@@ -786,6 +838,15 @@ export default function Transactions() {
       setEditing(null);
       setEditingRuleId(null);
       setApplyToRule(false);
+
+      if (timelinePatchScope) {
+        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
+          transactionId: id,
+          date: data.date,
+          payee: data.payee,
+          amount: data.amount,
+        });
+      }
 
       await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
@@ -831,34 +892,26 @@ export default function Transactions() {
       const txnId = variables.id;
       const newAccountId = variables.data.account_id;
       const syncedToAccountId = (updatedTxn as { synced_to_account_id?: number }).synced_to_account_id;
-      const t = todayStr();
-      const timelineKey = ["timeline", timelineStart, timelineEnd, accountId, t];
-      queryClient.setQueryData(timelineKey, (old: { timeline?: { transaction_id: number | null; amount?: string; date?: string; description?: string }[] } | undefined) => {
-        if (!old?.timeline) return old;
-        return {
-          ...old,
-          timeline: old.timeline.map((r) =>
-            r.transaction_id === txnId
-              ? {
-                  ...r,
-                  ...(updatedTxn.date != null && { date: updatedTxn.date }),
-                  ...(updatedTxn.payee != null && { description: updatedTxn.payee }),
-                  ...(updatedTxn.amount != null && { amount: String(updatedTxn.amount) }),
-                }
-              : r
-          ),
-        };
-      });
-      const accountIdsToRefresh = new Set<number>();
-      if (typeof accountId === "number") accountIdsToRefresh.add(accountId);
-      if (newAccountId != null) accountIdsToRefresh.add(newAccountId);
-      if (syncedToAccountId != null) accountIdsToRefresh.add(syncedToAccountId);
+      if (timelinePatchScope) {
+        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
+          transactionId: txnId,
+          date: updatedTxn.date,
+          payee: updatedTxn.payee,
+          amount: updatedTxn.amount != null ? String(updatedTxn.amount) : undefined,
+        });
+      }
       const affectsBalances =
         variables.data.amount != null ||
         variables.data.date != null ||
         variables.data.account_id != null;
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: affectsBalances });
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, {
+        refreshAccounts: affectsBalances,
+        skipTransactionsInvalidate: affectsBalances,
+      });
       if (newAccountId != null) setAccountId(newAccountId);
+      if (syncedToAccountId != null) {
+        void queryClient.refetchQueries({ queryKey: ["account", syncedToAccountId], type: "active" });
+      }
     },
   });
 
@@ -866,7 +919,7 @@ export default function Transactions() {
     mutationFn: deleteTransaction,
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
     },
     onError: (err: Error) => {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
@@ -882,9 +935,9 @@ export default function Transactions() {
           ? "No orphaned automation rows found (future dated, from automation source, no link)."
           : `Removed ${data.deleted} orphaned row(s). Refresh if counts look off.`
       );
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
-      if (householdId != null) {
-        scheduleTimelineRefresh(queryClient);
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      if (householdId != null && timelinePatchScope) {
+        scheduleTimelineRefresh(queryClient, timelinePatchScope);
       }
     },
     onError: (err: Error) => {
@@ -1210,6 +1263,20 @@ export default function Transactions() {
               ))}
             </select>
           </div>
+          <TransactionsFilterBar
+            kindFilter={kindFilter}
+            onKindFilterChange={setKindFilter}
+            amountMin={amountMinInput}
+            amountMax={amountMaxInput}
+            onAmountMinChange={setAmountMinInput}
+            onAmountMaxChange={setAmountMaxInput}
+            showClear={pastFiltersActive}
+            onClear={() => {
+              setKindFilter("");
+              setAmountMinInput("");
+              setAmountMaxInput("");
+            }}
+          />
         </div>
       </div>
 
@@ -1246,7 +1313,8 @@ export default function Transactions() {
           ) : null}
           <PastSection
             start={ledgerSections.start}
-            past={ledgerSections.past}
+            past={filteredPastRows}
+            totalUnfilteredCount={pastFiltersActive ? ledgerSections.past.length : undefined}
             currency={currency}
             isCredit={isCredit}
             expanded={pastExpanded}

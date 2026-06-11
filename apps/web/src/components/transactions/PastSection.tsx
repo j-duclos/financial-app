@@ -17,6 +17,8 @@ const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
 type Props = {
   start: LedgerRow | null;
   past: LedgerRow[];
+  /** Unfiltered past row count (for "X of Y" when filters are active). */
+  totalUnfilteredCount?: number;
   currency: string;
   isCredit: boolean;
   /** Full-height scroll panel */
@@ -36,6 +38,7 @@ type Props = {
 export default function PastSection({
   start,
   past,
+  totalUnfilteredCount,
   currency,
   isCredit,
   expanded,
@@ -54,6 +57,12 @@ export default function PastSection({
   const creditClass = (bal: number) => creditBalanceColorClass(isCredit, bal);
 
   const showBody = !minimized;
+  const countLabel =
+    totalUnfilteredCount != null && totalUnfilteredCount !== past.length
+      ? `${past.length} of ${totalUnfilteredCount} shown — scroll to browse`
+      : past.length > 0
+        ? `${past.length} total — scroll to browse`
+        : undefined;
 
   useEffect(() => {
     if (!showBody) return;
@@ -109,6 +118,7 @@ export default function PastSection({
         expanded={showBody && expanded}
         onToggleExpanded={onToggleExpanded}
         totalCount={past.length}
+        countLabel={countLabel}
         tone="past"
         expandChevron="past"
       />
@@ -136,7 +146,11 @@ export default function PastSection({
             )}
 
             {past.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-gray-500 text-center">No past transactions in this range.</p>
+              <p className="px-4 py-6 text-sm text-gray-500 text-center">
+                {totalUnfilteredCount != null && totalUnfilteredCount > 0
+                  ? "No transactions match the current filters."
+                  : "No past transactions in this range."}
+              </p>
             ) : (
               past.map((row) => {
                 if (row.type === "transaction_from_timeline") {

@@ -33,10 +33,12 @@ from transactions.models import Transaction, TransactionMatch
 from transactions.services.matching import (
     bank_movement_already_on_ledger,
     match_imported_transaction,
+    collapse_materialized_actual_duplicates,
     materialize_unmatched_plaid_imports,
     normalize_description,
     reconcile_orphan_matched_plaid_imports,
     release_excess_duplicate_plaid_imports,
+    rematch_unmatched_manual_actuals,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
@@ -697,7 +699,11 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             repair_orphan_absorbed_resync_matches(account_id=aid)
             repair_materialized_plaid_resync_duplicates(account_id=aid)
             release_excess_duplicate_plaid_imports(account_id=aid)
+            collapsed = collapse_materialized_actual_duplicates(account_id=aid)
+            rematch_unmatched_manual_actuals(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            totals.setdefault("collapsed", 0)
+            totals["collapsed"] += collapsed
             totals.setdefault("materialized", 0)
             totals["materialized"] += materialized
     except Exception:
