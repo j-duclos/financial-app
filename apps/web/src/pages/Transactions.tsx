@@ -25,7 +25,7 @@ import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
-import InlineAddRow from "../components/transactions/InlineAddRow";
+import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
 import MaintenanceMenu from "../components/transactions/MaintenanceMenu";
 import TransactionsFilterBar from "../components/transactions/TransactionsFilterBar";
 import {
@@ -100,6 +100,7 @@ export default function Transactions() {
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
   const hasAppliedBillPrefill = useRef(false);
+  const inlineAddInFlight = useRef(false);
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
 
@@ -786,14 +787,14 @@ export default function Transactions() {
   }, [ledgerSections.future]);
 
   const resetInlineRow = () => {
-    setInlineRow((prev) => ({
-      ...prev,
+    setInlineRow({
+      date: todayStr(),
       payee: "",
       category_id: "",
       transfer_to_account_id: "",
       amount: "",
       direction: "OUTFLOW",
-    }));
+    });
   };
 
   const transactionsQueryKey = useMemo(
@@ -809,7 +810,7 @@ export default function Transactions() {
     mutationFn: createTransaction,
     onSuccess: () => {
       refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
-      resetInlineRow();
+      void queryClient.invalidateQueries({ queryKey: ["timeline"], type: "active" });
     },
   });
 
@@ -817,9 +818,9 @@ export default function Transactions() {
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
     onSuccess: (_data, variables) => {
       refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      void queryClient.invalidateQueries({ queryKey: ["timeline"], type: "active" });
       void queryClient.refetchQueries({ queryKey: ["account", variables.from_account], type: "active" });
       void queryClient.refetchQueries({ queryKey: ["account", variables.to_account], type: "active" });
-      resetInlineRow();
     },
   });
 
@@ -1067,30 +1068,69 @@ export default function Transactions() {
 
   function handleInlineAdd(e?: React.FormEvent) {
     e?.preventDefault();
-    const signedAmt = parseFloat(inlineRow.amount);
-    if (!accountId || !inlineRow.amount.trim() || signedAmt === 0 || Number.isNaN(signedAmt)) return;
+    if (
+      inlineAddInFlight.current ||
+      createMu.isPending ||
+      createTransferMu.isPending
+    ) {
+      return;
+    }
 
-    if (isTransferCategory && inlineRow.transfer_to_account_id) {
+    const formSnapshot: InlineAddForm = { ...inlineRow };
+    const signedAmt = parseFloat(formSnapshot.amount);
+    if (
+      !accountId ||
+      !formSnapshot.amount.trim() ||
+      signedAmt === 0 ||
+      Number.isNaN(signedAmt)
+    ) {
+      return;
+    }
+    if (isTransferCategory && !formSnapshot.transfer_to_account_id) {
+      return;
+    }
+
+    inlineAddInFlight.current = true;
+    setDeleteError(null);
+    resetInlineRow();
+
+    const restoreInlineForm = () => setInlineRow(formSnapshot);
+    const onAddError = (err: Error) => {
+      restoreInlineForm();
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to add transaction");
+    };
+    const onAddSettled = () => {
+      inlineAddInFlight.current = false;
+    };
+
+    if (isTransferCategory && formSnapshot.transfer_to_account_id) {
       const absAmt = Math.abs(signedAmt);
       const isOutflow = signedAmt < 0;
-      createTransferMu.mutate({
-        from_account: (isOutflow ? accountId : inlineRow.transfer_to_account_id) as number,
-        to_account: (isOutflow ? inlineRow.transfer_to_account_id : accountId) as number,
-        amount: String(absAmt),
-        date: inlineRow.date,
-        payee: inlineRow.payee.trim(),
-        from_category_id: inlineRow.category_id ? inlineRow.category_id : undefined,
-      });
+      createTransferMu.mutate(
+        {
+          from_account: (isOutflow ? accountId : formSnapshot.transfer_to_account_id) as number,
+          to_account: (isOutflow ? formSnapshot.transfer_to_account_id : accountId) as number,
+          amount: String(absAmt),
+          date: formSnapshot.date,
+          payee: formSnapshot.payee.trim(),
+          from_category_id: formSnapshot.category_id ? formSnapshot.category_id : undefined,
+        },
+        { onError: onAddError, onSettled: onAddSettled }
+      );
     } else {
-      createMu.mutate({
-        account_id: accountId,
-        date: inlineRow.date,
-        payee: inlineRow.payee || "—",
-        amount: String(signedAmt),
-        category_id: inlineRow.category_id || null,
-        memo: "",
-        ...(navState?.fromBillChecklist ? { is_bill: true } : {}),
-      });
+      createMu.mutate(
+        {
+          account_id: accountId,
+          date: formSnapshot.date,
+          payee: formSnapshot.payee || "—",
+          amount: String(signedAmt),
+          category_id: formSnapshot.category_id || null,
+          memo: "",
+          ...(navState?.fromBillChecklist ? { is_bill: true } : {}),
+        },
+        { onError: onAddError, onSettled: onAddSettled }
+      );
     }
   }
 

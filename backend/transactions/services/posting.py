@@ -5,6 +5,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
+
+
+def _coerce_transaction_date(value) -> date:
+    """API payloads send ISO date strings; matching logic needs ``date`` objects."""
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value[:10])
+    raise ValueError("date must be YYYY-MM-DD")
 from django.db.models import Count, Q
 from django.utils import timezone
 
@@ -42,6 +51,7 @@ def post_transaction(
         raise ValueError("Account not found")
     if not _user_can_access_household(user, account.household):
         raise ValueError("Not allowed to post to this account")
+    date = _coerce_transaction_date(date)
     amount = Decimal(str(amount))
     if amount == 0:
         raise ValueError("Amount cannot be zero")

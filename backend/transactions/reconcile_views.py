@@ -87,6 +87,7 @@ class ReconcileSetupView(APIView):
         return Response(
             {
                 "account_id": account.pk,
+                "all_reconciled_through_today": data.get("all_reconciled_through_today", False),
                 "last_reconciled_balance": str(data["last_reconciled_balance"]),
                 "period_opening_balance": str(data["period_opening_balance"]),
                 "app_current_balance": str(data["app_current_balance"]),

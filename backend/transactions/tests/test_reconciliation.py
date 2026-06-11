@@ -321,6 +321,65 @@ class TestReconciliationCalculations:
             )
 
 
+def test_reconcile_setup_all_reconciled_through_today(auth_client, account, user):
+    today = date.today()
+    txn = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=today,
+        payee="Coffee",
+        amount=Decimal("-4.50"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("995.50"),
+        checked_transaction_ids=[txn.pk],
+        period_start=today,
+        period_end=today,
+    )
+    r = auth_client.get("/api/reconcile/setup/", {"account_id": account.pk})
+    assert r.status_code == 200, r.data
+    data = r.json()
+    assert data["all_reconciled_through_today"] is True
+    assert data["unreconciled_transactions"] == []
+    assert data["last_reconcile_period_end"] == today.isoformat()
+
+
+def test_reconcile_setup_after_same_day_imports_post_reconcile(auth_client, account, user):
+    """New unreconciled rows on the last reconciled day must not 400 the setup endpoint."""
+    today = date.today()
+    txn = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=today,
+        payee="Coffee",
+        amount=Decimal("-4.50"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("995.50"),
+        checked_transaction_ids=[txn.pk],
+        period_start=today,
+        period_end=today,
+    )
+    post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=today,
+        payee="Snack",
+        amount=Decimal("-2.00"),
+    )
+    r = auth_client.get("/api/reconcile/setup/", {"account_id": account.pk})
+    assert r.status_code == 200, r.data
+    data = r.json()
+    assert data["all_reconciled_through_today"] is False
+    assert data["min_start_date"] == today.isoformat()
+    assert data["period_start_date"] == today.isoformat()
+    assert len(data["unreconciled_transactions"]) >= 1
+
+
 def test_reconcile_setup_api_returns_date_range_fields(auth_client, account):
     r = auth_client.get("/api/reconcile/setup/", {"account_id": account.pk})
     assert r.status_code == 200, r.data

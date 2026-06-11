@@ -103,6 +103,30 @@ class TestPlaidMatching(TestCase):
         self.assertIn(manual.pk, visible)
         self.assertNotIn(imp.pk, visible)
 
+    def test_post_transaction_accepts_iso_date_string_with_pending_plaid(self):
+        """Regression: JSON date strings must not break auto-match after create."""
+        d = date(2026, 6, 11)
+        amt = Decimal("-12.34")
+        Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Store",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-str-jun11",
+            imported_description="STORE",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        manual = post_transaction(
+            user=self.user,
+            account_id=self.acc.id,
+            date="2026-06-11",
+            payee="Store purchase",
+            amount=amt,
+        )
+        self.assertIsNotNone(manual.pk)
+        self.assertEqual(manual.date, d)
+
     def test_rematch_unmatched_manual_actuals_links_existing_rows(self):
         d = date(2026, 6, 10)
         amt = Decimal("-24.42")

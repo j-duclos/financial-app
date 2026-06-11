@@ -104,11 +104,38 @@ def _reconcile_floor_date(account: Account, as_of: Optional[date] = None) -> dat
     """
     First calendar date that may appear in reconcile lists.
     Day after the last completed period end, or the first unreconciled row on first reconcile.
+
+    When Plaid or manual rows land on the last reconciled day (e.g. reconciled through today,
+    then sync adds same-day charges), floor stays on that day instead of jumping to tomorrow.
     """
     as_of = _as_of_date(as_of)
     prev_end = last_reconcile_period_end(account)
     if prev_end is not None:
-        return prev_end + timedelta(days=1)
+        same_day_unreconciled = ledger_visible_transactions(
+            Transaction.objects.filter(
+                account=account,
+                reconciled=False,
+                date=prev_end,
+                date__lte=as_of,
+            )
+        ).exists()
+        if same_day_unreconciled:
+            return prev_end
+        next_after_prev = prev_end + timedelta(days=1)
+        first_after = (
+            ledger_visible_transactions(
+                Transaction.objects.filter(
+                    account=account,
+                    reconciled=False,
+                    date__gt=prev_end,
+                    date__lte=as_of,
+                )
+            )
+            .order_by("date", "id")
+            .values_list("date", flat=True)
+            .first()
+        )
+        return first_after if first_after else next_after_prev
     first = (
         ledger_visible_transactions(
             Transaction.objects.filter(
@@ -140,6 +167,21 @@ def last_reconcile_period_end(account: Account) -> date | None:
         .aggregate(Max("date"))
         .get("date__max")
     )
+
+
+def is_all_reconciled_through_today(account: Account, as_of: Optional[date] = None) -> bool:
+    """True when the latest reconcile session covers through today and no ledger rows remain unreconciled."""
+    as_of = _as_of_date(as_of)
+    prev_end = last_reconcile_period_end(account)
+    if prev_end is None or prev_end < as_of:
+        return False
+    return not ledger_visible_transactions(
+        Transaction.objects.filter(
+            account=account,
+            reconciled=False,
+            date__lte=as_of,
+        )
+    ).exists()
 
 
 def resolve_period_dates(
@@ -369,11 +411,36 @@ def get_setup_data(
     end: Optional[date] = None,
 ) -> dict[str, Any]:
     as_of = _as_of_date(as_of)
+    prev = last_completed_reconciliation(account)
+    last_period_end = last_reconcile_period_end(account)
+    starting = (
+        str(_normalize_credit_balance(account, Decimal(str(account.starting_balance))))
+        if account.starting_balance is not None
+        else None
+    )
+
+    if is_all_reconciled_through_today(account, as_of):
+        opening_bal = prev.bank_current_balance if prev is not None else period_opening_balance(account, as_of)
+        return {
+            "all_reconciled_through_today": True,
+            "last_reconciled_balance": opening_bal,
+            "period_opening_balance": opening_bal,
+            "app_current_balance": app_current_balance(account, as_of),
+            "unreconciled_transactions": [],
+            "running_balances": {},
+            "is_first_reconciliation": prev is None,
+            "account_starting_balance": starting,
+            "min_start_date": as_of,
+            "period_start_date": as_of,
+            "period_end_date": as_of,
+            "last_reconcile_period_end": last_period_end,
+            "max_end_date": as_of,
+            "latest_session_id": prev.pk if prev else None,
+        }
+
     floor = _reconcile_floor_date(account, as_of)
     period_start, period_end = resolve_period_dates(account, start, end, as_of, strict=False)
 
-    prev = last_completed_reconciliation(account)
-    last_period_end = last_reconcile_period_end(account)
     if prev is not None:
         opening_bal = prev.bank_current_balance
     else:
@@ -384,12 +451,8 @@ def get_setup_data(
         account, as_of, period_start=period_start, period_end=period_end
     )
     running = transaction_running_balances(account, txns, as_of)
-    starting = (
-        str(_normalize_credit_balance(account, Decimal(str(account.starting_balance))))
-        if account.starting_balance is not None
-        else None
-    )
     return {
+        "all_reconciled_through_today": False,
         "last_reconciled_balance": opening_bal,
         "period_opening_balance": opening_bal,
         "app_current_balance": app_bal_period_end,

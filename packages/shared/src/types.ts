@@ -1676,6 +1676,8 @@ export interface ReconcileTransactionRow {
 
 export interface ReconcileSetupResponse {
   account_id: number;
+  /** Account is reconciled through today with no remaining unreconciled ledger rows. */
+  all_reconciled_through_today?: boolean;
   last_reconciled_balance: string;
   period_opening_balance: string;
   app_current_balance: string;

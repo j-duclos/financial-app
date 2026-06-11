@@ -22,6 +22,7 @@ import ReconcileVarianceLine, {
   reconcileVarianceHint,
 } from "../components/reconcile/ReconcileVarianceLine";
 import ReconcileHistoryModal from "../components/reconcile/ReconcileHistoryModal";
+import ReconcileAllCaughtUpCard from "../components/reconcile/ReconcileAllCaughtUpCard";
 import ReconcileRemainingPanel from "../components/reconcile/ReconcileRemainingPanel";
 import { reconcileBalanceAfterChecks } from "../lib/reconcileCheckedBalance";
 import { reconcileVarianceDisplay } from "../lib/reconcileVarianceDisplay";
@@ -114,10 +115,18 @@ export default function Reconcile() {
 
   useEffect(() => {
     if (!metaData || accountId === "" || hasSetInitialPeriod.current) return;
+    if (metaData.all_reconciled_through_today) {
+      hasSetInitialPeriod.current = true;
+      return;
+    }
     setPeriodStart(metaData.min_start_date);
     setPeriodEnd(metaData.max_end_date);
     hasSetInitialPeriod.current = true;
-  }, [metaData?.min_start_date, metaData?.max_end_date, accountId]);
+  }, [metaData?.min_start_date, metaData?.max_end_date, metaData?.all_reconciled_through_today, accountId]);
+
+  const allReconciledThroughToday = metaData?.all_reconciled_through_today === true;
+  const caughtUpThroughDate =
+    metaData?.last_reconcile_period_end ?? metaData?.max_end_date ?? todayIso();
 
   const minStartDate = metaData?.min_start_date ?? null;
   const maxEndDate = metaData?.max_end_date ?? todayIso();
@@ -140,7 +149,7 @@ export default function Reconcile() {
         start: periodStart,
         end: periodEnd,
       }),
-    enabled: !!accountId && periodDatesValid,
+    enabled: !!accountId && periodDatesValid && !allReconciledThroughToday,
     staleTime: 0,
     gcTime: 0,
   });
@@ -320,9 +329,6 @@ export default function Reconcile() {
     onSuccess: async (txn) => {
       await onAddSuccess(txn.id);
     },
-    onError: (err: unknown) => {
-      setAddError(err instanceof ApiError ? err.message : (err as Error).message);
-    },
   });
 
   const addTransferMu = useMutation({
@@ -332,13 +338,11 @@ export default function Reconcile() {
         variables.from_account === accountId ? data.from_transaction.id : data.to_transaction.id;
       await onAddSuccess(bankLegId);
     },
-    onError: (err: unknown) => {
-      setAddError(err instanceof ApiError ? err.message : (err as Error).message);
-    },
   });
 
   function submitAddTransaction(e: React.FormEvent) {
     e.preventDefault();
+    if (addMu.isPending || addTransferMu.isPending) return;
     setAddError(null);
     if (!accountId || !periodStart || !periodEnd) return;
     const date = addDate || periodEnd;
@@ -364,28 +368,51 @@ export default function Reconcile() {
       return;
     }
 
-    if (addIsTransferCategory && addTransferToAccountId) {
+    const payee = addPayee.trim();
+    const categoryId = addCategoryId;
+    const transferTo = addTransferToAccountId;
+    resetAddForm();
+
+    const restoreAddForm = () => {
+      setAddPayee(payee);
+      setAddAmount(String(signedAmt));
+      setAddCategoryId(categoryId);
+      setAddTransferToAccountId(transferTo);
+      setAddDate(date);
+    };
+    const onAddError = (err: unknown) => {
+      restoreAddForm();
+      setAddError(err instanceof ApiError ? err.message : (err as Error).message);
+    };
+
+    if (addIsTransferCategory && transferTo) {
       const absAmt = Math.abs(signedAmt);
       const isOutflow = signedAmt < 0;
-      addTransferMu.mutate({
-        from_account: (isOutflow ? accountId : addTransferToAccountId) as number,
-        to_account: (isOutflow ? addTransferToAccountId : accountId) as number,
-        amount: String(absAmt),
-        date,
-        payee: addPayee.trim(),
-        from_category_id: addCategoryId === "" ? undefined : addCategoryId,
-      });
+      addTransferMu.mutate(
+        {
+          from_account: (isOutflow ? accountId : transferTo) as number,
+          to_account: (isOutflow ? transferTo : accountId) as number,
+          amount: String(absAmt),
+          date,
+          payee,
+          from_category_id: categoryId === "" ? undefined : categoryId,
+        },
+        { onError: onAddError }
+      );
       return;
     }
 
-    addMu.mutate({
-      account_id: accountId as number,
-      date,
-      payee: addPayee.trim(),
-      amount: String(signedAmt),
-      category_id: addCategoryId === "" ? null : addCategoryId,
-      cleared: true,
-    });
+    addMu.mutate(
+      {
+        account_id: accountId as number,
+        date,
+        payee,
+        amount: String(signedAmt),
+        category_id: categoryId === "" ? null : categoryId,
+        cleared: true,
+      },
+      { onError: onAddError }
+    );
   }
 
   const updateMu = useMutation({
@@ -614,7 +641,7 @@ export default function Reconcile() {
   }
 
   const showChecklist =
-    !!accountId && setupSuccess && setupData != null && periodDatesValid;
+    !!accountId && setupSuccess && setupData != null && periodDatesValid && !allReconciledThroughToday;
   const showPeriodTools = !!accountId && periodDatesValid && !!periodStart && !!periodEnd;
   const effectivePeriodStart = setupData?.period_start_date ?? periodStart;
   const effectivePeriodEnd = setupData?.period_end_date ?? periodEnd;
@@ -730,7 +757,7 @@ export default function Reconcile() {
           <p className="text-sm text-red-600">{(setupError as Error).message}</p>
         )}
 
-        {accountId && setupData && periodStart && periodEnd && setupSuccess && (
+        {accountId && setupData && periodStart && periodEnd && setupSuccess && !allReconciledThroughToday && (
           <div className="grid sm:grid-cols-3 gap-4 mt-2">
             <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3">
               <p className="text-xs font-medium text-gray-500 mb-1">
@@ -753,6 +780,10 @@ export default function Reconcile() {
           </div>
         )}
       </div>
+
+      {accountId !== "" && !metaLoading && allReconciledThroughToday && (
+        <ReconcileAllCaughtUpCard throughDate={caughtUpThroughDate} />
+      )}
 
       {showChecklist && (
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden mb-6">
