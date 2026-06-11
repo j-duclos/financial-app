@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import date
 from typing import Any, Optional
 
 from django.conf import settings
 from django.core.cache import cache
+
+logger = logging.getLogger(__name__)
 
 
 def timeline_cache_enabled() -> bool:
@@ -23,9 +26,13 @@ def bump_timeline_cache_for_household(household_id: int | None) -> None:
         return
     key = _household_version_key(household_id)
     try:
-        cache.incr(key)
-    except ValueError:
-        cache.set(key, 1, timeout=None)
+        try:
+            cache.incr(key)
+        except ValueError:
+            cache.set(key, 1, timeout=None)
+    except Exception:
+        # Never fail Plaid sync / writes because Redis is down or misconfigured.
+        logger.exception("bump_timeline_cache_for_household failed for household_id=%s", household_id)
 
 
 def timeline_response_cache_key(

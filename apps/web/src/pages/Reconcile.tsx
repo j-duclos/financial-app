@@ -23,6 +23,7 @@ import ReconcileVarianceLine, {
 } from "../components/reconcile/ReconcileVarianceLine";
 import ReconcileHistoryModal from "../components/reconcile/ReconcileHistoryModal";
 import { reconcileVarianceDisplay } from "../lib/reconcileVarianceDisplay";
+import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
@@ -233,15 +234,15 @@ export default function Reconcile() {
       editDestinationAccount != null &&
       String(editDestinationAccount.account_type ?? "").toUpperCase() === "CREDIT");
 
-  async function invalidateReconcileQueries() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] }),
-      queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] }),
-      queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] }),
-      queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      queryClient.invalidateQueries({ queryKey: ["timeline"] }),
-      queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-    ]);
+  function invalidateReconcileQueries(opts?: { immediateSetup?: boolean }) {
+    if (opts?.immediateSetup !== false) {
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] });
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] });
+    }
+    void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    scheduleTimelineRefresh(queryClient);
+    scheduleAccountsRefresh(queryClient);
   }
 
   async function refreshReconcileSetupAfterUndo() {
@@ -249,7 +250,10 @@ export default function Reconcile() {
     setCheckedIds(new Set());
     setBankBalanceInput("");
     setCompleteError(null);
-    await invalidateReconcileQueries();
+    flushFinancialRefresh(queryClient);
+    void queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] });
+    void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
+    void queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] });
     const meta = await queryClient.fetchQuery({
       queryKey: ["reconcile-meta", accountId],
       queryFn: () => getReconcileSetup(accountId as number),
@@ -303,7 +307,7 @@ export default function Reconcile() {
   async function onAddSuccess(txnId: number) {
     setAddError(null);
     resetAddForm();
-    await invalidateReconcileQueries();
+    invalidateReconcileQueries();
     setCheckedIds((prev) => new Set(prev).add(txnId));
   }
 
@@ -398,7 +402,7 @@ export default function Reconcile() {
       setEditError(null);
       setEditingTxn(null);
       setEditingFullTxn(null);
-      await invalidateReconcileQueries();
+      invalidateReconcileQueries();
     },
     onError: (err: unknown) => {
       setEditError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -416,7 +420,7 @@ export default function Reconcile() {
         next.delete(deletedId);
         return next;
       });
-      await invalidateReconcileQueries();
+      invalidateReconcileQueries();
     },
     onError: (err: unknown) => {
       setEditError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -549,13 +553,10 @@ export default function Reconcile() {
       setCompleteError(null);
       setCheckedIds(new Set());
       setBankBalanceInput("");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] }),
-        queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] }),
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-        queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-        queryClient.invalidateQueries({ queryKey: ["timeline"] }),
-      ]);
+      flushFinancialRefresh(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] });
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
+      void queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] });
       const meta = await queryClient.fetchQuery({
         queryKey: ["reconcile-meta", accountId],
         queryFn: () => getReconcileSetup(accountId as number),

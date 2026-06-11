@@ -53,6 +53,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
+import { refreshAfterTransactionEdit, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import {
   loadStoredTransactionsAccountId,
   loadStoredTransactionsTimeFilter,
@@ -735,29 +736,29 @@ export default function Transactions() {
     }));
   };
 
+  const transactionsQueryKey = useMemo(
+    () =>
+      [
+        "transactions",
+        { account: accountId || undefined, date_after: timelineStart, date_before: timelineEnd },
+      ] as const,
+    [accountId, timelineStart, timelineEnd]
+  );
+
   const createMu = useMutation({
     mutationFn: createTransaction,
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-        queryClient.invalidateQueries({ queryKey: ["account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["timeline"] }),
-      ]);
+    onSuccess: () => {
+      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
       resetInlineRow();
     },
   });
 
   const createTransferMu = useMutation({
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
-    onSuccess: async (_data, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-        queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-        queryClient.invalidateQueries({ queryKey: ["account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["account", variables.from_account] }),
-        queryClient.invalidateQueries({ queryKey: ["account", variables.to_account] }),
-        queryClient.invalidateQueries({ queryKey: ["timeline"] }),
-      ]);
+    onSuccess: (_data, variables) => {
+      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      void queryClient.invalidateQueries({ queryKey: ["account", variables.from_account] });
+      void queryClient.invalidateQueries({ queryKey: ["account", variables.to_account] });
       resetInlineRow();
     },
   });
@@ -779,16 +780,43 @@ export default function Transactions() {
         rule_id?: number | null;
       };
     }) => updateTransaction(id, data),
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: ["timeline"] });
+    onMutate: async ({ id, data }) => {
       setDeleteError(null);
       const snapshot = { editing, editForm, editingRuleId, applyToRule };
       setEditing(null);
       setEditingRuleId(null);
       setApplyToRule(false);
-      return snapshot;
+
+      await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
+      const previousTxns = queryClient.getQueryData(transactionsQueryKey);
+      queryClient.setQueryData(
+        transactionsQueryKey,
+        (old: { results?: Transaction[] } | undefined) => {
+          if (!old?.results) return old;
+          return {
+            ...old,
+            results: old.results.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    ...(data.date != null && { date: data.date }),
+                    ...(data.payee != null && { payee: data.payee }),
+                    ...(data.amount != null && { amount: data.amount }),
+                    ...(data.category_id !== undefined && { category_id: data.category_id }),
+                    ...(data.memo != null && { memo: data.memo }),
+                    ...(data.account_id != null && { account_id: data.account_id }),
+                  }
+                : t
+            ),
+          };
+        }
+      );
+      return { ...snapshot, previousTxns, transactionsQueryKey };
     },
     onError: (err: Error, _vars, context) => {
+      if (context?.previousTxns != null && context?.transactionsQueryKey) {
+        queryClient.setQueryData(context.transactionsQueryKey, context.previousTxns);
+      }
       if (context?.editing) {
         setEditing(context.editing);
         setEditForm(context.editForm);
@@ -825,16 +853,11 @@ export default function Transactions() {
       if (typeof accountId === "number") accountIdsToRefresh.add(accountId);
       if (newAccountId != null) accountIdsToRefresh.add(newAccountId);
       if (syncedToAccountId != null) accountIdsToRefresh.add(syncedToAccountId);
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      for (const aid of accountIdsToRefresh) {
-        void queryClient.invalidateQueries({ queryKey: ["account", aid] });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-      if (householdId != null) {
-        void queryClient.invalidateQueries({
-          queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, t],
-        });
-      }
+      const affectsBalances =
+        variables.data.amount != null ||
+        variables.data.date != null ||
+        variables.data.account_id != null;
+      refreshAfterTransactionEdit(queryClient, { refreshAccounts: affectsBalances });
       if (newAccountId != null) setAccountId(newAccountId);
     },
   });
@@ -843,17 +866,7 @@ export default function Transactions() {
     mutationFn: deleteTransaction,
     onSuccess: () => {
       setDeleteError(null);
-      const t = todayStr();
-      if (typeof accountId !== "number") return;
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["account", accountId] });
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-      if (householdId != null) {
-        void queryClient.invalidateQueries({
-          queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, t],
-        });
-      }
+      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
     },
     onError: (err: Error) => {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
@@ -869,13 +882,9 @@ export default function Transactions() {
           ? "No orphaned automation rows found (future dated, from automation source, no link)."
           : `Removed ${data.deleted} orphaned row(s). Refresh if counts look off.`
       );
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-        queryClient.invalidateQueries({ queryKey: ["timeline"] }),
-        queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-      ]);
+      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
       if (householdId != null) {
-        queryClient.invalidateQueries({ queryKey: ["timeline", "household"] });
+        scheduleTimelineRefresh(queryClient);
       }
     },
     onError: (err: Error) => {
@@ -1221,10 +1230,10 @@ export default function Transactions() {
         <div className="flex-1 min-h-0 flex flex-col bg-white rounded-lg shadow overflow-hidden">
           {timelineFetching && transactions.length > 0 ? (
             <p
-              className="shrink-0 text-sm text-amber-900 bg-amber-50 border-b border-amber-200 px-4 py-2"
+              className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5"
               role="status"
             >
-              Loading timeline and forecast… showing posted transactions until that finishes.
+              Updating forecast in the background…
             </p>
           ) : null}
           {timelineError && !timelineFetching && transactions.length > 0 ? (

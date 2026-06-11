@@ -51,15 +51,44 @@ def normalize_description(text: str) -> str:
     return s
 
 
+def _plaid_description(txn: Transaction) -> str:
+    return normalize_description(
+        (txn.imported_description or txn.payee or txn.memo or "").strip()
+    )
+
+
+def _plaid_imports_likely_same_bank_movement(a: Transaction, b: Transaction) -> bool:
+    """
+    Same amount and date window alone is not enough to call two imports duplicates.
+    Zelle $25 and a $25 card payment on the same day are separate bank posts.
+    """
+    if a.amount is None or b.amount is None:
+        return False
+    if abs(a.amount - b.amount) > AMOUNT_TOLERANCE:
+        return False
+    pa = _plaid_description(a)
+    pb = _plaid_description(b)
+    if not pa or not pb:
+        return False
+    if pa == pb:
+        return True
+    return SequenceMatcher(None, pa, pb).ratio() >= 0.72
+
+
 def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transaction]:
     """
     Transactions that affect running balance / timeline totals.
 
     Excludes: (1) Plaid rows linked as the import side of a TransactionMatch;
     (2) Plaid rows explicitly marked ignored or duplicate.
+
+    Only ``source=PLAID`` import legs are hidden — a materialized or manual ACTUAL row must
+    never disappear because it was wrongly linked as ``imported_transaction``.
     """
-    excluded_import_pks = TransactionMatch.objects.values("imported_transaction_id")
-    return qs.exclude(pk__in=Subquery(excluded_import_pks)).exclude(
+    matched_plaid_import_pks = TransactionMatch.objects.filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).values("imported_transaction_id")
+    return qs.exclude(pk__in=Subquery(matched_plaid_import_pks)).exclude(
         source=Transaction.Source.PLAID,
         import_match_status__in=[
             Transaction.ImportMatchStatus.IGNORED,
@@ -74,9 +103,11 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
 
     Mirrors :func:`ledger_visible_transactions` exclusion rules.
     """
-    matched_imports = TransactionMatch.objects.values("imported_transaction_id")
+    matched_plaid_imports = TransactionMatch.objects.filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).values("imported_transaction_id")
     return (
-        ~Q(**{f"{prefix}__pk__in": Subquery(matched_imports)})
+        ~Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)})
         & ~(
             Q(**{f"{prefix}__source": Transaction.Source.PLAID})
             & Q(
@@ -463,11 +494,19 @@ def find_candidate_matches(
     candidates = _planned_candidate_base_qs(imported).select_related(
         "account", "transfer_group", "transfer_group__to_account", "transfer_group__from_account"
     )
+    confirmed = _find_confirmed_ledger_match_for_import(imported)
     out: list[tuple[Transaction, int, dict[str, Any]]] = []
     for planned in candidates:
         if planned.amount is None or imported.amount is None:
             continue
         if abs(planned.amount - imported.amount) > AMOUNT_TOLERANCE:
+            continue
+        if (
+            confirmed is not None
+            and planned.transfer_group_id is None
+            and not planned.reconciled
+            and _plaid_imports_likely_same_bank_movement(imported, planned)
+        ):
             continue
         sc, parts = score_candidate(imported, planned)
         if sc <= 0:
@@ -490,12 +529,104 @@ def _unmatched_planned_same_amount_count(imported: Transaction) -> int:
     return count
 
 
+def _unmatched_distinct_charge_slots(imported: Transaction) -> int:
+    """
+    Unmatched planned rows that should still receive their own import (e.g. four $20 donations).
+
+    Excludes orphan ACTUAL rows with the same payee as the import when a transfer / reconciled row
+    already represents this bank charge — those orphans are re-sync ghosts, not open slots.
+    """
+    if imported.amount is None:
+        return 0
+    count = 0
+    for planned in _planned_candidate_base_qs(imported):
+        if planned.amount is None:
+            continue
+        if abs(planned.amount - imported.amount) > AMOUNT_TOLERANCE:
+            continue
+        if (
+            planned.transfer_group_id is None
+            and not planned.reconciled
+            and _plaid_imports_likely_same_bank_movement(imported, planned)
+            and _find_confirmed_ledger_match_for_import(imported) is not None
+        ):
+            continue
+        count += 1
+    return count
+
+
+def _find_confirmed_ledger_match_for_import(
+    imported: Transaction,
+    *,
+    exclude_match_id: int | None = None,
+) -> TransactionMatch | None:
+    """
+    Return an existing match that already represents this bank charge (transfer leg, reconciled row,
+    or prior Plaid import with the same payee/amount).
+    """
+    if imported.amount is None:
+        return None
+    low = imported.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = imported.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    qs = (
+        TransactionMatch.objects.filter(
+            planned_transaction__account_id=imported.account_id,
+            planned_transaction__date__gte=low,
+            planned_transaction__date__lte=high,
+            planned_transaction__amount=imported.amount,
+        )
+        .select_related("planned_transaction", "imported_transaction")
+        .order_by("-planned_transaction__reconciled", "-planned_transaction__transfer_group_id")
+    )
+    if exclude_match_id is not None:
+        qs = qs.exclude(pk=exclude_match_id)
+    for match in qs:
+        planned = match.planned_transaction
+        peer = match.imported_transaction
+        if peer.source != Transaction.Source.PLAID:
+            continue
+        if peer.pk == imported.pk:
+            continue
+        if not _plaid_imports_likely_same_bank_movement(imported, peer):
+            if not _plaid_imports_likely_same_bank_movement(imported, planned):
+                continue
+        if _planned_match_allows_import_dedup(planned) or planned.reconciled:
+            return match
+    return None
+
+
+def bank_movement_already_on_ledger(
+    *,
+    account_id: int,
+    txn_date: date,
+    amount: Decimal,
+    payee: str = "",
+    imported_description: str = "",
+) -> bool:
+    """True when this charge is already represented by a matched transfer / reconciled row."""
+    probe = Transaction(
+        account_id=account_id,
+        date=txn_date,
+        amount=amount,
+        payee=payee,
+        imported_description=imported_description,
+        source=Transaction.Source.PLAID,
+    )
+    return _find_confirmed_ledger_match_for_import(probe) is not None
+
+
 def _planned_match_allows_import_dedup(planned: Transaction) -> bool:
     """
-    When a planned row is already matched, only auto-hide extra Plaid rows for patterns that
-    should have a single bank post (transfers / rule materializations). Repeated ACTUAL entries
-    with the same amount (e.g. four identical donations) must not suppress extra imports.
+    When a planned row is already matched, hide a later Plaid row with the same payee/amount when:
+
+    - the planned row is **reconciled** (bank-confirmed; a second Plaid id is a re-sync duplicate), or
+    - the match is a transfer / rule row (single bank post expected).
+
+    Unreconciled manual rows with the same amount still accept additional imports (e.g. four $20
+    donations on one day) until the user reconciles.
     """
+    if planned.reconciled:
+        return True
     if planned.transfer_group_id:
         return True
     if planned.source == Transaction.Source.RULE and planned.rule_id:
@@ -551,7 +682,9 @@ def mark_redundant_plaid_imports_after_match(anchor_import: Transaction) -> int:
             continue
         if abs(sibling.amount - anchor_import.amount) > AMOUNT_TOLERANCE:
             continue
-        if _unmatched_planned_same_amount_count(sibling) > 0:
+        if not _plaid_imports_likely_same_bank_movement(anchor_import, sibling):
+            continue
+        if _unmatched_distinct_charge_slots(sibling) > 0:
             continue
         mark_import_duplicate(sibling)
         marked += 1
@@ -590,9 +723,34 @@ def try_mark_plaid_import_as_duplicate_of_existing_match(imported: Transaction) 
         return False
     if abs(imported.amount - matched_peer.planned_transaction.amount) > AMOUNT_TOLERANCE:
         return False
-    if _unmatched_planned_same_amount_count(imported) > 0:
-        return False
     if not _planned_match_allows_import_dedup(matched_peer.planned_transaction):
+        return False
+    peer_import = matched_peer.imported_transaction
+    if not _plaid_imports_likely_same_bank_movement(imported, peer_import):
+        return False
+    if _unmatched_distinct_charge_slots(imported) > 0:
+        return False
+    mark_import_duplicate(imported)
+    return True
+
+
+def try_mark_resync_import_duplicate(imported: Transaction) -> bool:
+    """
+    Re-sync duplicate detection — runs before candidate matching so orphan ACTUAL rows cannot
+    steal a second import when the real transfer / reconciled row is already matched.
+    """
+    if imported.source != Transaction.Source.PLAID:
+        return False
+    if not (imported.plaid_transaction_id or "").strip():
+        return False
+    if TransactionMatch.objects.filter(imported_transaction_id=imported.pk).exists():
+        return False
+    if imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+        return True
+    prior = _find_confirmed_ledger_match_for_import(imported)
+    if prior is None:
+        return False
+    if _unmatched_distinct_charge_slots(imported) > 0:
         return False
     mark_import_duplicate(imported)
     return True
@@ -660,6 +818,10 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
         if bank_payee and planned.payee != bank_payee[:255]:
             planned.payee = bank_payee[:255]
             update_fields.append("payee")
+    pid = (imported.plaid_transaction_id or "").strip()
+    if pid and not (planned.plaid_transaction_id or "").strip():
+        planned.plaid_transaction_id = pid[:255]
+        update_fields.append("plaid_transaction_id")
     return update_fields
 
 
@@ -672,6 +834,10 @@ def _create_match_record(
     confidence: str,
 ) -> TransactionMatch:
     """Persist match and update row metadata (planned stays canonical for ledger)."""
+    if imported.source != Transaction.Source.PLAID:
+        raise ValueError("Import side of a match must be a Plaid row.")
+    if planned.source == Transaction.Source.PLAID:
+        raise ValueError("Planned side of a match cannot be a Plaid row.")
     with db_transaction.atomic():
         tm = TransactionMatch.objects.create(
             planned_transaction=planned,
@@ -803,7 +969,10 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
             mark_redundant_plaid_imports_after_match(imported)
         return existing
 
-    if not dry_run and try_mark_plaid_import_as_duplicate_of_existing_match(imported):
+    if not dry_run and (
+        try_mark_resync_import_duplicate(imported)
+        or try_mark_plaid_import_as_duplicate_of_existing_match(imported)
+    ):
         return None
 
     MatchSuggestion.objects.filter(imported_transaction=imported).delete()
@@ -811,7 +980,10 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
     ranked = find_candidate_matches(imported, allow_orphan_repair=not dry_run)
     if not ranked:
         if not dry_run:
-            if not try_mark_plaid_import_as_duplicate_of_existing_match(imported):
+            if not (
+                try_mark_resync_import_duplicate(imported)
+                or try_mark_plaid_import_as_duplicate_of_existing_match(imported)
+            ):
                 imported.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
                 imported.save(update_fields=["import_match_status", "updated_at"])
         return None
@@ -966,9 +1138,12 @@ def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> 
                 planned_transaction__date__gte=low,
                 planned_transaction__date__lte=high,
                 planned_transaction__amount=dup.amount,
-            ).select_related("planned_transaction")
+            ).select_related("planned_transaction", "imported_transaction")
         )
-        if any(_planned_match_allows_import_dedup(m.planned_transaction) for m in matches):
+        if any(
+            _plaid_imports_likely_same_bank_movement(dup, m.imported_transaction)
+            for m in matches
+        ):
             continue
         distinct_ids = (
             Transaction.objects.filter(
@@ -1021,6 +1196,8 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
     qs = qs.exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
     materialized = 0
     for imp in qs:
+        if try_mark_resync_import_duplicate(imp) or try_mark_plaid_import_as_duplicate_of_existing_match(imp):
+            continue
         imp.source = Transaction.Source.ACTUAL
         imp.import_match_status = Transaction.ImportMatchStatus.NONE
         imp.cleared = True
@@ -1036,3 +1213,108 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         )
         materialized += 1
     return materialized
+
+
+def repair_invalid_transaction_matches(*, account_id: int | None = None) -> int:
+    """
+    Remove TransactionMatch rows whose import leg is not ``source=PLAID`` (bad data from
+    materialize / re-sync) and reset row metadata so ACTUAL lines reappear in the ledger.
+    """
+    qs = TransactionMatch.objects.exclude(
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).select_related("planned_transaction", "imported_transaction")
+    if account_id is not None:
+        qs = qs.filter(planned_transaction__account_id=account_id)
+    removed = 0
+    touched: set[int] = set()
+    for match in qs:
+        touched.add(match.planned_transaction_id)
+        touched.add(match.imported_transaction_id)
+        match.delete()
+        removed += 1
+    for pk in touched:
+        txn = Transaction.objects.filter(pk=pk).first()
+        if txn is None:
+            continue
+        if TransactionMatch.objects.filter(planned_transaction_id=pk).exists():
+            txn.import_match_status = Transaction.ImportMatchStatus.MATCHED
+        elif TransactionMatch.objects.filter(imported_transaction_id=pk).exists():
+            txn.import_match_status = Transaction.ImportMatchStatus.MATCHED
+        elif txn.source == Transaction.Source.PLAID:
+            txn.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+        else:
+            txn.import_match_status = Transaction.ImportMatchStatus.NONE
+        txn.save(update_fields=["import_match_status", "updated_at"])
+    return removed
+
+
+def repair_orphan_absorbed_resync_matches(*, account_id: int | None = None) -> int:
+    """
+    Undo bad matches where a re-sync import latched onto an orphan ACTUAL row while the real
+    transfer / reconciled row was already matched to a prior import.
+    """
+    qs = TransactionMatch.objects.filter(
+        planned_transaction__transfer_group__isnull=True,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).select_related("planned_transaction", "imported_transaction")
+    if account_id is not None:
+        qs = qs.filter(planned_transaction__account_id=account_id)
+    fixed = 0
+    for match in list(qs):
+        imported = match.imported_transaction
+        planned = match.planned_transaction
+        if planned.reconciled:
+            continue
+        prior = _find_confirmed_ledger_match_for_import(imported, exclude_match_id=match.pk)
+        if prior is None:
+            continue
+        if not _plaid_imports_likely_same_bank_movement(imported, planned):
+            continue
+        match.delete()
+        imported.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+        imported.save(update_fields=["import_match_status", "updated_at"])
+        if (
+            planned.source == Transaction.Source.ACTUAL
+            and planned.transfer_group_id is None
+            and not planned.reconciled
+            and not TransactionMatch.objects.filter(planned_transaction_id=planned.pk).exists()
+            and not TransactionMatch.objects.filter(imported_transaction_id=planned.pk).exists()
+        ):
+            planned.delete()
+        fixed += 1
+    return fixed
+
+
+def repair_materialized_plaid_resync_duplicates(*, account_id: int | None = None) -> int:
+    """
+    Drop ACTUAL rows created from a re-sync Plaid id when the same charge is already matched to a
+    reconciled (or transfer/rule) planned row with the same payee and amount.
+    """
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.ACTUAL,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    qs = qs.exclude(reconciled=True)
+    qs = qs.exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    removed = 0
+    for txn in list(qs):
+        low = txn.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+        high = txn.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+        peers = TransactionMatch.objects.filter(
+            planned_transaction__account_id=txn.account_id,
+            planned_transaction__date__gte=low,
+            planned_transaction__date__lte=high,
+            planned_transaction__amount=txn.amount,
+        ).select_related("planned_transaction", "imported_transaction")
+        for peer in peers:
+            if not _planned_match_allows_import_dedup(peer.planned_transaction):
+                continue
+            if not _plaid_imports_likely_same_bank_movement(txn, peer.imported_transaction):
+                continue
+            if not _plaid_imports_likely_same_bank_movement(txn, peer.planned_transaction):
+                continue
+            txn.delete()
+            removed += 1
+            break
+    return removed

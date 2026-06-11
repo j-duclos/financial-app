@@ -210,7 +210,20 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 from common.services.redis_config import resolve_redis_url
 
 _REDIS_URL = resolve_redis_url()
+_REDIS_BACKEND_AVAILABLE = False
 if _REDIS_URL:
+    try:
+        import django_redis  # noqa: F401
+
+        _REDIS_BACKEND_AVAILABLE = True
+    except ImportError:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "REDIS_URL is set but django-redis is not installed; using in-memory cache."
+        )
+
+if _REDIS_URL and _REDIS_BACKEND_AVAILABLE:
     CACHES = {
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",

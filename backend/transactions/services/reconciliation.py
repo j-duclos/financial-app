@@ -216,30 +216,32 @@ def transaction_running_balances(
     txns: list[Transaction],
     as_of: Optional[date] = None,
 ) -> dict[int, Decimal]:
-    """Cumulative ledger balance after each unreconciled row (matches transaction register)."""
+    """
+    Cumulative **statement** balance after each unreconciled row in the reconcile list.
+
+    Anchors to the last completed reconciliation's bank balance (or ledger opening on first
+    reconcile), not ``account.starting_balance`` alone — otherwise running balances diverge from
+    the period opening shown in the UI after any prior reconcile.
+    """
     if not txns:
         return {}
     as_of = _as_of_date(as_of)
     unreconciled_ids = {t.pk for t in txns}
 
-    start = Decimal("0")
-    if account.starting_balance is not None:
-        start = Decimal(str(account.starting_balance))
-    if account.account_type == Account.AccountType.CREDIT and start > 0:
-        start = -start
+    prev = last_completed_reconciliation(account)
+    if prev is not None:
+        running = Decimal(str(prev.bank_current_balance))
+        prev_end = last_reconcile_period_end(account)
+        walk_from = (prev_end + timedelta(days=1)) if prev_end is not None else _reconcile_floor_date(account, as_of)
+    else:
+        walk_from = _reconcile_floor_date(account, as_of)
+        running = period_opening_balance(account, walk_from)
 
     result: dict[int, Decimal] = {}
-    running = start
-    ledger_qs = ledger_visible_transactions(
-        Transaction.objects.filter(account=account, date__lte=as_of)
-    ).order_by("date", "id")
-    for txn in ledger_qs:
+    for txn in unreconciled_transactions_qs(account, as_of).filter(date__gte=walk_from):
         running += txn.amount
         if txn.pk in unreconciled_ids:
-            balance = running
-            if account.account_type == Account.AccountType.CREDIT and balance > 0:
-                balance = -balance
-            result[txn.pk] = balance
+            result[txn.pk] = _normalize_credit_balance(account, running)
     return result
 
 

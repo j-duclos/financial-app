@@ -117,6 +117,9 @@ def invalidate_financial_cache_for_household(household_id: int | None) -> None:
     if household_id is None:
         return
     from core.models import HouseholdMembership
+    from core.timeline_cache import bump_timeline_cache_for_household
+
+    bump_timeline_cache_for_household(household_id)
 
     user_ids = (
         HouseholdMembership.objects.filter(household_id=household_id)

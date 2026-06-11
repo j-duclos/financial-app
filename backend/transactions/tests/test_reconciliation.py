@@ -154,6 +154,46 @@ class TestReconciliationCalculations:
         assert balances[txns[0].pk] == Decimal("1100.00")
         assert balances[t2.pk] == Decimal("1150.00")
 
+    def test_running_balances_follow_last_bank_reconcile_not_raw_ledger(self, account, user):
+        """After a prior reconcile, running balances must start from the saved bank balance."""
+        from transactions.services.reconciliation import transaction_running_balances
+
+        post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 10),
+            payee="Old",
+            amount=Decimal("-5000.00"),
+        )
+        adj = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 13),
+            payee="Adjust",
+            amount=Decimal("236.52"),
+        )
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("1236.52"),
+            checked_transaction_ids=[adj.pk],
+            period_start=date(2026, 5, 10),
+            period_end=date(2026, 5, 13),
+        )
+        payroll = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 14),
+            payee="Payroll",
+            amount=Decimal("1835.52"),
+        )
+        txns = list(
+            __import__("transactions.services.reconciliation", fromlist=["unreconciled_transactions_qs"])
+            .unreconciled_transactions_qs(account, start=date(2026, 5, 14), end=date(2026, 5, 14))
+        )
+        balances = transaction_running_balances(account, txns)
+        assert balances[payroll.pk] == Decimal("3072.04")
+
     def test_complete_reconciliation_rejects_imbalance(self, account, user):
         t1 = post_transaction(
             user=user,

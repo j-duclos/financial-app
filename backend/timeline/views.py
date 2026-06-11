@@ -550,6 +550,27 @@ class ScenarioAddedRecurringViewSet(ModelViewSet):
             serializer.save()
 
 
+def _resolve_timeline_household_id(
+    *,
+    account_id: int | None,
+    household_id: int | None,
+    user,
+) -> int | None:
+    """Cache busting uses household version keys — derive from account when the client omits household_id."""
+    if household_id is not None:
+        return household_id
+    if account_id is None:
+        return None
+    from accounts.models import Account
+
+    households = get_households_for_user(user)
+    return (
+        Account.objects.filter(pk=account_id, household__in=households)
+        .values_list("household_id", flat=True)
+        .first()
+    )
+
+
 class TimelineView(APIView):
     permission_classes = [IsHouseholdMember]
 
@@ -563,6 +584,11 @@ class TimelineView(APIView):
             scenario_id = int(scenario_id) if scenario_id else None
             account_id = int(account_id) if account_id else None
             household_id = int(household_id) if household_id else None
+            household_id = _resolve_timeline_household_id(
+                account_id=account_id,
+                household_id=household_id,
+                user=request.user,
+            )
 
             cache_key = timeline_response_cache_key(
                 household_id=household_id,

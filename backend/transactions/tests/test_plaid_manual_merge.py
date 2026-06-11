@@ -16,6 +16,10 @@ from transactions.services.matching import (
     manual_match_transactions,
     match_imported_transaction,
     reconcile_orphan_matched_plaid_imports,
+    repair_invalid_transaction_matches,
+    repair_materialized_plaid_resync_duplicates,
+    try_mark_plaid_import_as_duplicate_of_existing_match,
+    try_mark_resync_import_duplicate,
     try_match_rule_to_pending_imports,
 )
 
@@ -585,3 +589,245 @@ class TestPlaidMatching(TestCase):
             Transaction.objects.filter(account=self.acc, amount=amt, date=d_bank)
         )
         self.assertEqual(visible.count(), 4)
+
+    def test_same_amount_zelle_not_marked_duplicate_of_card_payment(self):
+        """A $25 Zelle charge must not disappear when a $25 card payment is matched."""
+        d = date(2026, 3, 26)
+        amt = Decimal("-25.00")
+        from accounts.models import Account
+        from transactions.services.posting import create_transfer
+
+        card = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            currency="USD",
+        )
+        create_transfer(
+            user=self.user,
+            from_account_id=self.acc.id,
+            to_account_id=card.id,
+            amount=Decimal("25.00"),
+            transfer_date=d.isoformat(),
+            payee="Credit Card Pmt",
+        )
+        out_leg = Transaction.objects.get(account=self.acc, amount=amt, date=d)
+        card_pmt = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE CRCARDPMT CA01EFA28B1C8B9",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-crcard",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(card_pmt)
+        out_leg.refresh_from_db()
+        self.assertEqual(out_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+
+        zelle_a = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Zelle payment to T JPM99cak2hnj",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-zelle-a",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        zelle_b = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Zelle payment to T JPM99cak3yn2",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-zelle-b",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(zelle_a)
+        match_imported_transaction(zelle_b)
+        zelle_a.refresh_from_db()
+        zelle_b.refresh_from_db()
+        self.assertNotEqual(zelle_a.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(zelle_b.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        from transactions.services.matching import release_excess_duplicate_plaid_imports
+
+        release_excess_duplicate_plaid_imports(account_id=self.acc.id)
+        zelle_a.refresh_from_db()
+        zelle_b.refresh_from_db()
+        self.assertNotEqual(zelle_a.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertGreaterEqual(visible.count(), 3)
+
+    def test_invalid_match_with_actual_import_leg_stays_visible(self):
+        """ACTUAL rows wrongly linked as import leg must not disappear from the ledger."""
+        d = date(2026, 2, 2)
+        amt = Decimal("-10.00")
+        rows = []
+        for i, payee in enumerate(
+            [
+                "CASH APP*ANDREW DUCLOS",
+                "CASH APP*JOSEPH DUCLOS",
+                "CASH APP*ELIJAH DUCLOS",
+                "Credit Karma Transfer",
+            ]
+        ):
+            rows.append(
+                Transaction.objects.create(
+                    account=self.acc,
+                    date=d,
+                    payee=payee,
+                    amount=amt,
+                    source=Transaction.Source.ACTUAL,
+                    import_match_status=Transaction.ImportMatchStatus.MATCHED,
+                )
+            )
+        # Simulate bad data: circular matches with ACTUAL on both legs.
+        TransactionMatch.objects.create(
+            planned_transaction=rows[0],
+            imported_transaction=rows[1],
+            score=100,
+        )
+        TransactionMatch.objects.create(
+            planned_transaction=rows[1],
+            imported_transaction=rows[2],
+            score=100,
+        )
+        TransactionMatch.objects.create(
+            planned_transaction=rows[2],
+            imported_transaction=rows[3],
+            score=100,
+        )
+        TransactionMatch.objects.create(
+            planned_transaction=rows[3],
+            imported_transaction=rows[0],
+            score=100,
+        )
+        before = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(before.count(), 0)
+
+        removed = repair_invalid_transaction_matches(account_id=self.acc.id)
+        self.assertEqual(removed, 4)
+
+        after = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(after.count(), 4)
+
+    def test_resync_import_duplicate_when_planned_row_reconciled(self):
+        """A second Plaid id for the same reconciled charge must not become a second ledger line."""
+        d = date(2026, 4, 29)
+        amt = Decimal("-49.25")
+        planned = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Lowe's",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+            reconciled=True,
+        )
+        first = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Lowe's",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-lowes-1",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(first)
+        planned.refresh_from_db()
+        self.assertEqual(planned.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+
+        resync = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Lowe's",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-lowes-2",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        self.assertTrue(try_mark_plaid_import_as_duplicate_of_existing_match(resync))
+        resync.refresh_from_db()
+        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, planned.pk)
+
+    def test_resync_import_not_matched_to_orphan_when_transfer_already_matched(self):
+        """Re-sync must not latch onto a ghost ACTUAL row when the transfer leg is already matched."""
+        from accounts.models import Account
+        from transactions.services.posting import create_transfer
+
+        d = date(2026, 5, 5)
+        amt = Decimal("-200.00")
+        payee = "CAPITAL ONE ONLINE PMT CA0492F731BBFFE WEB ID: 9279744391"
+        card = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Amazon",
+            institution="Capital One",
+            currency="USD",
+        )
+        create_transfer(
+            user=self.user,
+            from_account_id=self.acc.id,
+            to_account_id=card.id,
+            amount=Decimal("200.00"),
+            transfer_date=d.isoformat(),
+            payee=payee,
+        )
+        transfer_out = Transaction.objects.get(account=self.acc, amount=amt, date=d)
+        transfer_out.reconciled = True
+        transfer_out.save(update_fields=["reconciled", "updated_at"])
+
+        first = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee=payee,
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cap1-1",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(first)
+        transfer_out.refresh_from_db()
+        self.assertEqual(transfer_out.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+
+        ghost = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee=payee,
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+
+        resync = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee=payee,
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cap1-2",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        self.assertTrue(try_mark_resync_import_duplicate(resync))
+        resync.refresh_from_db()
+        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertFalse(TransactionMatch.objects.filter(imported_transaction_id=resync.pk).exists())
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, transfer_out.pk)
+        ghost.delete()

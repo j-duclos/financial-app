@@ -27,14 +27,19 @@ from accounts.models import Account
 from accounts.services.credit_card import classify_plaid_credit_card_type
 from common.services.cache import invalidate_financial_cache_for_household
 from core.phone_e164 import normalize_to_e164
+from core.timeline_cache import bump_timeline_cache_for_household
 from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
 from transactions.services.matching import (
+    bank_movement_already_on_ledger,
     match_imported_transaction,
     materialize_unmatched_plaid_imports,
     normalize_description,
     reconcile_orphan_matched_plaid_imports,
     release_excess_duplicate_plaid_imports,
+    repair_invalid_transaction_matches,
+    repair_materialized_plaid_resync_duplicates,
+    repair_orphan_absorbed_resync_matches,
 )
 
 from .crypto import (
@@ -612,7 +617,15 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                 tid = txn.get("transaction_id") if isinstance(txn, dict) else None
                 if not tid:
                     continue
-                n, _ = Transaction.objects.filter(plaid_transaction_id=str(tid)).delete()
+                qs = Transaction.objects.filter(plaid_transaction_id=str(tid))
+                # Never delete reconciled history when Plaid rotates transaction ids.
+                if qs.filter(reconciled=True).exists():
+                    logger.warning(
+                        "Plaid removed txn id=%s but row is reconciled — skipping delete",
+                        tid,
+                    )
+                    continue
+                n, _ = qs.delete()
                 removed += n
 
             for txn in list(data.get("added") or []) + list(data.get("modified") or []):
@@ -635,9 +648,18 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     _safe_match_imported_transaction(existing)
                     continue
 
+                if bank_movement_already_on_ledger(
+                    account_id=account_pk,
+                    txn_date=defaults["date"],
+                    amount=defaults["amount"],
+                    payee=defaults.get("payee") or "",
+                    imported_description=defaults.get("imported_description") or "",
+                ):
+                    defaults["import_match_status"] = Transaction.ImportMatchStatus.DUPLICATE
                 created = Transaction.objects.create(plaid_transaction_id=pid, **defaults)
                 added += 1
-                _safe_match_imported_transaction(created)
+                if created.import_match_status != Transaction.ImportMatchStatus.DUPLICATE:
+                    _safe_match_imported_transaction(created)
 
             cursor = next_cursor
             plaid_item.transactions_cursor = cursor or ""
@@ -671,6 +693,9 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         account_pks = list(plaid_item.linked_accounts.values_list("account_id", flat=True))
         for aid in account_pks:
             reconcile_orphan_matched_plaid_imports(account_id=aid)
+            repair_invalid_transaction_matches(account_id=aid)
+            repair_orphan_absorbed_resync_matches(account_id=aid)
+            repair_materialized_plaid_resync_duplicates(account_id=aid)
             release_excess_duplicate_plaid_imports(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)
             totals.setdefault("materialized", 0)
@@ -681,8 +706,6 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     totals["skipped_sync_disabled_accounts"] = skipped_accounts
     plaid_item.last_sync_at = timezone.now()
     plaid_item.save(update_fields=["last_sync_at", "updated_at"])
-    from core.timeline_cache import bump_timeline_cache_for_household
-
     bump_timeline_cache_for_household(plaid_item.household_id)
     invalidate_financial_cache_for_household(plaid_item.household_id)
     return totals
