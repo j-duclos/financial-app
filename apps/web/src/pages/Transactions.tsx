@@ -71,6 +71,8 @@ import {
   loadStoredTransactionsAmountMin,
   loadStoredTransactionsAmountMax,
   saveStoredTransactionsAmountRange,
+  loadStoredTransactionsReconciledFilter,
+  saveStoredTransactionsReconciledFilter,
 } from "../lib/transactionsPageState";
 
 export type { TimeFilter };
@@ -93,6 +95,7 @@ export default function Transactions() {
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
+  const [reconciledFilter, setReconciledFilter] = useState(() => loadStoredTransactionsReconciledFilter());
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
@@ -243,6 +246,10 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsKindFilter(kindFilter);
   }, [kindFilter]);
+
+  useEffect(() => {
+    saveStoredTransactionsReconciledFilter(reconciledFilter);
+  }, [reconciledFilter]);
 
   useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
@@ -757,10 +764,11 @@ export default function Transactions() {
   const pastRowFilters = useMemo(
     () => ({
       kind: kindFilter,
+      reconciled: reconciledFilter,
       amountMin: parseAmountFilterInput(debouncedAmountMinInput),
       amountMax: parseAmountFilterInput(debouncedAmountMaxInput),
     }),
-    [kindFilter, debouncedAmountMinInput, debouncedAmountMaxInput]
+    [kindFilter, reconciledFilter, debouncedAmountMinInput, debouncedAmountMaxInput]
   );
 
   const filteredPastRows = useMemo(
@@ -1266,6 +1274,8 @@ export default function Transactions() {
           <TransactionsFilterBar
             kindFilter={kindFilter}
             onKindFilterChange={setKindFilter}
+            reconciledFilter={reconciledFilter}
+            onReconciledFilterChange={setReconciledFilter}
             amountMin={amountMinInput}
             amountMax={amountMaxInput}
             onAmountMinChange={setAmountMinInput}
@@ -1273,6 +1283,7 @@ export default function Transactions() {
             showClear={pastFiltersActive}
             onClear={() => {
               setKindFilter("");
+              setReconciledFilter("");
               setAmountMinInput("");
               setAmountMaxInput("");
             }}

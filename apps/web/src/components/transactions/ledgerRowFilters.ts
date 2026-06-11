@@ -8,8 +8,11 @@ export const TRANSACTION_KIND_OPTIONS: TransactionKind[] = [
   "Card Payment",
 ];
 
+export type ReconciledFilter = "" | "reconciled" | "unreconciled";
+
 export type LedgerRowFilters = {
   kind: TransactionKind | "";
+  reconciled: ReconciledFilter;
   amountMin: number | null;
   amountMax: number | null;
 };
@@ -41,6 +44,32 @@ export function ledgerRowKind(row: LedgerRow): TransactionKind | null {
   return null;
 }
 
+export function ledgerRowReconciled(row: LedgerRow): boolean | null {
+  if (!ledgerRowIsReconcilableTransaction(row)) return null;
+  if (row.type === "transaction") return row.txn.reconciled ?? false;
+  if (row.type === "transaction_from_timeline") return row.row.reconciled ?? false;
+  return null;
+}
+
+/** Posted ledger rows that can be marked reconciled (excludes forecast/planned/interest). */
+export function ledgerRowIsReconcilableTransaction(row: LedgerRow): boolean {
+  if (row.type === "transaction") {
+    const src = (row.txn.source ?? "").toUpperCase();
+    if (src === "INTEREST") return false;
+    const status = (row.txn.status ?? "").toUpperCase();
+    if (status === "PLANNED") return false;
+    return true;
+  }
+  if (row.type === "transaction_from_timeline") {
+    if (row.row.source === "interest") return false;
+    if (row.row.transaction_id == null) return false;
+    const status = (row.row.status ?? "").toUpperCase();
+    if (status === "PLANNED") return false;
+    return true;
+  }
+  return false;
+}
+
 export function ledgerRowAbsAmount(row: LedgerRow): number | null {
   if (row.type === "transaction") {
     const n = parseFloat(row.txn.amount);
@@ -63,11 +92,19 @@ export function matchesLedgerRowFilters(row: LedgerRow, filters: LedgerRowFilter
     if (kind !== filters.kind) return false;
   }
 
-  const abs = ledgerRowAbsAmount(row);
-  if (abs == null) return false;
+  if (filters.reconciled) {
+    const reconciled = ledgerRowReconciled(row);
+    if (reconciled == null) return false;
+    if (filters.reconciled === "reconciled" && !reconciled) return false;
+    if (filters.reconciled === "unreconciled" && reconciled) return false;
+  }
 
-  if (filters.amountMin != null && abs < filters.amountMin) return false;
-  if (filters.amountMax != null && abs > filters.amountMax) return false;
+  if (filters.amountMin != null || filters.amountMax != null) {
+    const abs = ledgerRowAbsAmount(row);
+    if (abs == null) return false;
+    if (filters.amountMin != null && abs < filters.amountMin) return false;
+    if (filters.amountMax != null && abs > filters.amountMax) return false;
+  }
 
   return true;
 }
@@ -78,5 +115,10 @@ export function filterLedgerPastRows(rows: LedgerRow[], filters: LedgerRowFilter
 }
 
 export function hasActiveLedgerRowFilters(filters: LedgerRowFilters): boolean {
-  return Boolean(filters.kind) || filters.amountMin != null || filters.amountMax != null;
+  return (
+    Boolean(filters.kind) ||
+    Boolean(filters.reconciled) ||
+    filters.amountMin != null ||
+    filters.amountMax != null
+  );
 }

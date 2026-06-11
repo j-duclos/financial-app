@@ -1,9 +1,11 @@
 import type { TransactionKind } from "./transactionKindUtils";
-import { TRANSACTION_KIND_OPTIONS } from "./ledgerRowFilters";
+import { TRANSACTION_KIND_OPTIONS, type ReconciledFilter } from "./ledgerRowFilters";
 
 type Props = {
   kindFilter: TransactionKind | "";
   onKindFilterChange: (kind: TransactionKind | "") => void;
+  reconciledFilter: ReconciledFilter;
+  onReconciledFilterChange: (value: ReconciledFilter) => void;
   amountMin: string;
   amountMax: string;
   onAmountMinChange: (value: string) => void;
@@ -15,6 +17,8 @@ type Props = {
 export default function TransactionsFilterBar({
   kindFilter,
   onKindFilterChange,
+  reconciledFilter,
+  onReconciledFilterChange,
   amountMin,
   amountMax,
   onAmountMinChange,
@@ -24,6 +28,18 @@ export default function TransactionsFilterBar({
 }: Props) {
   return (
     <>
+      <div>
+        <label className="block text-xs font-medium text-gray-500 mb-0.5">Reconciled</label>
+        <select
+          value={reconciledFilter}
+          onChange={(e) => onReconciledFilterChange(e.target.value as ReconciledFilter)}
+          className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+        >
+          <option value="">All</option>
+          <option value="unreconciled">Unreconciled</option>
+          <option value="reconciled">Reconciled</option>
+        </select>
+      </div>
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Type</label>
         <select
