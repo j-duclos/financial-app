@@ -919,6 +919,68 @@ class TestPlaidMatching(TestCase):
         )
         self.assertEqual(visible.count(), 2)
 
+    def test_same_amount_different_payees_not_blocked_by_prior_reconciled_match(self):
+        """Exeter car payment must import even when a reconciled Synchrony row shares the amount."""
+        d_march = date(2026, 3, 30)
+        d_april = date(2026, 4, 3)
+        amt = Decimal("-393.79")
+        sync_planned = Transaction.objects.create(
+            account=self.acc,
+            date=d_march,
+            payee="Synchrony",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+            reconciled=True,
+            imported_description="EXETERFINA LOAN PMNT PPD ID: 5221907813",
+        )
+        sync_import = Transaction.objects.create(
+            account=self.acc,
+            date=d_march,
+            payee="Synchrony",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-sync-march",
+            imported_description="Synchrony Bank CC PYMT 601918247228591 WEB ID: 9856794001",
+            import_match_status=Transaction.ImportMatchStatus.MATCHED,
+        )
+        TransactionMatch.objects.create(
+            planned_transaction=sync_planned,
+            imported_transaction=sync_import,
+            match_type=TransactionMatch.MatchType.SAME_ACCOUNT,
+            score=90,
+            confidence=TransactionMatch.Confidence.AUTO,
+        )
+        from transactions.services.matching import bank_movement_already_on_ledger, materialize_unmatched_plaid_imports
+
+        self.assertFalse(
+            bank_movement_already_on_ledger(
+                account_id=self.acc.id,
+                txn_date=d_april,
+                amount=amt,
+                payee="EXETERFINA LOAN PMNT",
+                imported_description="EXETERFINA LOAN PMNT PPD ID: 5221907813",
+            )
+        )
+        exeter = Transaction.objects.create(
+            account=self.acc,
+            date=d_april,
+            payee="EXETERFINA LOAN PMNT",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-exeter-april",
+            imported_description="EXETERFINA LOAN PMNT PPD ID: 5221907813",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(exeter)
+        exeter.refresh_from_db()
+        self.assertNotEqual(exeter.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d_april, amount=amt)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertIn("EXETER", visible.first().payee.upper())
+
     def test_invalid_match_with_actual_import_leg_stays_visible(self):
         """ACTUAL rows wrongly linked as import leg must not disappear from the ledger."""
         d = date(2026, 2, 2)

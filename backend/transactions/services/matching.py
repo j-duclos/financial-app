@@ -81,7 +81,7 @@ def _plaid_description(txn: Transaction) -> str:
 _BANK_UNIQUE_REF_PATTERNS = (
     re.compile(r"ca0[a-z0-9]{10,}"),
     re.compile(r"jpm[a-z0-9]{5,}"),
-    re.compile(r"ppd id \d+"),
+    re.compile(r"transaction#:\s*\d+"),
 )
 
 
@@ -697,9 +697,10 @@ def _find_confirmed_ledger_match_for_import(
             continue
         if peer.pk == imported.pk:
             continue
+        # Only compare against the prior Plaid bank row — not the planned/manual side, which may
+        # have bank text copied from a wrong match (e.g. Exeter car payment merged onto Synchrony).
         if not _plaid_imports_likely_same_bank_movement(imported, peer):
-            if not _plaid_imports_likely_same_bank_movement(imported, planned):
-                continue
+            continue
         if _planned_match_allows_import_dedup(planned) or planned.reconciled:
             return match
     return None
