@@ -20,6 +20,8 @@ from transactions.services.matching import (
     materialize_unmatched_plaid_imports,
     release_excess_duplicate_plaid_imports,
     rematch_unmatched_manual_actuals,
+    repair_cross_merchant_wrong_matches,
+    repair_stale_planned_bank_text,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
@@ -86,7 +88,11 @@ class Command(BaseCommand):
         invalid_matches = 0
         resync_dupes = 0
         orphan_resync = 0
+        stale_text = 0
+        cross_merchant = 0
         for aid in account_ids:
+            n_cross = repair_cross_merchant_wrong_matches(account_id=aid)
+            n_stale = repair_stale_planned_bank_text(account_id=aid)
             n_invalid = repair_invalid_transaction_matches(account_id=aid)
             n_orphan = repair_orphan_absorbed_resync_matches(account_id=aid)
             n_resync = repair_materialized_plaid_resync_duplicates(account_id=aid)
@@ -94,6 +100,8 @@ class Command(BaseCommand):
             n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            stale_text += n_stale
+            cross_merchant += n_cross
             invalid_matches += n_invalid
             orphan_resync += n_orphan
             resync_dupes += n_resync
@@ -104,7 +112,7 @@ class Command(BaseCommand):
             acct = Account.objects.filter(pk=aid).first()
             label = f"{acct.name} #{aid}" if acct else f"account #{aid}"
             self.stdout.write(
-                f"  {label}: invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
+                f"  {label}: cross_merchant={n_cross} stale_text={n_stale} invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
                 f"released={n_released} collapsed={n_collapsed} manual_linked={n_manual} "
                 f"materialized={n_materialized}"
             )
@@ -115,7 +123,7 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done — removed {invalid_matches} invalid match(es), fixed {orphan_resync} orphan re-sync "
+                f"Done — fixed {stale_text} stale bank-text row(s), unlinked {cross_merchant} cross-merchant match(es), removed {invalid_matches} invalid match(es), fixed {orphan_resync} orphan re-sync "
                 f"match(es), dropped {resync_dupes} re-sync "
                 f"duplicate(s), restored {released} DUPLICATE row(s), collapsed {collapsed} materialized "
                 f"duplicate(s), linked {manual_linked} manual row(s) to "

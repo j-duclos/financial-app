@@ -61,6 +61,33 @@ _MERCHANT_TOKEN_STOPWORDS = frozenset(
 )
 
 
+_MERCHANT_FAMILY_KEYWORDS = (
+    "exeterfina",
+    "exeter",
+    "synchrony",
+    "syf",
+    "carecredit",
+    "care credit",
+    "capital one",
+    "geico",
+    "myuhc",
+    "exeterfina loan",
+)
+
+
+def _merchant_families(text: str) -> frozenset[str]:
+    """Coarse payee families — Exeter car loan ≠ Synchrony credit card even at the same amount."""
+    s = normalize_description(text).replace(" ", "")
+    if not s:
+        return frozenset()
+    found: set[str] = set()
+    for fam in _MERCHANT_FAMILY_KEYWORDS:
+        key = fam.replace(" ", "")
+        if key in s:
+            found.add(key)
+    return frozenset(found)
+
+
 def normalize_description(text: str) -> str:
     """Collapse whitespace/punctuation for fuzzy comparison (not equality)."""
     if not text:
@@ -418,6 +445,41 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
     rel_boost, rel_parts = _relationship_score_boost(imported, planned)
     score += rel_boost
     parts.update(rel_parts)
+
+    import_text = ni
+    planned_labels = [np]
+    if planned.source == Transaction.Source.RULE and planned.rule_id:
+        from timeline.models import RecurringRule
+
+        rule = (
+            planned.rule
+            if getattr(planned, "rule", None) is not None
+            else RecurringRule.objects.filter(pk=planned.rule_id).first()
+        )
+        if rule and (rule.name or "").strip():
+            planned_labels.append(normalize_description(rule.name))
+            rn = normalize_description(rule.name)
+            if rn and rn in ni:
+                score += 28
+                parts["rule_name_token"] = 28
+            elif rn and ni and SequenceMatcher(None, rn, ni).ratio() >= 0.45:
+                score += 22
+                parts["rule_name_sim"] = 22
+
+    import_families = _merchant_families(import_text)
+    planned_families: set[str] = set()
+    for label in planned_labels:
+        planned_families.update(_merchant_families(label))
+    if import_families and planned_families and import_families.isdisjoint(planned_families):
+        return 0, {"reject": "merchant_family_mismatch"}
+
+    max_ratio = max(ratios) if ratios else 0.0
+    has_ref = bool(ref_i and ref_p and (ref_i & ref_p))
+    has_transfer = bool(planned.transfer_group_id)
+    has_rule_signal = bool(parts.get("rule_name_token") or parts.get("rule_name_sim"))
+    if not has_transfer and not has_ref and not has_rule_signal:
+        if max_ratio < 0.35 and merchant_pts < 8:
+            return 0, {"reject": "payee_mismatch"}
 
     return score, parts
 
@@ -994,15 +1056,17 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
             planned.posted_date = posted
             update_fields.append("posted_date")
     bank_desc = (imported.imported_description or imported.memo or imported.payee or "").strip()
-    if bank_desc and not (planned.imported_description or "").strip():
-        planned.imported_description = bank_desc[:2000]
-        update_fields.append("imported_description")
+    if bank_desc:
+        stale = (planned.imported_description or "").strip()
+        if not stale or _merchant_families(stale) != _merchant_families(bank_desc):
+            planned.imported_description = bank_desc[:2000]
+            update_fields.append("imported_description")
     np = normalize_description(imported.payee or bank_desc or "")[:512]
     if np and planned.normalized_payee != np:
         planned.normalized_payee = np
         update_fields.append("normalized_payee")
     if planned.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
-        bank_payee = (imported.payee or bank_desc or "").strip()
+        bank_payee = (bank_desc or imported.payee or "").strip()
         if bank_payee and planned.payee != bank_payee[:255]:
             planned.payee = bank_payee[:255]
             update_fields.append("payee")
@@ -1336,6 +1400,67 @@ def manual_match_transactions(
         score=max(sc, SUGGEST_MATCH_THRESHOLD),
         confidence=TransactionMatch.Confidence.MANUAL,
     )
+
+
+def repair_cross_merchant_wrong_matches(*, account_id: int | None = None) -> int:
+    """
+    Undo auto-matches that paired different billers because the amount matched
+    (e.g. Exeter car loan import linked to a Synchrony credit-card row).
+    """
+    qs = TransactionMatch.objects.select_related(
+        "planned_transaction",
+        "imported_transaction",
+        "planned_transaction__rule",
+    ).filter(imported_transaction__source=Transaction.Source.PLAID)
+    if account_id is not None:
+        qs = qs.filter(planned_transaction__account_id=account_id)
+    repaired = 0
+    for match in qs.iterator(chunk_size=200):
+        imp = match.imported_transaction
+        planned = match.planned_transaction
+        import_text = (imp.imported_description or imp.payee or imp.memo or "").strip()
+        planned_labels = [(planned.payee or "").strip()]
+        if planned.source == Transaction.Source.RULE and planned.rule_id:
+            rule = getattr(planned, "rule", None)
+            if rule and (rule.name or "").strip():
+                planned_labels.append(rule.name.strip())
+        import_families = _merchant_families(import_text)
+        planned_families: set[str] = set()
+        for label in planned_labels:
+            planned_families.update(_merchant_families(label))
+        if not import_families or not planned_families or not import_families.isdisjoint(planned_families):
+            continue
+        unmatch_transaction(match)
+        repaired += 1
+    return repaired
+
+
+def repair_stale_planned_bank_text(*, account_id: int | None = None) -> int:
+    """Fix planned rows whose bank text came from a prior wrong match (Exeter text on Synchrony row)."""
+    qs = TransactionMatch.objects.select_related("planned_transaction", "imported_transaction").filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+    )
+    if account_id is not None:
+        qs = qs.filter(planned_transaction__account_id=account_id)
+    fixed = 0
+    for match in qs.iterator(chunk_size=200):
+        planned = match.planned_transaction
+        imp = match.imported_transaction
+        bank_desc = (imp.imported_description or imp.memo or imp.payee or "").strip()
+        if not bank_desc:
+            continue
+        stale = (planned.imported_description or "").strip()
+        if not stale:
+            continue
+        if _merchant_families(stale) == _merchant_families(bank_desc):
+            continue
+        if normalize_description(stale) == normalize_description(bank_desc):
+            continue
+        fields = apply_bank_fields_to_planned_from_import(planned, imp)
+        if fields:
+            planned.save(update_fields=list(dict.fromkeys([*fields, "updated_at"])))
+            fixed += 1
+    return fixed
 
 
 def unmatch_transaction(pair: TransactionMatch) -> None:

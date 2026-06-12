@@ -981,6 +981,30 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(visible.count(), 1)
         self.assertIn("EXETER", visible.first().payee.upper())
 
+    def test_exeter_import_never_matches_synchrony_at_same_amount(self):
+        """Exeter car loan and Synchrony CC payment must not auto-match on amount alone."""
+        d = date(2026, 3, 30)
+        amt = Decimal("-393.79")
+        synchrony = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Synchrony",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        exeter = Transaction(
+            account=self.acc,
+            date=d,
+            amount=amt,
+            payee="EXETERFINA LOAN PMNT",
+            imported_description="EXETERFINA LOAN PMNT PPD ID: 5221907813",
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-exeter-test",
+        )
+        sc, parts = score_candidate(exeter, synchrony)
+        self.assertEqual(sc, 0)
+        self.assertEqual(parts.get("reject"), "merchant_family_mismatch")
+
     def test_invalid_match_with_actual_import_leg_stays_visible(self):
         """ACTUAL rows wrongly linked as import leg must not disappear from the ledger."""
         d = date(2026, 2, 2)
