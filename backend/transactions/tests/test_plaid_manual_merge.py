@@ -841,6 +841,84 @@ class TestPlaidMatching(TestCase):
         )
         self.assertGreaterEqual(visible.count(), 3)
 
+    def test_two_zelle_same_amount_same_day_both_visible(self):
+        """Two distinct Zelle payments must not collapse when descriptions only differ by recipient id."""
+        d = date(2026, 3, 26)
+        amt = Decimal("-25.00")
+        zelle_a = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Zelle payment to T JPM99cak2hnj",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-zelle-a",
+            imported_description="Zelle payment to T JPM99cak2hnj",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        zelle_b = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Zelle payment to T JPM99cak3yn2",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-zelle-b",
+            imported_description="Zelle payment to T JPM99cak3yn2",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(zelle_a)
+        match_imported_transaction(zelle_b)
+        zelle_a.refresh_from_db()
+        zelle_b.refresh_from_db()
+        self.assertNotEqual(zelle_a.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(zelle_b.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 2)
+
+    def test_two_capital_one_online_pmt_same_amount_same_day_both_visible(self):
+        """Two Capital One ACH payments with different confirmation codes are separate charges."""
+        d = date(2026, 3, 26)
+        amt = Decimal("-250.00")
+        pmt_a = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE ONLINE PMT CA0F652823B8B44",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cap-a",
+            imported_description="CAPITAL ONE ONLINE PMT CA0F652823B8B44 WEB ID: 9279744391",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        pmt_b = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="CAPITAL ONE ONLINE PMT CA0F613177D0164",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cap-b",
+            imported_description="CAPITAL ONE ONLINE PMT CA0F613177D0164 WEB ID: 9279744391",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(pmt_a)
+        match_imported_transaction(pmt_b)
+        pmt_a.refresh_from_db()
+        pmt_b.refresh_from_db()
+        self.assertNotEqual(pmt_a.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(pmt_b.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 2)
+
     def test_invalid_match_with_actual_import_leg_stays_visible(self):
         """ACTUAL rows wrongly linked as import leg must not disappear from the ledger."""
         d = date(2026, 2, 2)

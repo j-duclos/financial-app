@@ -552,6 +552,7 @@ class AccountViewSet(ModelViewSet):
                 "detail": (
                     f"Deleted {stats['transactions_deleted']} transaction(s) and "
                     f"{stats['statement_lines_deleted']} reconcile statement line(s). "
+                    f"Deactivated {stats.get('reconciliation_sessions_deactivated', 0)} reconciliation session(s). "
                     f"Reset Plaid sync cursor on {reset_n} bank login(s) so the next import can reload history. "
                     "Transfers from this account removed the counterparty leg too, unless that account is marked "
                     "manual-only (preserve partner legs). "

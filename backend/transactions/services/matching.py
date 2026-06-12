@@ -78,6 +78,53 @@ def _plaid_description(txn: Transaction) -> str:
     )
 
 
+_BANK_UNIQUE_REF_PATTERNS = (
+    re.compile(r"ca0[a-z0-9]{10,}"),
+    re.compile(r"jpm[a-z0-9]{5,}"),
+    re.compile(r"ppd id \d+"),
+)
+
+
+def _extract_bank_reference_tokens(desc: str) -> frozenset[str]:
+    """
+    Per-transaction ids embedded in bank text (Zelle JPM…, Capital One CA0…, ACH PPD id).
+
+    When two imports share amount/date but carry different reference tokens, they are separate
+    bank posts — not a Plaid re-sync of the same movement.
+    """
+    s = normalize_description(desc)
+    if not s:
+        return frozenset()
+    tokens: set[str] = set()
+    for pat in _BANK_UNIQUE_REF_PATTERNS:
+        for m in pat.finditer(s):
+            tokens.add(re.sub(r"\s+", "", m.group(0)))
+    for word in s.split():
+        if len(word) < 12:
+            continue
+        if not re.search(r"[a-z]", word) or not re.search(r"\d", word):
+            continue
+        if word in _MERCHANT_TOKEN_STOPWORDS:
+            continue
+        tokens.add(word)
+    return frozenset(tokens)
+
+
+def _bank_reference_tokens(txn: Transaction) -> frozenset[str]:
+    return _extract_bank_reference_tokens(
+        (txn.imported_description or txn.payee or txn.memo or "").strip()
+    )
+
+
+def _bank_reference_tokens_compatible(a: Transaction, b: Transaction) -> bool:
+    """False when both rows carry distinct bank reference ids (separate Zelle/ACH posts)."""
+    ref_a = _bank_reference_tokens(a)
+    ref_b = _bank_reference_tokens(b)
+    if ref_a and ref_b and ref_a.isdisjoint(ref_b):
+        return False
+    return True
+
+
 def _merchant_token_overlap_score(imported: Transaction, planned: Transaction) -> int:
     """
     Boost when a merchant token from the cleaner import label appears in a long manual payee
@@ -115,6 +162,10 @@ def _plaid_imports_likely_same_bank_movement(a: Transaction, b: Transaction) -> 
     pa = _plaid_description(a)
     pb = _plaid_description(b)
     if not pa or not pb:
+        return False
+    ref_a = _bank_reference_tokens(a)
+    ref_b = _bank_reference_tokens(b)
+    if ref_a and ref_b and ref_a.isdisjoint(ref_b):
         return False
     if pa == pb:
         return True
@@ -261,8 +312,16 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
         return score, parts
     if abs(planned.amount - imported.amount) > AMOUNT_TOLERANCE:
         return 0, {"reject": "amount_mismatch"}
+    if not _bank_reference_tokens_compatible(imported, planned):
+        return 0, {"reject": "reference_token_mismatch"}
     score += 40
     parts["amount"] = 40
+
+    ref_i = _bank_reference_tokens(imported)
+    ref_p = _bank_reference_tokens(planned)
+    if ref_i and ref_p and (ref_i & ref_p):
+        score += 30
+        parts["reference_token_match"] = 30
 
     dd = abs((planned.date - imported.date).days)
     if dd <= 2:
@@ -663,7 +722,11 @@ def bank_movement_already_on_ledger(
         imported_description=imported_description,
         source=Transaction.Source.PLAID,
     )
-    return _find_confirmed_ledger_match_for_import(probe) is not None
+    if _find_confirmed_ledger_match_for_import(probe) is None:
+        return False
+    if _unmatched_distinct_charge_slots(probe) > 0:
+        return False
+    return True
 
 
 def _planned_match_allows_import_dedup(planned: Transaction) -> bool:

@@ -576,6 +576,7 @@ def clear_all_transactions_for_account(account: Account) -> dict[str, int]:
     from django.utils import timezone as dj_tz
 
     from plaid_link.models import PlaidItem
+    from .reconciliation import reset_reconciliation_history_for_account
 
     tg_ids = set(
         Transaction.objects.filter(account=account, transfer_group_id__isnull=False).values_list(
@@ -583,6 +584,9 @@ def clear_all_transactions_for_account(account: Account) -> dict[str, int]:
         )
     )
     with transaction.atomic():
+        reconcile_reset = reset_reconciliation_history_for_account(
+            account, reason="clear_all_transactions"
+        )
         stmt_deleted, _ = StatementTransaction.objects.filter(account=account).delete()
         removed = delete_transactions_with_transfer_pairs_for_queryset(
             Transaction.objects.filter(account=account)
@@ -597,6 +601,8 @@ def clear_all_transactions_for_account(account: Account) -> dict[str, int]:
         "transactions_deleted": removed,
         "statement_lines_deleted": stmt_deleted,
         "plaid_items_cursor_reset": plaid_items_reset,
+        "reconciliation_sessions_deactivated": reconcile_reset["sessions_deactivated"],
+        "transactions_unreconciled_count": reconcile_reset["transactions_unreconciled_count"],
     }
 
 

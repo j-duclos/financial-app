@@ -164,6 +164,40 @@ class TestClearAllTransactionsForAccount(TestCase):
         self.assertEqual(Transaction.objects.filter(account=self.checking).count(), 0)
         self.assertEqual(Transaction.objects.filter(account=self.savings).count(), 0)
 
+    def test_clear_resets_active_reconciliation_sessions(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from transactions.models import Reconciliation
+        from transactions.services.reconciliation import complete_reconciliation, min_reconcile_start_date
+        from transactions.services.posting import post_transaction
+
+        t1 = post_transaction(
+            user=self.user,
+            account_id=self.checking.id,
+            date=date(2026, 5, 10),
+            payee="Deposit",
+            amount=Decimal("25.00"),
+        )
+        complete_reconciliation(
+            account=self.checking,
+            user=self.user,
+            bank_current_balance=Decimal("1025.00"),
+            checked_transaction_ids=[t1.pk],
+            period_start=date(2026, 5, 10),
+            period_end=date(2026, 5, 13),
+        )
+        self.assertEqual(min_reconcile_start_date(self.checking), date(2026, 5, 14))
+
+        stats = clear_all_transactions_for_account(self.checking)
+        self.assertEqual(stats["reconciliation_sessions_deactivated"], 1)
+        self.assertFalse(
+            Reconciliation.objects.filter(
+                account=self.checking, status=Reconciliation.Status.COMPLETED, is_active=True
+            ).exists()
+        )
+        self.assertEqual(min_reconcile_start_date(self.checking), date.today())
+
     def test_clear_resets_plaid_sync_cursor_for_linked_item(self):
         from plaid_link.models import PlaidItem, PlaidLinkedAccount
 

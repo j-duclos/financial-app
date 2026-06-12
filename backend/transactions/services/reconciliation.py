@@ -20,6 +20,8 @@ from .matching import (
     collapse_materialized_actual_duplicates,
     ledger_visible_transactions,
     match_imported_transaction,
+    materialize_unmatched_plaid_imports,
+    release_excess_duplicate_plaid_imports,
     rematch_unmatched_manual_actuals,
     try_match_rule_to_pending_imports,
 )
@@ -317,6 +319,8 @@ def _load_reconcile_period_transactions(
     period_end: date,
 ) -> list[Transaction]:
     """Unreconciled rows for a reconcile period, with import healing and superseded PLANNED removed."""
+    release_excess_duplicate_plaid_imports(account_id=account.pk)
+    materialize_unmatched_plaid_imports(account_id=account.pk)
     collapse_materialized_actual_duplicates(account_id=account.pk)
     rematch_unmatched_manual_actuals(account_id=account.pk)
     txns = list(
@@ -602,6 +606,61 @@ def serialize_session_detail(rec: Reconciliation) -> dict[str, Any]:
         for entry in entries
     ]
     return summary
+
+
+@db_transaction.atomic
+def reset_reconciliation_history_for_account(
+    account: Account,
+    *,
+    user=None,
+    reason: str = "ledger_reset",
+) -> dict[str, Any]:
+    """
+    Deactivate all active reconciliation sessions and clear reconciled flags on the account.
+
+    Used when the ledger is wiped and re-imported so reconcile is not locked to a prior period end.
+    """
+    now = timezone.now()
+    active_sessions = list(
+        _active_completed_qs(account).order_by("completed_at", "id")
+    )
+    if not active_sessions:
+        txn_cleared = Transaction.objects.filter(account=account, reconciled=True).update(
+            reconciled=False,
+            reconciled_at=None,
+            reconciliation=None,
+            status=Transaction.Status.CLEARED,
+        )
+        return {
+            "sessions_deactivated": 0,
+            "transactions_unreconciled_count": txn_cleared,
+            "reason": reason,
+        }
+
+    for session in active_sessions:
+        session.is_active = False
+        session.undone_at = now
+        session.undone_by = user
+        session.notes = (
+            f"{session.notes}\n[{reason}]".strip()
+            if session.notes
+            else f"[{reason}]"
+        )
+        session.save(update_fields=["is_active", "undone_at", "undone_by", "notes", "updated_at"])
+
+    txn_cleared = Transaction.objects.filter(account=account, reconciled=True).update(
+        reconciled=False,
+        reconciled_at=None,
+        reconciliation=None,
+        status=Transaction.Status.CLEARED,
+    )
+    if user is not None and getattr(user, "pk", None):
+        invalidate_user_financial_cache(user.pk)
+    return {
+        "sessions_deactivated": len(active_sessions),
+        "transactions_unreconciled_count": txn_cleared,
+        "reason": reason,
+    }
 
 
 @db_transaction.atomic
