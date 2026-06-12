@@ -12,6 +12,10 @@ def test_perf_timer_accumulates_phases():
 
 def test_perf_enabled_follows_debug_setting(settings):
     settings.DEBUG = False
+    settings.ENABLE_PERF_LOGS = False
     assert perf_enabled() is False
     settings.DEBUG = True
+    assert perf_enabled() is True
+    settings.DEBUG = False
+    settings.ENABLE_PERF_LOGS = True
     assert perf_enabled() is True

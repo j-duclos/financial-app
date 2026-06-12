@@ -15,7 +15,15 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from accounts.models import Account
-from common.services.profiler import QueryProfiler, PerfTimer, log_perf, perf_enabled, phase_end, phase_start
+from common.services.profiler import (
+    QueryProfiler,
+    PerfTimer,
+    increment_build_timeline_count,
+    log_perf,
+    perf_enabled,
+    phase_end,
+    phase_start,
+)
 from core.utils import get_households_for_user
 from timeline.services.balance_cache import TimelineBalanceCache, get_active_balance_cache
 
@@ -1734,6 +1742,7 @@ def build_timeline(
     cycles are not shown on the timeline, and ``source=INTEREST`` rows from the database are
     omitted here (use a normal transaction to record actual bank interest if needed).
     """
+    increment_build_timeline_count()
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
     wall_start = time.perf_counter() if perf_enabled() else None

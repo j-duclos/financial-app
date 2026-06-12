@@ -485,7 +485,7 @@ export default function Accounts() {
         interest_rate: interestRate,
         interest_cycle_end_day: interestCycleDayVal,
         credit_limit: creditLimitValue,
-        target_utilization_percent: targetUtilValue,
+        ...(form.account_type === "CREDIT" ? { target_utilization_percent: targetUtilValue ?? "10" } : {}),
         billing_cycle_end_day: billingDay,
         statement_closing_day: billingDay,
         payment_due_day: paymentDueDay,

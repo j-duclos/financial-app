@@ -599,6 +599,7 @@ def calculate_account_health_for_accounts(
     *,
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
+    timeline_rows: list[dict] | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Batch health calculation with shared forecast timeline where possible."""
     days = normalize_forecast_days(days)
@@ -606,12 +607,15 @@ def calculate_account_health_for_accounts(
     window_end = today + timedelta(days=days)
 
     forecasts = calculate_forecast_summaries_for_accounts(
-        user, accounts, as_of_date=today, days=days
+        user,
+        accounts,
+        as_of_date=today,
+        days=days,
+        timeline_rows=timeline_rows,
     )
 
     supported = [a for a in accounts if account_supports_available_to_spend(a)]
-    timeline_rows: list[dict] | None = None
-    if supported:
+    if timeline_rows is None and supported:
         timeline_rows = build_timeline(
             user,
             start_date=today,

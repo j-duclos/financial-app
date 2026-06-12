@@ -32,6 +32,9 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_DEV_SECRET)
 # Local dev: DEBUG True by default. Render sets RENDER=true → DEBUG False unless DEBUG= is explicit.
 DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
 
+# Performance instrumentation ([PERF] logs) — enable on Render without DEBUG=True.
+ENABLE_PERF_LOGS = os.getenv("ENABLE_PERF_LOGS", "false").lower() == "true"
+
 if not DEBUG and SECRET_KEY == _INSECURE_DEV_SECRET:
     raise ImproperlyConfigured(
         "Set DJANGO_SECRET_KEY to a unique secret when DEBUG is False (required on Render)."
@@ -309,4 +312,78 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Budget App API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+}
+
+# Console logging for Render (captures stdout/stderr from gunicorn workers).
+_PERF_LOG_LEVEL = "INFO" if (DEBUG or ENABLE_PERF_LOGS) else "WARNING"
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "common.services.profiler": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "timeline": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "timeline.services": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "timeline.services.ledger": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "accounts": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "accounts.services": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "accounts.services.available_to_spend": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "insights": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "insights.services": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "insights.services.dashboard_summary": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+    },
 }

@@ -158,6 +158,70 @@ def test_patch_account_updates_role(auth_client, household):
     assert float(acc.minimum_buffer) == 100.0
 
 
+def test_patch_checking_account_with_null_credit_fields(auth_client, household):
+    """Edit payload for non-credit accounts may send null credit-only fields."""
+    acc = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+    )
+    payload = {
+        "name": "Checking",
+        "account_type": "CHECKING",
+        "role": "spending",
+        "minimum_buffer": "0",
+        "currency": "USD",
+        "target_utilization_percent": None,
+        "credit_limit": None,
+        "apr": None,
+        "interest_rate": None,
+        "interest_cycle_end_day": None,
+        "billing_cycle_end_day": None,
+        "statement_closing_day": None,
+        "payment_due_day": None,
+        "promotional_apr": None,
+        "promotional_end_date": None,
+    }
+    r = auth_client.patch(f"/api/accounts/{acc.id}/", payload, format="json")
+    assert r.status_code == 200, r.data
+
+
+def test_patch_include_in_forecast_only(auth_client, household):
+    acc = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+    )
+    r = auth_client.patch(
+        f"/api/accounts/{acc.id}/",
+        {"include_in_forecast": False},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    acc.refresh_from_db()
+    assert acc.include_in_forecast is False
+
+
+def test_patch_credit_toggle_forecast_ignores_stale_invalid_autopay(auth_client, household):
+    """Partial toggles must not fail when stored autopay_account is invalid."""
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Visa",
+        currency="USD",
+    )
+    card.autopay_account = card
+    card.save(update_fields=["autopay_account"])
+    r = auth_client.patch(
+        f"/api/accounts/{card.id}/",
+        {"include_in_forecast": False},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+
 def test_create_credit_account_infers_credit_card_role(auth_client, household):
     payload = {
         "household": household.id,

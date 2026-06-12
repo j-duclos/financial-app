@@ -413,6 +413,7 @@ def _calculate_forecast_summaries_for_accounts(
     *,
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
+    timeline_rows: Optional[list[dict]] = None,
 ) -> dict[int, dict[str, Any]]:
     """Uncached batch forecast summaries: one build_timeline for supported accounts."""
     timer = PerfTimer() if perf_enabled() else None
@@ -436,14 +437,15 @@ def _calculate_forecast_summaries_for_accounts(
         }
 
     supported_ids = {a.id for a in supported}
-    _phase_timeline = phase_start(timer, "timeline_build")
-    timeline_rows = build_timeline(
-        user,
-        start_date=today,
-        end_date=window_end,
-        as_of_date=today,
-    )
-    phase_end(timer, _phase_timeline)
+    if timeline_rows is None:
+        _phase_timeline = phase_start(timer, "timeline_build")
+        timeline_rows = build_timeline(
+            user,
+            start_date=today,
+            end_date=window_end,
+            as_of_date=today,
+        )
+        phase_end(timer, _phase_timeline)
 
     result: dict[int, dict[str, Any]] = {}
     _phase_summaries = phase_start(timer, "account_summaries")
@@ -487,13 +489,24 @@ def calculate_forecast_summaries_for_accounts(
     *,
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
+    timeline_rows: Optional[list[dict]] = None,
 ) -> dict[int, dict[str, Any]]:
     """
     Batch forecast summaries with Django cache (5-minute TTL).
 
     Expensive build_timeline() runs once per cache miss; dashboard and account list
-    endpoints hit this path repeatedly.
+    endpoints hit this path repeatedly. Pass timeline_rows to reuse a precomputed timeline
+    (skips cache; used by dashboard assembly).
     """
+    if timeline_rows is not None:
+        return _calculate_forecast_summaries_for_accounts(
+            user,
+            accounts,
+            as_of_date=as_of_date,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     account_ids = [a.id for a in accounts]

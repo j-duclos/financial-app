@@ -1,6 +1,7 @@
 """Tests for dashboard summary endpoint and service."""
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -17,6 +18,7 @@ from core.models import Household, HouseholdMembership
 from insights.services.dashboard_summary import (
     ATTENTION_TOP_LIMIT,
     _active_credit_accounts_for_available_credit,
+    _build_dashboard_summary,
     build_attention_items,
     build_dashboard_summary,
     _next_safe_to_spend_issue,
@@ -532,3 +534,102 @@ def test_attention_items_include_account_metadata(user, credit_card):
     assert item["account_role"] == credit_card.role
     assert item["account_type"] == credit_card.account_type
     assert item["url"].startswith("/accounts?account=")
+
+
+def test_dashboard_summary_builds_timeline_once(user, checking):
+    """Dashboard assembly builds the forecast timeline once and passes it to dependents."""
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        mock_build = stack.enter_context(
+            patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+        )
+        mock_forecast = stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.calculate_forecast_summaries_for_accounts",
+                return_value={},
+            )
+        )
+        mock_health = stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.calculate_account_health_for_accounts",
+                return_value={},
+            )
+        )
+        mock_upcoming = stack.enter_context(
+            patch("insights.services.dashboard_summary.build_upcoming_events", return_value=[])
+        )
+        stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.build_upcoming_groups",
+                return_value={"groups": [], "truncated": False, "total_event_count": 0},
+            )
+        )
+        stack.enter_context(patch("goals.bucket_services.dashboard_buckets_for_user", return_value=[]))
+        stack.enter_context(
+            patch(
+                "goals.bucket_services.calculate_aggregate_bucket_summary",
+                return_value={"goals_active_count": 0, "warnings": []},
+            )
+        )
+        stack.enter_context(patch("bills.services.build_dashboard_bill_summary", return_value={}))
+        stack.enter_context(
+            patch("credit_cards.services.debt_engine.build_dashboard_debt_summary", return_value={})
+        )
+        stack.enter_context(
+            patch("insights.services.dashboard_insights.build_dashboard_insights", return_value=[])
+        )
+        mock_rec_ctx = stack.enter_context(
+            patch("recommendations.services.engine.build_recommendation_context")
+        )
+        stack.enter_context(
+            patch("recommendations.services.engine.build_dashboard_recommendation_list", return_value=[])
+        )
+        stack.enter_context(
+            patch("recommendations.services.engine.recommendation_timeline_hints", return_value=[])
+        )
+        mock_rec_ctx.return_value = object()
+        _build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+
+    assert mock_build.call_count == 1
+    shared_rows = mock_build.return_value
+    assert mock_forecast.call_args.kwargs["timeline_rows"] is shared_rows
+    assert mock_health.call_args.kwargs["timeline_rows"] is shared_rows
+    assert mock_upcoming.call_args.kwargs["timeline_rows"] is shared_rows
+
+
+def test_forecast_summaries_reuse_precomputed_timeline(user, checking):
+    """Passing timeline_rows skips an internal build_timeline call."""
+    with patch("accounts.services.available_to_spend.build_timeline") as mock_build:
+        mock_build.return_value = []
+        calculate_forecast_summaries_for_accounts(
+            user,
+            [checking],
+            as_of_date=AS_OF,
+            days=30,
+            timeline_rows=[],
+        )
+        mock_build.assert_not_called()
+
+
+def test_account_health_reuse_precomputed_timeline(user, checking):
+    """Passing timeline_rows skips duplicate build_timeline in health batch."""
+    with patch("accounts.services.account_health.build_timeline") as mock_build:
+        mock_build.return_value = []
+        calculate_forecast_summaries_for_accounts(
+            user,
+            [checking],
+            as_of_date=AS_OF,
+            days=30,
+            timeline_rows=[],
+        )
+        from accounts.services.account_health import calculate_account_health_for_accounts
+
+        calculate_account_health_for_accounts(
+            user,
+            [checking],
+            as_of_date=AS_OF,
+            days=30,
+            timeline_rows=[],
+        )
+        mock_build.assert_not_called()

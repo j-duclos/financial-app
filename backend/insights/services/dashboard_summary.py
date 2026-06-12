@@ -21,10 +21,12 @@ from common.services.cache import (
 from common.services.profiler import (
     PerfTimer,
     QueryProfiler,
+    get_build_timeline_count,
     log_perf,
     perf_enabled,
     phase_end,
     phase_start,
+    reset_build_timeline_count,
 )
 
 from accounts.models import Account
@@ -927,6 +929,11 @@ def _build_dashboard_summary(
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     window_end = today + timedelta(days=days)
+    timeline_end = max(window_end, today + timedelta(days=UPCOMING_DAYS))
+
+    if perf_enabled():
+        reset_build_timeline_count()
+        log_perf("dashboard_summary starting", user=user.pk, days=days)
 
     households = get_households_for_user(user)
     accounts = list(
@@ -937,12 +944,39 @@ def _build_dashboard_summary(
     accounts_by_id = {a.id: a for a in accounts}
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
+    _phase_timeline = phase_start(timer, "timeline_build")
+    timeline_build_start = time.perf_counter() if perf_enabled() else None
+    timeline_rows = build_timeline(
+        user,
+        start_date=today,
+        end_date=timeline_end,
+        as_of_date=today,
+    )
+    if perf_enabled() and timeline_build_start is not None:
+        log_perf(
+            "dashboard_summary build_timeline",
+            user=user.pk,
+            days=days,
+            timeline_end=timeline_end.isoformat(),
+            build_timeline_count=get_build_timeline_count(),
+            elapsed_ms=f"{(time.perf_counter() - timeline_build_start) * 1000:.0f}",
+        )
+    phase_end(timer, _phase_timeline)
+
     _phase_forecast = phase_start(timer, "forecast")
     forecasts = calculate_forecast_summaries_for_accounts(
-        user, forecast_accounts, as_of_date=today, days=days
+        user,
+        forecast_accounts,
+        as_of_date=today,
+        days=days,
+        timeline_rows=timeline_rows,
     )
     health_by_id = calculate_account_health_for_accounts(
-        user, accounts, as_of_date=today, days=days
+        user,
+        accounts,
+        as_of_date=today,
+        days=days,
+        timeline_rows=timeline_rows,
     )
     phase_end(timer, _phase_forecast)
 
@@ -959,12 +993,6 @@ def _build_dashboard_summary(
     phase_end(timer, _phase_sts)
 
     _phase_upcoming = phase_start(timer, "upcoming")
-    timeline_rows = build_timeline(
-        user,
-        start_date=today,
-        end_date=max(window_end, today + timedelta(days=UPCOMING_DAYS)),
-        as_of_date=today,
-    )
     upcoming_events = build_upcoming_events(
         user,
         accounts,
@@ -1115,6 +1143,7 @@ def _build_dashboard_summary(
             user=user.pk,
             days=days,
             accounts=len(accounts),
+            build_timeline_count=get_build_timeline_count(),
             elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
             forecast_ms=f"{phases.get('forecast', 0):.0f}",
             safe_to_spend_ms=f"{phases.get('safe_to_spend', 0):.0f}",

@@ -49,6 +49,7 @@ class AccountSerializer(serializers.ModelSerializer):
         max_digits=5,
         decimal_places=2,
         required=False,
+        allow_null=True,
         min_value=Decimal("0"),
         max_value=Decimal("100"),
     )
@@ -246,10 +247,13 @@ class AccountSerializer(serializers.ModelSerializer):
         attrs = self._apply_nickname_compat(attrs)
         attrs = self._drop_null_credit_card_amounts(attrs)
         is_credit = self._is_credit(attrs)
-        autopay_account = attrs.get("autopay_account")
-        if autopay_account is None and self.instance:
+        autopay_touched = any(
+            key in attrs for key in ("autopay_account", "autopay_enabled", "autopay_type", "account_type")
+        )
+        autopay_account = attrs.get("autopay_account") if "autopay_account" in attrs else None
+        if autopay_account is None and autopay_touched and self.instance:
             autopay_account = self.instance.autopay_account
-        if autopay_account is not None:
+        if autopay_account is not None and autopay_touched:
             if autopay_account.account_type not in (
                 Account.AccountType.CHECKING,
                 Account.AccountType.SAVINGS,
@@ -272,6 +276,8 @@ class AccountSerializer(serializers.ModelSerializer):
             attrs["billing_cycle_end_day"] = stmt_day
         elif attrs.get("billing_cycle_end_day") is not None and is_credit:
             attrs["statement_closing_day"] = attrs["billing_cycle_end_day"]
+        if not is_credit and attrs.get("target_utilization_percent") is None:
+            attrs.pop("target_utilization_percent", None)
         return attrs
 
     def create(self, validated_data):

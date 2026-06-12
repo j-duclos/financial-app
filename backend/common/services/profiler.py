@@ -1,14 +1,17 @@
 """
-DEBUG-only performance instrumentation for forecast and dashboard paths.
+Performance instrumentation for forecast and dashboard paths.
 
-Profiling is disabled unless settings.DEBUG is True so production request latency
-is unaffected. SQL query stats use django.db.connection.queries (populated only in DEBUG).
+Enabled when settings.DEBUG or settings.ENABLE_PERF_LOGS is True.
+Set ENABLE_PERF_LOGS=true on Render to emit [PERF] logs without DEBUG=True.
+
+SQL query stats use django.db.connection.queries (populated only when DEBUG=True).
 """
 from __future__ import annotations
 
 import logging
 import time
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from typing import Any, Iterator
 
 from django.conf import settings
@@ -16,11 +19,32 @@ from django.db import connection
 
 logger = logging.getLogger(__name__)
 
+_build_timeline_call_count: ContextVar[int] = ContextVar("build_timeline_call_count", default=0)
+
+
+def reset_build_timeline_count() -> None:
+    """Reset per-request build_timeline() counter (DEBUG instrumentation)."""
+    _build_timeline_call_count.set(0)
+
+
+def increment_build_timeline_count() -> int:
+    """Record one build_timeline() invocation; returns new count."""
+    count = _build_timeline_call_count.get() + 1
+    _build_timeline_call_count.set(count)
+    return count
+
+
+def get_build_timeline_count() -> int:
+    """How many times build_timeline() ran in the current context."""
+    return _build_timeline_call_count.get()
+
 PhaseToken = tuple[str, float] | None
 
 
 def perf_enabled() -> bool:
-    return bool(getattr(settings, "DEBUG", False))
+    return bool(getattr(settings, "DEBUG", False)) or bool(
+        getattr(settings, "ENABLE_PERF_LOGS", False)
+    )
 
 
 class PerfTimer:
