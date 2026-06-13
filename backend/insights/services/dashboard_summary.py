@@ -24,6 +24,7 @@ from common.services.profiler import (
     get_build_timeline_count,
     log_perf,
     perf_enabled,
+    perf_print,
     phase_end,
     phase_start,
     reset_build_timeline_count,
@@ -766,6 +767,7 @@ def build_upcoming_events(
             start_date=today,
             end_date=window_end,
             as_of_date=today,
+            projection_only=True,
         )
 
     households = get_households_for_user(user)
@@ -933,7 +935,7 @@ def _build_dashboard_summary(
 
     if perf_enabled():
         reset_build_timeline_count()
-        log_perf("dashboard_summary starting", user=user.pk, days=days)
+        perf_print(f"[PERF] dashboard request start user={user.pk} days={days}")
 
     households = get_households_for_user(user)
     accounts = list(
@@ -945,25 +947,17 @@ def _build_dashboard_summary(
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
     _phase_timeline = phase_start(timer, "timeline_build")
-    timeline_build_start = time.perf_counter() if perf_enabled() else None
     timeline_rows = build_timeline(
         user,
         start_date=today,
         end_date=timeline_end,
         as_of_date=today,
+        projection_only=True,
     )
-    if perf_enabled() and timeline_build_start is not None:
-        log_perf(
-            "dashboard_summary build_timeline",
-            user=user.pk,
-            days=days,
-            timeline_end=timeline_end.isoformat(),
-            build_timeline_count=get_build_timeline_count(),
-            elapsed_ms=f"{(time.perf_counter() - timeline_build_start) * 1000:.0f}",
-        )
     phase_end(timer, _phase_timeline)
 
     _phase_forecast = phase_start(timer, "forecast")
+    forecast_start = time.perf_counter() if perf_enabled() else None
     forecasts = calculate_forecast_summaries_for_accounts(
         user,
         forecast_accounts,
@@ -971,6 +965,15 @@ def _build_dashboard_summary(
         days=days,
         timeline_rows=timeline_rows,
     )
+    phase_end(timer, _phase_forecast)
+    if perf_enabled() and forecast_start is not None:
+        perf_print(
+            f"[PERF] forecast_summary elapsed_ms="
+            f"{(time.perf_counter() - forecast_start) * 1000:.0f}"
+        )
+
+    _phase_health = phase_start(timer, "account_health")
+    health_start = time.perf_counter() if perf_enabled() else None
     health_by_id = calculate_account_health_for_accounts(
         user,
         accounts,
@@ -978,9 +981,15 @@ def _build_dashboard_summary(
         days=days,
         timeline_rows=timeline_rows,
     )
-    phase_end(timer, _phase_forecast)
+    phase_end(timer, _phase_health)
+    if perf_enabled() and health_start is not None:
+        perf_print(
+            f"[PERF] account_health elapsed_ms="
+            f"{(time.perf_counter() - health_start) * 1000:.0f}"
+        )
 
     _phase_sts = phase_start(timer, "safe_to_spend")
+    sts_start = time.perf_counter() if perf_enabled() else None
     st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
     attention_all = build_attention_items(
         health_by_id, accounts_by_id, forecasts, limit=999, today=today
@@ -991,6 +1000,11 @@ def _build_dashboard_summary(
     sts_status = _safe_to_spend_status(total_sts, st_aggregate)
     next_issue = _next_safe_to_spend_issue(st_aggregate, forecasts)
     phase_end(timer, _phase_sts)
+    if perf_enabled() and sts_start is not None:
+        perf_print(
+            f"[PERF] safe_to_spend elapsed_ms="
+            f"{(time.perf_counter() - sts_start) * 1000:.0f}"
+        )
 
     _phase_upcoming = phase_start(timer, "upcoming")
     upcoming_events = build_upcoming_events(
@@ -1135,21 +1149,13 @@ def _build_dashboard_summary(
     if perf_enabled() and wall_start is not None:
         if query_profiler is not None:
             query_profiler.stop()
-        phases = timer.phases if timer is not None else {}
-        log_perf(
-            "dashboard_summary_compute",
-            timer=timer,
-            query_profiler=query_profiler,
-            user=user.pk,
-            days=days,
-            accounts=len(accounts),
-            build_timeline_count=get_build_timeline_count(),
-            elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
-            forecast_ms=f"{phases.get('forecast', 0):.0f}",
-            safe_to_spend_ms=f"{phases.get('safe_to_spend', 0):.0f}",
-            upcoming_ms=f"{phases.get('upcoming', 0):.0f}",
-            recommendations_ms=f"{phases.get('recommendations', 0):.0f}",
+        perf_print(f"[PERF] dashboard build_timeline_count={get_build_timeline_count()}")
+        perf_print(
+            f"[PERF] dashboard_total elapsed_ms="
+            f"{(time.perf_counter() - wall_start) * 1000:.0f}"
         )
+        if query_profiler is not None:
+            perf_print(f"[PERF] query_count={query_profiler.query_count}")
 
     return {
         "safe_to_spend": {

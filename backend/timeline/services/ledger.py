@@ -18,14 +18,33 @@ from accounts.models import Account
 from common.services.profiler import (
     QueryProfiler,
     PerfTimer,
+    enter_build_timeline_context,
+    exit_build_timeline_context,
+    get_materialized_transaction_count,
     increment_build_timeline_count,
     log_perf,
+    materialization_active,
     perf_enabled,
+    perf_print,
     phase_end,
     phase_start,
+    projection_only_build_active,
+    record_materialization_created,
+    record_materialization_skipped,
+    record_materialization_updated,
+    record_materialized_transaction,
+    set_materialization_existing_loaded,
+    set_materialization_occurrences_generated,
 )
 from core.utils import get_households_for_user
 from timeline.services.balance_cache import TimelineBalanceCache, get_active_balance_cache
+from timeline.services.rule_occurrence_store import (
+    RuleOccurrenceStore,
+    activate_rule_occurrence_store,
+    build_rule_occurrence_store,
+    deactivate_rule_occurrence_store,
+    get_rule_occurrence_store,
+)
 
 
 def _lookup_account(account_id: int, accs: dict[int, Account]) -> Account | None:
@@ -649,12 +668,19 @@ def _materialize_rule_occurrence(
     category_id: Optional[int],
 ) -> Transaction:
     """Get or create a Transaction for this rule occurrence. If one already exists, return it as-is so user edits (e.g. "this occurrence only" amount change) are preserved."""
-    txn = (
-        Transaction.objects.filter(rule=rule, date=d, account_id=account_id)
-        .select_related("account", "category")
-        .first()
-    )
+    if projection_only_build_active():
+        raise RuntimeError("Materialization called during projection_only timeline build")
+    store = get_rule_occurrence_store()
+    if store is not None:
+        txn = store.get(rule.pk, account_id, d)
+    else:
+        txn = (
+            Transaction.objects.filter(rule=rule, date=d, account_id=account_id)
+            .select_related("account", "category")
+            .first()
+        )
     if txn is not None:
+        amount_updated = False
         if (
             d >= timezone.localdate()
             and txn.source == Transaction.Source.RULE
@@ -663,9 +689,15 @@ def _materialize_rule_occurrence(
         ):
             txn.amount = amount
             txn.save(update_fields=["amount", "updated_at"])
+            amount_updated = True
             cache = get_active_balance_cache()
             if cache is not None:
                 cache.note_transaction_saved(txn)
+        if materialization_active():
+            if amount_updated:
+                record_materialization_updated()
+            else:
+                record_materialization_skipped()
         _safe_try_match_rule_to_pending_imports(txn)
         return txn
     if not _rule_allows_materialization(rule, d):
@@ -683,8 +715,18 @@ def _materialize_rule_occurrence(
         source=Transaction.Source.RULE,
         rule=rule,
     )
+    if materialization_active():
+        record_materialization_created()
+    else:
+        record_materialized_transaction()
     _safe_try_match_rule_to_pending_imports(created)
-    if created.amount > 0 and rule.bucket_allocations.filter(active=True).exists():
+    # TODO: Batch Plaid import matching after materialization loop to avoid per-occurrence queries.
+    has_bucket_allocations = (
+        rule.pk in store.active_bucket_rule_ids
+        if store is not None
+        else rule.bucket_allocations.filter(active=True).exists()
+    )
+    if created.amount > 0 and has_bucket_allocations:
         try:
             from goals.bucket_services import process_rule_allocations_for_transaction
 
@@ -694,6 +736,8 @@ def _materialize_rule_occurrence(
     cache = get_active_balance_cache()
     if cache is not None:
         cache.note_transaction_saved(created)
+    if store is not None:
+        store.put(created)
     return created
 
 
@@ -1743,9 +1787,39 @@ def build_timeline(
     omitted here (use a normal transaction to record actual bank interest if needed).
     """
     increment_build_timeline_count()
+    enter_build_timeline_context(projection_only=projection_only)
+    try:
+        return _build_timeline_impl(
+            user,
+            start_date,
+            end_date,
+            scenario_id=scenario_id,
+            account_id=account_id,
+            household_id=household_id,
+            as_of_date=as_of_date,
+            ephemeral_events=ephemeral_events,
+            projection_only=projection_only,
+        )
+    finally:
+        exit_build_timeline_context()
+
+
+def _build_timeline_impl(
+    user,
+    start_date: date,
+    end_date: date,
+    scenario_id: Optional[int] = None,
+    account_id: Optional[int] = None,
+    household_id: Optional[int] = None,
+    as_of_date: Optional[date] = None,
+    ephemeral_events: Optional[list] = None,
+    projection_only: bool = False,
+) -> list[dict]:
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
     wall_start = time.perf_counter() if perf_enabled() else None
+    if perf_enabled():
+        perf_print(f"[PERF] build_timeline START projection_only={projection_only}")
     perf_generated_occurrences = 0
     if query_profiler is not None:
         query_profiler.start()
@@ -1757,7 +1831,8 @@ def build_timeline(
     if not households.exists():
         return []
 
-    promote_due_schedules(as_of_date=as_of_date)
+    if not projection_only:
+        promote_due_schedules(as_of_date=as_of_date)
 
     if account_id:
         accounts = Account.all_objects.for_historical_reporting().filter(
@@ -1776,12 +1851,12 @@ def build_timeline(
 
     if perf_enabled():
         requested_days = max((end_date - start_date).days, 0)
-        logger.info(
-            "[PERF] forecast_requested\nuser=%s\ndays=%s\nstart=%s\nend=%s",
-            getattr(user, "pk", user),
-            requested_days,
-            start_date.isoformat(),
-            end_date.isoformat(),
+        perf_print(
+            "[PERF] forecast_requested "
+            f"user={getattr(user, 'pk', user)} "
+            f"days={requested_days} "
+            f"start={start_date.isoformat()} "
+            f"end={end_date.isoformat()}"
         )
 
     from timeline.services.balance_cache import (
@@ -2000,14 +2075,19 @@ def build_timeline(
         rules_qs = RecurringRule.objects.filter(
             household__in=households,
             active=True,
-        ).select_related("account", "category", "transfer_to_account")
+        ).select_related("account", "category", "transfer_to_account").prefetch_related(
+            "bucket_allocations"
+        )
         if scenario_id and scenario:
             rules_qs = rules_qs.prefetch_related("scenario_overrides")
 
         # Build rule list and sort by first occurrence date so that when we evaluate "skip 3/23?"
         # we have already added any earlier payment (e.g. 3/20) from the same or another rule.
         rules_with_occ: list[tuple] = []
+        active_bucket_rule_ids: set[int] = set()
         for rule in rules_qs:
+            if any(ba.active for ba in rule.bucket_allocations.all()):
+                active_bucket_rule_ids.add(rule.id)
             eff = apply_scenario_overrides(rule, scenario)
             if not eff.get("active", True):
                 continue
@@ -2149,10 +2229,24 @@ def build_timeline(
 
         occurrence_events.sort(key=lambda x: (x[0], x[1], x[2]))
         perf_generated_occurrences = len(occurrence_events)
+        if materialization_active():
+            set_materialization_occurrences_generated(perf_generated_occurrences)
         phase_end(timer, _phase_generate)
         seen_scenario_rule_keys: set[tuple] = set()
 
         _phase_materialize = phase_start(timer, "materialize_occurrences")
+        occurrence_store: RuleOccurrenceStore | None = None
+        if not scenario_projection_only and rule_ids:
+            occurrence_store = build_rule_occurrence_store(
+                rule_ids=rule_ids,
+                account_ids=account_ids,
+                start_date=start_date,
+                end_date=end_date,
+                active_bucket_rule_ids=active_bucket_rule_ids,
+            )
+            activate_rule_occurrence_store(occurrence_store)
+            if materialization_active():
+                set_materialization_existing_loaded(occurrence_store.existing_loaded)
         for d, _sort_amt, _rid, kind, payload in occurrence_events:
             if kind == "transfer":
                 (
@@ -2169,11 +2263,14 @@ def build_timeline(
                 ) = payload
                 to_acc_for_skip = _lookup_account(to_acc_id, accs)
                 if is_debt_dest and to_acc_for_skip:
-                    dest_leg_ids = tuple(
-                        Transaction.objects.filter(
-                            rule_id=rule.id, date=d, account_id=to_acc_id
-                        ).values_list("pk", flat=True)
-                    )
+                    if occurrence_store is not None:
+                        dest_leg_ids = occurrence_store.get_leg_pks(rule.id, d, to_acc_id)
+                    else:
+                        dest_leg_ids = tuple(
+                            Transaction.objects.filter(
+                                rule_id=rule.id, date=d, account_id=to_acc_id
+                            ).values_list("pk", flat=True)
+                        )
                     from_acc_obj = _lookup_account(from_acc_id, accs)
                     fund_from_bank = (
                         from_acc_obj is not None
@@ -2212,6 +2309,8 @@ def build_timeline(
                             category_name=cat_name,
                         )
                     if skip_payment:
+                        if materialization_active():
+                            record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
                         continue
@@ -2253,9 +2352,12 @@ def build_timeline(
                 txn_from = _materialize_rule_occurrence(
                     rule, d, from_acc_id, out_amount, rule.name, cat_id
                 )
-                existing_to = Transaction.objects.filter(
-                    rule_id=rule.id, date=d
-                ).exclude(account_id=from_acc_id).select_related("account").first()
+                if occurrence_store is not None:
+                    existing_to = occurrence_store.get_other_account_leg(rule.id, d, from_acc_id)
+                else:
+                    existing_to = Transaction.objects.filter(
+                        rule_id=rule.id, date=d
+                    ).exclude(account_id=from_acc_id).select_related("account").first()
                 if existing_to is not None:
                     txn_to = existing_to
                     to_acc_id_actual = txn_to.account_id
@@ -2316,6 +2418,8 @@ def build_timeline(
                         exclude_transaction_ids=None,
                         category_name=cat_name,
                     ):
+                        if materialization_active():
+                            record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
                         continue
@@ -2369,6 +2473,7 @@ def build_timeline(
                     "sort_key": (d, 1, rule.id),
                     **_timeline_row_meta(txn),
                 })
+        deactivate_rule_occurrence_store()
         phase_end(timer, _phase_materialize)
 
         if scenario_id and scenario:
@@ -2555,6 +2660,15 @@ def build_timeline(
     if perf_enabled() and wall_start is not None:
         if query_profiler is not None:
             query_profiler.stop()
+        elapsed_ms = (time.perf_counter() - wall_start) * 1000
+        perf_print(
+            f"[PERF] build_timeline projection_only={projection_only} "
+            f"generated_occurrences={perf_generated_occurrences} "
+            f"created_transactions={get_materialized_transaction_count()}"
+        )
+        perf_print(f"[PERF] build_timeline END elapsed_ms={elapsed_ms:.0f}")
+        if query_profiler is not None:
+            perf_print(f"[PERF] query_count={query_profiler.query_count}")
         forecast_days = max((end_date - start_date).days, 0)
         log_perf(
             "build_timeline",
@@ -2568,6 +2682,6 @@ def build_timeline(
             end_date=end_date.isoformat(),
             days=forecast_days,
             rows_returned=len(rows),
-            elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+            elapsed_ms=f"{elapsed_ms:.0f}",
         )
     return rows

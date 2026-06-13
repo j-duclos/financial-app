@@ -592,6 +592,7 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
         _build_dashboard_summary(user, days=30, as_of_date=AS_OF)
 
     assert mock_build.call_count == 1
+    assert mock_build.call_args.kwargs.get("projection_only") is True
     shared_rows = mock_build.return_value
     assert mock_forecast.call_args.kwargs["timeline_rows"] is shared_rows
     assert mock_health.call_args.kwargs["timeline_rows"] is shared_rows
@@ -633,3 +634,31 @@ def test_account_health_reuse_precomputed_timeline(user, checking):
             timeline_rows=[],
         )
         mock_build.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dashboard_projection_only_does_not_materialize_rule_transactions(
+    user, household, checking, expense_category
+):
+    """Dashboard timeline build must not create future RULE-sourced Transaction rows."""
+    from timeline.models import RecurringRule
+
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Monthly Rent",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("1200"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=AS_OF,
+        active=True,
+    )
+    before = Transaction.objects.filter(rule=rule).count()
+    summary = _build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    after = Transaction.objects.filter(rule=rule).count()
+    assert after == before
+    assert summary["safe_to_spend"]["window_days"] == 30

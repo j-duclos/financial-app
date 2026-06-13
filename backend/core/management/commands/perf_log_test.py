@@ -7,12 +7,10 @@ Requires ENABLE_PERF_LOGS=true or DEBUG=True for perf instrumentation to be acti
 The command always writes one INFO line so you can confirm the logging pipeline.
 """
 
-import logging
-
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
-logger = logging.getLogger("common.services.profiler")
+from common.services.profiler import perf_print
 
 
 class Command(BaseCommand):
@@ -29,5 +27,5 @@ class Command(BaseCommand):
                     "set ENABLE_PERF_LOGS=true to enable [PERF] instrumentation."
                 )
             )
-        logger.info("[PERF] Render performance log test")
+        perf_print("[PERF] Render performance log test")
         self.stdout.write(self.style.SUCCESS("Emitted: [PERF] Render performance log test"))

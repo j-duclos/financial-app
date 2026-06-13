@@ -257,6 +257,7 @@ def _calculate_account_forecast_summary(
             end_date=window_end,
             account_id=account.pk,
             as_of_date=today,
+            projection_only=True,
         )
 
     by_date, inflows, outflows, committed_outflows = _summarize_future_rows(
@@ -444,6 +445,7 @@ def _calculate_forecast_summaries_for_accounts(
             start_date=today,
             end_date=window_end,
             as_of_date=today,
+            projection_only=True,
         )
         phase_end(timer, _phase_timeline)
 

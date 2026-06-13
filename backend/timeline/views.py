@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
+from common.services.forecast_horizon import normalize_forecast_days
 
 from transactions.models import Transaction, Transfer
 
@@ -52,6 +53,11 @@ from .services.rule_cleanup import (
     resume_recurring_rule,
 )
 from .services.rule_schedule import promote_due_schedules
+from .services.materialization import (
+    DEFAULT_MATERIALIZE_DAYS,
+    materialize_recurring_transactions_for_user,
+    refresh_rule_materialization,
+)
 from .reconcile_services import parse_csv_to_statement_rows, get_suggestions
 from .pagination import RecurringRulePagination
 
@@ -112,6 +118,8 @@ class RecurringRuleViewSet(ModelViewSet):
         rule = serializer.save()
         if not rule.active:
             pause_recurring_rule(rule)
+        else:
+            refresh_rule_materialization(self.request.user, rule)
 
     def update(self, request, *args, **kwargs):
         promote_due_schedules()
@@ -239,6 +247,9 @@ class RecurringRuleViewSet(ModelViewSet):
         else:
             delete_materialized_transactions_for_rule_on_or_after(instance.pk, cutoff)
 
+        if instance.active:
+            refresh_rule_materialization(request.user, instance)
+
         return response
 
     @action(detail=True, methods=["post"])
@@ -254,6 +265,7 @@ class RecurringRuleViewSet(ModelViewSet):
         rule = self.get_object()
         resume_recurring_rule(rule)
         rule.refresh_from_db()
+        refresh_rule_materialization(request.user, rule)
         serializer = RecurringRuleSerializer(rule, context={"request": request})
         return Response(serializer.data)
 
@@ -571,6 +583,56 @@ def _resolve_timeline_household_id(
     )
 
 
+class MaterializeRecurringView(APIView):
+    """Explicitly materialize future rule-created transactions (not done on dashboard/timeline reads)."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        raw_days = data.get("forecast_days", DEFAULT_MATERIALIZE_DAYS)
+        try:
+            forecast_days = normalize_forecast_days(int(raw_days))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "forecast_days must be one of the allowed forecast horizons."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        account_id = data.get("account_id")
+        rule_id = data.get("rule_id")
+        force = bool(data.get("force", False))
+
+        account_ids = None
+        if account_id is not None and str(account_id).strip() != "":
+            try:
+                account_ids = [int(account_id)]
+            except (TypeError, ValueError):
+                return Response({"detail": "account_id must be an integer."}, status=400)
+
+        rule_ids = None
+        if rule_id is not None and str(rule_id).strip() != "":
+            try:
+                rule_ids = [int(rule_id)]
+            except (TypeError, ValueError):
+                return Response({"detail": "rule_id must be an integer."}, status=400)
+
+        try:
+            summary = materialize_recurring_transactions_for_user(
+                request.user,
+                account_ids=account_ids,
+                rule_ids=rule_ids,
+                force=force,
+                forecast_days=forecast_days,
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"Materialization error: {type(exc).__name__}: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(summary)
+
+
 class TimelineView(APIView):
     permission_classes = [IsHouseholdMember]
 
@@ -615,6 +677,7 @@ class TimelineView(APIView):
                 account_id=account_id,
                 household_id=household_id,
                 as_of_date=as_of_date,
+                projection_only=True,
             )
             # Serialize dates and decimals for JSON
             for r in rows:
@@ -803,6 +866,7 @@ class TimelineCalendarView(APIView):
                 account_id=account_id,
                 household_id=household_id,
                 as_of_date=as_of_date,
+                projection_only=True,
             )
             resp = Response(payload)
             resp["Cache-Control"] = "no-store, no-cache, must-revalidate"

@@ -1,9 +1,6 @@
-import logging
-
 from django.apps import AppConfig
-from django.conf import settings
 
-_perf_logger = logging.getLogger("common.services.profiler")
+from common.services.profiler import perf_print
 
 
 class CoreConfig(AppConfig):
@@ -11,5 +8,4 @@ class CoreConfig(AppConfig):
     name = "core"
 
     def ready(self) -> None:
-        if getattr(settings, "ENABLE_PERF_LOGS", False):
-            _perf_logger.info("[PERF] Performance logging enabled ENABLE_PERF_LOGS=true")
+        perf_print("[PERF] startup performance logging active")

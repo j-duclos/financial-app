@@ -531,6 +531,7 @@ def calculate_account_health(
                 end_date=window_end,
                 account_id=account.pk,
                 as_of_date=today,
+                projection_only=True,
             )
         from accounts.services.available_to_spend import calculate_account_forecast_summary
 
@@ -621,6 +622,7 @@ def calculate_account_health_for_accounts(
             start_date=today,
             end_date=window_end,
             as_of_date=today,
+            projection_only=True,
         )
 
     for account in accounts:

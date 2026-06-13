@@ -4,11 +4,12 @@ Performance instrumentation for forecast and dashboard paths.
 Enabled when settings.DEBUG or settings.ENABLE_PERF_LOGS is True.
 Set ENABLE_PERF_LOGS=true on Render to emit [PERF] logs without DEBUG=True.
 
+[PERF] lines are written to stdout (not Django logging) so Render captures them reliably.
+
 SQL query stats use django.db.connection.queries (populated only when DEBUG=True).
 """
 from __future__ import annotations
 
-import logging
 import time
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -17,9 +18,133 @@ from typing import Any, Iterator
 from django.conf import settings
 from django.db import connection
 
-logger = logging.getLogger(__name__)
+
+def perf_enabled() -> bool:
+    return bool(getattr(settings, "DEBUG", False)) or bool(
+        getattr(settings, "ENABLE_PERF_LOGS", False)
+    )
+
+
+def perf_print(message: str) -> None:
+    """Emit a [PERF] line to stdout for Render log visibility."""
+    if not perf_enabled():
+        return
+    print(message, flush=True)
 
 _build_timeline_call_count: ContextVar[int] = ContextVar("build_timeline_call_count", default=0)
+_projection_only_build: ContextVar[bool] = ContextVar("projection_only_build", default=False)
+_materialized_transaction_count: ContextVar[int] = ContextVar("materialized_transaction_count", default=0)
+
+
+def enter_build_timeline_context(*, projection_only: bool) -> None:
+    """Track projection-only mode and materialized-transaction count for one build_timeline() call."""
+    _projection_only_build.set(projection_only)
+    _materialized_transaction_count.set(0)
+
+
+def exit_build_timeline_context() -> None:
+    """Reset build_timeline context vars."""
+    _projection_only_build.set(False)
+    _materialized_transaction_count.set(0)
+
+
+def projection_only_build_active() -> bool:
+    return _projection_only_build.get()
+
+
+def record_materialized_transaction() -> None:
+    count = _materialized_transaction_count.get() + 1
+    _materialized_transaction_count.set(count)
+
+
+def get_materialized_transaction_count() -> int:
+    return _materialized_transaction_count.get()
+
+
+_materialization_active: ContextVar[bool] = ContextVar("materialization_active", default=False)
+_materialization_stats: ContextVar[dict[str, int]] = ContextVar(
+    "materialization_stats",
+    default={
+        "rules_processed": 0,
+        "occurrences_generated": 0,
+        "transactions_created": 0,
+        "transactions_updated": 0,
+        "transactions_skipped": 0,
+        "existing_loaded": 0,
+    },
+)
+
+
+def enter_materialization_context(*, rules_processed: int) -> None:
+    """Begin dedicated materialization run; track create/update/skip counts."""
+    _materialization_active.set(True)
+    _materialization_stats.set(
+        {
+            "rules_processed": rules_processed,
+            "occurrences_generated": 0,
+            "transactions_created": 0,
+            "transactions_updated": 0,
+            "transactions_skipped": 0,
+            "existing_loaded": 0,
+        }
+    )
+
+
+def exit_materialization_context() -> dict[str, int]:
+    """End materialization run and return summary counters."""
+    summary = dict(_materialization_stats.get())
+    _materialization_active.set(False)
+    _materialization_stats.set(
+        {
+            "rules_processed": 0,
+            "occurrences_generated": 0,
+            "transactions_created": 0,
+            "transactions_updated": 0,
+            "transactions_skipped": 0,
+            "existing_loaded": 0,
+        }
+    )
+    return summary
+
+
+def materialization_active() -> bool:
+    return _materialization_active.get()
+
+
+def _bump_materialization_stat(key: str, delta: int = 1) -> None:
+    if not materialization_active():
+        return
+    stats = dict(_materialization_stats.get())
+    stats[key] = stats.get(key, 0) + delta
+    _materialization_stats.set(stats)
+
+
+def set_materialization_occurrences_generated(count: int) -> None:
+    if not materialization_active():
+        return
+    stats = dict(_materialization_stats.get())
+    stats["occurrences_generated"] = count
+    _materialization_stats.set(stats)
+
+
+def record_materialization_created() -> None:
+    _bump_materialization_stat("transactions_created")
+
+
+def record_materialization_updated() -> None:
+    _bump_materialization_stat("transactions_updated")
+
+
+def record_materialization_skipped() -> None:
+    _bump_materialization_stat("transactions_skipped")
+
+
+def set_materialization_existing_loaded(count: int) -> None:
+    if not materialization_active():
+        return
+    stats = dict(_materialization_stats.get())
+    stats["existing_loaded"] = count
+    _materialization_stats.set(stats)
 
 
 def reset_build_timeline_count() -> None:
@@ -39,12 +164,6 @@ def get_build_timeline_count() -> int:
     return _build_timeline_call_count.get()
 
 PhaseToken = tuple[str, float] | None
-
-
-def perf_enabled() -> bool:
-    return bool(getattr(settings, "DEBUG", False)) or bool(
-        getattr(settings, "ENABLE_PERF_LOGS", False)
-    )
 
 
 class PerfTimer:
@@ -113,17 +232,17 @@ def log_perf(
 ) -> None:
     if not perf_enabled():
         return
-    lines = [f"[PERF] {label}"]
+    parts = [f"[PERF] {label}"]
     for key, value in fields.items():
-        lines.append(f"{key}={value}")
+        parts.append(f"{key}={value}")
     if query_profiler is not None:
-        lines.append(f"query_count={query_profiler.query_count}")
-        lines.append(f"query_time_ms={query_profiler.query_time_ms:.0f}")
+        parts.append(f"query_count={query_profiler.query_count}")
+        parts.append(f"query_time_ms={query_profiler.query_time_ms:.0f}")
     if timer is not None:
         summary = timer.phase_summary()
         if summary:
-            lines.append(summary)
-    logger.info("\n".join(lines))
+            parts.append(summary)
+    perf_print(" ".join(parts))
 
 
 def log_elapsed(label: str, started_at: float, **fields: Any) -> None:

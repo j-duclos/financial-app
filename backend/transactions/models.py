@@ -288,6 +288,27 @@ class Transaction(models.Model):
             models.Index(fields=["category", "date"]),
             models.Index(fields=["account", "interest_cycle_end_date"]),
             models.Index(fields=["import_match_status", "account"]),
+            # Rule materialization: bulk preload + per-occurrence idempotency (rule, account, date).
+            models.Index(
+                fields=["rule", "account", "date"],
+                name="txn_rule_acct_date_idx",
+            ),
+            models.Index(
+                fields=["rule", "date", "source"],
+                name="txn_rule_date_src_idx",
+            ),
+            models.Index(
+                fields=["account", "source", "date"],
+                name="txn_acct_src_date_idx",
+            ),
+            models.Index(
+                fields=["account", "reconciled", "date"],
+                name="txn_acct_recon_date_idx",
+            ),
+            models.Index(
+                fields=["account", "source", "import_match_status"],
+                name="txn_acct_src_match_idx",
+            ),
         ]
 
 
