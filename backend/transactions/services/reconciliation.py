@@ -24,6 +24,7 @@ from .matching import (
     release_excess_duplicate_plaid_imports,
     rematch_unmatched_manual_actuals,
     repair_cross_merchant_wrong_matches,
+    repair_mismatched_import_links,
     repair_stale_planned_bank_text,
     try_match_rule_to_pending_imports,
 )
@@ -323,6 +324,7 @@ def _load_reconcile_period_transactions(
     """Unreconciled rows for a reconcile period, with import healing and superseded PLANNED removed."""
     release_excess_duplicate_plaid_imports(account_id=account.pk)
     repair_cross_merchant_wrong_matches(account_id=account.pk)
+    repair_mismatched_import_links(account_id=account.pk)
     repair_stale_planned_bank_text(account_id=account.pk)
     materialize_unmatched_plaid_imports(account_id=account.pk)
     collapse_materialized_actual_duplicates(account_id=account.pk)

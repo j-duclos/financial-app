@@ -153,7 +153,8 @@ class TestPlaidMatching(TestCase):
         self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=imp).exists())
         self.assertEqual(manual.payee, "Fry's Food and Drug")
 
-    def test_collapse_materialized_actual_duplicate_merges_onto_manual(self):
+    def test_collapse_materialized_actual_duplicate_does_not_merge(self):
+        """Each unique plaid_transaction_id keeps its own row — no fuzzy collapse onto manual twins."""
         d = date(2026, 6, 10)
         amt = Decimal("-77.65")
         manual = Transaction.objects.create(
@@ -175,17 +176,14 @@ class TestPlaidMatching(TestCase):
         )
         from transactions.services.matching import collapse_materialized_actual_duplicates
 
-        self.assertEqual(collapse_materialized_actual_duplicates(account_id=self.acc.id), 1)
-        self.assertFalse(Transaction.objects.filter(pk=materialized.pk).exists())
-        manual.refresh_from_db()
-        self.assertEqual(manual.payee, "Chewy")
-        self.assertEqual(manual.plaid_transaction_id, "pl-chewy-mat")
+        self.assertEqual(collapse_materialized_actual_duplicates(account_id=self.acc.id), 0)
+        self.assertTrue(Transaction.objects.filter(pk=materialized.pk).exists())
         visible = set(
             ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
                 "pk", flat=True
             )
         )
-        self.assertEqual(visible, {manual.pk})
+        self.assertEqual(visible, {manual.pk, materialized.pk})
 
     def test_materialize_skips_when_manual_twin_exists(self):
         d = date(2026, 6, 10)
@@ -516,7 +514,8 @@ class TestPlaidMatching(TestCase):
             TransactionMatch.objects.filter(planned_transaction=planned, imported_transaction=imp).exists()
         )
 
-    def test_second_plaid_import_marked_duplicate_when_planned_already_matched(self):
+    def test_second_plaid_import_stays_unmatched_when_planned_already_matched(self):
+        """A second Plaid id with a different transaction_id is kept — not fuzzy-marked duplicate."""
         card = Account.objects.create(
             household=self.h,
             account_type=Account.AccountType.CREDIT,
@@ -561,7 +560,8 @@ class TestPlaidMatching(TestCase):
         )
         self.assertIsNone(match_imported_transaction(second))
         second.refresh_from_db()
-        self.assertEqual(second.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(second.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(second.import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
 
         visible = set(
             ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
@@ -570,7 +570,7 @@ class TestPlaidMatching(TestCase):
         )
         self.assertIn(out_leg.pk, visible)
         self.assertNotIn(first.pk, visible)
-        self.assertNotIn(second.pk, visible)
+        self.assertIn(second.pk, visible)
 
     def test_reconcile_orphan_matched_plaid_import(self):
         d = date(2026, 5, 13)
@@ -604,7 +604,7 @@ class TestPlaidMatching(TestCase):
         n = reconcile_orphan_matched_plaid_imports(account_id=self.acc.id)
         self.assertGreaterEqual(n, 1)
         orphan.refresh_from_db()
-        self.assertEqual(orphan.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(orphan.import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
 
     def test_three_capital_one_payments_same_day_match_correct_card(self):
         savor = Account.objects.create(
@@ -1062,8 +1062,8 @@ class TestPlaidMatching(TestCase):
         )
         self.assertEqual(after.count(), 4)
 
-    def test_resync_import_duplicate_when_planned_row_reconciled(self):
-        """A second Plaid id for the same reconciled charge must not become a second ledger line."""
+    def test_resync_import_with_new_plaid_id_stays_unmatched(self):
+        """A second Plaid transaction_id for the same charge is kept — only exact id dedupes."""
         d = date(2026, 4, 29)
         amt = Decimal("-49.25")
         planned = Transaction.objects.create(
@@ -1096,15 +1096,16 @@ class TestPlaidMatching(TestCase):
             plaid_transaction_id="pl-lowes-2",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
-        self.assertTrue(try_mark_plaid_import_as_duplicate_of_existing_match(resync))
+        self.assertFalse(try_mark_plaid_import_as_duplicate_of_existing_match(resync))
         resync.refresh_from_db()
-        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
 
         visible = ledger_visible_transactions(
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
-        self.assertEqual(visible.count(), 1)
-        self.assertEqual(visible.first().pk, planned.pk)
+        self.assertEqual(visible.count(), 2)
+        self.assertIn(planned.pk, set(visible.values_list("pk", flat=True)))
+        self.assertIn(resync.pk, set(visible.values_list("pk", flat=True)))
 
     def test_resync_import_not_matched_to_orphan_when_transfer_already_matched(self):
         """Re-sync must not latch onto a ghost ACTUAL row when the transfer leg is already matched."""
@@ -1163,14 +1164,184 @@ class TestPlaidMatching(TestCase):
             plaid_transaction_id="pl-cap1-2",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
-        self.assertTrue(try_mark_resync_import_duplicate(resync))
+        self.assertFalse(try_mark_resync_import_duplicate(resync))
         resync.refresh_from_db()
-        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(resync.import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
         self.assertFalse(TransactionMatch.objects.filter(imported_transaction_id=resync.pk).exists())
 
         visible = ledger_visible_transactions(
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
-        self.assertEqual(visible.count(), 1)
-        self.assertEqual(visible.first().pk, transfer_out.pk)
+        self.assertGreaterEqual(visible.count(), 2)
+        self.assertIn(transfer_out.pk, set(visible.values_list("pk", flat=True)))
+        self.assertIn(resync.pk, set(visible.values_list("pk", flat=True)))
         ghost.delete()
+
+
+class TestPlaidImportDeduplicationRules(TestCase):
+    """Plaid imports are authoritative — dedupe only on exact plaid_transaction_id."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="dedupe", password="p1")
+        self.h = Household.objects.create(name="DedupeH")
+        HouseholdMembership.objects.create(household=self.h, user=self.user, role=HouseholdMembership.Role.OWNER)
+        self.acc = Account.objects.create(
+            household=self.h, account_type=Account.AccountType.CHECKING, name="Checking", currency="USD"
+        )
+
+    def test_three_cash_app_same_day_same_amount_all_saved(self):
+        """Test 1: three distinct Plaid ids on the same day must all import and stay visible."""
+        d = date(2026, 6, 13)
+        amt = Decimal("-10.00")
+        descriptions = [
+            "Cash App Payment John",
+            "Cash App Payment Mike",
+            "Cash App Payment Sarah",
+        ]
+        imports = []
+        for i, desc in enumerate(descriptions):
+            imports.append(
+                Transaction.objects.create(
+                    account=self.acc,
+                    date=d,
+                    payee=desc,
+                    amount=amt,
+                    source=Transaction.Source.PLAID,
+                    plaid_transaction_id=f"pl-cash-{i}",
+                    imported_description=desc,
+                    import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+                )
+            )
+        for imp in imports:
+            match_imported_transaction(imp)
+            imp.refresh_from_db()
+            self.assertNotEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 3)
+
+    def test_one_manual_matches_closest_cash_app_only(self):
+        """Test 2: one manual row absorbs only the closest Plaid import; others stay unmatched."""
+        d = date(2026, 6, 13)
+        amt = Decimal("-10.00")
+        manual = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Cash App Payment John",
+            amount=amt,
+            source=Transaction.Source.ACTUAL,
+        )
+        john = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Cash App Payment John",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cash-john",
+            imported_description="Cash App Payment John",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        mike = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Cash App Payment Mike",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cash-mike",
+            imported_description="Cash App Payment Mike",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        sarah = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Cash App Payment Sarah",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-cash-sarah",
+            imported_description="Cash App Payment Sarah",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        for imp in (john, mike, sarah):
+            match_imported_transaction(imp)
+
+        john.refresh_from_db()
+        mike.refresh_from_db()
+        sarah.refresh_from_db()
+        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=john).exists())
+        self.assertFalse(TransactionMatch.objects.filter(imported_transaction=mike).exists())
+        self.assertFalse(TransactionMatch.objects.filter(imported_transaction=sarah).exists())
+        self.assertNotEqual(mike.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(sarah.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertTrue(Transaction.objects.filter(pk=mike.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=sarah.pk).exists())
+
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 3)
+
+    def test_same_plaid_transaction_id_updates_existing_row(self):
+        """Test 3: re-importing the same plaid_transaction_id updates — no second row."""
+        d = date(2026, 6, 13)
+        amt = Decimal("-10.00")
+        original = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee="Store",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-same-id",
+            imported_description="STORE A",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        existing = Transaction.objects.filter(plaid_transaction_id="pl-same-id").first()
+        self.assertEqual(existing.pk, original.pk)
+        existing.payee = "Store Updated"
+        existing.imported_description = "STORE B"
+        existing.save(update_fields=["payee", "imported_description", "updated_at"])
+        self.assertEqual(Transaction.objects.filter(plaid_transaction_id="pl-same-id").count(), 1)
+
+    def test_same_amount_date_description_different_ids_not_duplicate(self):
+        """Test 4: identical amount/date/description but different plaid_transaction_id — both kept."""
+        d = date(2026, 6, 13)
+        amt = Decimal("-10.00")
+        desc = "Cash App Payment"
+        a = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee=desc,
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-dup-a",
+            imported_description=desc,
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        b = Transaction.objects.create(
+            account=self.acc,
+            date=d,
+            payee=desc,
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-dup-b",
+            imported_description=desc,
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(a)
+        match_imported_transaction(b)
+        a.refresh_from_db()
+        b.refresh_from_db()
+        self.assertNotEqual(a.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(b.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 2)
