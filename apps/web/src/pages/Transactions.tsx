@@ -74,6 +74,7 @@ import {
   loadStoredTransactionsReconciledFilter,
   saveStoredTransactionsReconciledFilter,
 } from "../lib/transactionsPageState";
+import { categoriesForDropdown } from "../lib/categoryOptions";
 
 export type { TimeFilter };
 
@@ -314,12 +315,10 @@ export default function Transactions() {
   }, [accountId, navState?.prefillDate, navState?.prefillPayee, navState?.prefillAmount]);
 
   const categories = categoriesData?.results ?? [];
-  const categoriesForDropdown = useMemo(() => {
-    const sorted = [...categories].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true })
-    );
-    return sorted.map((c) => ({ ...c, label: c.name }));
-  }, [categories]);
+  const categoryDropdownOptions = useMemo(
+    () => categoriesForDropdown(categories),
+    [categories]
+  );
 
   const selectedCategory = useMemo(
     () => (inlineRow.category_id ? categories.find((c) => c.id === inlineRow.category_id) : null),
@@ -1392,7 +1391,7 @@ export default function Transactions() {
             onChange={(patch) => setInlineRow((r) => ({ ...r, ...patch }))}
             onSubmit={() => handleInlineAdd()}
             onCancel={resetInlineRow}
-            categories={categoriesForDropdown}
+            categories={categoryDropdownOptions}
             transferToAccounts={transferToAccounts}
             isTransferCategory={isTransferCategory}
             transferCategoryName={selectedCategory?.name}
@@ -1526,7 +1525,7 @@ export default function Transactions() {
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
                 >
                   <option value="">None</option>
-                  {categoriesForDropdown.map((c) => (
+                  {categoryDropdownOptions.map((c) => (
                     <option key={c.id} value={c.id}>{c.label}</option>
                   ))}
                 </select>

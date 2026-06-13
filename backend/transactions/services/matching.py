@@ -155,12 +155,28 @@ def _bank_reference_tokens_compatible(a: Transaction, b: Transaction) -> bool:
     return True
 
 
+def _plaid_ids_compatible_for_match(imported: Transaction, planned: Transaction) -> bool:
+    """
+    Each unique plaid_transaction_id is its own bank post.
+
+    Blocks a second import (e.g. four $20 Arizona Humane donations) from latching onto a row
+    that already represents a different Plaid id.
+    """
+    import_id = (imported.plaid_transaction_id or "").strip()
+    planned_id = (planned.plaid_transaction_id or "").strip()
+    if planned_id and import_id and planned_id != import_id:
+        return False
+    return True
+
+
 def _auto_link_description_compatible(imported: Transaction, planned: Transaction) -> bool:
     """
     Auto-match only when bank text clearly describes the same charge as the planned row.
 
     Blocks Andrew / Elijah / Joseph Cash App $10 sends from collapsing onto one row.
     """
+    if not _plaid_ids_compatible_for_match(imported, planned):
+        return False
     if planned.transfer_group_id:
         return True
     pi = _plaid_description(imported)
@@ -370,6 +386,8 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
         return score, parts
     if abs(planned.amount - imported.amount) > AMOUNT_TOLERANCE:
         return 0, {"reject": "amount_mismatch"}
+    if not _plaid_ids_compatible_for_match(imported, planned):
+        return 0, {"reject": "plaid_id_mismatch"}
     if not _bank_reference_tokens_compatible(imported, planned):
         return 0, {"reject": "reference_token_mismatch"}
     score += 40
@@ -996,6 +1014,14 @@ def _create_match_record(
         raise ValueError("Import side of a match must be a Plaid row.")
     if planned.source == Transaction.Source.PLAID:
         raise ValueError("Planned side of a match cannot be a Plaid row.")
+    if confidence != TransactionMatch.Confidence.MANUAL:
+        sc, parts = score_candidate(imported, planned)
+        if sc < AUTO_MATCH_THRESHOLD or parts.get("reject"):
+            raise ValueError("Cannot auto-match: account/amount/date/payee do not align.")
+        if not _auto_link_description_compatible(imported, planned):
+            raise ValueError("Cannot auto-match: import payee does not describe this row.")
+        if not _plaid_ids_compatible_for_match(imported, planned):
+            raise ValueError("Cannot auto-match: import belongs to a different Plaid transaction id.")
     with db_transaction.atomic():
         tm = TransactionMatch.objects.create(
             planned_transaction=planned,
@@ -1040,6 +1066,8 @@ def _planned_row_eligible_as_import_match_candidate(planned: Transaction) -> boo
     )
     if not eligible_source:
         return False
+    if (planned.plaid_transaction_id or "").strip():
+        return False
     if planned.transfer_group_id:
         return True
     # Mirror Q(transfer_out__isnull=True) & Q(transfer_in__isnull=True) — no Transfer row wiring.
@@ -1080,6 +1108,8 @@ def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction]
         if imp.amount is None or planned.amount is None:
             continue
         if abs(imp.amount - planned.amount) > AMOUNT_TOLERANCE:
+            continue
+        if not _plaid_ids_compatible_for_match(imp, planned):
             continue
         sc, _parts = score_candidate(imp, planned)
         if sc > best_score:
@@ -1336,7 +1366,9 @@ def repair_mismatched_import_links(*, account_id: int | None = None) -> int:
         qs = qs.filter(planned_transaction__account_id=account_id)
     repaired = 0
     for match in qs.iterator(chunk_size=200):
-        if _auto_link_description_compatible(match.imported_transaction, match.planned_transaction):
+        imp = match.imported_transaction
+        planned = match.planned_transaction
+        if _auto_link_description_compatible(imp, planned) and _plaid_ids_compatible_for_match(imp, planned):
             continue
         unmatch_transaction(match)
         repaired += 1
@@ -1426,6 +1458,8 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
     Bank charges with no forecast/manual row to match become ACTUAL ledger lines (keep plaid id).
     Avoids orphan PLAID rows that never surface like matched imports in the UI.
     """
+    from transactions.services.reconciliation import is_import_date_locked
+
     qs = Transaction.objects.filter(
         source=Transaction.Source.PLAID,
         import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
@@ -1434,7 +1468,9 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         qs = qs.filter(account_id=account_id)
     qs = qs.exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
     materialized = 0
-    for imp in qs:
+    for imp in qs.select_related("account"):
+        if is_import_date_locked(imp.account, imp.date):
+            continue
         match_imported_transaction(imp)
         imp.refresh_from_db()
         if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():

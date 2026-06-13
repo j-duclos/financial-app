@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from django.core.exceptions import ValidationError
 from django.db import transaction as db_transaction
@@ -172,6 +172,21 @@ def last_reconcile_period_end(account: Account) -> date | None:
         .aggregate(Max("date"))
         .get("date__max")
     )
+
+
+def import_locked_through_date(account: Account) -> date | None:
+    """
+    Last calendar day closed by a completed reconciliation.
+
+    Plaid sync must not create or modify imports on or before this date.
+    """
+    return last_reconcile_period_end(account)
+
+
+def is_import_date_locked(account: Account, txn_date: date) -> bool:
+    """True when txn_date falls in a reconciled-and-closed period for this account."""
+    cutoff = import_locked_through_date(account)
+    return cutoff is not None and txn_date <= cutoff
 
 
 def is_all_reconciled_through_today(account: Account, as_of: Optional[date] = None) -> bool:
@@ -390,19 +405,29 @@ def calculated_balance_for_checked(
     as_of: Optional[date] = None,
 ) -> Decimal:
     """
-    Balance after the checked rows, aligned with reconcile running-balance column.
+    Balance after the checked rows for reconcile completion.
 
-    Uses cumulative running balances (same walk as the UI) rather than opening + raw sum,
-    which can disagree when the period opening anchor differs from the running-balance anchor.
+    Uses period opening + sum of checked amounts only. Unchecked rows in the same period
+    are reviewed separately after complete and must not affect the bank balance check.
     """
+    _ = (account, as_of)
     checked_list = list(checked_qs.order_by("date", "id"))
     if not checked_list:
         return opening_bal
-    running = transaction_running_balances(account, checked_list, as_of)
-    last = checked_list[-1]
-    if last.pk in running:
-        return running[last.pk]
     return calculating_balance(opening_bal, checked_qs)
+
+
+def checked_transaction_running_balances(
+    opening_bal: Decimal,
+    checked_list: Iterable[Transaction],
+) -> dict[int, Decimal]:
+    """Running balance after each checked row (checked subset only)."""
+    result: dict[int, Decimal] = {}
+    running = Decimal(str(opening_bal))
+    for txn in sorted(checked_list, key=lambda t: (t.date, t.pk)):
+        running += txn.amount
+        result[txn.pk] = running
+    return result
 
 
 def difference_remaining(bank_balance: Decimal, calc_balance: Decimal) -> Decimal:
@@ -516,6 +541,7 @@ def complete_reconciliation(
         raise ValueError(f"Invalid or already reconciled transaction ids: {invalid}")
 
     checked_qs = Transaction.objects.filter(pk__in=checked_ids, account=account)
+    checked_list = list(checked_qs.order_by("date", "id"))
     final_bal = calculated_balance_for_checked(
         account, opening_bal, checked_qs, period_end
     )
@@ -525,7 +551,7 @@ def complete_reconciliation(
             f"Reconciliation does not balance (remaining difference {diff_remaining})."
         )
 
-    running = transaction_running_balances(account, list(checked_qs.order_by("date", "id")), as_of)
+    running = checked_transaction_running_balances(opening_bal, checked_list)
     now = timezone.now()
     rec = Reconciliation(
         user=user,

@@ -302,6 +302,43 @@ class TestReconciliationCalculations:
         )
         assert rec.final_reconciled_balance == bank
 
+    def test_complete_reconciliation_with_unchecked_siblings_in_period(self, account, user):
+        """Partial selection: unchecked rows in the period must not block completion."""
+        checked_a = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Deposit",
+            amount=Decimal("100.00"),
+        )
+        post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Pending fee",
+            amount=Decimal("-50.00"),
+        )
+        checked_c = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Refund",
+            amount=Decimal("25.00"),
+        )
+        opening = last_reconciled_balance(account)
+        bank = opening + Decimal("125.00")
+        rec = complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=bank,
+            checked_transaction_ids=[checked_a.pk, checked_c.pk],
+            period_start=date(2026, 6, 1),
+            period_end=date(2026, 6, 1),
+        )
+        assert rec.final_reconciled_balance == bank
+        pending = Transaction.objects.get(payee="Pending fee")
+        assert pending.reconciled is False
+
     def test_complete_reconciliation_rejects_imbalance(self, account, user):
         t1 = post_transaction(
             user=user,

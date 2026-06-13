@@ -27,3 +27,15 @@ class Category(models.Model):
             models.Index(fields=["household", "category_type", "is_archived"]),
             models.Index(fields=["household", "name"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["household", "name", "category_type"],
+                condition=models.Q(parent__isnull=True, is_archived=False),
+                name="uniq_category_root_active",
+            ),
+            models.UniqueConstraint(
+                fields=["household", "parent", "name", "category_type"],
+                condition=models.Q(parent__isnull=False, is_archived=False),
+                name="uniq_category_child_active",
+            ),
+        ]

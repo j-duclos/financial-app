@@ -31,16 +31,23 @@ describe("reconcileBalanceAfterChecks", () => {
     expect(reconcileBalanceAfterChecks(txns, new Set(), opening)).toBe(opening);
   });
 
-  it("uses running balance of the last checked row", () => {
-    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2]), opening)).toBe(3050.83);
-    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2, 3]), opening)).toBe(1835.85);
-  });
-
-  it("falls back to opening + sum when running balance is missing", () => {
-    const noRunning = txns.map((t) => ({ ...t, running_balance: null }));
-    expect(reconcileBalanceAfterChecks(noRunning, new Set([1, 2]), opening)).toBeCloseTo(
+  it("uses opening plus checked amounts only", () => {
+    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2]), opening)).toBeCloseTo(
       opening + 1835.52 - 21.21,
       2
     );
+    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2, 3]), opening)).toBeCloseTo(
+      opening + 1835.52 - 21.21 - 50,
+      2
+    );
+  });
+
+  it("ignores unchecked siblings even when running balances include them", () => {
+    const partial = [
+      row({ id: 1, date: "2026-05-14", amount: "50.00", running_balance: "1050.00" }),
+      row({ id: 2, date: "2026-05-14", amount: "-30.00", running_balance: "1020.00" }),
+      row({ id: 3, date: "2026-05-14", amount: "20.00", running_balance: "1040.00" }),
+    ];
+    expect(reconcileBalanceAfterChecks(partial, new Set([1, 3]), 1000)).toBe(1070);
   });
 });

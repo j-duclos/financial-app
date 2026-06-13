@@ -16,6 +16,7 @@ import {
 } from "@budget-app/api-client";
 import { ApiError } from "@budget-app/api-client";
 import TransactionStatusIcons from "../components/transactions/TransactionStatusIcons";
+import { categoriesForDropdown } from "../lib/categoryOptions";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import { isTransferCategoryName } from "../components/transactions/transactionsLedgerUtils";
 import ReconcileVarianceLine, {
@@ -181,11 +182,7 @@ export default function Reconcile() {
     enabled: !!selectedAccount?.household?.id,
   });
   const categories = categoriesData?.results ?? [];
-  const categoriesForDropdown = useMemo(() => {
-    return [...categories].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }),
-    );
-  }, [categories]);
+  const categoryDropdownOptions = useMemo(() => categoriesForDropdown(categories), [categories]);
 
   const addSelectedCategory = useMemo(
     () => (addCategoryId ? categories.find((c) => c.id === addCategoryId) : null),
@@ -931,7 +928,7 @@ export default function Reconcile() {
                   className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
                 >
                   <option value="">None</option>
-                  {categoriesForDropdown.map((c) => (
+                  {categoryDropdownOptions.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -1019,6 +1016,9 @@ export default function Reconcile() {
                 <ReconcileVarianceLine difference={offBy} size="lg" />
                 <p className="text-xs text-gray-500 mt-1">
                   {reconcileVarianceHint(offBy, { tolerance: BALANCE_TOLERANCE })}
+                  {transactions.length > checkedIds.size && isBalanced && (
+                    <> Unchecked transactions will be reviewed after you complete.</>
+                  )}
                 </p>
               </div>
             </div>
@@ -1117,7 +1117,7 @@ export default function Reconcile() {
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
                 >
                   <option value="">None</option>
-                  {categoriesForDropdown.map((c) => (
+                  {categoryDropdownOptions.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>

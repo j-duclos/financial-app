@@ -30,6 +30,7 @@ from core.phone_e164 import normalize_to_e164
 from core.timeline_cache import bump_timeline_cache_for_household
 from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
+from transactions.services.reconciliation import is_import_date_locked, import_locked_through_date
 from transactions.services.matching import (
     bank_movement_already_on_ledger,
     match_imported_transaction,
@@ -41,6 +42,7 @@ from transactions.services.matching import (
     rematch_unmatched_manual_actuals,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
+    repair_mismatched_import_links,
     repair_orphan_absorbed_resync_matches,
 )
 
@@ -191,6 +193,8 @@ def _rematch_unmatched_imports_for_plaid_item(plaid_item: PlaidItem) -> None:
         import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
     ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
     for imp in qs.iterator(chunk_size=200):
+        if is_import_date_locked(imp.account, imp.date):
+            continue
         _safe_match_imported_transaction(imp)
 
 
@@ -599,12 +603,16 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         cursor = plaid_item.transactions_cursor or None
         added = modified = removed = 0
         id_to_account_pk = {}
+        account_by_pk: dict[int, Account] = {}
         for la in plaid_item.linked_accounts.select_related("account"):
             acct = la.account
             if acct.allows_plaid_sync():
                 id_to_account_pk[str(la.plaid_account_id)] = la.account_id
+                account_by_pk[la.account_id] = acct
             else:
                 skipped_accounts += 1
+
+        skipped_reconciled_period = 0
 
         while True:
             kwargs: dict[str, Any] = {"access_token": access_token, "count": 500}
@@ -638,6 +646,17 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                 if not defaults:
                     continue
                 pid = defaults.pop("plaid_transaction_id")
+                account = account_by_pk.get(account_pk)
+                if account and is_import_date_locked(account, defaults["date"]):
+                    skipped_reconciled_period += 1
+                    logger.info(
+                        "Skipping Plaid %s on %s for account %s — reconciled through %s",
+                        pid,
+                        defaults["date"],
+                        account_pk,
+                        import_locked_through_date(account),
+                    )
+                    continue
                 existing = Transaction.objects.filter(plaid_transaction_id=pid).first()
                 if existing:
                     _apply_plaid_defaults_to_existing(existing, defaults)
@@ -666,7 +685,13 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             if not has_more:
                 break
 
-        return {"added": added, "modified": modified, "removed": removed, "merged": 0}
+        return {
+            "added": added,
+            "modified": modified,
+            "removed": removed,
+            "merged": 0,
+            "skipped_reconciled_period": skipped_reconciled_period,
+        }
 
     try:
         totals = run_sync_pages()
@@ -681,6 +706,9 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         totals["added"] += extra["added"]
         totals["modified"] += extra["modified"]
         totals["removed"] += extra["removed"]
+        totals["skipped_reconciled_period"] = totals.get("skipped_reconciled_period", 0) + extra.get(
+            "skipped_reconciled_period", 0
+        )
 
     try:
         _rematch_unmatched_imports_for_plaid_item(plaid_item)
@@ -692,6 +720,7 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         for aid in account_pks:
             reconcile_orphan_matched_plaid_imports(account_id=aid)
             repair_invalid_transaction_matches(account_id=aid)
+            repair_mismatched_import_links(account_id=aid)
             repair_orphan_absorbed_resync_matches(account_id=aid)
             repair_materialized_plaid_resync_duplicates(account_id=aid)
             release_excess_duplicate_plaid_imports(account_id=aid)

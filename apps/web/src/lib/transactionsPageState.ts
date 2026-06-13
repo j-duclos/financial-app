@@ -106,7 +106,7 @@ export function loadStoredTransactionsAmountMax(): string {
 }
 
 export function loadStoredTransactionsReconciledFilter(): StoredReconciledFilter {
-  if (typeof window === "undefined") return "unreconciled";
+  if (typeof window === "undefined") return "";
   try {
     const raw = sessionStorage.getItem(RECONCILED_FILTER_KEY);
     if (raw === "") return "";
@@ -116,7 +116,7 @@ export function loadStoredTransactionsReconciledFilter(): StoredReconciledFilter
   } catch {
     /* ignore */
   }
-  return "unreconciled";
+  return "";
 }
 
 export function saveStoredTransactionsReconciledFilter(filter: StoredReconciledFilter): void {

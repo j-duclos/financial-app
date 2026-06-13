@@ -14,12 +14,8 @@ export function reconcileBalanceAfterChecks(
 
   if (sortedChecked.length === 0) return periodOpeningBalance;
 
-  const last = sortedChecked[sortedChecked.length - 1];
-  if (last.running_balance != null && last.running_balance.trim() !== "") {
-    const running = parseFloat(last.running_balance);
-    if (Number.isFinite(running)) return running;
-  }
-
+  // Use opening + sum of checked rows only. Running balances from the API walk every
+  // unreconciled row in the period, so they include unchecked siblings and block partial reconcile.
   let sum = 0;
   for (const t of sortedChecked) {
     const amt = parseFloat(t.amount);

@@ -1345,3 +1345,30 @@ class TestPlaidImportDeduplicationRules(TestCase):
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
         self.assertEqual(visible.count(), 2)
+
+    def test_four_identical_arizona_humane_imports_all_visible(self):
+        """Four $20 donations with identical payee text are four separate ledger rows."""
+        d = date(2026, 6, 2)
+        amt = Decimal("-20.00")
+        payee = "ARIZONA HUMANE SOCIET"
+        desc = "ARIZONA HUMANE SOCIET 602-997-7585 AZ 06/01 (...2404)"
+        for i in range(4):
+            match_imported_transaction(
+                Transaction.objects.create(
+                    account=self.acc,
+                    date=d,
+                    payee=payee,
+                    amount=amt,
+                    source=Transaction.Source.PLAID,
+                    plaid_transaction_id=f"pl-humane-{i}",
+                    imported_description=desc,
+                    import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+                )
+            )
+        from transactions.services.matching import materialize_unmatched_plaid_imports
+
+        materialize_unmatched_plaid_imports(account_id=self.acc.id)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.acc, date=d, amount=amt)
+        )
+        self.assertEqual(visible.count(), 4)
