@@ -199,7 +199,11 @@ export async function listAccounts(params?: {
   if (params?.include_closed) q.include_closed = "true";
   if (params?.include_deleted) q.include_deleted = "true";
   q._ = String(Date.now());
-  return requestRequired("/api/accounts/", { params: q });
+  const heavy = params?.forecast_summary === "true" || params?.health === "true";
+  return requestRequired("/api/accounts/", {
+    params: q,
+    timeoutMs: heavy ? 180_000 : undefined,
+  });
 }
 
 export async function createAccount(data: {

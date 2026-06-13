@@ -18,13 +18,13 @@ from core.timeline_cache import bump_timeline_cache_for_household
 from transactions.services.matching import (
     collapse_materialized_actual_duplicates,
     materialize_unmatched_plaid_imports,
-    release_excess_duplicate_plaid_imports,
     rematch_unmatched_manual_actuals,
     repair_cross_merchant_wrong_matches,
     repair_stale_planned_bank_text,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
+    restore_all_duplicate_plaid_imports,
 )
 
 
@@ -96,7 +96,7 @@ class Command(BaseCommand):
             n_invalid = repair_invalid_transaction_matches(account_id=aid)
             n_orphan = repair_orphan_absorbed_resync_matches(account_id=aid)
             n_resync = repair_materialized_plaid_resync_duplicates(account_id=aid)
-            n_released = release_excess_duplicate_plaid_imports(account_id=aid)
+            n_released = restore_all_duplicate_plaid_imports(account_id=aid)
             n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)

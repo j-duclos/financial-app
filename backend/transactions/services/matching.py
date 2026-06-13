@@ -1414,8 +1414,11 @@ def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int
 
 
 def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
-    """Restore all fuzzy DUPLICATE marks — only user-marked duplicates should stay hidden."""
-    return restore_all_duplicate_plaid_imports(account_id=account_id)
+    """
+    No-op during sync — restoring DUPLICATE rows on every Plaid refresh is expensive and can
+    inflate the ledger. Run ``repair_plaid_ledger_imports`` once after dedup rule changes.
+    """
+    return 0
 
 
 def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int:
