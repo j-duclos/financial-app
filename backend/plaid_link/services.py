@@ -619,16 +619,12 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                 tid = txn.get("transaction_id") if isinstance(txn, dict) else None
                 if not tid:
                     continue
-                qs = Transaction.objects.filter(plaid_transaction_id=str(tid))
-                # Never delete reconciled history when Plaid rotates transaction ids.
-                if qs.filter(reconciled=True).exists():
-                    logger.warning(
-                        "Plaid removed txn id=%s but row is reconciled — skipping delete",
+                if Transaction.objects.filter(plaid_transaction_id=str(tid)).exists():
+                    logger.info(
+                        "Plaid removed txn id=%s — keeping local row (Plaid imports are never deleted)",
                         tid,
                     )
-                    continue
-                n, _ = qs.delete()
-                removed += n
+                continue
 
             for txn in list(data.get("added") or []) + list(data.get("modified") or []):
                 if not isinstance(txn, dict):

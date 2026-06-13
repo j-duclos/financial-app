@@ -172,6 +172,8 @@ class TestClearAllTransactionsForAccount(TestCase):
         from transactions.services.reconciliation import complete_reconciliation, min_reconcile_start_date
         from transactions.services.posting import post_transaction
 
+        self.checking.starting_balance = Decimal("1000.00")
+        self.checking.save(update_fields=["starting_balance", "updated_at"])
         t1 = post_transaction(
             user=self.user,
             account_id=self.checking.id,

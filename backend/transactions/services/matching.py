@@ -179,8 +179,10 @@ def _merchant_token_overlap_score(imported: Transaction, planned: Transaction) -
 
 def _plaid_imports_likely_same_bank_movement(a: Transaction, b: Transaction) -> bool:
     """
-    Same amount and date window alone is not enough to call two imports duplicates.
-    Zelle $25 and a $25 card payment on the same day are separate bank posts.
+    Two Plaid rows are the same bank post only when normalized descriptions match exactly.
+
+    Same amount/date alone is never enough — e.g. three Cash App $20 sends on one day are
+    separate charges; Zelle and card payments at $25 are separate.
     """
     if a.amount is None or b.amount is None:
         return False
@@ -190,13 +192,7 @@ def _plaid_imports_likely_same_bank_movement(a: Transaction, b: Transaction) -> 
     pb = _plaid_description(b)
     if not pa or not pb:
         return False
-    ref_a = _bank_reference_tokens(a)
-    ref_b = _bank_reference_tokens(b)
-    if ref_a and ref_b and ref_a.isdisjoint(ref_b):
-        return False
-    if pa == pb:
-        return True
-    return SequenceMatcher(None, pa, pb).ratio() >= 0.72
+    return pa == pb
 
 
 def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transaction]:
@@ -214,10 +210,7 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
     ).values("imported_transaction_id")
     return qs.exclude(pk__in=Subquery(matched_plaid_import_pks)).exclude(
         source=Transaction.Source.PLAID,
-        import_match_status__in=[
-            Transaction.ImportMatchStatus.IGNORED,
-            Transaction.ImportMatchStatus.DUPLICATE,
-        ],
+        import_match_status=Transaction.ImportMatchStatus.IGNORED,
     )
 
 
@@ -234,14 +227,7 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
         ~Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)})
         & ~(
             Q(**{f"{prefix}__source": Transaction.Source.PLAID})
-            & Q(
-                **{
-                    f"{prefix}__import_match_status__in": [
-                        Transaction.ImportMatchStatus.IGNORED,
-                        Transaction.ImportMatchStatus.DUPLICATE,
-                    ]
-                }
-            )
+            & Q(**{f"{prefix}__import_match_status": Transaction.ImportMatchStatus.IGNORED})
         )
     )
 
@@ -776,20 +762,8 @@ def bank_movement_already_on_ledger(
     payee: str = "",
     imported_description: str = "",
 ) -> bool:
-    """True when this charge is already represented by a matched transfer / reconciled row."""
-    probe = Transaction(
-        account_id=account_id,
-        date=txn_date,
-        amount=amount,
-        payee=payee,
-        imported_description=imported_description,
-        source=Transaction.Source.PLAID,
-    )
-    if _find_confirmed_ledger_match_for_import(probe) is None:
-        return False
-    if _unmatched_distinct_charge_slots(probe) > 0:
-        return False
-    return True
+    """Plaid imports are always kept — never pre-mark duplicate at insert time."""
+    return False
 
 
 def _planned_match_allows_import_dedup(planned: Transaction) -> bool:
@@ -1487,6 +1461,22 @@ def mark_import_duplicate(txn: Transaction) -> None:
         raise ValueError("Only imported transactions can be marked duplicate.")
     txn.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
     txn.save(update_fields=["import_match_status", "updated_at"])
+
+
+def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
+    """Unhide every Plaid row previously marked DUPLICATE (safe after dedup rule changes)."""
+    from django.utils import timezone
+
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.DUPLICATE,
+    )
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    return qs.update(
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        updated_at=timezone.now(),
+    )
 
 
 def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
