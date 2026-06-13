@@ -253,7 +253,8 @@ export function buildLedgerRowsFromTimeline(
   timeline: TimelineRow[],
   today: string,
   openingBalance: number,
-  isCredit: boolean
+  isCredit: boolean,
+  pastOpeningOverride?: number | null,
 ): LedgerRow[] {
   const past = timeline
     .filter((r) => isPastTimelineRow(r, today))
@@ -264,7 +265,10 @@ export function buildLedgerRowsFromTimeline(
     .sort(compareTimelineRows);
 
   const rows: LedgerRow[] = [];
-  const start = resolveLedgerOpening(openingBalance, past[0], isCredit);
+  const start =
+    pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
+      ? pastOpeningOverride
+      : resolveLedgerOpening(openingBalance, past[0], isCredit);
   rows.push({ type: "starting_balance", balance: start });
 
   // Recompute from visible rows only — API running_balance can include filtered duplicates.

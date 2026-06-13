@@ -3,8 +3,7 @@ Emit a test [PERF] log line to verify console logging on Render.
 
   cd budget-app/backend && python manage.py perf_log_test
 
-Requires ENABLE_PERF_LOGS=true or DEBUG=True for perf instrumentation to be active.
-The command always writes one INFO line so you can confirm the logging pipeline.
+Requires DEBUG=True locally, or ENABLE_PERF_LOGS (defaults true on Render).
 """
 
 from django.conf import settings
@@ -28,4 +27,11 @@ class Command(BaseCommand):
                 )
             )
         perf_print("[PERF] Render performance log test")
-        self.stdout.write(self.style.SUCCESS("Emitted: [PERF] Render performance log test"))
+        if perf_on:
+            self.stdout.write(self.style.SUCCESS("OK: [PERF] line written to stdout (check Render Logs)"))
+        else:
+            self.stdout.write(
+                self.style.ERROR(
+                    "No [PERF] line written — set ENABLE_PERF_LOGS=true or DEBUG=true"
+                )
+            )

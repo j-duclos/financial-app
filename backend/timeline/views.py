@@ -651,6 +651,11 @@ class TimelineView(APIView):
                 household_id=household_id,
                 user=request.user,
             )
+            exclude_reconciled_past = request.query_params.get("exclude_reconciled_past", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
 
             cache_key = timeline_response_cache_key(
                 household_id=household_id,
@@ -660,6 +665,7 @@ class TimelineView(APIView):
                 account_id=account_id,
                 scenario_id=scenario_id,
                 as_of_date=as_of_date,
+                exclude_reconciled_past=exclude_reconciled_past,
             )
             cached = get_cached_timeline_response(cache_key)
             if cached is not None:
@@ -678,6 +684,7 @@ class TimelineView(APIView):
                 household_id=household_id,
                 as_of_date=as_of_date,
                 projection_only=True,
+                exclude_reconciled_past=exclude_reconciled_past,
             )
             # Serialize dates and decimals for JSON
             for r in rows:
@@ -695,6 +702,16 @@ class TimelineView(APIView):
                 "timeline": rows,
                 "account_summary": list(account_balances.values()),
             })
+            if exclude_reconciled_past and account_id is not None:
+                from accounts.models import Account
+                from transactions.services.reconciliation import past_ledger_opening_balance
+
+                households = get_households_for_user(request.user)
+                acc = Account.objects.filter(pk=account_id, household__in=households).first()
+                if acc is not None:
+                    resp.data["past_opening_balance"] = str(
+                        past_ledger_opening_balance(acc, as_of_date)
+                    )
             set_cached_timeline_response(cache_key, resp.data)
             resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
             resp["X-Timeline-Cache"] = "miss"

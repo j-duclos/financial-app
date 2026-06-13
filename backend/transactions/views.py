@@ -241,6 +241,12 @@ class TransactionViewSet(ModelViewSet):
             qs = qs.filter(date__gte=date_after)
         if date_before:
             qs = qs.filter(date__lte=date_before)
+        reconciled = self.request.query_params.get("reconciled")
+        if reconciled is not None and reconciled != "":
+            if reconciled.lower() in ("true", "1", "yes"):
+                qs = qs.filter(reconciled=True)
+            elif reconciled.lower() in ("false", "0", "no"):
+                qs = qs.filter(reconciled=False)
         return qs
 
     def create(self, request: Request, *args, **kwargs):

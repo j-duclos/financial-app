@@ -588,6 +588,7 @@ export async function listTransactions(params?: {
   category?: number;
   date_after?: string;
   date_before?: string;
+  reconciled?: boolean;
   page?: number;
   page_size?: number;
 }): Promise<PaginatedResponse<Transaction>> {
@@ -596,6 +597,8 @@ export async function listTransactions(params?: {
   if (params?.category != null) q.category = String(params.category);
   if (params?.date_after) q.date_after = params.date_after;
   if (params?.date_before) q.date_before = params.date_before;
+  if (params?.reconciled === true) q.reconciled = "true";
+  if (params?.reconciled === false) q.reconciled = "false";
   if (params?.page != null) q.page = String(params.page);
   if (params?.page_size != null) q.page_size = String(params.page_size);
   q._ = String(Date.now());
@@ -1553,6 +1556,7 @@ export async function getTimeline(params: {
   scenario_id?: number | null;
   account_id?: number | null;
   household_id?: number | null;
+  exclude_reconciled_past?: boolean;
 }): Promise<TimelineResponse> {
   const q: Record<string, string> = {};
   if (params.start) q.start = params.start;
@@ -1563,6 +1567,7 @@ export async function getTimeline(params: {
   if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
   if (params.account_id != null) q.account_id = String(params.account_id);
   if (params.household_id != null) q.household_id = String(params.household_id);
+  if (params.exclude_reconciled_past) q.exclude_reconciled_past = "true";
   q._ = String(Date.now());
   return requestRequired("/api/timeline/", { params: q });
 }

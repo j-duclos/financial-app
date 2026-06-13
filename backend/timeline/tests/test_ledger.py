@@ -1239,6 +1239,64 @@ class TestBuildTimeline:
             f"expected next Saturday transfer on Chase; got {xfer}"
         )
 
+    def test_checking_to_savings_transfer_projects_on_source_with_projection_only(
+        self, user, household, db
+    ):
+        """projection_only timeline reads must still show Chase outflows for Chase→Savings rules."""
+        fixed_today = date(2026, 3, 27)
+        start = fixed_today
+        end = date(2026, 4, 30)
+        checking = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        savings = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.SAVINGS,
+            name="Chase Savings",
+            currency="USD",
+            starting_balance=Decimal("3000.00"),
+        )
+        bt = Category.objects.get_or_create(
+            household=household,
+            name="Bank Transfer",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 50},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Save For Rent",
+            account=checking,
+            transfer_to_account=savings,
+            category=bt,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("680.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.WEEKLY,
+            interval=1,
+            day_of_week=5,
+            start_date=date(2026, 3, 14),
+            end_date=None,
+            active=True,
+        )
+        rows = build_timeline(
+            user,
+            start,
+            end,
+            account_id=checking.id,
+            as_of_date=fixed_today,
+            projection_only=True,
+        )
+        xfer = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == checking.id]
+        assert any(r.get("date") == date(2026, 3, 28) for r in xfer), (
+            f"expected projected Saturday transfer on Chase; got {xfer}"
+        )
+        on_savings = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == savings.id]
+        assert len(on_savings) == 0
+
     def test_duplicate_named_accounts_rule_projects_only_on_bound_account(
         self, user, household, db
     ):

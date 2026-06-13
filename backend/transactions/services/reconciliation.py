@@ -257,6 +257,18 @@ def last_reconciled_balance(account: Account, as_of: Optional[date] = None) -> D
     return app_bal - unrec_sum
 
 
+def past_ledger_opening_balance(account: Account, as_of: Optional[date] = None) -> Decimal:
+    """
+    Opening balance for a ledger view that lists only unreconciled rows.
+
+    Credit cards: positive = amount owed (matches Transactions ledger UI running math).
+    """
+    bal = last_reconciled_balance(account, as_of)
+    if account.account_type == Account.AccountType.CREDIT:
+        return abs(bal)
+    return bal
+
+
 def unreconciled_transactions_qs(
     account: Account,
     as_of: Optional[date] = None,

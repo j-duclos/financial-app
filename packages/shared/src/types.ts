@@ -1543,6 +1543,8 @@ export interface TimelineRow {
 export interface TimelineResponse {
   timeline: TimelineRow[];
   account_summary: { account_id: number; account_name: string; ending_balance: string }[];
+  /** When exclude_reconciled_past: opening balance for the unreconciled past ledger list. */
+  past_opening_balance?: string;
 }
 
 export type TimelineCalendarRiskLevel = "none" | "watch" | "critical";

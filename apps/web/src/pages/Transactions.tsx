@@ -73,6 +73,8 @@ import {
   saveStoredTransactionsAmountRange,
   loadStoredTransactionsReconciledFilter,
   saveStoredTransactionsReconciledFilter,
+  loadStoredHideReconciledPast,
+  saveStoredHideReconciledPast,
 } from "../lib/transactionsPageState";
 import { categoriesForDropdown } from "../lib/categoryOptions";
 
@@ -97,6 +99,7 @@ export default function Transactions() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
   const [reconciledFilter, setReconciledFilter] = useState(() => loadStoredTransactionsReconciledFilter());
+  const [hideReconciledPast, setHideReconciledPast] = useState(() => loadStoredHideReconciledPast());
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
@@ -149,7 +152,12 @@ export default function Transactions() {
   const { data: txnsData } = useQuery({
     queryKey: [
       "transactions",
-      { account: accountId || undefined, date_after: timelineStart, date_before: timelineEnd },
+      {
+        account: accountId || undefined,
+        date_after: timelineStart,
+        date_before: timelineEnd,
+        unreconciled_only: hideReconciledPast,
+      },
     ],
     queryFn: () =>
       listTransactions({
@@ -159,6 +167,7 @@ export default function Transactions() {
               date_after: timelineStart,
               date_before: timelineEnd,
               page_size: 2000,
+              ...(hideReconciledPast ? { reconciled: false } : {}),
             }
           : {}),
       }),
@@ -172,13 +181,14 @@ export default function Transactions() {
     isFetching: timelineFetching,
     isError: timelineError,
   } = useQuery({
-    queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr()],
+    queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
     queryFn: () =>
       getTimeline({
         start: timelineStart,
         end: timelineEnd,
         as_of: todayStr(),
         account_id: typeof accountId === "number" ? accountId : undefined,
+        exclude_reconciled_past: hideReconciledPast,
       }),
     enabled: typeof accountId === "number",
     staleTime: 60_000,
@@ -252,6 +262,10 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsReconciledFilter(reconciledFilter);
   }, [reconciledFilter]);
+
+  useEffect(() => {
+    saveStoredHideReconciledPast(hideReconciledPast);
+  }, [hideReconciledPast]);
 
   useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
@@ -752,11 +766,34 @@ export default function Transactions() {
     if (timelineHasAccountRows(timeline, accountId)) {
       const aid = Number(accountId);
       const timelineForAccount = timeline!.filter((r) => Number(r.account_id) === aid);
-      return buildLedgerRowsFromTimeline(timelineForAccount, today, openingBalance, isCreditAccount);
+      const pastOpeningOverride =
+        hideReconciledPast && timelineData?.past_opening_balance != null
+          ? parseFloat(timelineData.past_opening_balance)
+          : null;
+      return buildLedgerRowsFromTimeline(
+        timelineForAccount,
+        today,
+        openingBalance,
+        isCreditAccount,
+        pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
+          ? pastOpeningOverride
+          : undefined
+      );
     }
     // Timeline missing, slow, errored, or empty on Render — show posted transactions immediately.
-    return buildLedgerRows(transactions, start, account.currency, isCreditAccount);
-  }, [account, accountId, transactions, timelineData?.timeline, isCreditAccount]);
+    const fallbackTxns = hideReconciledPast
+      ? transactions.filter((t) => !t.reconciled)
+      : transactions;
+    return buildLedgerRows(fallbackTxns, start, account.currency, isCreditAccount);
+  }, [
+    account,
+    accountId,
+    transactions,
+    timelineData?.timeline,
+    timelineData?.past_opening_balance,
+    isCreditAccount,
+    hideReconciledPast,
+  ]);
 
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
@@ -800,9 +837,14 @@ export default function Transactions() {
     () =>
       [
         "transactions",
-        { account: accountId || undefined, date_after: timelineStart, date_before: timelineEnd },
+        {
+          account: accountId || undefined,
+          date_after: timelineStart,
+          date_before: timelineEnd,
+          unreconciled_only: hideReconciledPast,
+        },
       ] as const,
-    [accountId, timelineStart, timelineEnd]
+    [accountId, timelineStart, timelineEnd, hideReconciledPast]
   );
 
   const createMu = useMutation({
@@ -1315,6 +1357,8 @@ export default function Transactions() {
             onKindFilterChange={setKindFilter}
             reconciledFilter={reconciledFilter}
             onReconciledFilterChange={setReconciledFilter}
+            hideReconciledPast={hideReconciledPast}
+            onHideReconciledPastChange={setHideReconciledPast}
             amountMin={amountMinInput}
             amountMax={amountMaxInput}
             onAmountMinChange={setAmountMinInput}

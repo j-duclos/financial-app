@@ -169,29 +169,37 @@ def signed_amount_from_params(params: RuleScheduleParams) -> Decimal:
     return params.amount
 
 
+def _schedules_for_rule(rule: RecurringRule):
+    """Query schedules by rule id (avoids stale prefetched rule.schedules caches on updates)."""
+    return RecurringRuleSchedule.objects.filter(rule_id=rule.pk)
+
+
 def create_schedule_from_params(
     rule: RecurringRule,
     *,
     effective_from: date,
     params: RuleScheduleParams,
 ) -> RecurringRuleSchedule:
-    return RecurringRuleSchedule.objects.create(
+    schedule, _ = RecurringRuleSchedule.objects.update_or_create(
         rule=rule,
         effective_from=effective_from,
-        account_id=params.account_id,
-        transfer_to_account_id=params.transfer_to_account_id,
-        category_id=params.category_id,
-        direction=params.direction,
-        amount=params.amount,
-        currency=params.currency,
-        frequency=params.frequency,
-        interval=params.interval,
-        day_of_week=params.day_of_week,
-        day_of_month=params.day_of_month,
-        nth_week=params.nth_week,
-        start_date=params.start_date,
-        end_date=params.end_date,
+        defaults={
+            "account_id": params.account_id,
+            "transfer_to_account_id": params.transfer_to_account_id,
+            "category_id": params.category_id,
+            "direction": params.direction,
+            "amount": params.amount,
+            "currency": params.currency,
+            "frequency": params.frequency,
+            "interval": params.interval,
+            "day_of_week": params.day_of_week,
+            "day_of_month": params.day_of_month,
+            "nth_week": params.nth_week,
+            "start_date": params.start_date,
+            "end_date": params.end_date,
+        },
     )
+    return schedule
 
 
 def ensure_initial_schedule(rule: RecurringRule) -> RecurringRuleSchedule:
@@ -274,10 +282,11 @@ def apply_rule_schedule_change(
     today = today or timezone.localdate()
     effective_from = max(effective_from, rule.start_date)
 
+    schedules_qs = _schedules_for_rule(rule)
     if effective_from <= today:
-        rule.schedules.all().delete()
+        schedules_qs.delete()
     else:
-        rule.schedules.filter(effective_from__gte=effective_from).delete()
+        schedules_qs.filter(effective_from__gte=effective_from).delete()
     create_schedule_from_params(rule, effective_from=effective_from, params=params)
 
     if effective_from <= today:

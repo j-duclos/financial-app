@@ -44,6 +44,7 @@ def timeline_response_cache_key(
     account_id: int | None,
     scenario_id: int | None,
     as_of_date: date | None,
+    exclude_reconciled_past: bool = False,
 ) -> str:
     version = 0
     if household_id is not None:
@@ -58,6 +59,7 @@ def timeline_response_cache_key(
             "a": account_id,
             "sc": scenario_id,
             "o": as_of_date.isoformat() if as_of_date else None,
+            "xrp": exclude_reconciled_past,
         },
         sort_keys=True,
     )

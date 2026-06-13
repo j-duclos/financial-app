@@ -1776,6 +1776,7 @@ def build_timeline(
     as_of_date: Optional[date] = None,
     ephemeral_events: Optional[list] = None,
     projection_only: bool = False,
+    exclude_reconciled_past: bool = False,
 ) -> list[dict]:
     """
     Build merged timeline: opening balances, actual transactions, projected rule occurrences,
@@ -1799,6 +1800,7 @@ def build_timeline(
             as_of_date=as_of_date,
             ephemeral_events=ephemeral_events,
             projection_only=projection_only,
+            exclude_reconciled_past=exclude_reconciled_past,
         )
     finally:
         exit_build_timeline_context()
@@ -1814,6 +1816,7 @@ def _build_timeline_impl(
     as_of_date: Optional[date] = None,
     ephemeral_events: Optional[list] = None,
     projection_only: bool = False,
+    exclude_reconciled_past: bool = False,
 ) -> list[dict]:
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
@@ -1872,23 +1875,25 @@ def _build_timeline_impl(
         if scenario_id:
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
-        # 1) Actual transactions: fetch ALL with date <= end_date so nothing is ever hidden in opening balance.
+        # 1) Actual transactions: fetch with date <= end_date so nothing is ever hidden in opening balance.
         #    Exclude Plaid rows that are matched as imports (canonical row is the planned side).
-        actual = list(
-            ledger_visible_transactions(
-                Transaction.objects.filter(
-                    account_id__in=account_ids,
-                    date__lte=end_date,
-                )
+        #    When exclude_reconciled_past, omit reconciled rows at the database (ledger UI default).
+        actual_qs = ledger_visible_transactions(
+            Transaction.objects.filter(
+                account_id__in=account_ids,
+                date__lte=end_date,
             )
-            .select_related(
+        )
+        if exclude_reconciled_past:
+            actual_qs = actual_qs.filter(reconciled=False)
+        actual = list(
+            actual_qs.select_related(
                 "account",
                 "category",
                 "rule",
                 "rule__transfer_to_account",
                 "match_as_planned__imported_transaction",
-            )
-            .order_by("date", "id")
+            ).order_by("date", "id")
         )
         # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
         # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
@@ -1921,12 +1926,25 @@ def _build_timeline_impl(
 
         # Opening balances (before actual + rule rows) — used with full row ledger when skipping min payments
         opening: dict[int, Decimal] = {}
-        for aid in account_ids:
-            acc = accs.get(aid)
-            sb = Decimal(str(acc.starting_balance)) if acc and acc.starting_balance is not None else Decimal("0")
-            if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
-                sb = -sb
-            opening[aid] = sb
+        if exclude_reconciled_past:
+            from transactions.services.reconciliation import last_reconciled_balance
+
+            for aid in account_ids:
+                acc = accs.get(aid)
+                if acc is None:
+                    opening[aid] = Decimal("0")
+                    continue
+                sb = last_reconciled_balance(acc, today)
+                if acc.account_type == Account.AccountType.CREDIT and sb > 0:
+                    sb = -sb
+                opening[aid] = sb
+        else:
+            for aid in account_ids:
+                acc = accs.get(aid)
+                sb = Decimal(str(acc.starting_balance)) if acc and acc.starting_balance is not None else Decimal("0")
+                if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
+                    sb = -sb
+                opening[aid] = sb
         phase_end(timer, _phase_setup)
 
         rows: list[dict] = []
@@ -2115,13 +2133,15 @@ def _build_timeline_impl(
         occurrence_events: list[tuple[date, Decimal, int, str, tuple]] = []
 
         def _rule_account_forecastable(rule_obj: RecurringRule, eff: dict) -> bool:
+            """Include rules whose source account is in scope.
+
+            Transfer destinations may be on other accounts (e.g. Chase→Savings). The output
+            filter keeps only rows for the requested account(s), but we must still project
+            those rules when projection_only=True — otherwise future materialized rows are
+            hidden and the forecast loses every cross-account transfer.
+            """
             acc_id = eff.get("account_id") or rule_obj.account_id
-            if acc_id not in forecastable_account_ids:
-                return False
-            to_id = rule_obj.transfer_to_account_id
-            if to_id and to_id not in forecastable_account_ids:
-                return False
-            return True
+            return acc_id in forecastable_account_ids
 
         for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
             if not _rule_account_forecastable(rule, eff):

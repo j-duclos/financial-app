@@ -6,6 +6,8 @@ type Props = {
   onKindFilterChange: (kind: TransactionKind | "") => void;
   reconciledFilter: ReconciledFilter;
   onReconciledFilterChange: (value: ReconciledFilter) => void;
+  hideReconciledPast: boolean;
+  onHideReconciledPastChange: (hide: boolean) => void;
   amountMin: string;
   amountMax: string;
   onAmountMinChange: (value: string) => void;
@@ -19,6 +21,8 @@ export default function TransactionsFilterBar({
   onKindFilterChange,
   reconciledFilter,
   onReconciledFilterChange,
+  hideReconciledPast,
+  onHideReconciledPastChange,
   amountMin,
   amountMax,
   onAmountMinChange,
@@ -28,6 +32,17 @@ export default function TransactionsFilterBar({
 }: Props) {
   return (
     <>
+      <div className="flex flex-col justify-end">
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5">
+          <input
+            type="checkbox"
+            checked={hideReconciledPast}
+            onChange={(e) => onHideReconciledPastChange(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Hide reconciled
+        </label>
+      </div>
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Reconciled</label>
         <select

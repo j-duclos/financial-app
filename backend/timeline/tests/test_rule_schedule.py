@@ -182,7 +182,131 @@ def test_immediate_change_updates_rule_row(api_client, user, household):
 
 
 @pytest.mark.django_db
-def test_cancel_scheduled_change(api_client, user, household):
+def test_second_immediate_update_same_day(api_client, user, household):
+    """Repeated same-day edits must not violate uniq_rule_schedule_rule_effective_from."""
+    api_client.force_authenticate(user=user)
+    acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Pay",
+        currency="USD",
+    )
+    cat = Category.objects.create(
+        household=household,
+        name="Salary",
+        category_type=Category.CategoryType.INCOME,
+        sort_order=1,
+    )
+    today = timezone.localdate()
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=acct,
+        category=cat,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("2000.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=today,
+        active=True,
+    )
+    RecurringRuleSchedule.objects.create(
+        rule=rule,
+        effective_from=today,
+        account=acct,
+        category=cat,
+        direction=rule.direction,
+        amount=Decimal("2000.00"),
+        currency="USD",
+        frequency=rule.frequency,
+        interval=1,
+        day_of_month=1,
+        start_date=today,
+    )
+    for amount in ("2100.00", "2200.00", "2300.00"):
+        r = api_client.patch(
+            f"/api/rules/{rule.id}/",
+            {"amount": amount},
+            format="json",
+        )
+        assert r.status_code == 200, r.content
+    rule.refresh_from_db()
+    assert rule.amount == Decimal("2300.00")
+    assert RecurringRuleSchedule.objects.filter(rule=rule).count() == 1
+    assert (
+        RecurringRuleSchedule.objects.get(rule=rule).effective_from == today
+    )
+
+
+@pytest.mark.django_db
+def test_reschedule_future_change_same_effective_date(api_client, user, household):
+    """Editing an existing future-dated segment replaces it instead of duplicating."""
+    api_client.force_authenticate(user=user)
+    acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Pay",
+        currency="USD",
+    )
+    cat = Category.objects.create(
+        household=household,
+        name="Salary",
+        category_type=Category.CategoryType.INCOME,
+        sort_order=1,
+    )
+    today = timezone.localdate()
+    future = today + timedelta(days=30)
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=acct,
+        category=cat,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("2000.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=today - timedelta(days=30),
+        active=True,
+    )
+    RecurringRuleSchedule.objects.create(
+        rule=rule,
+        effective_from=rule.start_date,
+        account=acct,
+        category=cat,
+        direction=rule.direction,
+        amount=Decimal("2000.00"),
+        currency="USD",
+        frequency=rule.frequency,
+        interval=1,
+        day_of_month=1,
+        start_date=rule.start_date,
+    )
+    RecurringRuleSchedule.objects.create(
+        rule=rule,
+        effective_from=future,
+        account=acct,
+        category=cat,
+        direction=rule.direction,
+        amount=Decimal("2200.00"),
+        currency="USD",
+        frequency=rule.frequency,
+        interval=1,
+        day_of_month=1,
+        start_date=rule.start_date,
+    )
+    for amount in ("2250.00", "2300.00"):
+        r = api_client.patch(
+            f"/api/rules/{rule.id}/",
+            {"amount": amount, "change_effective_date": future.isoformat()},
+            format="json",
+        )
+        assert r.status_code == 200, r.content
+    assert RecurringRuleSchedule.objects.filter(rule=rule, effective_from=future).count() == 1
+    assert resolve_rule_params(rule, future).amount == Decimal("2300.00")
     api_client.force_authenticate(user=user)
     acct = Account.objects.create(
         household=household,
