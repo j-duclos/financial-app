@@ -294,6 +294,8 @@ export default function Transactions() {
   }, [accountId, queryClient]);
 
   useEffect(() => {
+    saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
+  }, [amountMinInput, amountMaxInput]);
 
   useEffect(() => {
     if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {

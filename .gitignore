@@ -3,4 +3,5 @@ node_modules
 backend/.env
 backend/.env.render
 backend/.venv
+backend/test_db.sqlite3
 scripts/.render-env-export

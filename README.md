@@ -240,6 +240,8 @@ cd backend
 python3 -m pytest
 ```
 
+Pytest uses `config/settings_test.py` (SQLite in `backend/test_db.sqlite3`), not `DATABASE_URL` from `.env`, so tests do not run against Render Postgres.
+
 ### Upcoming charge notifications (daily job)
 
 Notifications remind users 1 day before a recurring automation charge is due. Run daily (e.g. cron at 06:00):
@@ -390,3 +392,7 @@ Can see 36 month projection
 Can create unlimited scenarios
 Recurring detection
 Export
+
+
+|   Current Balance Next Risk Date  Lowest Projected In Date Range  View Forecast   |   Date Range      |   Account                     |   
+|       $xxxx.xx      MM-DD-YY         $xxxx.xx on MM-DD-YY                         |   Hide Reconciled |   Reconciled | Type | Amount  |
