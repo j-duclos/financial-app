@@ -61,6 +61,23 @@ def get_materialized_transaction_count() -> int:
     return _materialized_transaction_count.get()
 
 
+_perf_caller: ContextVar[str | None] = ContextVar("perf_caller", default=None)
+
+
+@contextmanager
+def perf_caller_context(caller: str) -> Iterator[None]:
+    """Tag build_timeline() calls for dashboard vs ledger vs other paths in [PERF] logs."""
+    token = _perf_caller.set(caller)
+    try:
+        yield
+    finally:
+        _perf_caller.reset(token)
+
+
+def get_perf_caller() -> str | None:
+    return _perf_caller.get()
+
+
 _materialization_active: ContextVar[bool] = ContextVar("materialization_active", default=False)
 _materialization_stats: ContextVar[dict[str, int]] = ContextVar(
     "materialization_stats",

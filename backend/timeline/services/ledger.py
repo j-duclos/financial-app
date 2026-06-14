@@ -21,6 +21,7 @@ from common.services.profiler import (
     enter_build_timeline_context,
     exit_build_timeline_context,
     get_materialized_transaction_count,
+    get_perf_caller,
     increment_build_timeline_count,
     log_perf,
     materialization_active,
@@ -2690,6 +2691,14 @@ def _build_timeline_impl(
         if query_profiler is not None:
             perf_print(f"[PERF] query_count={query_profiler.query_count}")
         forecast_days = max((end_date - start_date).days, 0)
+        caller = get_perf_caller()
+        if caller == "dashboard":
+            perf_print(f"[PERF] build_timeline days={forecast_days} caller=dashboard")
+        elif forecast_days > 90:
+            perf_print(
+                f"[PERF] non_dashboard forecast_days={forecast_days} "
+                f"caller={caller or 'unknown'}"
+            )
         log_perf(
             "build_timeline",
             timer=timer,

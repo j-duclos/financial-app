@@ -2,8 +2,8 @@ import { formatCurrency } from "@budget-app/shared";
 import type { DashboardDebtSummary, DashboardSummary } from "@budget-app/shared";
 import { DASHBOARD_SECTION, FINANCIAL_HEALTH } from "../../lib/dashboardTerminology";
 import {
-  PASSIVE_FORECAST_DAY_OPTIONS,
-  type PassiveForecastDays,
+  FORECAST_DAY_OPTIONS,
+  type ForecastDays,
 } from "../../lib/safeToSpendLabels";
 import {
   availableCreditSubtitle,
@@ -20,8 +20,8 @@ import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "./metricTileLayo
 
 type Props = {
   summary: DashboardSummary | undefined;
-  forecastDays: PassiveForecastDays;
-  onForecastDaysChange: (days: PassiveForecastDays) => void;
+  forecastDays: ForecastDays;
+  onForecastDaysChange: (days: ForecastDays) => void;
   loading?: boolean;
 };
 
@@ -34,8 +34,8 @@ function ForecastWindowControl({
   forecastDays,
   onForecastDaysChange,
 }: {
-  forecastDays: PassiveForecastDays;
-  onForecastDaysChange: (days: PassiveForecastDays) => void;
+  forecastDays: ForecastDays;
+  onForecastDaysChange: (days: ForecastDays) => void;
 }) {
   return (
     <label className="flex items-center gap-2 shrink-0">
@@ -48,7 +48,7 @@ function ForecastWindowControl({
         className="rounded border border-gray-300 bg-white px-2 py-1.5 text-xs sm:text-sm"
         data-testid="forecast-window-select"
       >
-        {PASSIVE_FORECAST_DAY_OPTIONS.map((d) => (
+        {FORECAST_DAY_OPTIONS.map((d) => (
           <option key={d} value={d}>
             {d} days
           </option>

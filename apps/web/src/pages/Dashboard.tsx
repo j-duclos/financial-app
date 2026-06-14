@@ -23,7 +23,7 @@ import { attentionTransferPreset } from "../lib/attentionCardDisplay";
 import { recommendationTransferPreset } from "../lib/recommendationDisplay";
 import {
   DEFAULT_PASSIVE_FORECAST_DAYS,
-  type PassiveForecastDays,
+  type ForecastDays,
 } from "../lib/safeToSpendLabels";
 import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
 import {
@@ -31,6 +31,7 @@ import {
   upcomingSectionCollapsedSummary,
   upcomingSectionCollapseLabel,
 } from "../lib/upcomingDisplay";
+import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 function DashboardOnboarding() {
   return (
@@ -59,7 +60,7 @@ function DashboardOnboarding() {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const [forecastDays, setForecastDays] = useState<PassiveForecastDays>(
+  const [forecastDays, setForecastDays] = useState<ForecastDays>(
     DEFAULT_PASSIVE_FORECAST_DAYS
   );
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
@@ -96,6 +97,8 @@ export default function Dashboard() {
     accounts.length === 0 &&
     summary.attention.length === 0 &&
     (summary.recommendations?.length ?? summary.insights.length) === 0;
+
+  usePerfPageLoad("dashboard", !isLoading && !isError, { forecast_days: forecastDays });
 
   return (
     <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>

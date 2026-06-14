@@ -1,3 +1,5 @@
+import { isPerfLoggingEnabled, perfLog } from "./perf";
+
 let baseUrl = "";
 let getAccessToken: (() => string | null) | null = null;
 let getRefreshToken: (() => string | null) | null = null;
@@ -97,6 +99,16 @@ async function requestInner<T>(
   const timeoutMs = timeoutOverride ?? 90_000;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const method = (init.method ?? "GET").toUpperCase();
+  const perfOn = isPerfLoggingEnabled();
+  const perfStarted = perfOn ? performance.now() : 0;
+  if (perfOn) {
+    const paramStr =
+      params && Object.keys(params).length > 0
+        ? ` params=${JSON.stringify(params)}`
+        : "";
+    perfLog(`[PERF] api START ${method} ${path}${paramStr}`);
+  }
   let res: Response;
   try {
     res = await fetch(url, { ...init, ...getOpts, headers, signal: controller.signal });
@@ -110,6 +122,11 @@ async function requestInner<T>(
     throw err;
   } finally {
     window.clearTimeout(timeoutId);
+  }
+
+  if (perfOn) {
+    const elapsedMs = Math.round(performance.now() - perfStarted);
+    perfLog(`[PERF] api END ${method} ${path} status=${res.status} elapsed_ms=${elapsedMs}`);
   }
 
   if (res.status === 401 && !didRefresh && !isPublicAuth && getRefreshToken && setAccessToken) {

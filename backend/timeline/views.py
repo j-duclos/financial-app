@@ -11,6 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
 from common.services.forecast_horizon import normalize_forecast_days
+from common.services.profiler import perf_caller_context
 
 from transactions.models import Transaction, Transfer
 
@@ -675,17 +676,18 @@ class TimelineView(APIView):
                 resp["X-Timeline-Skip-Logic"] = "1"
                 return resp
 
-            rows = build_timeline(
-                request.user,
-                start_date=start,
-                end_date=end,
-                scenario_id=scenario_id,
-                account_id=account_id,
-                household_id=household_id,
-                as_of_date=as_of_date,
-                projection_only=True,
-                exclude_reconciled_past=exclude_reconciled_past,
-            )
+            with perf_caller_context("timeline_api"):
+                rows = build_timeline(
+                    request.user,
+                    start_date=start,
+                    end_date=end,
+                    scenario_id=scenario_id,
+                    account_id=account_id,
+                    household_id=household_id,
+                    as_of_date=as_of_date,
+                    projection_only=True,
+                    exclude_reconciled_past=exclude_reconciled_past,
+                )
             # Serialize dates and decimals for JSON
             for r in rows:
                 r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])

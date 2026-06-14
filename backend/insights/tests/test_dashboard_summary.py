@@ -593,10 +593,72 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
 
     assert mock_build.call_count == 1
     assert mock_build.call_args.kwargs.get("projection_only") is True
+    assert mock_build.call_args.kwargs["start_date"] == AS_OF
+    assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=30)
     shared_rows = mock_build.return_value
     assert mock_forecast.call_args.kwargs["timeline_rows"] is shared_rows
     assert mock_health.call_args.kwargs["timeline_rows"] is shared_rows
     assert mock_upcoming.call_args.kwargs["timeline_rows"] is shared_rows
+
+
+def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
+    """Dashboard build_timeline uses today → today+days, not a fixed long horizon."""
+    from contextlib import ExitStack
+
+    for days, expected_end in ((60, AS_OF + timedelta(days=60)), (90, AS_OF + timedelta(days=90))):
+        with ExitStack() as stack:
+            mock_build = stack.enter_context(
+                patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+            )
+            stack.enter_context(
+                patch(
+                    "insights.services.dashboard_summary.calculate_forecast_summaries_for_accounts",
+                    return_value={},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "insights.services.dashboard_summary.calculate_account_health_for_accounts",
+                    return_value={},
+                )
+            )
+            stack.enter_context(
+                patch("insights.services.dashboard_summary.build_upcoming_events", return_value=[])
+            )
+            stack.enter_context(
+                patch(
+                    "insights.services.dashboard_summary.build_upcoming_groups",
+                    return_value={"groups": [], "truncated": False, "total_event_count": 0},
+                )
+            )
+            stack.enter_context(patch("goals.bucket_services.dashboard_buckets_for_user", return_value=[]))
+            stack.enter_context(
+                patch(
+                    "goals.bucket_services.calculate_aggregate_bucket_summary",
+                    return_value={"goals_active_count": 0, "warnings": []},
+                )
+            )
+            stack.enter_context(patch("bills.services.build_dashboard_bill_summary", return_value={}))
+            stack.enter_context(
+                patch("credit_cards.services.debt_engine.build_dashboard_debt_summary", return_value={})
+            )
+            stack.enter_context(
+                patch("insights.services.dashboard_insights.build_dashboard_insights", return_value=[])
+            )
+            mock_rec_ctx = stack.enter_context(
+                patch("recommendations.services.engine.build_recommendation_context")
+            )
+            stack.enter_context(
+                patch("recommendations.services.engine.build_dashboard_recommendation_list", return_value=[])
+            )
+            stack.enter_context(
+                patch("recommendations.services.engine.recommendation_timeline_hints", return_value=[])
+            )
+            mock_rec_ctx.return_value = object()
+            _build_dashboard_summary(user, days=days, as_of_date=AS_OF)
+
+        assert mock_build.call_args.kwargs["start_date"] == AS_OF
+        assert mock_build.call_args.kwargs["end_date"] == expected_end
 
 
 def test_forecast_summaries_reuse_precomputed_timeline(user, checking):

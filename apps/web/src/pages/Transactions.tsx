@@ -77,6 +77,7 @@ import {
   saveStoredHideReconciledPast,
 } from "../lib/transactionsPageState";
 import { categoriesForDropdown } from "../lib/categoryOptions";
+import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 export type { TimeFilter };
 
@@ -228,6 +229,18 @@ export default function Transactions() {
     enabled: !!accountId,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
+  });
+
+  const ledgerReady =
+    typeof accountId === "number" &&
+    accountData != null &&
+    !timelineFetching &&
+    (timelineData != null || timelineError);
+
+  usePerfPageLoad("transactions", ledgerReady, {
+    account_id: accountId || "",
+    start: timelineStart,
+    end: timelineEnd,
   });
 
   const transactions = txnsData?.results ?? [];

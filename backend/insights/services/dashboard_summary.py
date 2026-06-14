@@ -23,6 +23,7 @@ from common.services.profiler import (
     QueryProfiler,
     get_build_timeline_count,
     log_perf,
+    perf_caller_context,
     perf_enabled,
     perf_print,
     phase_end,
@@ -756,19 +757,23 @@ def build_upcoming_events(
     *,
     today: date | None = None,
     timeline_rows: list[dict] | None = None,
+    upcoming_days: int | None = None,
 ) -> list[dict[str, Any]]:
     today = today or date.today()
-    window_end = today + timedelta(days=UPCOMING_DAYS)
+    horizon = upcoming_days if upcoming_days is not None else UPCOMING_DAYS
+    horizon = max(horizon, 1)
+    window_end = today + timedelta(days=horizon)
     accounts_by_id = {a.id: a for a in accounts}
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
-            user,
-            start_date=today,
-            end_date=window_end,
-            as_of_date=today,
-            projection_only=True,
-        )
+        with perf_caller_context("dashboard_upcoming"):
+            timeline_rows = build_timeline(
+                user,
+                start_date=today,
+                end_date=window_end,
+                as_of_date=today,
+                projection_only=True,
+            )
 
     households = get_households_for_user(user)
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
@@ -930,11 +935,16 @@ def _build_dashboard_summary(
 
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    window_end = today + timedelta(days=days)
-    timeline_end = max(window_end, today + timedelta(days=UPCOMING_DAYS))
+    forecast_end = today + timedelta(days=days)
+    upcoming_horizon = min(days, UPCOMING_DAYS)
 
     if perf_enabled():
         reset_build_timeline_count()
+        perf_print(f"[PERF] dashboard forecast_days_selected={days}")
+        perf_print(
+            f"[PERF] dashboard start_date={today.isoformat()} "
+            f"end_date={forecast_end.isoformat()}"
+        )
         perf_print(f"[PERF] dashboard request start user={user.pk} days={days}")
 
     households = get_households_for_user(user)
@@ -947,13 +957,14 @@ def _build_dashboard_summary(
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
     _phase_timeline = phase_start(timer, "timeline_build")
-    timeline_rows = build_timeline(
-        user,
-        start_date=today,
-        end_date=timeline_end,
-        as_of_date=today,
-        projection_only=True,
-    )
+    with perf_caller_context("dashboard"):
+        timeline_rows = build_timeline(
+            user,
+            start_date=today,
+            end_date=forecast_end,
+            as_of_date=today,
+            projection_only=True,
+        )
     phase_end(timer, _phase_timeline)
 
     _phase_forecast = phase_start(timer, "forecast")
@@ -1013,6 +1024,7 @@ def _build_dashboard_summary(
         health_by_id,
         today=today,
         timeline_rows=timeline_rows,
+        upcoming_days=upcoming_horizon,
     )
 
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
@@ -1173,7 +1185,7 @@ def _build_dashboard_summary(
         "upcoming_groups": upcoming_grouped["groups"],
         "upcoming_truncated": upcoming_grouped["truncated"],
         "upcoming_total_count": upcoming_grouped["total_event_count"],
-        "upcoming_days": UPCOMING_DAYS,
+        "upcoming_days": upcoming_horizon,
         "snapshot": snapshot,
         "goals": dashboard_goals,
         "goal_warnings": goal_warnings,
