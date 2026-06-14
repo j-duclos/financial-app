@@ -216,7 +216,9 @@ def resolve_period_dates(
     floor = _reconcile_floor_date(account, as_of)
     period_end = end or as_of
     if period_end > as_of:
-        raise ValueError(f"Period end cannot be after today ({as_of.isoformat()}).")
+        if strict:
+            raise ValueError(f"Period end cannot be after today ({as_of.isoformat()}).")
+        period_end = as_of
     if start is None:
         period_start = floor
     elif start < floor:
@@ -230,6 +232,13 @@ def resolve_period_dates(
         period_start = floor
     else:
         period_start = start
+    if not strict and period_start > as_of:
+        period_start = as_of
+    if period_end < period_start:
+        if strict:
+            raise ValueError("Period start must be on or before period end.")
+        # Stale UI range (e.g. after delete/undo) entirely before the reconcile floor.
+        period_end = min(period_start, as_of)
     if period_start > period_end:
         raise ValueError("Period start must be on or before period end.")
     return period_start, period_end

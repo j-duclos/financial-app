@@ -247,12 +247,16 @@ class AccountSerializer(serializers.ModelSerializer):
         attrs = self._apply_nickname_compat(attrs)
         attrs = self._drop_null_credit_card_amounts(attrs)
         is_credit = self._is_credit(attrs)
+        autopay_account_explicit = "autopay_account" in attrs
         autopay_touched = any(
             key in attrs for key in ("autopay_account", "autopay_enabled", "autopay_type", "account_type")
         )
-        autopay_account = attrs.get("autopay_account") if "autopay_account" in attrs else None
-        if autopay_account is None and autopay_touched and self.instance:
+        if autopay_account_explicit:
+            autopay_account = attrs.get("autopay_account")
+        elif autopay_touched and self.instance:
             autopay_account = self.instance.autopay_account
+        else:
+            autopay_account = None
         if autopay_account is not None and autopay_touched:
             if autopay_account.account_type not in (
                 Account.AccountType.CHECKING,

@@ -247,8 +247,25 @@ export default function Reconcile() {
       editDestinationAccount != null &&
       String(editDestinationAccount.account_type ?? "").toUpperCase() === "CREDIT");
 
+  async function syncReconcilePeriodFromMeta() {
+    if (!accountId) return;
+    const meta = await queryClient.fetchQuery({
+      queryKey: ["reconcile-meta", accountId],
+      queryFn: () => getReconcileSetup(accountId as number),
+    });
+    if (meta.all_reconciled_through_today) {
+      setPeriodStart("");
+      setPeriodEnd("");
+    } else {
+      setPeriodStart(meta.min_start_date);
+      setPeriodEnd(meta.max_end_date);
+    }
+    return meta;
+  }
+
   function invalidateReconcileQueries(opts?: { immediateSetup?: boolean }) {
     if (opts?.immediateSetup !== false) {
+      void queryClient.removeQueries({ queryKey: ["reconcile-setup"] });
       void queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] });
       void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
       void queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] });
@@ -264,15 +281,8 @@ export default function Reconcile() {
     setBankBalanceInput("");
     setCompleteError(null);
     flushFinancialRefresh(queryClient);
-    void queryClient.invalidateQueries({ queryKey: ["reconcile-meta"] });
-    void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
-    void queryClient.invalidateQueries({ queryKey: ["reconcile-sessions"] });
-    const meta = await queryClient.fetchQuery({
-      queryKey: ["reconcile-meta", accountId],
-      queryFn: () => getReconcileSetup(accountId as number),
-    });
-    setPeriodStart(meta.min_start_date);
-    setPeriodEnd(meta.max_end_date);
+    await syncReconcilePeriodFromMeta();
+    invalidateReconcileQueries();
   }
 
   const periodOpeningBalance = parseAmount(
@@ -430,6 +440,10 @@ export default function Reconcile() {
       setEditError(null);
       setEditingTxn(null);
       setEditingFullTxn(null);
+      if (accountId) {
+        flushFinancialRefresh(queryClient);
+        await syncReconcilePeriodFromMeta();
+      }
       invalidateReconcileQueries();
     },
     onError: (err: unknown) => {
@@ -449,6 +463,10 @@ export default function Reconcile() {
         return next;
       });
       removeRemainingTransactions([deletedId]);
+      if (accountId) {
+        flushFinancialRefresh(queryClient);
+        await syncReconcilePeriodFromMeta();
+      }
       invalidateReconcileQueries();
     },
     onError: (err: unknown) => {

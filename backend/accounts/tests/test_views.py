@@ -1,4 +1,6 @@
 """Tests for account API saving interest_rate and interest_cycle_end_day."""
+from decimal import Decimal
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -220,6 +222,51 @@ def test_patch_credit_toggle_forecast_ignores_stale_invalid_autopay(auth_client,
         format="json",
     )
     assert r.status_code == 200, r.data
+
+
+def test_patch_credit_full_edit_clears_stale_invalid_autopay(auth_client, household):
+    """Full account edit (Save modal) must succeed when clearing a bad autopay_account."""
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        currency="USD",
+    )
+    card.autopay_account = card
+    card.save(update_fields=["autopay_account"])
+    payload = {
+        "name": "Savor",
+        "display_name": "",
+        "purpose": "",
+        "notes": "",
+        "account_type": "CREDIT",
+        "role": "credit_card",
+        "minimum_buffer": "0",
+        "institution": "",
+        "last_four": "",
+        "currency": "USD",
+        "starting_balance": "500.00",
+        "apr": None,
+        "interest_rate": None,
+        "interest_cycle_end_day": None,
+        "credit_limit": None,
+        "target_utilization_percent": "10",
+        "billing_cycle_end_day": None,
+        "statement_closing_day": None,
+        "payment_due_day": None,
+        "autopay_enabled": False,
+        "autopay_account": None,
+        "autopay_type": "minimum_payment",
+        "promotional_apr": None,
+        "promotional_end_date": None,
+        "preserve_partner_transfer_legs": False,
+        "include_in_available_credit": True,
+    }
+    r = auth_client.patch(f"/api/accounts/{card.id}/", payload, format="json")
+    assert r.status_code == 200, r.data
+    card.refresh_from_db()
+    assert card.starting_balance == Decimal("500.00")
+    assert card.autopay_account_id is None
 
 
 def test_create_credit_account_infers_credit_card_role(auth_client, household):

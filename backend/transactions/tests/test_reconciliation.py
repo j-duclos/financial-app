@@ -513,6 +513,60 @@ def test_reconcile_date_range_limits_start_after_prior_period(auth_client, accou
     assert body["unreconciled_transactions"][0]["id"] == t2.pk
 
 
+def test_reconcile_setup_clamps_stale_period_before_floor(auth_client, account, user):
+    """Stale cached start/end entirely before the reconcile floor must not 400."""
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 2, 1),
+        payee="A",
+        amount=Decimal("10.00"),
+    )
+    t2 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 2, 10),
+        payee="B",
+        amount=Decimal("5.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1010.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date(2026, 2, 1),
+        period_end=date(2026, 2, 2),
+    )
+    r = auth_client.get(
+        "/api/reconcile/setup/",
+        {"account_id": account.pk, "start": "2026-01-30", "end": "2026-02-02"},
+    )
+    assert r.status_code == 200, r.data
+    body = r.json()
+    assert body["min_start_date"] == "2026-02-10"
+    assert body["period_start_date"] == "2026-02-10"
+    assert body["period_end_date"] == "2026-02-10"
+    assert len(body["unreconciled_transactions"]) == 1
+    assert body["unreconciled_transactions"][0]["id"] == t2.pk
+
+
+def test_reconcile_setup_clamps_period_end_after_today(auth_client, account, user):
+    post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 1, 10),
+        payee="A",
+        amount=Decimal("10.00"),
+    )
+    r = auth_client.get(
+        "/api/reconcile/setup/",
+        {"account_id": account.pk, "start": "2026-01-10", "end": "2099-12-31"},
+    )
+    assert r.status_code == 200, r.data
+    body = r.json()
+    assert body["period_end_date"] == date.today().isoformat()
+
+
 def test_reconcile_complete_api(auth_client, account, user):
     t1 = post_transaction(
         user=user,
