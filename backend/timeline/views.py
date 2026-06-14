@@ -689,18 +689,18 @@ class TimelineView(APIView):
                 resp["X-Timeline-Skip-Logic"] = "1"
                 return resp
 
-                rows = build_timeline(
-                    request.user,
-                    start_date=start,
-                    end_date=end,
-                    scenario_id=scenario_id,
-                    account_id=account_id,
-                    household_id=household_id,
-                    as_of_date=as_of_date,
-                    projection_only=True,
-                    exclude_reconciled_past=exclude_reconciled_past,
-                    caller="timeline_page",
-                )
+            rows = build_timeline(
+                request.user,
+                start_date=start,
+                end_date=end,
+                scenario_id=scenario_id,
+                account_id=account_id,
+                household_id=household_id,
+                as_of_date=as_of_date,
+                projection_only=True,
+                exclude_reconciled_past=exclude_reconciled_past,
+                caller="timeline_page",
+            )
             # Serialize dates and decimals for JSON
             for r in rows:
                 r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])

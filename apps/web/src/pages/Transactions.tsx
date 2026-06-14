@@ -48,6 +48,7 @@ import {
   timelineHasAccountRows,
   isTransferCategoryName,
   accountLedgerDisplayBalance,
+  ledgerOpeningBalance,
   timelineRangeForFilter,
   projectionTimelineRangeForAsOf,
   type TimeFilter,
@@ -771,10 +772,7 @@ export default function Transactions() {
   const ledgerRows = useMemo(() => {
     if (!account || typeof accountId !== "number") return [];
     const today = todayStr();
-    const openingBalance =
-      account.starting_balance != null && String(account.starting_balance).trim() !== ""
-        ? parseFloat(account.starting_balance)
-        : 0;
+    const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
     const start = openingBalance;
     const timeline = timelineData?.timeline;
     const pastOpeningOverride =
@@ -784,6 +782,7 @@ export default function Transactions() {
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
     const canUseTimelineLedger =
+      !timelineError &&
       timelineData != null &&
       (timelineHasAccountRows(timeline, accountId) ||
         (hideReconciledPast && hasPastOpeningOverride));
@@ -818,6 +817,7 @@ export default function Transactions() {
     timelineData,
     timelineData?.timeline,
     timelineData?.past_opening_balance,
+    timelineError,
     isCreditAccount,
     hideReconciledPast,
   ]);

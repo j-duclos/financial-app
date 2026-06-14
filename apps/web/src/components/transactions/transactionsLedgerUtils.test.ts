@@ -58,7 +58,7 @@ describe("ledgerOpeningBalance", () => {
 });
 
 describe("resolveLedgerOpening", () => {
-  it("ignores stale starting_balance on bank accounts when timeline exists", () => {
+  it("derives opening from first timeline row for credit cards", () => {
     const row: TimelineRow = {
       date: "2025-01-01",
       description: "Deposit",
@@ -75,6 +75,30 @@ describe("resolveLedgerOpening", () => {
       running_balance: "100",
     };
     expect(resolveLedgerOpening(983.43, row, false)).toBe(50);
+  });
+
+  it("buildLedgerRowsFromTimeline uses configured starting balance for bank accounts", () => {
+    const timeline: TimelineRow[] = [
+      {
+        date: "2026-03-16",
+        description: "Chewy",
+        account_id: 1,
+        account_name: "Chase",
+        category_id: null,
+        category_name: null,
+        amount: "-125.53",
+        type: "OUTFLOW",
+        status: "CLEARED",
+        source: "actual",
+        rule_id: null,
+        transaction_id: 1,
+        running_balance: "6890.39",
+      },
+    ];
+    const rows = buildLedgerRowsFromTimeline(timeline, todayStr(), 1805.3, false);
+    expect(rows.find((r) => r.type === "starting_balance")?.balance).toBe(1805.3);
+    const pastTxn = rows.find((r) => r.type === "transaction_from_timeline");
+    expect(pastTxn?.balance).toBeCloseTo(1805.3 - 125.53, 2);
   });
 });
 

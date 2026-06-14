@@ -301,10 +301,13 @@ export function buildLedgerRowsFromTimeline(
     .sort(compareTimelineRows);
 
   const rows: LedgerRow[] = [];
+  const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
   const start =
     pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
       ? pastOpeningOverride
-      : resolveLedgerOpening(openingBalance, past[0], isCredit);
+      : isCredit
+        ? resolveLedgerOpening(openingBalance, past[0], isCredit)
+        : configuredOpening;
   rows.push({ type: "starting_balance", balance: start });
 
   // Recompute from visible rows only — API running_balance can include filtered duplicates.
