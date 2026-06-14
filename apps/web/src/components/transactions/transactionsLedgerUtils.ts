@@ -120,6 +120,28 @@ export function buildLedgerRows(
   return rows;
 }
 
+/**
+ * When the timeline API is unavailable, infer opening balance so the running total at
+ * `today` matches the account's ledger balance from the API (not raw starting_balance).
+ */
+export function resolveFallbackLedgerOpening(
+  transactions: Transaction[],
+  today: string,
+  balanceAtToday: number,
+  isCredit: boolean
+): number {
+  let sumThroughToday = 0;
+  for (const txn of transactions) {
+    if ((txn.source || "").toUpperCase() === "INTEREST") continue;
+    if (txn.date > today) continue;
+    const amt = parseFloat(txn.amount);
+    if (Number.isNaN(amt)) continue;
+    const effective = isCredit && amt > 0 ? -amt : amt;
+    sumThroughToday += effective;
+  }
+  return balanceAtToday - sumThroughToday;
+}
+
 /** Synthetic projected interest/income — forecast-only estimates, never historical ledger. */
 export function isProjectedInterestRow(row: TimelineRow): boolean {
   return row.source === "interest";

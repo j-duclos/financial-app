@@ -13,6 +13,7 @@ import {
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
   splitLedgerSections,
+  resolveFallbackLedgerOpening,
   formatDateDisplay,
   todayStr,
   timelineRangeForFilter,
@@ -614,6 +615,18 @@ describe("buildLedgerRows fallback", () => {
     expect(sections.future).toHaveLength(1);
     expect(sections.past[0].type === "transaction" && sections.past[0].txn.date).toBe(today);
     expect(sections.future[0].type === "transaction" && sections.future[0].txn.date).toBe(futureDate);
+  });
+
+  it("anchors fallback opening balance to balance at today", () => {
+    const today = todayStr();
+    const txns = [
+      { id: 1, date: today, payee: "Coffee", amount: "-10", direction: "OUTFLOW" } as never,
+      { id: 2, date: today, payee: "Deposit", amount: "100", direction: "INFLOW" } as never,
+    ];
+    const opening = resolveFallbackLedgerOpening(txns, today, 500, false);
+    const rows = buildLedgerRows(txns, opening, "USD", false);
+    const todayRow = rows.find((r) => r.type === "today_balance");
+    expect(todayRow?.balance).toBe(500);
   });
 });
 

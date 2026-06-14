@@ -44,6 +44,7 @@ import {
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
+  resolveFallbackLedgerOpening,
   splitLedgerSections,
   timelineHasAccountRows,
   isTransferCategoryName,
@@ -802,7 +803,14 @@ export default function Transactions() {
     const fallbackTxns = hideReconciledPast
       ? transactions.filter((t) => !t.reconciled)
       : transactions;
-    return buildLedgerRows(fallbackTxns, start, account.currency, isCreditAccount);
+    const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
+    const fallbackOpening = resolveFallbackLedgerOpening(
+      fallbackTxns,
+      today,
+      apiBalance,
+      isCreditAccount
+    );
+    return buildLedgerRows(fallbackTxns, fallbackOpening, account.currency, isCreditAccount);
   }, [
     account,
     accountId,
@@ -1322,9 +1330,11 @@ export default function Transactions() {
             <ForecastSummaryBar
               account={account}
               currentBalance={
-                ledgerSections.today?.balance ??
-                pastOpeningBalance ??
-                accountLedgerDisplayBalance(account, isCredit)
+                timelineError || timelineData == null
+                  ? accountLedgerDisplayBalance(account, isCredit)
+                  : ledgerSections.today?.balance ??
+                    pastOpeningBalance ??
+                    accountLedgerDisplayBalance(account, isCredit)
               }
               isCredit={isCredit}
               currency={currency}
