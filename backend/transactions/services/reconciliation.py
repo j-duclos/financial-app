@@ -189,6 +189,29 @@ def is_import_date_locked(account: Account, txn_date: date) -> bool:
     return cutoff is not None and txn_date <= cutoff
 
 
+def suppress_plaid_imports_in_locked_periods(*, account_id: int | None = None) -> int:
+    """
+    Hide Plaid import rows that landed on reconciled-and-closed dates.
+
+    Re-sync duplicates and repair commands must never surface UNMATCHED Plaid rows in
+    periods the user already closed.
+    """
+    qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    suppressed = 0
+    for imp in qs.select_related("account").iterator(chunk_size=200):
+        if not is_import_date_locked(imp.account, imp.date):
+            continue
+        imp.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+        imp.save(update_fields=["import_match_status", "updated_at"])
+        suppressed += 1
+    return suppressed
+
+
 def is_all_reconciled_through_today(account: Account, as_of: Optional[date] = None) -> bool:
     """True when the latest reconcile session covers through today and no ledger rows remain unreconciled."""
     as_of = _as_of_date(as_of)

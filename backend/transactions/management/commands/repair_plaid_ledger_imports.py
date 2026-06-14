@@ -26,6 +26,7 @@ from transactions.services.matching import (
     repair_orphan_absorbed_resync_matches,
     restore_all_duplicate_plaid_imports,
 )
+from transactions.services.reconciliation import suppress_plaid_imports_in_locked_periods
 
 
 class Command(BaseCommand):
@@ -90,6 +91,7 @@ class Command(BaseCommand):
         orphan_resync = 0
         stale_text = 0
         cross_merchant = 0
+        suppressed_locked = 0
         for aid in account_ids:
             n_cross = repair_cross_merchant_wrong_matches(account_id=aid)
             n_stale = repair_stale_planned_bank_text(account_id=aid)
@@ -100,6 +102,7 @@ class Command(BaseCommand):
             n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            n_suppressed = suppress_plaid_imports_in_locked_periods(account_id=aid)
             stale_text += n_stale
             cross_merchant += n_cross
             invalid_matches += n_invalid
@@ -109,12 +112,13 @@ class Command(BaseCommand):
             collapsed += n_collapsed
             manual_linked += n_manual
             materialized += n_materialized
+            suppressed_locked += n_suppressed
             acct = Account.objects.filter(pk=aid).first()
             label = f"{acct.name} #{aid}" if acct else f"account #{aid}"
             self.stdout.write(
                 f"  {label}: cross_merchant={n_cross} stale_text={n_stale} invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
                 f"released={n_released} collapsed={n_collapsed} manual_linked={n_manual} "
-                f"materialized={n_materialized}"
+                f"materialized={n_materialized} suppressed_locked={n_suppressed}"
             )
 
         for hid in {h for h in household_ids if h is not None}:
@@ -127,6 +131,7 @@ class Command(BaseCommand):
                 f"match(es), dropped {resync_dupes} re-sync "
                 f"duplicate(s), restored {released} DUPLICATE row(s), collapsed {collapsed} materialized "
                 f"duplicate(s), linked {manual_linked} manual row(s) to "
-                f"imports, materialized {materialized} orphan import(s)."
+                f"imports, materialized {materialized} orphan import(s), "
+                f"suppressed {suppressed_locked} import(s) in reconciled period(s)."
             )
         )

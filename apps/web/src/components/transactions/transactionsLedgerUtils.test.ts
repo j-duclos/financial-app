@@ -584,6 +584,37 @@ describe("buildLedgerRows fallback", () => {
     expect(todayIdx).toBeGreaterThan(-1);
     expect(todayIdx).toBeLessThan(futureIdx);
   });
+
+  it("routes future fallback transactions to forecast section", () => {
+    const today = todayStr();
+    const futureDate = addDaysToIsoDate(today, 30);
+    const rows = buildLedgerRows(
+      [
+        {
+          id: 1,
+          date: today,
+          payee: "Today charge",
+          amount: "-10",
+          direction: "OUTFLOW",
+        } as never,
+        {
+          id: 2,
+          date: futureDate,
+          payee: "Save for Rent",
+          amount: "680",
+          direction: "INFLOW",
+        } as never,
+      ],
+      0,
+      "USD",
+      false
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    expect(sections.future).toHaveLength(1);
+    expect(sections.past[0].type === "transaction" && sections.past[0].txn.date).toBe(today);
+    expect(sections.future[0].type === "transaction" && sections.future[0].txn.date).toBe(futureDate);
+  });
 });
 
 describe("timelineHasAccountRows", () => {

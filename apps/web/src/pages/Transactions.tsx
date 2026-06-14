@@ -282,18 +282,6 @@ export default function Transactions() {
   }, [hideReconciledPast]);
 
   useEffect(() => {
-    if (typeof accountId !== "number") return;
-    let cancelled = false;
-    void materializeRecurring({ account_id: accountId, forecast_days: 90 }).then(() => {
-      if (cancelled) return;
-      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId, queryClient]);
-
-  useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
   }, [amountMinInput, amountMaxInput]);
 
@@ -1561,8 +1549,10 @@ export default function Transactions() {
               });
             }}
             onEditRow={openEditByLedgerRow}
+            onEditTransaction={openEdit}
             onSkipRow={confirmSkipRow}
             onDeleteRow={confirmDeleteRow}
+            onDeleteTransaction={confirmDelete}
             deletePending={deleteMu.isPending}
             minimumBuffer={
               account?.minimum_buffer != null && String(account.minimum_buffer).trim() !== ""

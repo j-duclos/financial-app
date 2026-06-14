@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import type { TimelineRow } from "@budget-app/shared";
-import TransactionRow, { timelineRowToData } from "./TransactionRow";
+import type { TimelineRow, Transaction } from "@budget-app/shared";
+import TransactionRow, { timelineRowToData, transactionToData } from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LedgerColumnHeader,
@@ -23,8 +23,10 @@ type Props = {
   hiddenByPast: boolean;
   onToggleExpanded: () => void;
   onEditRow: (row: TimelineRow) => void;
+  onEditTransaction: (txn: Transaction) => void;
   onSkipRow: (row: TimelineRow) => void;
   onDeleteRow: (row: TimelineRow) => void;
+  onDeleteTransaction: (transactionId: number, label: string) => void;
   deletePending: boolean;
   minimumBuffer: number | null;
   riskDate: string | null;
@@ -39,14 +41,20 @@ export default function ForecastCardsSection({
   hiddenByPast,
   onToggleExpanded,
   onEditRow,
+  onEditTransaction,
   onSkipRow,
   onDeleteRow,
+  onDeleteTransaction,
   deletePending,
   minimumBuffer,
   riskDate,
 }: Props) {
   const forecastRows = useMemo(
-    () => future.filter((row): row is Extract<LedgerRow, { type: "recurring" }> => row.type === "recurring"),
+    () =>
+      future.filter(
+        (row): row is Extract<LedgerRow, { type: "recurring" } | { type: "transaction" }> =>
+          row.type === "recurring" || row.type === "transaction"
+      ),
     [future]
   );
 
@@ -91,6 +99,34 @@ export default function ForecastCardsSection({
               }
             >
               {forecastRows.map((row, index) => {
+                if (row.type === "transaction") {
+                  const data = transactionToData(row.txn, row.balance);
+                  const editable = !row.txn.reconciled;
+                  return (
+                    <TransactionRow
+                      key={`future-txn-${row.txn.id}`}
+                      row={data}
+                      variant="future"
+                      currency={currency}
+                      isCredit={isCredit}
+                      forecastSeverity={forecastRowSeverityClasses({
+                        balance: row.balance,
+                        rowDate: row.txn.date,
+                        minimumBuffer,
+                        riskDate,
+                        isCredit,
+                      })}
+                      onEdit={editable ? () => onEditTransaction(row.txn) : undefined}
+                      onDelete={
+                        editable
+                          ? () => onDeleteTransaction(row.txn.id, row.txn.payee || row.txn.date)
+                          : undefined
+                      }
+                      actionsDisabled={deletePending}
+                    />
+                  );
+                }
+
                 const data = timelineRowToData(row.row, row.balance, "future");
                 const rowKey =
                   row.row.source === "interest"

@@ -319,15 +319,22 @@ export function timelineHasAccountRows(
 }
 
 export function splitLedgerSections(rows: LedgerRow[]) {
+  const today = todayStr();
   const start = rows.find((r) => r.type === "starting_balance") ?? null;
-  const today = rows.find((r) => r.type === "today_balance") ?? null;
+  const todayRow = rows.find((r) => r.type === "today_balance") ?? null;
   const past: LedgerRow[] = [];
   const future: LedgerRow[] = [];
   for (const r of rows) {
-    if (r.type === "transaction" || r.type === "transaction_from_timeline") past.push(r);
-    if (r.type === "recurring") future.push(r);
+    if (r.type === "transaction_from_timeline") {
+      past.push(r);
+    } else if (r.type === "transaction") {
+      if (r.txn.date <= today) past.push(r);
+      else future.push(r);
+    } else if (r.type === "recurring") {
+      future.push(r);
+    }
   }
-  return { start, past, today, future };
+  return { start, past, today: todayRow, future };
 }
 
 /**

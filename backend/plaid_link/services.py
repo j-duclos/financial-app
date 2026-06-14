@@ -30,7 +30,11 @@ from core.phone_e164 import normalize_to_e164
 from core.timeline_cache import bump_timeline_cache_for_household
 from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction, TransactionMatch
-from transactions.services.reconciliation import is_import_date_locked, import_locked_through_date
+from transactions.services.reconciliation import (
+    import_locked_through_date,
+    is_import_date_locked,
+    suppress_plaid_imports_in_locked_periods,
+)
 from transactions.services.matching import (
     bank_movement_already_on_ledger,
     match_imported_transaction,
@@ -659,6 +663,16 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     continue
                 existing = Transaction.objects.filter(plaid_transaction_id=pid).first()
                 if existing:
+                    if account and is_import_date_locked(account, defaults["date"]):
+                        skipped_reconciled_period += 1
+                        logger.info(
+                            "Skipping Plaid modify %s on %s for account %s — reconciled through %s",
+                            pid,
+                            defaults["date"],
+                            account_pk,
+                            import_locked_through_date(account),
+                        )
+                        continue
                     _apply_plaid_defaults_to_existing(existing, defaults)
                     existing.save()
                     modified += 1
@@ -727,10 +741,13 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             rematch_unmatched_manual_actuals(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            suppressed = suppress_plaid_imports_in_locked_periods(account_id=aid)
             totals.setdefault("collapsed", 0)
             totals["collapsed"] += collapsed
             totals.setdefault("materialized", 0)
             totals["materialized"] += materialized
+            totals.setdefault("suppressed_locked_period", 0)
+            totals["suppressed_locked_period"] += suppressed
     except Exception:
         logger.exception("post-sync import repair failed for plaid_item pk=%s", plaid_item.pk)
 

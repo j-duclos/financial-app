@@ -1430,8 +1430,8 @@ def mark_import_duplicate(txn: Transaction) -> None:
 
 
 def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
-    """Unhide every Plaid row previously marked DUPLICATE (safe after dedup rule changes)."""
-    from django.utils import timezone
+    """Unhide Plaid rows previously marked DUPLICATE (never on reconciled-and-closed dates)."""
+    from transactions.services.reconciliation import is_import_date_locked
 
     qs = Transaction.objects.filter(
         source=Transaction.Source.PLAID,
@@ -1439,10 +1439,14 @@ def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int
     )
     if account_id is not None:
         qs = qs.filter(account_id=account_id)
-    return qs.update(
-        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
-        updated_at=timezone.now(),
-    )
+    restored = 0
+    for imp in qs.select_related("account").iterator(chunk_size=200):
+        if is_import_date_locked(imp.account, imp.date):
+            continue
+        imp.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+        imp.save(update_fields=["import_match_status", "updated_at"])
+        restored += 1
+    return restored
 
 
 def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
