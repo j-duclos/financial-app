@@ -60,6 +60,17 @@ describe("resolveTransactionStatusIcons", () => {
     ).toEqual([]);
   });
 
+  it("still shows origin icons when readOnly is set on non-interest rows", () => {
+    expect(
+      resolveTransactionStatusIcons({
+        reconciled: true,
+        readOnly: true,
+        txnSource: "plaid",
+        transactionId: 1,
+      })
+    ).toEqual(["reconciled", "plaid"]);
+  });
+
   it("shows transfer for credit card payment category", () => {
     expect(
       resolveTransactionStatusIcons({

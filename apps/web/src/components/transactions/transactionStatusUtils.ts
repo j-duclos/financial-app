@@ -27,7 +27,7 @@ export function resolveTransactionStatusIcons(
   const icons: TransactionStatusIcon[] = [];
   if (input.reconciled) icons.push("reconciled");
 
-  if (input.readOnly || input.ledgerSource === "interest") {
+  if (input.ledgerSource === "interest") {
     return icons;
   }
 

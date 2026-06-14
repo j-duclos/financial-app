@@ -66,7 +66,7 @@ export function timelineRowToData(
     importMatchStatus: row.import_match_status ?? null,
     plaidTransactionId: row.plaid_transaction_id ?? null,
     transactionId: row.transaction_id,
-    readOnly: row.reconciled || row.source === "interest",
+    readOnly: row.source === "interest",
     linkedTransactionId: null,
     hasTransferDestination: false,
   };
@@ -96,7 +96,6 @@ export function transactionToData(txn: Transaction, balance: number): Transactio
     transactionId: txn.id,
     linkedTransactionId: txn.linked_transaction_id ?? null,
     hasTransferDestination: Boolean(txn.transfer_to_account),
-    readOnly: Boolean(txn.reconciled),
   };
 }
 
