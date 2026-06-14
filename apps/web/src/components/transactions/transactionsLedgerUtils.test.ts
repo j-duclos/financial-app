@@ -13,7 +13,6 @@ import {
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
   splitLedgerSections,
-  resolveFallbackLedgerOpening,
   formatDateDisplay,
   todayStr,
   timelineRangeForFilter,
@@ -606,27 +605,28 @@ describe("buildLedgerRows fallback", () => {
           direction: "INFLOW",
         } as never,
       ],
-      0,
+      906.52,
       "USD",
       false
     );
     const sections = splitLedgerSections(rows);
+    expect(sections.start?.type).toBe("starting_balance");
+    expect(sections.start?.balance).toBe(906.52);
     expect(sections.past).toHaveLength(1);
     expect(sections.future).toHaveLength(1);
-    expect(sections.past[0].type === "transaction" && sections.past[0].txn.date).toBe(today);
-    expect(sections.future[0].type === "transaction" && sections.future[0].txn.date).toBe(futureDate);
   });
 
-  it("anchors fallback opening balance to balance at today", () => {
+  it("uses account starting balance and API balance for today row in fallback", () => {
     const today = todayStr();
-    const txns = [
-      { id: 1, date: today, payee: "Coffee", amount: "-10", direction: "OUTFLOW" } as never,
-      { id: 2, date: today, payee: "Deposit", amount: "100", direction: "INFLOW" } as never,
-    ];
-    const opening = resolveFallbackLedgerOpening(txns, today, 500, false);
-    const rows = buildLedgerRows(txns, opening, "USD", false);
-    const todayRow = rows.find((r) => r.type === "today_balance");
-    expect(todayRow?.balance).toBe(500);
+    const rows = buildLedgerRows(
+      [{ id: 1, date: today, payee: "Coffee", amount: "-10", direction: "OUTFLOW" } as never],
+      1805.3,
+      "USD",
+      false,
+      1923.99
+    );
+    expect(rows.find((r) => r.type === "starting_balance")?.balance).toBe(1805.3);
+    expect(rows.find((r) => r.type === "today_balance")?.balance).toBe(1923.99);
   });
 });
 

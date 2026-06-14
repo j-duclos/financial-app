@@ -44,7 +44,6 @@ import {
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
-  resolveFallbackLedgerOpening,
   splitLedgerSections,
   timelineHasAccountRows,
   isTransferCategoryName,
@@ -799,18 +798,19 @@ export default function Transactions() {
         hasPastOpeningOverride ? pastOpeningOverride : undefined
       );
     }
-    // Timeline missing, slow, errored, or empty on Render — show posted transactions immediately.
+    // Timeline missing, slow, errored, or empty — posted transactions only.
+    // Starting Balance always comes from the account record; header uses API ledger balance.
     const fallbackTxns = hideReconciledPast
       ? transactions.filter((t) => !t.reconciled)
       : transactions;
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
-    const fallbackOpening = resolveFallbackLedgerOpening(
+    return buildLedgerRows(
       fallbackTxns,
-      today,
-      apiBalance,
-      isCreditAccount
+      start,
+      account.currency,
+      isCreditAccount,
+      apiBalance
     );
-    return buildLedgerRows(fallbackTxns, fallbackOpening, account.currency, isCreditAccount);
   }, [
     account,
     accountId,

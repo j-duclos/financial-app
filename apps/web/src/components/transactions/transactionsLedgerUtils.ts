@@ -92,7 +92,9 @@ export function buildLedgerRows(
   transactions: Transaction[],
   startingBalance: number,
   _currency: string,
-  isCredit: boolean
+  isCredit: boolean,
+  /** When set (e.g. timeline fallback), today's ending balance row uses the API ledger total. */
+  todayBalanceOverride?: number | null
 ): LedgerRow[] {
   const start = startingBalance ?? 0;
   const today = todayStr();
@@ -106,7 +108,11 @@ export function buildLedgerRows(
   for (const txn of sorted) {
     if ((txn.source || "").toUpperCase() === "INTEREST") continue;
     if (!todayRowInserted && txn.date > today) {
-      rows.push({ type: "today_balance", balance: running });
+      const bal =
+        todayBalanceOverride != null && Number.isFinite(todayBalanceOverride)
+          ? todayBalanceOverride
+          : running;
+      rows.push({ type: "today_balance", balance: bal });
       todayRowInserted = true;
     }
     const amt = parseFloat(txn.amount);
@@ -115,15 +121,16 @@ export function buildLedgerRows(
     rows.push({ type: "transaction", txn, balance: running });
   }
   if (!todayRowInserted) {
-    rows.push({ type: "today_balance", balance: running });
+    const bal =
+      todayBalanceOverride != null && Number.isFinite(todayBalanceOverride)
+        ? todayBalanceOverride
+        : running;
+    rows.push({ type: "today_balance", balance: bal });
   }
   return rows;
 }
 
-/**
- * When the timeline API is unavailable, infer opening balance so the running total at
- * `today` matches the account's ledger balance from the API (not raw starting_balance).
- */
+/** @deprecated Do not use for Starting Balance display — always show account.starting_balance. */
 export function resolveFallbackLedgerOpening(
   transactions: Transaction[],
   today: string,
