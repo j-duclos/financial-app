@@ -7,7 +7,7 @@ import {
   LedgerColumnHeader,
   LedgerSectionHeader,
 } from "./ledgerTableLayout";
-import { creditBalanceColorClass, type LedgerRow } from "./transactionsLedgerUtils";
+import { creditBalanceColorClass, canEditLedgerTimelineRow, type LedgerRow } from "./transactionsLedgerUtils";
 
 export const PAST_SCROLL_MIN_ROWS = COLLAPSED_LEDGER_ROWS;
 
@@ -27,10 +27,11 @@ type Props = {
   minimized: boolean;
   onToggleExpanded: () => void;
   accountId: number | "";
-  onEditTimeline: (transactionId: number) => void;
+  onEditRow: (row: import("@budget-app/shared").TimelineRow) => void;
   onEditTransaction: (txn: import("@budget-app/shared").Transaction) => void;
   onDuplicateById: (transactionId: number) => void;
   onDuplicate: (txn: import("@budget-app/shared").Transaction) => void;
+  onDeleteRow: (row: import("@budget-app/shared").TimelineRow) => void;
   onDelete: (transactionId: number, label: string) => void;
   deletePending: boolean;
 };
@@ -45,10 +46,11 @@ export default function PastSection({
   minimized,
   onToggleExpanded,
   accountId,
-  onEditTimeline,
+  onEditRow,
   onEditTransaction,
   onDuplicateById,
   onDuplicate,
+  onDeleteRow,
   onDelete,
   deletePending,
 }: Props) {
@@ -81,35 +83,6 @@ export default function PastSection({
   }, [accountId, past.length, expanded, minimized, showBody]);
 
   const sectionClass = minimized ? "flex-none shrink-0" : "flex-1 min-h-0";
-
-  // #region agent log
-  useEffect(() => {
-    if (!showBody) return;
-    const el = scrollRef.current;
-    const sectionEl = el?.parentElement?.parentElement;
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "55db24" },
-      body: JSON.stringify({
-        sessionId: "55db24",
-        location: "PastSection.tsx:layout",
-        message: "past section scroll metrics",
-        data: {
-          expanded,
-          minimized,
-          pastCount: past.length,
-          sectionClass,
-          scrollClientHeight: el?.clientHeight ?? null,
-          scrollScrollHeight: el?.scrollHeight ?? null,
-          scrollGap: el ? el.clientHeight - el.scrollHeight : null,
-          sectionClientHeight: sectionEl?.clientHeight ?? null,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "A-B",
-      }),
-    }).catch(() => {});
-  }, [expanded, minimized, past.length, showBody, sectionClass]);
-  // #endregion
 
   return (
     <section className={`flex flex-col overflow-hidden border-b-4 border-gray-300 ${sectionClass}`}>
@@ -155,6 +128,7 @@ export default function PastSection({
               past.map((row) => {
                 if (row.type === "transaction_from_timeline") {
                   const data = timelineRowToData(row.row, row.balance, "past");
+                  const editable = canEditLedgerTimelineRow(row.row);
                   return (
                     <TransactionRow
                       key={data.id}
@@ -162,21 +136,13 @@ export default function PastSection({
                       variant="past"
                       currency={currency}
                       isCredit={isCredit}
-                      onEdit={
-                        row.row.transaction_id != null
-                          ? () => onEditTimeline(row.row.transaction_id!)
-                          : undefined
-                      }
+                      onEdit={editable ? () => onEditRow(row.row) : undefined}
                       onDuplicate={
-                        row.row.transaction_id != null
+                        editable && row.row.transaction_id != null
                           ? () => onDuplicateById(row.row.transaction_id!)
                           : undefined
                       }
-                      onDelete={
-                        row.row.transaction_id != null
-                          ? () => onDelete(row.row.transaction_id!, row.row.description)
-                          : undefined
-                      }
+                      onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                       actionsDisabled={deletePending}
                     />
                   );
@@ -190,9 +156,13 @@ export default function PastSection({
                       variant="past"
                       currency={currency}
                       isCredit={isCredit}
-                      onEdit={() => onEditTransaction(row.txn)}
-                      onDuplicate={() => onDuplicate(row.txn)}
-                      onDelete={() => onDelete(row.txn.id, row.txn.payee)}
+                      onEdit={row.txn.reconciled ? undefined : () => onEditTransaction(row.txn)}
+                      onDuplicate={row.txn.reconciled ? undefined : () => onDuplicate(row.txn)}
+                      onDelete={
+                        row.txn.reconciled
+                          ? undefined
+                          : () => onDelete(row.txn.id, row.txn.payee)
+                      }
                       actionsDisabled={deletePending}
                     />
                   );

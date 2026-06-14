@@ -165,6 +165,7 @@ def build_timeline_calendar(
             as_of_date=as_of_date,
             ephemeral_events=ephemeral_events,
             projection_only=projection_only,
+            caller="timeline_calendar",
         )
     if account_id is not None:
         rows = [r for r in rows if r.get("account_id") == account_id]

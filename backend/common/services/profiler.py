@@ -32,6 +32,7 @@ def perf_print(message: str) -> None:
     print(message, flush=True)
 
 _build_timeline_call_count: ContextVar[int] = ContextVar("build_timeline_call_count", default=0)
+_build_timeline_callers: ContextVar[list[str]] = ContextVar("build_timeline_callers", default=[])
 _projection_only_build: ContextVar[bool] = ContextVar("projection_only_build", default=False)
 _materialized_transaction_count: ContextVar[int] = ContextVar("materialized_transaction_count", default=0)
 
@@ -167,18 +168,27 @@ def set_materialization_existing_loaded(count: int) -> None:
 def reset_build_timeline_count() -> None:
     """Reset per-request build_timeline() counter (DEBUG instrumentation)."""
     _build_timeline_call_count.set(0)
+    _build_timeline_callers.set([])
 
 
-def increment_build_timeline_count() -> int:
+def increment_build_timeline_count(*, caller: str = "unknown") -> int:
     """Record one build_timeline() invocation; returns new count."""
     count = _build_timeline_call_count.get() + 1
     _build_timeline_call_count.set(count)
+    callers = list(_build_timeline_callers.get())
+    callers.append(caller)
+    _build_timeline_callers.set(callers)
     return count
 
 
 def get_build_timeline_count() -> int:
     """How many times build_timeline() ran in the current context."""
     return _build_timeline_call_count.get()
+
+
+def get_build_timeline_callers() -> list[str]:
+    """Ordered caller tags for each build_timeline() in the current context."""
+    return list(_build_timeline_callers.get())
 
 PhaseToken = tuple[str, float] | None
 

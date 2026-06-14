@@ -1,13 +1,35 @@
 import type { TransactionKind } from "./transactionKindUtils";
 import { TRANSACTION_KIND_OPTIONS, type ReconciledFilter } from "./ledgerRowFilters";
 
-type Props = {
+type HideReconciledProps = {
+  hideReconciledPast: boolean;
+  onHideReconciledPastChange: (hide: boolean) => void;
+};
+
+export function HideReconciledFilter({
+  hideReconciledPast,
+  onHideReconciledPastChange,
+}: HideReconciledProps) {
+  return (
+    <div className="flex flex-col justify-end w-full lg:w-auto">
+      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5 lg:pb-1.5">
+        <input
+          type="checkbox"
+          checked={hideReconciledPast}
+          onChange={(e) => onHideReconciledPastChange(e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        Hide reconciled
+      </label>
+    </div>
+  );
+}
+
+type ColumnFiltersProps = {
   kindFilter: TransactionKind | "";
   onKindFilterChange: (kind: TransactionKind | "") => void;
   reconciledFilter: ReconciledFilter;
   onReconciledFilterChange: (value: ReconciledFilter) => void;
-  hideReconciledPast: boolean;
-  onHideReconciledPastChange: (hide: boolean) => void;
   amountMin: string;
   amountMax: string;
   onAmountMinChange: (value: string) => void;
@@ -16,51 +38,38 @@ type Props = {
   showClear: boolean;
 };
 
-export default function TransactionsFilterBar({
+export function TransactionColumnFilters({
   kindFilter,
   onKindFilterChange,
   reconciledFilter,
   onReconciledFilterChange,
-  hideReconciledPast,
-  onHideReconciledPastChange,
   amountMin,
   amountMax,
   onAmountMinChange,
   onAmountMaxChange,
   onClear,
   showClear,
-}: Props) {
+}: ColumnFiltersProps) {
   return (
-    <>
-      <div className="flex flex-col justify-end">
-        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5">
-          <input
-            type="checkbox"
-            checked={hideReconciledPast}
-            onChange={(e) => onHideReconciledPastChange(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          Hide reconciled
-        </label>
-      </div>
-      <div>
+    <div className="flex flex-wrap items-end gap-3 w-full lg:w-auto">
+      <div className="min-w-[7rem] flex-1 sm:flex-none">
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Reconciled</label>
         <select
           value={reconciledFilter}
           onChange={(e) => onReconciledFilterChange(e.target.value as ReconciledFilter)}
-          className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+          className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
         >
           <option value="">All</option>
           <option value="unreconciled">Unreconciled</option>
           <option value="reconciled">Reconciled</option>
         </select>
       </div>
-      <div>
+      <div className="min-w-[7rem] flex-1 sm:flex-none">
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Type</label>
         <select
           value={kindFilter}
           onChange={(e) => onKindFilterChange(e.target.value as TransactionKind | "")}
-          className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+          className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
         >
           <option value="">All types</option>
           {TRANSACTION_KIND_OPTIONS.map((kind) => (
@@ -70,7 +79,7 @@ export default function TransactionsFilterBar({
           ))}
         </select>
       </div>
-      <div>
+      <div className="min-w-[10rem] flex-1 sm:flex-none">
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Amount</label>
         <div className="flex items-center gap-1">
           <input
@@ -79,17 +88,17 @@ export default function TransactionsFilterBar({
             placeholder="Min"
             value={amountMin}
             onChange={(e) => onAmountMinChange(e.target.value)}
-            className="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
+            className="w-full min-w-0 sm:w-20 rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
             aria-label="Minimum amount"
           />
-          <span className="text-xs text-gray-400">–</span>
+          <span className="text-xs text-gray-400 shrink-0">–</span>
           <input
             type="text"
             inputMode="decimal"
             placeholder="Max"
             value={amountMax}
             onChange={(e) => onAmountMaxChange(e.target.value)}
-            className="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
+            className="w-full min-w-0 sm:w-20 rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
             aria-label="Maximum amount"
           />
         </div>
@@ -103,6 +112,21 @@ export default function TransactionsFilterBar({
           Clear filters
         </button>
       )}
+    </div>
+  );
+}
+
+type Props = HideReconciledProps & ColumnFiltersProps;
+
+/** @deprecated Prefer HideReconciledFilter + TransactionColumnFilters for responsive layouts. */
+export default function TransactionsFilterBar(props: Props) {
+  return (
+    <>
+      <HideReconciledFilter
+        hideReconciledPast={props.hideReconciledPast}
+        onHideReconciledPastChange={props.onHideReconciledPastChange}
+      />
+      <TransactionColumnFilters {...props} />
     </>
   );
 }

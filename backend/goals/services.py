@@ -98,6 +98,8 @@ def _timeline_balance_at_end_of_date(user, account_id: int, as_of: date) -> Deci
         end_date=as_of,
         account_id=account_id,
         as_of_date=date.today(),
+        projection_only=True,
+        caller="goals_timeline",
     )
     last: Decimal | None = None
     for row in rows:

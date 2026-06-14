@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { TimelineRow } from "@budget-app/shared";
 import TransactionRow, { timelineRowToData } from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
@@ -6,7 +7,7 @@ import {
   LedgerSectionHeader,
 } from "./ledgerTableLayout";
 import { forecastRowSeverityClasses } from "./forecastRowSeverity";
-import type { LedgerRow } from "./transactionsLedgerUtils";
+import { canEditLedgerTimelineRow, type LedgerRow } from "./transactionsLedgerUtils";
 
 const ROW_REM = 2.5;
 const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
@@ -21,9 +22,9 @@ type Props = {
   /** Past is expanded — hide forecast rows (header only) */
   hiddenByPast: boolean;
   onToggleExpanded: () => void;
-  onEditTimeline: (transactionId: number) => void;
-  onSkip: (transactionId: number, label: string) => void;
-  onDelete: (transactionId: number, label: string) => void;
+  onEditRow: (row: TimelineRow) => void;
+  onSkipRow: (row: TimelineRow) => void;
+  onDeleteRow: (row: TimelineRow) => void;
   deletePending: boolean;
   minimumBuffer: number | null;
   riskDate: string | null;
@@ -37,9 +38,9 @@ export default function ForecastCardsSection({
   expanded,
   hiddenByPast,
   onToggleExpanded,
-  onEditTimeline,
-  onSkip,
-  onDelete,
+  onEditRow,
+  onSkipRow,
+  onDeleteRow,
   deletePending,
   minimumBuffer,
   riskDate,
@@ -100,6 +101,8 @@ export default function ForecastCardsSection({
                         ? `rec-${row.row.rule_id}-${row.row.date}`
                         : `rec-future-${row.row.account_id}-${row.row.date}-${index}`;
 
+                const editable = canEditLedgerTimelineRow(row.row);
+
                 return (
                   <TransactionRow
                     key={rowKey}
@@ -114,21 +117,9 @@ export default function ForecastCardsSection({
                       riskDate,
                       isCredit,
                     })}
-                    onEdit={
-                      row.row.transaction_id != null
-                        ? () => onEditTimeline(row.row.transaction_id!)
-                        : undefined
-                    }
-                    onSkip={
-                      row.row.transaction_id != null
-                        ? () => onSkip(row.row.transaction_id!, row.row.description)
-                        : undefined
-                    }
-                    onDelete={
-                      row.row.transaction_id != null
-                        ? () => onDelete(row.row.transaction_id!, row.row.description)
-                        : undefined
-                    }
+                    onEdit={editable ? () => onEditRow(row.row) : undefined}
+                    onSkip={editable ? () => onSkipRow(row.row) : undefined}
+                    onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                     actionsDisabled={deletePending}
                   />
                 );

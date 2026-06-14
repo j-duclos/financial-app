@@ -31,6 +31,24 @@ def test_perf_enabled_follows_debug_setting(settings):
     assert perf_enabled() is True
 
 
+def test_build_timeline_callers_tracked():
+    from common.services.profiler import (
+        get_build_timeline_callers,
+        get_build_timeline_count,
+        increment_build_timeline_count,
+        reset_build_timeline_count,
+    )
+
+    reset_build_timeline_count()
+    increment_build_timeline_count(caller="dashboard_summary")
+    increment_build_timeline_count(caller="forecast_summary")
+    assert get_build_timeline_count() == 2
+    assert get_build_timeline_callers() == ["dashboard_summary", "forecast_summary"]
+    reset_build_timeline_count()
+    assert get_build_timeline_count() == 0
+    assert get_build_timeline_callers() == []
+
+
 def test_projection_only_build_context():
     enter_build_timeline_context(projection_only=True)
     try:

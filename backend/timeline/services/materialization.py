@@ -91,6 +91,7 @@ def materialize_recurring_transactions_for_user(
             end_date=through_date,
             as_of_date=today,
             projection_only=False,
+            caller="materialization",
         )
     finally:
         summary = exit_materialization_context()

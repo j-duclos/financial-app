@@ -32,7 +32,7 @@ from accounts.services.available_to_spend import (
     DEFAULT_FORECAST_DAYS,
     _decimal,
     account_supports_available_to_spend,
-    calculate_forecast_summaries_for_accounts,
+    calculate_forecast_summaries_for_accounts_with_timeline,
     normalize_forecast_days,
 )
 from accounts.services.credit_card import ledger_owed_balance, sync_current_balance_from_ledger
@@ -532,6 +532,7 @@ def calculate_account_health(
                 account_id=account.pk,
                 as_of_date=today,
                 projection_only=True,
+                caller="account_health",
             )
         from accounts.services.available_to_spend import calculate_account_forecast_summary
 
@@ -605,25 +606,15 @@ def calculate_account_health_for_accounts(
     """Batch health calculation with shared forecast timeline where possible."""
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    window_end = today + timedelta(days=days)
 
-    forecasts = calculate_forecast_summaries_for_accounts(
+    forecasts, shared_timeline = calculate_forecast_summaries_for_accounts_with_timeline(
         user,
         accounts,
         as_of_date=today,
         days=days,
         timeline_rows=timeline_rows,
     )
-
-    supported = [a for a in accounts if account_supports_available_to_spend(a)]
-    if timeline_rows is None and supported:
-        timeline_rows = build_timeline(
-            user,
-            start_date=today,
-            end_date=window_end,
-            as_of_date=today,
-            projection_only=True,
-        )
+    effective_timeline = timeline_rows if timeline_rows is not None else shared_timeline
 
     for account in accounts:
         if account.is_credit_card():
@@ -637,7 +628,7 @@ def calculate_account_health_for_accounts(
             as_of_date=today,
             days=days,
             forecast_summary=forecasts.get(account.id),
-            timeline_rows=timeline_rows,
+            timeline_rows=effective_timeline,
         )
     return result
 

@@ -81,6 +81,13 @@ export type LedgerRow =
   | { type: "transaction_from_timeline"; row: TimelineRow; balance: number }
   | { type: "recurring"; row: TimelineRow; balance: number };
 
+/** Forecast/past timeline rows the user may edit (reconciled and interest are read-only). */
+export function canEditLedgerTimelineRow(row: TimelineRow): boolean {
+  if (row.reconciled) return false;
+  if (row.source === "interest") return false;
+  return true;
+}
+
 export function buildLedgerRows(
   transactions: Transaction[],
   startingBalance: number,

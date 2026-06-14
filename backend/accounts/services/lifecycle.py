@@ -113,6 +113,8 @@ def lifecycle_preflight(account: Account, user, *, action: str) -> dict[str, Any
             start_date=today,
             end_date=today.replace(year=today.year + 1),
             account_id=account.pk,
+            projection_only=True,
+            caller="account_lifecycle",
         )
         future_payments = sum(
             1

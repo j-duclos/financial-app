@@ -1,6 +1,6 @@
 import asyncio
 import concurrent.futures
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import close_old_connections, transaction
@@ -191,23 +191,52 @@ class AccountViewSet(ModelViewSet):
             qs = self.filter_queryset(self.get_queryset())
             accounts = list(qs)
             if accounts:
+                today = date.today()
+                window_end = today + timedelta(days=days)
+                credit_cards = [a for a in accounts if a.is_credit_card()]
+                if credit_cards:
+                    from accounts.services.credit_card import calculate_next_statement_date
+
+                    for account in credit_cards:
+                        closing = account.get_statement_closing_day()
+                        if closing is None:
+                            continue
+                        cycle_end = calculate_next_statement_date(closing, today)
+                        if cycle_end > window_end:
+                            window_end = cycle_end
+
+                from timeline.services.ledger import build_timeline
+
+                shared_timeline = build_timeline(
+                    self.request.user,
+                    start_date=today,
+                    end_date=window_end,
+                    as_of_date=today,
+                    projection_only=True,
+                    caller="accounts_list",
+                )
                 if want_forecast:
                     ctx["forecast_summaries_by_id"] = calculate_forecast_summaries_for_accounts(
                         self.request.user,
                         accounts,
+                        as_of_date=today,
                         days=days,
+                        timeline_rows=shared_timeline,
                     )
                 if want_health:
                     ctx["health_by_id"] = calculate_account_health_for_accounts(
                         self.request.user,
                         accounts,
+                        as_of_date=today,
                         days=days,
+                        timeline_rows=shared_timeline,
                     )
-                credit_cards = [a for a in accounts if a.is_credit_card()]
                 if credit_cards:
                     ctx["projected_statement_by_id"] = calculate_projected_statements_for_accounts(
                         self.request.user,
                         accounts,
+                        as_of_date=today,
+                        timeline_rows=shared_timeline,
                     )
         if self.request.query_params.get("balance") == "true":
             qs = self.filter_queryset(self.get_queryset())

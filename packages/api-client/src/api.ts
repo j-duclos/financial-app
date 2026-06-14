@@ -1572,6 +1572,30 @@ export async function getTimeline(params: {
   return requestRequired("/api/timeline/", { params: q });
 }
 
+export async function materializeRecurring(params?: {
+  account_id?: number;
+  rule_id?: number;
+  forecast_days?: number;
+  force?: boolean;
+}): Promise<{
+  rules_processed: number;
+  occurrences_generated: number;
+  existing_loaded: number;
+  transactions_created: number;
+  transactions_updated: number;
+  transactions_skipped: number;
+}> {
+  return requestRequired("/api/timeline/materialize/", {
+    method: "POST",
+    body: JSON.stringify({
+      ...(params?.account_id != null ? { account_id: params.account_id } : {}),
+      ...(params?.rule_id != null ? { rule_id: params.rule_id } : {}),
+      ...(params?.forecast_days != null ? { forecast_days: params.forecast_days } : {}),
+      ...(params?.force ? { force: true } : {}),
+    }),
+  });
+}
+
 export async function getResolveRiskPlan(params: {
   account_id: number;
   days?: number;

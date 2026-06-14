@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
-import type { Transaction } from "@budget-app/shared";
+import type { Transaction, TimelineRow } from "@budget-app/shared";
 import {
   listTransactions,
   listAccounts,
@@ -12,11 +12,11 @@ import {
   updateTransaction,
   updateRule,
   deleteTransaction,
-  cleanupOrphanedRuleRows,
   getProfile,
   getAccount,
   getTimeline,
   getTransaction,
+  materializeRecurring,
   getAccountPayoff,
   ApiError,
   type PayoffProjection,
@@ -26,8 +26,10 @@ import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
-import MaintenanceMenu from "../components/transactions/MaintenanceMenu";
-import TransactionsFilterBar from "../components/transactions/TransactionsFilterBar";
+import {
+  HideReconciledFilter,
+  TransactionColumnFilters,
+} from "../components/transactions/TransactionsFilterBar";
 import {
   filterLedgerPastRows,
   hasActiveLedgerRowFilters,
@@ -129,7 +131,6 @@ export default function Transactions() {
   const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [orphanCleanupMessage, setOrphanCleanupMessage] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     date: todayStr(),
     payee: "",
@@ -281,8 +282,18 @@ export default function Transactions() {
   }, [hideReconciledPast]);
 
   useEffect(() => {
-    saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
-  }, [amountMinInput, amountMaxInput]);
+    if (typeof accountId !== "number") return;
+    let cancelled = false;
+    void materializeRecurring({ account_id: accountId, forecast_days: 90 }).then(() => {
+      if (cancelled) return;
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, queryClient]);
+
+  useEffect(() => {
 
   useEffect(() => {
     if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {
@@ -776,21 +787,25 @@ export default function Transactions() {
         : 0;
     const start = openingBalance;
     const timeline = timelineData?.timeline;
-    if (timelineHasAccountRows(timeline, accountId)) {
+    const pastOpeningOverride =
+      hideReconciledPast && timelineData?.past_opening_balance != null
+        ? parseFloat(timelineData.past_opening_balance)
+        : null;
+    const hasPastOpeningOverride =
+      pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
+    const canUseTimelineLedger =
+      timelineData != null &&
+      (timelineHasAccountRows(timeline, accountId) ||
+        (hideReconciledPast && hasPastOpeningOverride));
+    if (canUseTimelineLedger) {
       const aid = Number(accountId);
-      const timelineForAccount = timeline!.filter((r) => Number(r.account_id) === aid);
-      const pastOpeningOverride =
-        hideReconciledPast && timelineData?.past_opening_balance != null
-          ? parseFloat(timelineData.past_opening_balance)
-          : null;
+      const timelineForAccount = (timeline ?? []).filter((r) => Number(r.account_id) === aid);
       return buildLedgerRowsFromTimeline(
         timelineForAccount,
         today,
         openingBalance,
         isCreditAccount,
-        pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
-          ? pastOpeningOverride
-          : undefined
+        hasPastOpeningOverride ? pastOpeningOverride : undefined
       );
     }
     // Timeline missing, slow, errored, or empty on Render — show posted transactions immediately.
@@ -802,11 +817,18 @@ export default function Transactions() {
     account,
     accountId,
     transactions,
+    timelineData,
     timelineData?.timeline,
     timelineData?.past_opening_balance,
     isCreditAccount,
     hideReconciledPast,
   ]);
+
+  const pastOpeningBalance = useMemo(() => {
+    if (!hideReconciledPast || timelineData?.past_opening_balance == null) return null;
+    const n = parseFloat(timelineData.past_opening_balance);
+    return Number.isFinite(n) ? n : null;
+  }, [hideReconciledPast, timelineData?.past_opening_balance]);
 
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
@@ -990,25 +1012,6 @@ export default function Transactions() {
     },
   });
 
-  const cleanupOrphansMu = useMutation({
-    mutationFn: cleanupOrphanedRuleRows,
-    onSuccess: async (data) => {
-      setOrphanCleanupMessage(
-        data.deleted === 0
-          ? "No orphaned automation rows found (future dated, from automation source, no link)."
-          : `Removed ${data.deleted} orphaned row(s). Refresh if counts look off.`
-      );
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
-      if (householdId != null && timelinePatchScope) {
-        scheduleTimelineRefresh(queryClient, timelinePatchScope);
-      }
-    },
-    onError: (err: Error) => {
-      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
-      setOrphanCleanupMessage(msg || "Cleanup failed");
-    },
-  });
-
   function openEdit(txn: Transaction) {
     setDeleteError(null);
     setEditing(txn);
@@ -1042,6 +1045,84 @@ export default function Transactions() {
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not load transaction for edit");
+    }
+  }
+
+  async function resolveTimelineRowTransactionId(row: TimelineRow): Promise<number | null> {
+    if (row.transaction_id != null) return row.transaction_id;
+    if (row.rule_id == null || typeof accountId !== "number") return null;
+    await materializeRecurring({
+      account_id: accountId,
+      rule_id: row.rule_id,
+      forecast_days: 90,
+    });
+    const refreshed = await queryClient.fetchQuery({
+      queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
+      queryFn: () =>
+        getTimeline({
+          start: timelineStart,
+          end: timelineEnd,
+          as_of: todayStr(),
+          account_id: accountId,
+          exclude_reconciled_past: hideReconciledPast,
+        }),
+    });
+    const match = refreshed.timeline.find(
+      (r) =>
+        r.rule_id === row.rule_id &&
+        r.date === row.date &&
+        r.account_id === row.account_id &&
+        r.transaction_id != null
+    );
+    return match?.transaction_id ?? null;
+  }
+
+  async function openEditByLedgerRow(row: TimelineRow) {
+    if (row.reconciled || row.source === "interest") return;
+    try {
+      setDeleteError(null);
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this scheduled transaction for editing.");
+        return;
+      }
+      await openEditByTimelineId(transactionId);
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not load transaction for edit");
+    }
+  }
+
+  async function confirmDeleteRow(row: TimelineRow) {
+    setDeleteError(null);
+    try {
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this scheduled transaction for deletion.");
+        return;
+      }
+      confirmDelete(transactionId, row.description);
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not delete transaction");
+    }
+  }
+
+  async function confirmSkipRow(row: TimelineRow) {
+    setDeleteError(null);
+    try {
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this scheduled transaction to skip.");
+        return;
+      }
+      confirmSkip(transactionId, row.description);
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not skip transaction");
     }
   }
 
@@ -1245,13 +1326,14 @@ export default function Transactions() {
         </div>
       ) : null}
 
-      <div className="flex justify-between items-start gap-4 mb-3 flex-shrink-0 flex-wrap">
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-3 mb-3 flex-shrink-0">
         <div className="flex flex-col gap-2 min-w-0 flex-1">
           {account && ledgerSections.today?.type === "today_balance" && (
             <ForecastSummaryBar
               account={account}
               currentBalance={
                 ledgerSections.today?.balance ??
+                pastOpeningBalance ??
                 accountLedgerDisplayBalance(account, isCredit)
               }
               isCredit={isCredit}
@@ -1323,67 +1405,62 @@ export default function Transactions() {
           )}
         </div>
 
-        <div className="flex gap-2 items-end flex-wrap flex-shrink-0">
-          <MaintenanceMenu
-            onCleanupOrphans={() => {
-              setOrphanCleanupMessage(null);
-              cleanupOrphansMu.mutate();
-            }}
-            cleanupPending={cleanupOrphansMu.isPending}
-            orphanMessage={orphanCleanupMessage}
-            onDismissMessage={() => setOrphanCleanupMessage(null)}
-          />
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
-            <select
-              value={timeFilter}
-              onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm"
-            >
-              <option value="14d">14 days</option>
-              <option value="1m">1 month</option>
-              <option value="3m">3 months</option>
-              <option value="6m">6 months</option>
-              <option value="12m">12 months</option>
-              <option value="18m">18 months</option>
-              <option value="24m">24 months</option>
-              <option value="36m">36 months</option>
-            </select>
+        <div className="flex flex-col gap-3 w-full lg:w-auto lg:flex-shrink-0">
+          <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end lg:gap-2">
+            <div className="w-full lg:w-auto">
+              <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
+              <select
+                value={timeFilter}
+                onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
+                className="w-full lg:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="14d">14 days</option>
+                <option value="1m">1 month</option>
+                <option value="3m">3 months</option>
+                <option value="6m">6 months</option>
+                <option value="12m">12 months</option>
+                <option value="18m">18 months</option>
+                <option value="24m">24 months</option>
+                <option value="36m">36 months</option>
+              </select>
+            </div>
+            <HideReconciledFilter
+              hideReconciledPast={hideReconciledPast}
+              onHideReconciledPastChange={setHideReconciledPast}
+            />
+            <div className="w-full lg:w-auto lg:min-w-[12rem]">
+              <label className="block text-xs font-medium text-gray-500 mb-0.5">Account</label>
+              <select
+                value={accountId === "" ? "" : String(accountId)}
+                onChange={(e) => setAccountId(e.target.value === "" ? "" : Number(e.target.value))}
+                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="">Select an account</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {formatAccountOptionLabel(a)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <TransactionColumnFilters
+              kindFilter={kindFilter}
+              onKindFilterChange={setKindFilter}
+              reconciledFilter={reconciledFilter}
+              onReconciledFilterChange={setReconciledFilter}
+              amountMin={amountMinInput}
+              amountMax={amountMaxInput}
+              onAmountMinChange={setAmountMinInput}
+              onAmountMaxChange={setAmountMaxInput}
+              showClear={pastFiltersActive}
+              onClear={() => {
+                setKindFilter("");
+                setReconciledFilter("");
+                setAmountMinInput("");
+                setAmountMaxInput("");
+              }}
+            />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-0.5">Account</label>
-            <select
-              value={accountId === "" ? "" : String(accountId)}
-              onChange={(e) => setAccountId(e.target.value === "" ? "" : Number(e.target.value))}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm"
-            >
-              <option value="">Select an account</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {formatAccountOptionLabel(a)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <TransactionsFilterBar
-            kindFilter={kindFilter}
-            onKindFilterChange={setKindFilter}
-            reconciledFilter={reconciledFilter}
-            onReconciledFilterChange={setReconciledFilter}
-            hideReconciledPast={hideReconciledPast}
-            onHideReconciledPastChange={setHideReconciledPast}
-            amountMin={amountMinInput}
-            amountMax={amountMaxInput}
-            onAmountMinChange={setAmountMinInput}
-            onAmountMaxChange={setAmountMaxInput}
-            showClear={pastFiltersActive}
-            onClear={() => {
-              setKindFilter("");
-              setReconciledFilter("");
-              setAmountMinInput("");
-              setAmountMaxInput("");
-            }}
-          />
         </div>
       </div>
 
@@ -1434,10 +1511,11 @@ export default function Transactions() {
               });
             }}
             accountId={accountId}
-            onEditTimeline={openEditByTimelineId}
+            onEditRow={openEditByLedgerRow}
             onEditTransaction={openEdit}
             onDuplicateById={duplicateByTimelineId}
             onDuplicate={duplicateTransaction}
+            onDeleteRow={confirmDeleteRow}
             onDelete={confirmDelete}
             deletePending={deleteMu.isPending}
           />
@@ -1480,9 +1558,9 @@ export default function Transactions() {
                 return next;
               });
             }}
-            onEditTimeline={openEditByTimelineId}
-            onSkip={confirmSkip}
-            onDelete={confirmDelete}
+            onEditRow={openEditByLedgerRow}
+            onSkipRow={confirmSkipRow}
+            onDeleteRow={confirmDeleteRow}
             deletePending={deleteMu.isPending}
             minimumBuffer={
               account?.minimum_buffer != null && String(account.minimum_buffer).trim() !== ""

@@ -59,6 +59,8 @@ def calculate_projected_statement_for_account(
             end_date=cycle_end,
             account_id=account.pk,
             as_of_date=today,
+            projection_only=True,
+            caller="projected_statement",
         )
 
     signed = _signed_balance_at_cycle_end(account, cycle_end, timeline_rows)
@@ -102,6 +104,8 @@ def calculate_projected_statements_for_accounts(
             start_date=today,
             end_date=max_end,
             as_of_date=today,
+            projection_only=True,
+            caller="projected_statement",
         )
 
     result: dict[int, dict[str, Any]] = {}

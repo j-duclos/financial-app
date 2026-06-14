@@ -11,8 +11,6 @@ from rest_framework.viewsets import ModelViewSet
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
 from common.services.forecast_horizon import normalize_forecast_days
-from common.services.profiler import perf_caller_context
-
 from transactions.models import Transaction, Transfer
 
 from .models import (
@@ -670,13 +668,27 @@ class TimelineView(APIView):
             )
             cached = get_cached_timeline_response(cache_key)
             if cached is not None:
+                if (
+                    exclude_reconciled_past
+                    and account_id is not None
+                    and "past_opening_balance" not in cached
+                ):
+                    from accounts.models import Account
+                    from transactions.services.reconciliation import past_ledger_opening_balance
+
+                    households = get_households_for_user(request.user)
+                    acc = Account.objects.filter(pk=account_id, household__in=households).first()
+                    if acc is not None:
+                        cached = dict(cached)
+                        cached["past_opening_balance"] = str(
+                            past_ledger_opening_balance(acc, as_of_date)
+                        )
                 resp = Response(cached)
                 resp["Cache-Control"] = "private, max-age=60"
                 resp["X-Timeline-Cache"] = "hit"
                 resp["X-Timeline-Skip-Logic"] = "1"
                 return resp
 
-            with perf_caller_context("timeline_api"):
                 rows = build_timeline(
                     request.user,
                     start_date=start,
@@ -687,6 +699,7 @@ class TimelineView(APIView):
                     as_of_date=as_of_date,
                     projection_only=True,
                     exclude_reconciled_past=exclude_reconciled_past,
+                    caller="timeline_page",
                 )
             # Serialize dates and decimals for JSON
             for r in rows:

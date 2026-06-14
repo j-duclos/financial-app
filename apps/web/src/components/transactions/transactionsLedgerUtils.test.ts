@@ -208,6 +208,16 @@ describe("buildLedgerRowsFromTimeline", () => {
     expect(sections.future).toHaveLength(0);
   });
 
+  it("uses past opening override when all past rows are hidden", () => {
+    const today = todayStr();
+    const sections = splitLedgerSections(
+      buildLedgerRowsFromTimeline([], today, 0.12, false, 4.15)
+    );
+    expect(sections.start?.balance).toBeCloseTo(4.15, 2);
+    expect(sections.past).toHaveLength(0);
+    expect(sections.today?.balance).toBeCloseTo(4.15, 2);
+  });
+
   it("never places projected interest in past section", () => {
     const today = todayStr();
     const pastInterest: TimelineRow = {

@@ -63,6 +63,7 @@ def build_recommendation_context(
             as_of_date=today,
             scenario_id=scenario_id,
             projection_only=True,
+            caller="forecast_summary",
         )
 
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]

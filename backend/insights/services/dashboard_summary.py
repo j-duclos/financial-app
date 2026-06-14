@@ -21,9 +21,9 @@ from common.services.cache import (
 from common.services.profiler import (
     PerfTimer,
     QueryProfiler,
+    get_build_timeline_callers,
     get_build_timeline_count,
     log_perf,
-    perf_caller_context,
     perf_enabled,
     perf_print,
     phase_end,
@@ -766,14 +766,14 @@ def build_upcoming_events(
     accounts_by_id = {a.id: a for a in accounts}
 
     if timeline_rows is None:
-        with perf_caller_context("dashboard_upcoming"):
-            timeline_rows = build_timeline(
-                user,
-                start_date=today,
-                end_date=window_end,
-                as_of_date=today,
-                projection_only=True,
-            )
+        timeline_rows = build_timeline(
+            user,
+            start_date=today,
+            end_date=window_end,
+            as_of_date=today,
+            projection_only=True,
+            caller="dashboard_upcoming",
+        )
 
     households = get_households_for_user(user)
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
@@ -957,14 +957,14 @@ def _build_dashboard_summary(
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
     _phase_timeline = phase_start(timer, "timeline_build")
-    with perf_caller_context("dashboard"):
-        timeline_rows = build_timeline(
-            user,
-            start_date=today,
-            end_date=forecast_end,
-            as_of_date=today,
-            projection_only=True,
-        )
+    timeline_rows = build_timeline(
+        user,
+        start_date=today,
+        end_date=forecast_end,
+        as_of_date=today,
+        projection_only=True,
+        caller="dashboard_summary",
+    )
     phase_end(timer, _phase_timeline)
 
     _phase_forecast = phase_start(timer, "forecast")
@@ -1161,11 +1161,14 @@ def _build_dashboard_summary(
     if perf_enabled() and wall_start is not None:
         if query_profiler is not None:
             query_profiler.stop()
-        perf_print(f"[PERF] dashboard build_timeline_count={get_build_timeline_count()}")
+        bt_count = get_build_timeline_count()
+        total_ms = (time.perf_counter() - wall_start) * 1000
+        callers = get_build_timeline_callers()
         perf_print(
-            f"[PERF] dashboard_total elapsed_ms="
-            f"{(time.perf_counter() - wall_start) * 1000:.0f}"
+            f"[PERF] dashboard_total build_timeline_count={bt_count} total_ms={total_ms:.0f}"
         )
+        if bt_count > 1 and callers:
+            perf_print(f"[PERF] dashboard build_timeline_callers={','.join(callers)}")
         if query_profiler is not None:
             perf_print(f"[PERF] query_count={query_profiler.query_count}")
 

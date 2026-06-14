@@ -409,6 +409,56 @@ def _projected_rule_timeline_row(
     }
 
 
+def _materialized_rule_timeline_row_if_exists(
+    *,
+    rule_id: int,
+    d: date,
+    account_id: int,
+    account_name: str,
+    category_id: Optional[int],
+    category_name: Optional[str],
+    amount_decimal: Decimal,
+    row_type: str,
+    description: str,
+    sort_key: tuple,
+    ids_in_rows: set[int],
+) -> Optional[dict]:
+    """When a rule occurrence is already materialized, return a timeline row with transaction_id."""
+    store = get_rule_occurrence_store()
+    existing = store.get(rule_id, account_id, d) if store else None
+    if existing is None:
+        existing = (
+            Transaction.objects.filter(rule_id=rule_id, account_id=account_id, date=d)
+            .select_related("account", "category")
+            .first()
+        )
+    if existing is None or existing.pk in ids_in_rows:
+        return None
+    ids_in_rows.add(existing.pk)
+    amt = existing.amount if existing.amount is not None else amount_decimal
+    cat_id = category_id if category_id is not None else existing.category_id
+    cat_name = category_name
+    if cat_name is None and getattr(existing, "category", None):
+        cat_name = existing.category.name
+    desc = (existing.payee or description).strip() or description
+    return {
+        "date": d,
+        "description": desc,
+        "account_id": account_id,
+        "account_name": account_name,
+        "category_id": cat_id,
+        "category_name": cat_name,
+        "amount": amt,
+        "type": row_type,
+        "status": existing.status,
+        "source": "actual",
+        "rule_id": rule_id,
+        "transaction_id": existing.pk,
+        "sort_key": sort_key,
+        **_timeline_row_meta(existing),
+    }
+
+
 def _category_suggests_loan_payment(category_name: Optional[str]) -> bool:
     if not category_name or not str(category_name).strip():
         return False
@@ -1778,6 +1828,7 @@ def build_timeline(
     ephemeral_events: Optional[list] = None,
     projection_only: bool = False,
     exclude_reconciled_past: bool = False,
+    caller: str = "unknown",
 ) -> list[dict]:
     """
     Build merged timeline: opening balances, actual transactions, projected rule occurrences,
@@ -1788,7 +1839,7 @@ def build_timeline(
     cycles are not shown on the timeline, and ``source=INTEREST`` rows from the database are
     omitted here (use a normal transaction to record actual bank interest if needed).
     """
-    increment_build_timeline_count()
+    increment_build_timeline_count(caller=caller)
     enter_build_timeline_context(projection_only=projection_only)
     try:
         return _build_timeline_impl(
@@ -1802,6 +1853,7 @@ def build_timeline(
             ephemeral_events=ephemeral_events,
             projection_only=projection_only,
             exclude_reconciled_past=exclude_reconciled_past,
+            caller=caller,
         )
     finally:
         exit_build_timeline_context()
@@ -1818,12 +1870,17 @@ def _build_timeline_impl(
     ephemeral_events: Optional[list] = None,
     projection_only: bool = False,
     exclude_reconciled_past: bool = False,
+    caller: str = "unknown",
 ) -> list[dict]:
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
     wall_start = time.perf_counter() if perf_enabled() else None
+    forecast_days = max((end_date - start_date).days, 0)
     if perf_enabled():
-        perf_print(f"[PERF] build_timeline START projection_only={projection_only}")
+        perf_print(
+            f"[PERF] build_timeline START caller={caller} "
+            f"projection_only={projection_only} days={forecast_days}"
+        )
     perf_generated_occurrences = 0
     if query_profiler is not None:
         query_profiler.start()
@@ -2257,7 +2314,7 @@ def _build_timeline_impl(
 
         _phase_materialize = phase_start(timer, "materialize_occurrences")
         occurrence_store: RuleOccurrenceStore | None = None
-        if not scenario_projection_only and rule_ids:
+        if rule_ids:
             occurrence_store = build_rule_occurrence_store(
                 rule_ids=rule_ids,
                 account_ids=account_ids,
@@ -2341,34 +2398,66 @@ def _build_timeline_impl(
                         continue
                     seen_scenario_rule_keys.add(proj_key)
                     desc_with_card = f"{rule.name} ({to_name})" if to_name else rule.name
-                    rows.append(
-                        _projected_rule_timeline_row(
-                            d=d,
-                            description=desc_with_card,
-                            account_id=from_acc_id,
-                            account_name=from_name,
-                            category_id=cat_id,
-                            category_name=cat_name,
-                            amount=out_amount,
-                            row_type="OUTFLOW",
-                            rule_id=rule.id,
-                            sort_key=(d, 1, rule.id * 2),
-                        )
+                    from_row = _materialized_rule_timeline_row_if_exists(
+                        rule_id=rule.id,
+                        d=d,
+                        account_id=from_acc_id,
+                        account_name=from_name,
+                        category_id=cat_id,
+                        category_name=cat_name,
+                        amount_decimal=out_amount,
+                        row_type="OUTFLOW",
+                        description=desc_with_card,
+                        sort_key=(d, 1, rule.id * 2),
+                        ids_in_rows=ids_in_rows,
                     )
-                    rows.append(
-                        _projected_rule_timeline_row(
-                            d=d,
-                            description=desc_with_card,
-                            account_id=to_acc_id,
-                            account_name=to_name,
-                            category_id=None,
-                            category_name=None,
-                            amount=in_amount,
-                            row_type="INFLOW",
-                            rule_id=rule.id,
-                            sort_key=(d, 1, rule.id * 2 + 1),
+                    if from_row is not None:
+                        rows.append(from_row)
+                    else:
+                        rows.append(
+                            _projected_rule_timeline_row(
+                                d=d,
+                                description=desc_with_card,
+                                account_id=from_acc_id,
+                                account_name=from_name,
+                                category_id=cat_id,
+                                category_name=cat_name,
+                                amount=out_amount,
+                                row_type="OUTFLOW",
+                                rule_id=rule.id,
+                                sort_key=(d, 1, rule.id * 2),
+                            )
                         )
+                    to_row = _materialized_rule_timeline_row_if_exists(
+                        rule_id=rule.id,
+                        d=d,
+                        account_id=to_acc_id,
+                        account_name=to_name,
+                        category_id=None,
+                        category_name=None,
+                        amount_decimal=in_amount,
+                        row_type="INFLOW",
+                        description=desc_with_card,
+                        sort_key=(d, 1, rule.id * 2 + 1),
+                        ids_in_rows=ids_in_rows,
                     )
+                    if to_row is not None:
+                        rows.append(to_row)
+                    else:
+                        rows.append(
+                            _projected_rule_timeline_row(
+                                d=d,
+                                description=desc_with_card,
+                                account_id=to_acc_id,
+                                account_name=to_name,
+                                category_id=None,
+                                category_name=None,
+                                amount=in_amount,
+                                row_type="INFLOW",
+                                rule_id=rule.id,
+                                sort_key=(d, 1, rule.id * 2 + 1),
+                            )
+                        )
                     continue
                 txn_from = _materialize_rule_occurrence(
                     rule, d, from_acc_id, out_amount, rule.name, cat_id
@@ -2456,20 +2545,36 @@ def _build_timeline_impl(
                     ):
                         continue
                     seen_scenario_rule_keys.add(proj_key)
-                    rows.append(
-                        _projected_rule_timeline_row(
-                            d=d,
-                            description=rule.name,
-                            account_id=acc_id,
-                            account_name=acc_name,
-                            category_id=cat_id,
-                            category_name=cat_name,
-                            amount=amount_decimal,
-                            row_type=rule.direction,
-                            rule_id=rule.id,
-                            sort_key=(d, 1, rule.id),
-                        )
+                    materialized = _materialized_rule_timeline_row_if_exists(
+                        rule_id=rule.id,
+                        d=d,
+                        account_id=acc_id,
+                        account_name=acc_name,
+                        category_id=cat_id,
+                        category_name=cat_name,
+                        amount_decimal=amount_decimal,
+                        row_type=rule.direction,
+                        description=rule.name,
+                        sort_key=(d, 1, rule.id),
+                        ids_in_rows=ids_in_rows,
                     )
+                    if materialized is not None:
+                        rows.append(materialized)
+                    else:
+                        rows.append(
+                            _projected_rule_timeline_row(
+                                d=d,
+                                description=rule.name,
+                                account_id=acc_id,
+                                account_name=acc_name,
+                                category_id=cat_id,
+                                category_name=cat_name,
+                                amount=amount_decimal,
+                                row_type=rule.direction,
+                                rule_id=rule.id,
+                                sort_key=(d, 1, rule.id),
+                            )
+                        )
                     continue
                 txn = _materialize_rule_occurrence(
                     rule, d, acc_id, amount_decimal, rule.name, cat_id
@@ -2687,22 +2792,20 @@ def _build_timeline_impl(
             f"generated_occurrences={perf_generated_occurrences} "
             f"created_transactions={get_materialized_transaction_count()}"
         )
-        perf_print(f"[PERF] build_timeline END elapsed_ms={elapsed_ms:.0f}")
+        perf_print(
+            f"[PERF] build_timeline END caller={caller} elapsed_ms={elapsed_ms:.0f}"
+        )
         if query_profiler is not None:
             perf_print(f"[PERF] query_count={query_profiler.query_count}")
-        forecast_days = max((end_date - start_date).days, 0)
-        caller = get_perf_caller()
-        if caller == "dashboard":
-            perf_print(f"[PERF] build_timeline days={forecast_days} caller=dashboard")
-        elif forecast_days > 90:
+        if forecast_days > 90:
             perf_print(
-                f"[PERF] non_dashboard forecast_days={forecast_days} "
-                f"caller={caller or 'unknown'}"
+                f"[PERF] non_dashboard forecast_days={forecast_days} caller={caller}"
             )
         log_perf(
             "build_timeline",
             timer=timer,
             query_profiler=query_profiler,
+            caller=caller,
             user=getattr(user, "pk", user),
             accounts=len(account_ids),
             transactions=perf_transactions,
@@ -2710,6 +2813,7 @@ def _build_timeline_impl(
             start_date=start_date.isoformat(),
             end_date=end_date.isoformat(),
             days=forecast_days,
+            projection_only=projection_only,
             rows_returned=len(rows),
             elapsed_ms=f"{elapsed_ms:.0f}",
         )

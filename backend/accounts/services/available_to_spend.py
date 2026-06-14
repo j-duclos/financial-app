@@ -258,6 +258,7 @@ def _calculate_account_forecast_summary(
             account_id=account.pk,
             as_of_date=today,
             projection_only=True,
+            caller="forecast_summary",
         )
 
     by_date, inflows, outflows, committed_outflows = _summarize_future_rows(
@@ -415,7 +416,7 @@ def _calculate_forecast_summaries_for_accounts(
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
     timeline_rows: Optional[list[dict]] = None,
-) -> dict[int, dict[str, Any]]:
+) -> tuple[dict[int, dict[str, Any]], list[dict] | None]:
     """Uncached batch forecast summaries: one build_timeline for supported accounts."""
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
@@ -435,9 +436,10 @@ def _calculate_forecast_summaries_for_accounts(
         return {
             a.id: calculate_account_forecast_summary(user, a, as_of_date=today, days=days)
             for a in accounts
-        }
+        }, None
 
     supported_ids = {a.id for a in supported}
+    built_timeline: list[dict] | None = None
     if timeline_rows is None:
         _phase_timeline = phase_start(timer, "timeline_build")
         timeline_rows = build_timeline(
@@ -446,7 +448,9 @@ def _calculate_forecast_summaries_for_accounts(
             end_date=window_end,
             as_of_date=today,
             projection_only=True,
+            caller="forecast_summary",
         )
+        built_timeline = timeline_rows
         phase_end(timer, _phase_timeline)
 
     result: dict[int, dict[str, Any]] = {}
@@ -482,7 +486,72 @@ def _calculate_forecast_summaries_for_accounts(
             days=days,
             elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
         )
-    return result
+    return result, built_timeline if built_timeline is not None else timeline_rows
+
+
+def calculate_forecast_summaries_for_accounts_with_timeline(
+    user,
+    accounts: list[Account],
+    *,
+    as_of_date: Optional[date] = None,
+    days: int = DEFAULT_FORECAST_DAYS,
+    timeline_rows: Optional[list[dict]] = None,
+) -> tuple[dict[int, dict[str, Any]], list[dict] | None]:
+    """
+    Batch forecast summaries; returns (summaries, timeline_rows used).
+
+    When ``timeline_rows`` is precomputed (dashboard assembly), cache is skipped.
+    On cache hit without a precomputed timeline, the returned timeline is None.
+    """
+    if timeline_rows is not None:
+        summaries, _ = _calculate_forecast_summaries_for_accounts(
+            user,
+            accounts,
+            as_of_date=as_of_date,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+        return summaries, timeline_rows
+
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    account_ids = sorted({a.id for a in accounts})
+    household_ids = sorted({a.household_id for a in accounts if a.household_id is not None})
+    cache_key = get_forecast_summary_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        account_ids=account_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "forecast_summary",
+            cache="HIT",
+            user=user.pk,
+            accounts=len(account_ids),
+            days=days,
+        )
+        return cached, None
+
+    wall_start = time.perf_counter()
+    summaries, built_timeline = _calculate_forecast_summaries_for_accounts(
+        user,
+        accounts,
+        as_of_date=today,
+        days=days,
+    )
+    log_perf(
+        "forecast_summary",
+        cache="MISS",
+        user=user.pk,
+        accounts=len(account_ids),
+        days=days,
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(cache_key, summaries, timeout=FORECAST_SUMMARY_CACHE_SECONDS)
+    return summaries, built_timeline
 
 
 def calculate_forecast_summaries_for_accounts(
@@ -501,18 +570,19 @@ def calculate_forecast_summaries_for_accounts(
     (skips cache; used by dashboard assembly).
     """
     if timeline_rows is not None:
-        return _calculate_forecast_summaries_for_accounts(
+        summaries, _ = _calculate_forecast_summaries_for_accounts(
             user,
             accounts,
             as_of_date=as_of_date,
             days=days,
             timeline_rows=timeline_rows,
         )
+        return summaries
 
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    account_ids = [a.id for a in accounts]
-    household_ids = [a.household_id for a in accounts]
+    account_ids = sorted({a.id for a in accounts})
+    household_ids = sorted({a.household_id for a in accounts if a.household_id is not None})
     cache_key = get_forecast_summary_cache_key(
         user_id=user.pk,
         household_ids=household_ids,
@@ -532,7 +602,7 @@ def calculate_forecast_summaries_for_accounts(
         return cached
 
     wall_start = time.perf_counter()
-    result = _calculate_forecast_summaries_for_accounts(
+    summaries, _ = _calculate_forecast_summaries_for_accounts(
         user,
         accounts,
         as_of_date=today,
@@ -546,8 +616,8 @@ def calculate_forecast_summaries_for_accounts(
         days=days,
         elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
     )
-    cache.set(cache_key, result, timeout=FORECAST_SUMMARY_CACHE_SECONDS)
-    return result
+    cache.set(cache_key, summaries, timeout=FORECAST_SUMMARY_CACHE_SECONDS)
+    return summaries
 
 
 def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:

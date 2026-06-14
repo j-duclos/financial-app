@@ -593,6 +593,7 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
 
     assert mock_build.call_count == 1
     assert mock_build.call_args.kwargs.get("projection_only") is True
+    assert mock_build.call_args.kwargs.get("caller") == "dashboard_summary"
     assert mock_build.call_args.kwargs["start_date"] == AS_OF
     assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=30)
     shared_rows = mock_build.return_value
@@ -679,13 +680,6 @@ def test_account_health_reuse_precomputed_timeline(user, checking):
     """Passing timeline_rows skips duplicate build_timeline in health batch."""
     with patch("accounts.services.account_health.build_timeline") as mock_build:
         mock_build.return_value = []
-        calculate_forecast_summaries_for_accounts(
-            user,
-            [checking],
-            as_of_date=AS_OF,
-            days=30,
-            timeline_rows=[],
-        )
         from accounts.services.account_health import calculate_account_health_for_accounts
 
         calculate_account_health_for_accounts(
