@@ -475,6 +475,10 @@ export default function Reconcile() {
   });
 
   async function openEdit(t: ReconcileTransactionRow) {
+    if (t.reconciled) {
+      setEditError("Reconciled transactions cannot be edited.");
+      return;
+    }
     setEditError(null);
     setEditingTxn(t);
     setEditingFullTxn(null);
@@ -885,13 +889,17 @@ export default function Reconcile() {
                           />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(t)}
-                            className="text-blue-600 hover:text-blue-800 text-xs font-medium"
-                          >
-                            Edit
-                          </button>
+                          {!t.reconciled ? (
+                            <button
+                              type="button"
+                              onClick={() => openEdit(t)}
+                              className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                            >
+                              Edit
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400">Locked</span>
+                          )}
                         </td>
                       </tr>
                     );

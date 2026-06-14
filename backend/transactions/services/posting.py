@@ -438,6 +438,9 @@ def delete_transaction_respecting_partner_ledger(
     delete only ``txn``: remove the ``Transfer``, clear ``transfer_group`` on the other leg, and
     leave that row in place so a partner clear (e.g. Chase + Plaid) does not wipe the card ledger.
     """
+    from .immutability import reject_if_reconciled
+
+    reject_if_reconciled(txn, action="deleted")
     if deleted is not None and txn.pk in deleted:
         return 0
     try:

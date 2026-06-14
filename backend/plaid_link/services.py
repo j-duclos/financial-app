@@ -39,6 +39,7 @@ from transactions.services.matching import (
     bank_movement_already_on_ledger,
     match_imported_transaction,
     collapse_materialized_actual_duplicates,
+    ensure_reconciled_plaid_ledger_visibility,
     materialize_unmatched_plaid_imports,
     normalize_description,
     reconcile_orphan_matched_plaid_imports,
@@ -732,6 +733,7 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     try:
         account_pks = list(plaid_item.linked_accounts.values_list("account_id", flat=True))
         for aid in account_pks:
+            ensure_reconciled_plaid_ledger_visibility(account_id=aid)
             reconcile_orphan_matched_plaid_imports(account_id=aid)
             repair_invalid_transaction_matches(account_id=aid)
             repair_mismatched_import_links(account_id=aid)
@@ -741,13 +743,10 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             rematch_unmatched_manual_actuals(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)
-            suppressed = suppress_plaid_imports_in_locked_periods(account_id=aid)
             totals.setdefault("collapsed", 0)
             totals["collapsed"] += collapsed
             totals.setdefault("materialized", 0)
             totals["materialized"] += materialized
-            totals.setdefault("suppressed_locked_period", 0)
-            totals["suppressed_locked_period"] += suppressed
     except Exception:
         logger.exception("post-sync import repair failed for plaid_item pk=%s", plaid_item.pk)
 

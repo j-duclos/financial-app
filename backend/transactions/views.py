@@ -23,6 +23,7 @@ from .services import (
     delete_transaction_respecting_partner_ledger,
     post_transaction,
 )
+from .services.immutability import reject_if_reconciled
 from .services.matching import (
     find_candidate_matches,
     ignore_imported_transaction,
@@ -277,6 +278,7 @@ class TransactionViewSet(ModelViewSet):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
+        reject_if_reconciled(instance, action="edited")
         old_date = instance.date
         old_amount = instance.amount
         old_account_id = instance.account_id
@@ -443,18 +445,21 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="unmatch")
     def unmatch(self, request: Request, pk=None):
         imp = self.get_object()
+        reject_if_reconciled(imp, action="unmatched")
         m = TransactionMatch.objects.filter(imported_transaction=imp).first()
         if m is None:
             return Response(
                 {"detail": "This transaction is not linked as a matched Plaid import."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        reject_if_reconciled(m.planned_transaction, action="unmatched")
         unmatch_transaction(m)
         return Response({"detail": "Unmatched."})
 
     @action(detail=True, methods=["post"], url_path="ignore-import")
     def ignore_import(self, request: Request, pk=None):
         imp = self.get_object()
+        reject_if_reconciled(imp, action="ignored")
         try:
             ignore_imported_transaction(imp)
         except ValueError as e:
@@ -479,6 +484,7 @@ class TransactionViewSet(ModelViewSet):
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
     def perform_destroy(self, instance: Transaction):
+        reject_if_reconciled(instance, action="deleted")
         today = timezone.localdate()
         if instance.source == Transaction.Source.INTEREST:
             from timeline.models import InterestCycleSkip

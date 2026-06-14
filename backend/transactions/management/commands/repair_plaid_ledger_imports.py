@@ -17,6 +17,7 @@ from common.services.cache import invalidate_financial_cache_for_household
 from core.timeline_cache import bump_timeline_cache_for_household
 from transactions.services.matching import (
     collapse_materialized_actual_duplicates,
+    repair_wrongly_suppressed_plaid_ledger,
     materialize_unmatched_plaid_imports,
     rematch_unmatched_manual_actuals,
     repair_cross_merchant_wrong_matches,
@@ -24,9 +25,7 @@ from transactions.services.matching import (
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
-    restore_all_duplicate_plaid_imports,
 )
-from transactions.services.reconciliation import suppress_plaid_imports_in_locked_periods
 
 
 class Command(BaseCommand):
@@ -91,34 +90,41 @@ class Command(BaseCommand):
         orphan_resync = 0
         stale_text = 0
         cross_merchant = 0
-        suppressed_locked = 0
+        reconciled_restored = 0
+        flags_fixed_total = 0
+        orphans_removed_total = 0
         for aid in account_ids:
+            repair = repair_wrongly_suppressed_plaid_ledger(account_id=aid)
+            n_reconciled = repair["restored"]
+            orphans_removed = repair["orphans_removed"]
+            flags_fixed = repair["reconciled_flags_fixed"]
             n_cross = repair_cross_merchant_wrong_matches(account_id=aid)
             n_stale = repair_stale_planned_bank_text(account_id=aid)
             n_invalid = repair_invalid_transaction_matches(account_id=aid)
             n_orphan = repair_orphan_absorbed_resync_matches(account_id=aid)
             n_resync = repair_materialized_plaid_resync_duplicates(account_id=aid)
-            n_released = restore_all_duplicate_plaid_imports(account_id=aid)
             n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)
-            n_suppressed = suppress_plaid_imports_in_locked_periods(account_id=aid)
             stale_text += n_stale
             cross_merchant += n_cross
             invalid_matches += n_invalid
             orphan_resync += n_orphan
             resync_dupes += n_resync
-            released += n_released
+            released += n_reconciled
             collapsed += n_collapsed
             manual_linked += n_manual
             materialized += n_materialized
-            suppressed_locked += n_suppressed
+            reconciled_restored += n_reconciled
+            flags_fixed_total += flags_fixed
+            orphans_removed_total += orphans_removed
             acct = Account.objects.filter(pk=aid).first()
             label = f"{acct.name} #{aid}" if acct else f"account #{aid}"
             self.stdout.write(
-                f"  {label}: cross_merchant={n_cross} stale_text={n_stale} invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
-                f"released={n_released} collapsed={n_collapsed} manual_linked={n_manual} "
-                f"materialized={n_materialized} suppressed_locked={n_suppressed}"
+                f"  {label}: restored={n_reconciled} orphans_removed={orphans_removed} "
+                f"reconciled_flags_fixed={flags_fixed} cross_merchant={n_cross} stale_text={n_stale} "
+                f"invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
+                f"collapsed={n_collapsed} manual_linked={n_manual} materialized={n_materialized}"
             )
 
         for hid in {h for h in household_ids if h is not None}:
@@ -127,11 +133,11 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done — fixed {stale_text} stale bank-text row(s), unlinked {cross_merchant} cross-merchant match(es), removed {invalid_matches} invalid match(es), fixed {orphan_resync} orphan re-sync "
-                f"match(es), dropped {resync_dupes} re-sync "
-                f"duplicate(s), restored {released} DUPLICATE row(s), collapsed {collapsed} materialized "
-                f"duplicate(s), linked {manual_linked} manual row(s) to "
-                f"imports, materialized {materialized} orphan import(s), "
-                f"suppressed {suppressed_locked} import(s) in reconciled period(s)."
+                f"Done — restored {released} hidden Plaid import(s), removed {orphans_removed_total} orphan "
+                f"ACTUAL twin(s), fixed reconciled flags on {flags_fixed_total} row(s), fixed {stale_text} stale "
+                f"unlinked {cross_merchant} cross-merchant match(es), removed {invalid_matches} invalid match(es), "
+                f"fixed {orphan_resync} orphan re-sync match(es), dropped {resync_dupes} re-sync "
+                f"duplicate(s), collapsed {collapsed} materialized duplicate(s), linked {manual_linked} manual "
+                f"row(s) to imports, materialized {materialized} orphan import(s)."
             )
         )

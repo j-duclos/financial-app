@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from .models import Transaction, TransactionMatch, Transfer
+from .services.immutability import reject_if_reconciled
 from accounts.models import Account
 from accounts.serializers import AccountSerializer
 from categories.models import Category
@@ -121,6 +122,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             self.fields["transfer_to_account_id"].queryset = accts
 
     def update(self, instance, validated_data):
+        reject_if_reconciled(instance, action="edited")
         """
         ``transfer_to_account_id`` is not a DB column; when set, create the paired inflow on the
         destination account (``Transfer`` + ``TransferGroup``). If the edited row is a matched

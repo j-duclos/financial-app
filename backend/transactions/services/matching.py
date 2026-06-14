@@ -19,7 +19,7 @@ from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery
 from accounts.models import Account
 from accounts.relationship_models import AccountRelationship
 
-from ..models import MatchSuggestion, Transaction, TransactionMatch, Transfer, TransferGroup
+from ..models import MatchSuggestion, Reconciliation, Transaction, TransactionMatch, Transfer, TransferGroup
 
 from .posting import attach_out_leg_for_existing_card_inflow
 
@@ -250,22 +250,27 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
     """
     Transactions that affect running balance / timeline totals.
 
-    Excludes: (1) Plaid rows linked as the import side of a TransactionMatch;
-    (2) Plaid rows explicitly marked ignored or duplicate.
+    Reconciled rows are always visible — user-confirmed ledger lines must never disappear.
 
-    Only ``source=PLAID`` import legs are hidden — a materialized or manual ACTUAL row must
-    never disappear because it was wrongly linked as ``imported_transaction``.
+    Unreconciled rows may be hidden when: (1) Plaid import leg of a TransactionMatch; or
+    (2) Plaid row marked ignored/duplicate.
     """
     matched_plaid_import_pks = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
     ).values("imported_transaction_id")
-    return qs.exclude(pk__in=Subquery(matched_plaid_import_pks)).exclude(
-        source=Transaction.Source.PLAID,
-        import_match_status__in=[
-            Transaction.ImportMatchStatus.IGNORED,
-            Transaction.ImportMatchStatus.DUPLICATE,
-        ],
+    hide_unreconciled = Q(reconciled=False) & (
+        Q(pk__in=Subquery(matched_plaid_import_pks))
+        | (
+            Q(source=Transaction.Source.PLAID)
+            & Q(
+                import_match_status__in=[
+                    Transaction.ImportMatchStatus.IGNORED,
+                    Transaction.ImportMatchStatus.DUPLICATE,
+                ]
+            )
+        )
     )
+    return qs.exclude(hide_unreconciled)
 
 
 def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
@@ -277,9 +282,9 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
     matched_plaid_imports = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
     ).values("imported_transaction_id")
-    return (
-        ~Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)})
-        & ~(
+    hide_unreconciled = Q(**{f"{prefix}__reconciled": False}) & (
+        Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)})
+        | (
             Q(**{f"{prefix}__source": Transaction.Source.PLAID})
             & Q(
                 **{
@@ -291,6 +296,7 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
             )
         )
     )
+    return ~hide_unreconciled
 
 
 def _active_relationship_for_planned_leg(planned: Transaction) -> AccountRelationship | None:
@@ -1212,6 +1218,8 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
 
     if imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
         return None
+    if imported.reconciled:
+        return None
 
     MatchSuggestion.objects.filter(imported_transaction=imported).delete()
 
@@ -1422,31 +1430,165 @@ def ignore_imported_transaction(txn: Transaction) -> None:
     txn.save(update_fields=["import_match_status", "updated_at"])
 
 
+def duplicate_plaid_import_has_visible_ledger_twin(imp: Transaction) -> bool:
+    """
+    True when another visible ledger row already represents this bank post.
+
+    Materialized ACTUAL twins often share payee text but not plaid_transaction_id.
+    """
+    pid = (imp.plaid_transaction_id or "").strip()
+    if pid and ledger_visible_transactions(
+        Transaction.objects.filter(plaid_transaction_id=pid).exclude(pk=imp.pk)
+    ).exists():
+        return True
+    label = (imp.payee or imp.imported_description or "").strip()
+    if not label:
+        return False
+    for twin in ledger_visible_transactions(
+        Transaction.objects.filter(
+            account_id=imp.account_id,
+            date=imp.date,
+            amount=imp.amount,
+        ).exclude(pk=imp.pk)
+    ):
+        twin_label = (twin.payee or twin.imported_description or "").strip()
+        if twin_label == label:
+            return True
+    return False
+
+
+def should_restore_duplicate_plaid_import(imp: Transaction) -> bool:
+    """Restore wrongly hidden Plaid imports; keep true re-sync duplicates that have a visible twin."""
+    if imp.reconciled:
+        return True
+    if imp.reconciliation_entries.filter(
+        session__status=Reconciliation.Status.COMPLETED,
+        session__is_active=True,
+    ).exists():
+        return True
+    return not duplicate_plaid_import_has_visible_ledger_twin(imp)
+
+
+def ensure_reconciled_plaid_ledger_visibility(*, account_id: int | None = None) -> int:
+    """Clear DUPLICATE/IGNORED on Plaid rows that must stay in the ledger."""
+    return restore_all_duplicate_plaid_imports(account_id=account_id)
+
+
 def mark_import_duplicate(txn: Transaction) -> None:
     if txn.source != Transaction.Source.PLAID:
         raise ValueError("Only imported transactions can be marked duplicate.")
+    if txn.reconciled:
+        raise ValueError("Cannot mark a reconciled transaction as duplicate.")
     txn.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
     txn.save(update_fields=["import_match_status", "updated_at"])
 
 
-def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
-    """Unhide Plaid rows previously marked DUPLICATE (never on reconciled-and-closed dates)."""
-    from transactions.services.reconciliation import is_import_date_locked
+def repair_wrongly_suppressed_plaid_ledger(*, account_id: int | None = None) -> dict[str, int]:
+    """
+    Undo Plaid duplicate-suppression damage: restore hidden imports, drop orphan ACTUAL twins,
+    and re-sync reconciled flags from completed reconciliation entries.
+    """
+    from transactions.models import ReconciliationEntry
 
-    qs = Transaction.objects.filter(
+    hidden_qs = Transaction.objects.filter(
         source=Transaction.Source.PLAID,
-        import_match_status=Transaction.ImportMatchStatus.DUPLICATE,
-    )
+        import_match_status__in=[
+            Transaction.ImportMatchStatus.DUPLICATE,
+            Transaction.ImportMatchStatus.IGNORED,
+        ],
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
     if account_id is not None:
-        qs = qs.filter(account_id=account_id)
+        hidden_qs = hidden_qs.filter(account_id=account_id)
+
     restored = 0
-    for imp in qs.select_related("account").iterator(chunk_size=200):
-        if is_import_date_locked(imp.account, imp.date):
-            continue
+    for imp in hidden_qs.select_related("account").iterator(chunk_size=200):
         imp.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
         imp.save(update_fields=["import_match_status", "updated_at"])
         restored += 1
-    return restored
+
+    orphans_removed = 0
+    plaid_qs = Transaction.objects.filter(source=Transaction.Source.PLAID).exclude(
+        import_match_status__in=[
+            Transaction.ImportMatchStatus.DUPLICATE,
+            Transaction.ImportMatchStatus.IGNORED,
+        ]
+    )
+    if account_id is not None:
+        plaid_qs = plaid_qs.filter(account_id=account_id)
+    for imp in plaid_qs.iterator(chunk_size=200):
+        label = (imp.payee or imp.imported_description or "").strip()
+        if not label:
+            continue
+        orphan_actuals = Transaction.objects.filter(
+            account_id=imp.account_id,
+            date=imp.date,
+            amount=imp.amount,
+            source=Transaction.Source.ACTUAL,
+            reconciled=False,
+            rule__isnull=True,
+            scenario__isnull=True,
+        ).exclude(pk=imp.pk)
+        orphan_actuals = orphan_actuals.filter(
+            Q(payee=label) | Q(imported_description=label)
+        ).exclude(
+            reconciliation_entries__session__status=Reconciliation.Status.COMPLETED,
+        )
+        for orphan in orphan_actuals:
+            if TransactionMatch.objects.filter(planned_transaction_id=orphan.pk).exists():
+                continue
+            orphan.delete()
+            orphans_removed += 1
+
+    flags_fixed = 0
+    entry_qs = ReconciliationEntry.objects.filter(
+        session__status=Reconciliation.Status.COMPLETED,
+        transaction__reconciled=False,
+    ).select_related("transaction")
+    if account_id is not None:
+        entry_qs = entry_qs.filter(transaction__account_id=account_id)
+    touched: set[int] = set()
+    for entry in entry_qs.iterator(chunk_size=200):
+        touched.add(entry.transaction_id)
+    for pk in touched:
+        txn = Transaction.objects.filter(pk=pk).first()
+        if txn is None or txn.reconciled:
+            continue
+        txn.reconciled = True
+        txn.cleared = True
+        txn.status = Transaction.Status.RECONCILED
+        txn.save(update_fields=["reconciled", "cleared", "status", "updated_at"])
+        flags_fixed += 1
+
+    dup_actuals_removed = 0
+    rec_actuals = Transaction.objects.filter(source=Transaction.Source.ACTUAL, reconciled=True)
+    if account_id is not None:
+        rec_actuals = rec_actuals.filter(account_id=account_id)
+    for rec in rec_actuals.only("pk", "account_id", "date", "amount", "payee"):
+        label = (rec.payee or "").strip()
+        if not label:
+            continue
+        dupes = Transaction.objects.filter(
+            account_id=rec.account_id,
+            date=rec.date,
+            amount=rec.amount,
+            source=Transaction.Source.ACTUAL,
+            reconciled=False,
+            payee=label,
+        ).exclude(pk=rec.pk)
+        dup_actuals_removed += dupes.count()
+        dupes.delete()
+
+    return {
+        "restored": restored,
+        "orphans_removed": orphans_removed,
+        "reconciled_flags_fixed": flags_fixed,
+        "duplicate_actuals_removed": dup_actuals_removed,
+    }
+
+
+def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
+    """Unhide Plaid rows wrongly marked DUPLICATE (including canonical imports on locked dates)."""
+    return repair_wrongly_suppressed_plaid_ledger(account_id=account_id)["restored"]
 
 
 def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
@@ -1473,6 +1615,8 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
     qs = qs.exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
     materialized = 0
     for imp in qs.select_related("account"):
+        if imp.reconciled:
+            continue
         if is_import_date_locked(imp.account, imp.date):
             continue
         match_imported_transaction(imp)

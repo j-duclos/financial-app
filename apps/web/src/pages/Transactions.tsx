@@ -1011,6 +1011,10 @@ export default function Transactions() {
   });
 
   function openEdit(txn: Transaction) {
+    if (txn.reconciled) {
+      setDeleteError("Reconciled transactions cannot be edited.");
+      return;
+    }
     setDeleteError(null);
     setEditing(txn);
     const ruleId = (txn as { rule_id?: number | null }).rule_id ?? null;
@@ -1039,6 +1043,10 @@ export default function Transactions() {
     try {
       setDeleteError(null);
       const txn = await getTransaction(transactionId);
+      if (txn.reconciled) {
+        setDeleteError("Reconciled transactions cannot be edited.");
+        return;
+      }
       openEdit(txn);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
@@ -1093,6 +1101,10 @@ export default function Transactions() {
   }
 
   async function confirmDeleteRow(row: TimelineRow) {
+    if (row.reconciled) {
+      setDeleteError("Reconciled transactions cannot be deleted.");
+      return;
+    }
     setDeleteError(null);
     try {
       const transactionId =
@@ -1109,6 +1121,10 @@ export default function Transactions() {
   }
 
   async function confirmSkipRow(row: TimelineRow) {
+    if (row.reconciled) {
+      setDeleteError("Reconciled transactions cannot be skipped.");
+      return;
+    }
     setDeleteError(null);
     try {
       const transactionId =
