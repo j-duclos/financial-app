@@ -2333,7 +2333,7 @@ def _build_timeline_impl(
                             record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
-                        continue
+                            continue
                 if scenario_projection_only:
                     proj_key = (rule.id, d, "transfer")
                     if proj_key in seen_scenario_rule_keys:
@@ -2442,7 +2442,7 @@ def _build_timeline_impl(
                             record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
-                        continue
+                            continue
                 if scenario_projection_only:
                     proj_key = (rule.id, d, acc_id)
                     if proj_key in seen_scenario_rule_keys:

@@ -650,6 +650,59 @@ class TestBuildTimeline:
             f"expected exactly one projected payment when card is paid off by first; got {len(rule_rows)}: {rule_rows}"
         )
 
+    def test_card_payment_shows_in_projection_only_when_destination_paid_off(
+        self, user, household, db
+    ):
+        """Forecast UI must list every scheduled automation; skip paid-off cards only when materializing."""
+        from datetime import timedelta
+
+        today = date.today()
+        start = today
+        end = today + timedelta(days=90)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        dom = min(max((today + timedelta(days=7)).day, 1), 28)
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Electric - Move to Savor",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("450.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=dom,
+            start_date=today,
+            active=True,
+        )
+        rows = build_timeline(
+            user, start, end, account_id=bank.id, as_of_date=today, projection_only=True
+        )
+        bank_rows = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
+        assert len(bank_rows) >= 1, (
+            f"forecast must show scheduled card payment on source account; got {bank_rows}"
+        )
+
     def test_credit_card_minimum_payment_rule_hidden_when_card_balance_zero(self, user, household, db):
         """Do not project bank→card minimum payments when the card has no debt (uses DB balance)."""
         from datetime import timedelta
