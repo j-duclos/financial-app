@@ -749,4 +749,25 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
     const timeline = [plannedAtt, matched];
     expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(false);
   });
+
+  it("highlights materialized PLANNED rule rows (source=actual, txn_source=rule)", () => {
+    const materialized: TimelineRow = {
+      date: "2026-06-14",
+      description: "Chewy",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 1,
+      category_name: "Dog Food",
+      amount: "-79.46",
+      type: "OUTFLOW",
+      status: "PLANNED",
+      source: "actual",
+      txn_source: "rule",
+      rule_id: 34,
+      transaction_id: 900,
+      running_balance: "3228.53",
+    };
+    const timeline = [materialized, importedPypl];
+    expect(shouldHighlightUnmatchedScheduledRow(materialized, timeline)).toBe(true);
+  });
 });

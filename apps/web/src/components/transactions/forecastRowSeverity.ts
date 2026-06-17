@@ -42,13 +42,14 @@ export function unmatchedScheduleRowClasses(
   base?: ForecastRowSeverityClasses
 ): ForecastRowSeverityClasses {
   const highlight: ForecastRowSeverityClasses = {
-    backgroundClass: "bg-violet-50/70",
-    hoverClass: "hover:bg-violet-100/60",
-    borderClass: "border-l-4 border-violet-400 border-b border-gray-100",
+    backgroundClass: "bg-violet-100/80",
+    hoverClass: "hover:bg-violet-200/70",
+    borderClass: "border-l-4 border-violet-500 border-b border-violet-200",
   };
   if (!base) return highlight;
   const keepSeverityBg =
-    base.backgroundClass !== "bg-white" && base.backgroundClass !== "bg-violet-50/70";
+    base.backgroundClass !== "bg-white" &&
+    !base.backgroundClass.includes("violet");
   return {
     backgroundClass: keepSeverityBg ? base.backgroundClass : highlight.backgroundClass,
     hoverClass: keepSeverityBg ? base.hoverClass : highlight.hoverClass,

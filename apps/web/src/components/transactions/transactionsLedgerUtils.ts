@@ -167,7 +167,12 @@ export function isForecastTimelineRow(row: TimelineRow, today: string): boolean 
 
 /** Rule-generated row still in PLANNED status (not cleared by a bank import). */
 export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
-  return (row.status || "").toUpperCase() === "PLANNED" && row.source === "rule";
+  if ((row.status || "").toUpperCase() !== "PLANNED") return false;
+  if (row.source === "rule") return true;
+  const txnSrc = (row.txn_source ?? "").toLowerCase();
+  if (txnSrc === "rule") return true;
+  // Materialized rule occurrences use source=actual, txn_source=rule, rule_id set.
+  return row.rule_id != null && row.source === "actual";
 }
 
 /** Bank import or cleared posting (not a forecast-only rule row). */
