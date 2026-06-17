@@ -10,6 +10,7 @@ import {
   isPastTimelineRow,
   isProjectedInterestRow,
   isSupersededPlannedTimelineRow,
+  shouldHighlightUnmatchedScheduledRow,
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
   splitLedgerSections,
@@ -673,5 +674,79 @@ describe("timelineHasAccountRows", () => {
         1
       )
     ).toBe(false);
+  });
+});
+
+describe("shouldHighlightUnmatchedScheduledRow", () => {
+  const plannedChewy: TimelineRow = {
+    date: "2026-06-14",
+    description: "Chewy",
+    account_id: 1,
+    account_name: "Chase",
+    category_id: 1,
+    category_name: "Dog Food",
+    amount: "-79.46",
+    type: "OUTFLOW",
+    status: "PLANNED",
+    source: "rule",
+    rule_id: 10,
+    transaction_id: null,
+    running_balance: "3228.53",
+  };
+
+  const plannedAtt: TimelineRow = {
+    ...plannedChewy,
+    date: "2026-06-15",
+    description: "ATT",
+    amount: "-250.00",
+    rule_id: 11,
+  };
+
+  const importedPypl: TimelineRow = {
+    date: "2026-06-15",
+    description: "PYPL PAYMTHLY",
+    account_id: 1,
+    account_name: "Chase",
+    category_id: null,
+    category_name: null,
+    amount: "-36.88",
+    type: "OUTFLOW",
+    status: "CLEARED",
+    source: "actual",
+    rule_id: null,
+    transaction_id: 99,
+    txn_source: "plaid",
+    running_balance: "3000",
+  };
+
+  it("highlights planned rows when imports exist on or after the scheduled date", () => {
+    const timeline = [plannedChewy, plannedAtt, importedPypl];
+    expect(shouldHighlightUnmatchedScheduledRow(plannedChewy, timeline)).toBe(true);
+    expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(true);
+  });
+
+  it("does not highlight when no imports on or after the scheduled date", () => {
+    const timeline = [plannedChewy, plannedAtt];
+    expect(shouldHighlightUnmatchedScheduledRow(plannedChewy, timeline)).toBe(false);
+  });
+
+  it("does not highlight when a same-day import superseded the planned row", () => {
+    const matched: TimelineRow = {
+      date: "2026-06-15",
+      description: "ATT",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: null,
+      category_name: null,
+      amount: "-250.00",
+      type: "OUTFLOW",
+      status: "CLEARED",
+      source: "actual",
+      rule_id: 11,
+      transaction_id: 100,
+      running_balance: "2900",
+    };
+    const timeline = [plannedAtt, matched];
+    expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(false);
   });
 });

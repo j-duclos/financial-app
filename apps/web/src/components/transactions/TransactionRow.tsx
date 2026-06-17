@@ -36,8 +36,10 @@ type Props = {
   onDelete?: () => void;
   onSkip?: () => void;
   actionsDisabled?: boolean;
-  /** Forecast-only row background / border styling */
-  forecastSeverity?: ForecastRowSeverityClasses;
+  /** Row background / border styling (forecast buffer/risk or schedule highlight). */
+  rowSurface?: ForecastRowSeverityClasses;
+  /** Tooltip when a scheduled row is highlighted as unmatched vs later imports. */
+  scheduleHighlightTitle?: string;
 };
 
 export function timelineRowToData(
@@ -109,7 +111,8 @@ export default function TransactionRow({
   onDelete,
   onSkip,
   actionsDisabled,
-  forecastSeverity,
+  rowSurface,
+  scheduleHighlightTitle,
 }: Props) {
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
   const creditClass = creditBalanceColorClass(isCredit, row.balance);
@@ -125,17 +128,15 @@ export default function TransactionRow({
     has_transfer_destination: row.hasTransferDestination,
   });
 
-  const rowSurface =
-    variant === "future" && forecastSeverity
-      ? `${forecastSeverity.backgroundClass} ${forecastSeverity.hoverClass} ${forecastSeverity.borderClass}`
-      : variant === "future"
-        ? "bg-white hover:bg-gray-50/80 border-b border-gray-100"
-        : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
+  const surfaceClasses = rowSurface
+    ? `${rowSurface.backgroundClass} ${rowSurface.hoverClass} ${rowSurface.borderClass}`
+    : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
 
   return (
     <article
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
+      title={scheduleHighlightTitle}
       onClick={() => {
         if (clickable) onEdit?.();
       }}
@@ -145,7 +146,7 @@ export default function TransactionRow({
           onEdit?.();
         }
       }}
-      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${rowSurface} ${clickable ? "cursor-pointer" : ""}`}
+      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${surfaceClasses} ${clickable ? "cursor-pointer" : ""}`}
     >
       <time className="text-xs text-gray-500 tabular-nums">{formatDateDisplay(row.date)}</time>
       <div className="flex justify-center">

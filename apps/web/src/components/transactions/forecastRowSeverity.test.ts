@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { forecastRowSeverityClasses } from "./forecastRowSeverity";
+import { forecastRowSeverityClasses, unmatchedScheduleRowClasses } from "./forecastRowSeverity";
 
 describe("forecastRowSeverityClasses", () => {
   it("uses white background for normal bank rows", () => {
@@ -56,5 +56,24 @@ describe("forecastRowSeverityClasses", () => {
       isCredit: true,
     });
     expect(c.backgroundClass).toBe("bg-white");
+  });
+
+  it("uses violet tint for unmatched scheduled rows", () => {
+    const c = unmatchedScheduleRowClasses();
+    expect(c.backgroundClass).toContain("violet");
+    expect(c.borderClass).toContain("border-violet");
+  });
+
+  it("keeps buffer severity background when merging schedule highlight", () => {
+    const base = forecastRowSeverityClasses({
+      balance: -10,
+      rowDate: "2026-06-01",
+      minimumBuffer: 100,
+      riskDate: null,
+      isCredit: false,
+    });
+    const merged = unmatchedScheduleRowClasses(base);
+    expect(merged.backgroundClass).toBe(base.backgroundClass);
+    expect(merged.borderClass).toContain("border-violet");
   });
 });

@@ -828,6 +828,12 @@ export default function Transactions() {
     return Number.isFinite(n) ? n : null;
   }, [hideReconciledPast, timelineData?.past_opening_balance]);
 
+  const accountTimeline = useMemo(() => {
+    if (typeof accountId !== "number" || !timelineData?.timeline) return [];
+    const aid = Number(accountId);
+    return timelineData.timeline.filter((r) => Number(r.account_id) === aid);
+  }, [accountId, timelineData?.timeline]);
+
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
@@ -1514,6 +1520,7 @@ export default function Transactions() {
           <PastSection
             start={ledgerSections.start}
             past={filteredPastRows}
+            accountTimeline={accountTimeline}
             totalUnfilteredCount={pastFiltersActive ? ledgerSections.past.length : undefined}
             currency={currency}
             isCredit={isCredit}
@@ -1562,6 +1569,7 @@ export default function Transactions() {
 
           <ForecastCardsSection
             future={ledgerSections.future}
+            accountTimeline={accountTimeline}
             currency={currency}
             isCredit={isCredit}
             isCreditAccount={isCreditAccount}

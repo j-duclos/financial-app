@@ -7,7 +7,9 @@ import {
   LedgerColumnHeader,
   LedgerSectionHeader,
 } from "./ledgerTableLayout";
-import { creditBalanceColorClass, canEditLedgerTimelineRow, type LedgerRow } from "./transactionsLedgerUtils";
+import { creditBalanceColorClass, canEditLedgerTimelineRow, shouldHighlightUnmatchedScheduledRow, type LedgerRow } from "./transactionsLedgerUtils";
+import { unmatchedScheduleRowClasses, UNMATCHED_SCHEDULE_ROW_TITLE } from "./forecastRowSeverity";
+import type { TimelineRow } from "@budget-app/shared";
 
 export const PAST_SCROLL_MIN_ROWS = COLLAPSED_LEDGER_ROWS;
 
@@ -17,6 +19,8 @@ const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
 type Props = {
   start: LedgerRow | null;
   past: LedgerRow[];
+  /** Full account timeline — used to detect unmatched scheduled rows vs later imports. */
+  accountTimeline: TimelineRow[];
   /** Unfiltered past row count (for "X of Y" when filters are active). */
   totalUnfilteredCount?: number;
   currency: string;
@@ -39,6 +43,7 @@ type Props = {
 export default function PastSection({
   start,
   past,
+  accountTimeline,
   totalUnfilteredCount,
   currency,
   isCredit,
@@ -129,6 +134,10 @@ export default function PastSection({
                 if (row.type === "transaction_from_timeline") {
                   const data = timelineRowToData(row.row, row.balance, "past");
                   const editable = canEditLedgerTimelineRow(row.row);
+                  const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(
+                    row.row,
+                    accountTimeline
+                  );
                   return (
                     <TransactionRow
                       key={data.id}
@@ -136,6 +145,12 @@ export default function PastSection({
                       variant="past"
                       currency={currency}
                       isCredit={isCredit}
+                      rowSurface={
+                        scheduleHighlight ? unmatchedScheduleRowClasses() : undefined
+                      }
+                      scheduleHighlightTitle={
+                        scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : undefined
+                      }
                       onEdit={editable ? () => onEditRow(row.row) : undefined}
                       onDuplicate={
                         editable && row.row.transaction_id != null

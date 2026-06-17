@@ -165,6 +165,43 @@ export function isForecastTimelineRow(row: TimelineRow, today: string): boolean 
   return row.date > today;
 }
 
+/** Rule-generated row still in PLANNED status (not cleared by a bank import). */
+export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
+  return (row.status || "").toUpperCase() === "PLANNED" && row.source === "rule";
+}
+
+/** Bank import or cleared posting (not a forecast-only rule row). */
+export function isImportedTimelineRow(row: TimelineRow): boolean {
+  if (row.source === "interest") return false;
+  if (isPlannedScheduledTimelineRow(row)) return false;
+  const status = (row.status || "").toUpperCase();
+  if (status === "PLANNED") return false;
+  const txnSrc = (row.txn_source ?? "").toLowerCase();
+  if (txnSrc === "plaid") return true;
+  if ((row.plaid_transaction_id ?? "").trim()) return true;
+  if (status === "CLEARED" || status === "RECONCILED") return true;
+  return row.source === "actual" && row.transaction_id != null;
+}
+
+/**
+ * Highlight scheduled rows when imports exist on or after the scheduled date but no import
+ * replaced this rule occurrence (still PLANNED, not superseded).
+ */
+export function shouldHighlightUnmatchedScheduledRow(
+  row: TimelineRow,
+  timeline: TimelineRow[]
+): boolean {
+  if (!isPlannedScheduledTimelineRow(row)) return false;
+  if (isSupersededPlannedTimelineRow(row, timeline)) return false;
+  const accountId = Number(row.account_id);
+  for (const other of timeline) {
+    if (Number(other.account_id) !== accountId) continue;
+    if (other.date < row.date) continue;
+    if (isImportedTimelineRow(other)) return true;
+  }
+  return false;
+}
+
 /** Drop a today/past PLANNED row when the same account+day already has a matching cleared posting. */
 export function isSupersededPlannedTimelineRow(
   row: TimelineRow,

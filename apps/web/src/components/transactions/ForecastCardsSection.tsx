@@ -6,14 +6,24 @@ import {
   LedgerColumnHeader,
   LedgerSectionHeader,
 } from "./ledgerTableLayout";
-import { forecastRowSeverityClasses } from "./forecastRowSeverity";
-import { canEditLedgerTimelineRow, type LedgerRow } from "./transactionsLedgerUtils";
+import {
+  forecastRowSeverityClasses,
+  unmatchedScheduleRowClasses,
+  UNMATCHED_SCHEDULE_ROW_TITLE,
+} from "./forecastRowSeverity";
+import {
+  canEditLedgerTimelineRow,
+  shouldHighlightUnmatchedScheduledRow,
+  type LedgerRow,
+} from "./transactionsLedgerUtils";
 
 const ROW_REM = 2.5;
 const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
 
 type Props = {
   future: LedgerRow[];
+  /** Full account timeline — used to detect unmatched scheduled rows vs later imports. */
+  accountTimeline: TimelineRow[];
   currency: string;
   isCredit: boolean;
   isCreditAccount: boolean;
@@ -34,6 +44,7 @@ type Props = {
 
 export default function ForecastCardsSection({
   future,
+  accountTimeline,
   currency,
   isCredit,
   isCreditAccount,
@@ -109,7 +120,7 @@ export default function ForecastCardsSection({
                       variant="future"
                       currency={currency}
                       isCredit={isCredit}
-                      forecastSeverity={forecastRowSeverityClasses({
+                      rowSurface={forecastRowSeverityClasses({
                         balance: row.balance,
                         rowDate: row.txn.date,
                         minimumBuffer,
@@ -139,6 +150,25 @@ export default function ForecastCardsSection({
 
                 const editable = canEditLedgerTimelineRow(row.row);
 
+                const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(row.row, accountTimeline);
+                const rowSurface = scheduleHighlight
+                  ? unmatchedScheduleRowClasses(
+                      forecastRowSeverityClasses({
+                        balance: row.balance,
+                        rowDate: row.row.date,
+                        minimumBuffer,
+                        riskDate,
+                        isCredit,
+                      })
+                    )
+                  : forecastRowSeverityClasses({
+                      balance: row.balance,
+                      rowDate: row.row.date,
+                      minimumBuffer,
+                      riskDate,
+                      isCredit,
+                    });
+
                 return (
                   <TransactionRow
                     key={rowKey}
@@ -146,13 +176,8 @@ export default function ForecastCardsSection({
                     variant="future"
                     currency={currency}
                     isCredit={isCredit}
-                    forecastSeverity={forecastRowSeverityClasses({
-                      balance: row.balance,
-                      rowDate: row.row.date,
-                      minimumBuffer,
-                      riskDate,
-                      isCredit,
-                    })}
+                    rowSurface={rowSurface}
+                    scheduleHighlightTitle={scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : undefined}
                     onEdit={editable ? () => onEditRow(row.row) : undefined}
                     onSkip={editable ? () => onSkipRow(row.row) : undefined}
                     onDelete={editable ? () => onDeleteRow(row.row) : undefined}

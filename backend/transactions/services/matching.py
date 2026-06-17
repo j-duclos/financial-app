@@ -252,25 +252,23 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
 
     Reconciled rows are always visible — user-confirmed ledger lines must never disappear.
 
-    Unreconciled rows may be hidden when: (1) Plaid import leg of a TransactionMatch; or
-    (2) Plaid row marked ignored/duplicate.
+    Hidden rows: (1) Plaid import leg of a TransactionMatch (matched ACTUAL twin is shown);
+    (2) unreconciled Plaid rows marked ignored/duplicate.
     """
     matched_plaid_import_pks = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
     ).values("imported_transaction_id")
-    hide_unreconciled = Q(reconciled=False) & (
-        Q(pk__in=Subquery(matched_plaid_import_pks))
-        | (
-            Q(source=Transaction.Source.PLAID)
-            & Q(
-                import_match_status__in=[
-                    Transaction.ImportMatchStatus.IGNORED,
-                    Transaction.ImportMatchStatus.DUPLICATE,
-                ]
-            )
+    hide = Q(pk__in=Subquery(matched_plaid_import_pks)) | (
+        Q(reconciled=False)
+        & Q(source=Transaction.Source.PLAID)
+        & Q(
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.IGNORED,
+                Transaction.ImportMatchStatus.DUPLICATE,
+            ]
         )
     )
-    return qs.exclude(hide_unreconciled)
+    return qs.exclude(hide)
 
 
 def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
@@ -282,21 +280,19 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
     matched_plaid_imports = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
     ).values("imported_transaction_id")
-    hide_unreconciled = Q(**{f"{prefix}__reconciled": False}) & (
-        Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)})
-        | (
-            Q(**{f"{prefix}__source": Transaction.Source.PLAID})
-            & Q(
-                **{
-                    f"{prefix}__import_match_status__in": [
-                        Transaction.ImportMatchStatus.IGNORED,
-                        Transaction.ImportMatchStatus.DUPLICATE,
-                    ]
-                }
-            )
+    hide = Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)}) | (
+        Q(**{f"{prefix}__reconciled": False})
+        & Q(**{f"{prefix}__source": Transaction.Source.PLAID})
+        & Q(
+            **{
+                f"{prefix}__import_match_status__in": [
+                    Transaction.ImportMatchStatus.IGNORED,
+                    Transaction.ImportMatchStatus.DUPLICATE,
+                ]
+            }
         )
     )
-    return ~hide_unreconciled
+    return ~hide
 
 
 def _active_relationship_for_planned_leg(planned: Transaction) -> AccountRelationship | None:
