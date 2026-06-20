@@ -68,10 +68,8 @@ from timeline.models import (
 )
 from transactions.models import Transaction
 from transactions.services.matching import (
-    heal_unmatched_rule_and_import_links,
     ledger_visible_transactions,
-    normalize_description,
-    SAME_ACCOUNT_DATE_WINDOW_DAYS,
+    rematch_unmatched_for_accounts,
     try_match_rule_to_pending_imports,
 )
 from timeline.services.rule_schedule import (
@@ -1198,11 +1196,7 @@ def apply_scenario_overrides(rule: RecurringRule, scenario: Optional[Scenario]) 
 
 
 def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
-    """
-    Skip PLANNED rows when a matching bank posting exists same day, or within the import date
-    window when amount and payee clearly describe the same movement (e.g. payroll on the 18th vs
-    automation on the 19th).
-    """
+    """Skip PLANNED rows when a matching CLEARED/RECONCILED posting exists same day (matches web ledger)."""
     status = (row.get("status") or "").upper()
     if status != "PLANNED":
         return False
@@ -1211,54 +1205,23 @@ def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
         row_date = date.fromisoformat(str(row_date)[:10])
     amt = Decimal(str(row.get("amount")))
     abs_amt = abs(amt)
-    row_desc = str(row.get("description") or row.get("payee") or "")
     for other in account_rows:
         if other is row or other.get("account_id") != row.get("account_id"):
             continue
         other_date = other.get("date")
         if hasattr(other_date, "isoformat") and not isinstance(other_date, date):
             other_date = date.fromisoformat(str(other_date)[:10])
+        if other_date != row_date:
+            continue
         other_status = (other.get("status") or "").upper()
-        is_bank_posting = other_status in ("CLEARED", "RECONCILED") or (
-            (other.get("txn_source") or "").lower() == "plaid"
-        ) or bool((other.get("plaid_transaction_id") or "").strip())
-        if other_date == row_date:
-            if other_status not in ("CLEARED", "RECONCILED"):
-                continue
-            if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
-                return True
-            other_amt = Decimal(str(other.get("amount")))
-            if abs(abs(other_amt) - abs_amt) < Decimal("0.01"):
-                row_desc = str(row.get("description") or row.get("payee") or "")
-                other_desc = str(other.get("description") or other.get("payee") or "")
-                if _planned_and_posting_descriptions_likely_same(row_desc, other_desc):
-                    return True
-            continue
-        if not is_bank_posting:
-            continue
-        if abs((other_date - row_date).days) > SAME_ACCOUNT_DATE_WINDOW_DAYS:
-            continue
-        other_amt = Decimal(str(other.get("amount")))
-        if abs(abs(other_amt) - abs_amt) >= Decimal("0.01"):
+        if other_status not in ("CLEARED", "RECONCILED"):
             continue
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return True
-        other_desc = str(other.get("description") or other.get("payee") or "")
-        if _planned_and_posting_descriptions_likely_same(row_desc, other_desc):
+        other_amt = Decimal(str(other.get("amount")))
+        if abs(abs(other_amt) - abs_amt) < Decimal("0.01"):
             return True
     return False
-
-
-def _planned_and_posting_descriptions_likely_same(a: str, b: str) -> bool:
-    na = normalize_description(a)
-    nb = normalize_description(b)
-    if not na or not nb:
-        return False
-    if na == nb or na in nb or nb in na:
-        return True
-    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
-    tokens = [w for w in short.split() if len(w) >= 4]
-    return bool(tokens) and any(token in long for token in tokens)
 
 
 def sum_transaction_amounts_for_balance(
@@ -1994,7 +1957,7 @@ def _build_timeline_impl(
                 "match_as_planned__imported_transaction",
             ).order_by("date", "id")
         )
-        if heal_unmatched_rule_and_import_links(actual):
+        if rematch_unmatched_for_accounts(account_ids):
             actual = list(
                 actual_qs.select_related(
                     "account",

@@ -1210,6 +1210,46 @@ def heal_unmatched_rule_and_import_links(txns: Iterable[Transaction]) -> int:
     return linked
 
 
+def rematch_unmatched_for_accounts(account_ids: Iterable[int]) -> int:
+    """Retry pairing all unmatched rule rows and Plaid imports on the given accounts."""
+    ids = list(account_ids)
+    if not ids:
+        return 0
+    linked = 0
+    for planned in (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.RULE,
+            rule_id__isnull=False,
+            scenario__isnull=True,
+        )
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+        .order_by("date", "id")
+        .iterator(chunk_size=200)
+    ):
+        if try_match_rule_to_pending_imports(planned):
+            linked += 1
+    for imp in (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+            scenario__isnull=True,
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.UNMATCHED,
+                Transaction.ImportMatchStatus.SUGGESTED,
+            ],
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+        .order_by("date", "id")
+        .iterator(chunk_size=200)
+    ):
+        if match_imported_transaction(imp):
+            linked += 1
+    return linked
+
+
 def rematch_unmatched_manual_actuals(*, account_id: int | None = None) -> int:
     """Retry linking manual rows to pending Plaid imports (e.g. after user hand-enters a charge)."""
     qs = (

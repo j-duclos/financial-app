@@ -213,12 +213,6 @@ function descriptionsLikelySame(a: string, b: string): boolean {
   return tokens.length > 0 && tokens.some((t) => long.includes(t));
 }
 
-function isBankPostingTimelineRow(row: TimelineRow): boolean {
-  if (isImportedTimelineRow(row)) return true;
-  const status = (row.status || "").toUpperCase();
-  return status === "CLEARED" || status === "RECONCILED";
-}
-
 function plannedAndPostingLikelySame(planned: TimelineRow, posting: TimelineRow): boolean {
   const amt = parseFloat(planned.amount);
   const otherAmt = parseFloat(posting.amount);
@@ -232,6 +226,14 @@ function plannedAndPostingLikelySame(planned: TimelineRow, posting: TimelineRow)
     return true;
   }
   return descriptionsLikelySame(planned.description || "", posting.description || "");
+}
+
+/** Plaid row not yet linked to a scheduled/automation occurrence. */
+function isUnmatchedPlaidImportTimelineRow(row: TimelineRow): boolean {
+  if ((row.import_match_status ?? "").toLowerCase() === "matched") return false;
+  const txnSrc = (row.txn_source ?? "").toLowerCase();
+  if (txnSrc === "plaid") return true;
+  return Boolean((row.plaid_transaction_id ?? "").trim());
 }
 
 /** Bank import or cleared posting (not a forecast-only rule row). */
@@ -248,8 +250,8 @@ export function isImportedTimelineRow(row: TimelineRow): boolean {
 }
 
 /**
- * Highlight scheduled rows when a likely bank import exists within the date window but the rows
- * were not merged yet (still PLANNED, not superseded).
+ * Highlight scheduled rows when an unmatched bank import looks like the same charge
+ * (amount + payee, within ±5 days — payroll often posts before the automation date).
  */
 export function shouldHighlightUnmatchedScheduledRow(
   row: TimelineRow,
@@ -260,14 +262,14 @@ export function shouldHighlightUnmatchedScheduledRow(
   const accountId = Number(row.account_id);
   for (const other of timeline) {
     if (Number(other.account_id) !== accountId) continue;
-    if (!isBankPostingTimelineRow(other)) continue;
+    if (!isImportedTimelineRow(other)) continue;
     if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
     if (plannedAndPostingLikelySame(row, other)) return true;
   }
   return false;
 }
 
-/** Drop a PLANNED row when a matching bank posting exists same day or within the import window. */
+/** Drop a today/past PLANNED row when the same account+day already has a matching cleared posting. */
 export function isSupersededPlannedTimelineRow(
   row: TimelineRow,
   timeline: TimelineRow[]
@@ -276,18 +278,22 @@ export function isSupersededPlannedTimelineRow(
   if (status !== "PLANNED") return false;
   const amt = parseFloat(row.amount);
   if (Number.isNaN(amt)) return false;
+  const absAmt = Math.abs(amt);
   for (const other of timeline) {
-    if (other === row || other.account_id !== row.account_id) continue;
-    if (other.date === row.date) {
-      const otherStatus = (other.status || "").toUpperCase();
-      if (otherStatus !== "CLEARED" && otherStatus !== "RECONCILED") continue;
-      if (row.rule_id != null && other.rule_id === row.rule_id) return true;
-      if (plannedAndPostingLikelySame(row, other)) return true;
+    if (other === row || other.date !== row.date || other.account_id !== row.account_id) {
       continue;
     }
-    if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
-    if (!isBankPostingTimelineRow(other)) continue;
-    if (plannedAndPostingLikelySame(row, other)) return true;
+    const otherStatus = (other.status || "").toUpperCase();
+    if (otherStatus !== "CLEARED" && otherStatus !== "RECONCILED") continue;
+    if (row.rule_id != null && other.rule_id === row.rule_id) return true;
+    // Keep both rows visible (highlight planned) until an unmatched Plaid import is linked.
+    if (isUnmatchedPlaidImportTimelineRow(other) && plannedAndPostingLikelySame(row, other)) {
+      continue;
+    }
+    const otherAmt = parseFloat(other.amount);
+    if (!Number.isNaN(otherAmt) && Math.abs(Math.abs(otherAmt) - absAmt) < 0.01) {
+      return true;
+    }
   }
   return false;
 }
