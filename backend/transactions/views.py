@@ -62,19 +62,14 @@ def _record_rule_occurrence_date_move(
     from timeline.models import RecurringRule, RecurringRuleSkip
 
     RecurringRuleSkip.objects.get_or_create(rule_id=instance.rule_id, date=old_date)
+    # A moved occurrence is intentional — do not treat the new date as user-deleted.
+    RecurringRuleSkip.objects.filter(rule_id=instance.rule_id, date=new_date).delete()
 
     rule = RecurringRule.objects.filter(pk=instance.rule_id).first()
     if rule is None:
         return
 
-    keep_ids = {instance.pk}
-    if other is not None:
-        keep_ids.add(other.pk)
-    for mm in TransactionMatch.objects.filter(
-        Q(imported_transaction_id=instance.pk) | Q(planned_transaction_id=instance.pk)
-    ):
-        keep_ids.add(mm.imported_transaction_id)
-        keep_ids.add(mm.planned_transaction_id)
+    keep_ids = _rule_occurrence_keep_ids(instance, other=other, old_date=old_date)
 
     if rule.transfer_to_account_id:
         account_ids = [rule.account_id, rule.transfer_to_account_id]
@@ -87,12 +82,46 @@ def _record_rule_occurrence_date_move(
         keep_ids=keep_ids,
         account_ids=account_ids,
     )
-    _dedupe_rule_rows_on_date(
-        rule_id=rule.id,
-        occurrence_date=new_date,
-        keep_ids=keep_ids,
-        account_ids=account_ids,
-    )
+    # Never delete an unpaired transfer leg on the new date — only dedupe when both legs are known.
+    if not rule.transfer_to_account_id or len(keep_ids) >= 2:
+        _dedupe_rule_rows_on_date(
+            rule_id=rule.id,
+            occurrence_date=new_date,
+            keep_ids=keep_ids,
+            account_ids=account_ids,
+        )
+
+
+def _rule_occurrence_keep_ids(
+    instance: Transaction,
+    *,
+    other: Optional[Transaction],
+    old_date,
+) -> set[int]:
+    """Transaction ids that must survive dedupe after a one-off rule date edit."""
+    keep_ids = {instance.pk}
+    if other is not None:
+        keep_ids.add(other.pk)
+    elif instance.rule_id is not None:
+        for lookup_date in (old_date, instance.date):
+            if lookup_date is None:
+                continue
+            cp = find_rule_transfer_counterpart_txn(
+                rule_id=instance.rule_id,
+                exclude_txn_pk=instance.pk,
+                old_date=lookup_date,
+                old_amount=instance.amount,
+                old_account_id=instance.account_id,
+            )
+            if cp is not None:
+                keep_ids.add(cp.pk)
+                break
+    for mm in TransactionMatch.objects.filter(
+        Q(imported_transaction_id=instance.pk) | Q(planned_transaction_id=instance.pk)
+    ):
+        keep_ids.add(mm.imported_transaction_id)
+        keep_ids.add(mm.planned_transaction_id)
+    return keep_ids
 
 
 def _resolve_transfer_pair(
@@ -118,16 +147,15 @@ def _find_likely_transfer_counterpart(instance: Transaction, *, on_date) -> Opti
     abs_amt = abs(instance.amount)
     opp_amt = abs_amt if instance.amount < 0 else -abs_amt
     payee_root = (instance.payee or "").split("(")[0].strip()[:40]
-    qs = (
-        Transaction.objects.filter(
-            date=on_date,
-            amount=opp_amt,
-            source=Transaction.Source.ACTUAL,
-            account__household_id=instance.account.household_id,
-        )
-        .exclude(account_id=instance.account_id)
-        .exclude(pk=instance.pk)
-    )
+    qs = Transaction.objects.filter(
+        date=on_date,
+        amount=opp_amt,
+        account__household_id=instance.account.household_id,
+    ).exclude(account_id=instance.account_id).exclude(pk=instance.pk)
+    if instance.rule_id:
+        qs = qs.filter(rule_id=instance.rule_id)
+    else:
+        qs = qs.filter(source=Transaction.Source.ACTUAL)
     if payee_root:
         qs = qs.filter(Q(payee__icontains=payee_root) | Q(payee__startswith=payee_root))
     return qs.order_by("id").first()

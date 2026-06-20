@@ -7,7 +7,6 @@ describe("forecastRowSeverityClasses", () => {
       balance: 500,
       rowDate: "2026-06-01",
       minimumBuffer: 100,
-      riskDate: null,
       isCredit: false,
     });
     expect(c.backgroundClass).toBe("bg-white");
@@ -19,7 +18,6 @@ describe("forecastRowSeverityClasses", () => {
       balance: 50,
       rowDate: "2026-06-01",
       minimumBuffer: 100,
-      riskDate: null,
       isCredit: false,
     });
     expect(c.backgroundClass).toBe("bg-amber-50/30");
@@ -30,21 +28,9 @@ describe("forecastRowSeverityClasses", () => {
       balance: -10,
       rowDate: "2026-06-01",
       minimumBuffer: 100,
-      riskDate: null,
       isCredit: false,
     });
     expect(c.backgroundClass).toBe("bg-red-50/40");
-  });
-
-  it("uses orange border on risk date", () => {
-    const c = forecastRowSeverityClasses({
-      balance: 500,
-      rowDate: "2026-06-17",
-      minimumBuffer: 100,
-      riskDate: "2026-06-17",
-      isCredit: false,
-    });
-    expect(c.borderClass).toBe("border-y-2 border-amber-400");
   });
 
   it("skips buffer coloring for credit accounts", () => {
@@ -52,7 +38,6 @@ describe("forecastRowSeverityClasses", () => {
       balance: 50,
       rowDate: "2026-06-01",
       minimumBuffer: 100,
-      riskDate: null,
       isCredit: true,
     });
     expect(c.backgroundClass).toBe("bg-white");
@@ -69,7 +54,6 @@ describe("forecastRowSeverityClasses", () => {
       balance: -10,
       rowDate: "2026-06-01",
       minimumBuffer: 100,
-      riskDate: null,
       isCredit: false,
     });
     const merged = unmatchedScheduleRowClasses(base);

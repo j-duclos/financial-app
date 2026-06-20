@@ -14,6 +14,7 @@ import {
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
   splitLedgerSections,
+  lowestProjectedFromLedgerFuture,
   formatDateDisplay,
   todayStr,
   timelineRangeForFilter,
@@ -677,6 +678,20 @@ describe("timelineHasAccountRows", () => {
   });
 });
 
+describe("lowestProjectedFromLedgerFuture", () => {
+  it("returns the minimum running balance and its date from forecast rows", () => {
+    const future = [
+      { type: "recurring" as const, row: { date: "2026-07-02" } as TimelineRow, balance: 129.35 },
+      { type: "recurring" as const, row: { date: "2026-07-03" } as TimelineRow, balance: 49.89 },
+      { type: "recurring" as const, row: { date: "2026-07-10" } as TimelineRow, balance: 200 },
+    ];
+    expect(lowestProjectedFromLedgerFuture(future)).toEqual({
+      balance: 49.89,
+      date: "2026-07-03",
+    });
+  });
+});
+
 describe("shouldHighlightUnmatchedScheduledRow", () => {
   const plannedChewy: TimelineRow = {
     date: "2026-06-14",
@@ -719,10 +734,66 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
     running_balance: "3000",
   };
 
-  it("highlights planned rows when imports exist on or after the scheduled date", () => {
-    const timeline = [plannedChewy, plannedAtt, importedPypl];
-    expect(shouldHighlightUnmatchedScheduledRow(plannedChewy, timeline)).toBe(true);
-    expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(true);
+  it("hides duplicate planned rows when a matching import exists within the date window", () => {
+    const importedChewy: TimelineRow = {
+      date: "2026-06-15",
+      description: "CHEWY INC",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: null,
+      category_name: null,
+      amount: "-79.46",
+      type: "OUTFLOW",
+      status: "CLEARED",
+      source: "actual",
+      rule_id: null,
+      transaction_id: 98,
+      txn_source: "plaid",
+      running_balance: "3100",
+    };
+    const timeline = [plannedChewy, plannedAtt, importedPypl, importedChewy];
+    expect(isSupersededPlannedTimelineRow(plannedChewy, timeline)).toBe(true);
+    expect(shouldHighlightUnmatchedScheduledRow(plannedChewy, timeline)).toBe(false);
+    expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(false);
+  });
+
+  it("hides payroll automation when bank posts one day early with the same payee", () => {
+    const payrollDesc = "2930 JOHN GALT S PAYROLL PPD ID: 14409866";
+    const plannedPayroll: TimelineRow = {
+      date: "2026-06-19",
+      description: payrollDesc,
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 2,
+      category_name: "Paycheck / Salary",
+      amount: "1835.52",
+      type: "INFLOW",
+      status: "PLANNED",
+      source: "actual",
+      txn_source: "rule",
+      rule_id: 5,
+      transaction_id: 200,
+      running_balance: "3976.70",
+    };
+    const importedPayroll: TimelineRow = {
+      date: "2026-06-18",
+      description: payrollDesc,
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 2,
+      category_name: "Paycheck / Salary",
+      amount: "1835.52",
+      type: "INFLOW",
+      status: "CLEARED",
+      source: "actual",
+      rule_id: null,
+      transaction_id: 201,
+      txn_source: "plaid",
+      running_balance: "2361.21",
+    };
+    const timeline = [importedPayroll, plannedPayroll];
+    expect(isSupersededPlannedTimelineRow(plannedPayroll, timeline)).toBe(true);
+    expect(shouldHighlightUnmatchedScheduledRow(plannedPayroll, timeline)).toBe(false);
   });
 
   it("does not highlight when no imports on or after the scheduled date", () => {
@@ -750,7 +821,7 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
     expect(shouldHighlightUnmatchedScheduledRow(plannedAtt, timeline)).toBe(false);
   });
 
-  it("highlights materialized PLANNED rule rows (source=actual, txn_source=rule)", () => {
+  it("hides materialized PLANNED rule rows when a matching import exists", () => {
     const materialized: TimelineRow = {
       date: "2026-06-14",
       description: "Chewy",
@@ -767,7 +838,46 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
       transaction_id: 900,
       running_balance: "3228.53",
     };
-    const timeline = [materialized, importedPypl];
-    expect(shouldHighlightUnmatchedScheduledRow(materialized, timeline)).toBe(true);
+    const importedChewy: TimelineRow = {
+      date: "2026-06-14",
+      description: "CHEWY INC",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: null,
+      category_name: null,
+      amount: "-79.46",
+      type: "OUTFLOW",
+      status: "CLEARED",
+      source: "actual",
+      rule_id: null,
+      transaction_id: 901,
+      txn_source: "plaid",
+      running_balance: "3200",
+    };
+    const timeline = [materialized, importedChewy];
+    expect(isSupersededPlannedTimelineRow(materialized, timeline)).toBe(true);
+    expect(shouldHighlightUnmatchedScheduledRow(materialized, timeline)).toBe(false);
+  });
+
+  it("does not highlight when the scheduled row is already matched to a bank import", () => {
+    const matched: TimelineRow = {
+      date: "2026-06-15",
+      description: "POS DEBIT HENRY MEDS",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: null,
+      category_name: null,
+      amount: "-99.00",
+      type: "OUTFLOW",
+      status: "PLANNED",
+      source: "actual",
+      txn_source: "rule",
+      import_match_status: "matched",
+      rule_id: 42,
+      transaction_id: 6119,
+      running_balance: "3000",
+    };
+    const timeline = [matched, importedPypl];
+    expect(shouldHighlightUnmatchedScheduledRow(matched, timeline)).toBe(false);
   });
 });

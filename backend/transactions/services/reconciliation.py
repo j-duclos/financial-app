@@ -26,7 +26,7 @@ from .matching import (
     repair_cross_merchant_wrong_matches,
     repair_mismatched_import_links,
     repair_stale_planned_bank_text,
-    try_match_rule_to_pending_imports,
+    heal_unmatched_rule_and_import_links,
 )
 
 BALANCE_TOLERANCE = Decimal("0.01")
@@ -327,6 +327,10 @@ def filter_superseded_planned_transactions(txns: list[Transaction]) -> list[Tran
             "status": t.status,
             "rule_id": t.rule_id,
             "account_id": t.account_id,
+            "description": t.payee or "",
+            "payee": t.payee or "",
+            "txn_source": t.source.lower() if t.source else None,
+            "plaid_transaction_id": (t.plaid_transaction_id or "").strip() or None,
         }
         for t in txns
     ]
@@ -335,29 +339,6 @@ def filter_superseded_planned_transactions(txns: list[Transaction]) -> list[Tran
         for txn, row in zip(txns, compare_rows)
         if not is_superseded_planned_row(row, compare_rows)
     ]
-
-
-def _heal_unmatched_rule_and_import_links(txns: list[Transaction]) -> None:
-    """Link rule rows to pending Plaid imports (and vice versa) before building reconcile lists."""
-    seen_planned: set[int] = set()
-    seen_imports: set[int] = set()
-    for txn in txns:
-        if txn.source == Transaction.Source.RULE and txn.rule_id and txn.pk not in seen_planned:
-            if not TransactionMatch.objects.filter(planned_transaction_id=txn.pk).exists():
-                try_match_rule_to_pending_imports(txn)
-            seen_planned.add(txn.pk)
-        elif (
-            txn.source == Transaction.Source.PLAID
-            and txn.pk not in seen_imports
-            and txn.import_match_status
-            in (
-                Transaction.ImportMatchStatus.UNMATCHED,
-                Transaction.ImportMatchStatus.SUGGESTED,
-            )
-            and not TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists()
-        ):
-            match_imported_transaction(txn)
-            seen_imports.add(txn.pk)
 
 
 def _load_reconcile_period_transactions(
@@ -378,7 +359,7 @@ def _load_reconcile_period_transactions(
     txns = list(
         unreconciled_transactions_qs(account, as_of, start=period_start, end=period_end)
     )
-    _heal_unmatched_rule_and_import_links(txns)
+    heal_unmatched_rule_and_import_links(txns)
     txns = list(
         unreconciled_transactions_qs(account, as_of, start=period_start, end=period_end)
     )

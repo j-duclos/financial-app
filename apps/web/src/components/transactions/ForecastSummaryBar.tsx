@@ -14,6 +14,9 @@ type Props = {
   householdWarnings: { accountName: string; date: string; kind: "negative" | "credit_limit" }[];
   expanded: boolean;
   onToggle: () => void;
+  /** When set, use forecast ledger rows (matches the table below the header). */
+  ledgerLowestProjected?: number | null;
+  ledgerLowestProjectedDate?: string | null;
 };
 
 export default function ForecastSummaryBar({
@@ -26,13 +29,17 @@ export default function ForecastSummaryBar({
   householdWarnings,
   expanded,
   onToggle,
+  ledgerLowestProjected,
+  ledgerLowestProjectedDate,
 }: Props) {
   const showForecastMetrics = showSafeToSpendForRole(account.role, account.account_type ?? "");
   const lowestProjected =
-    account.lowest_projected_balance_30_days != null
+    ledgerLowestProjected ??
+    (account.lowest_projected_balance_30_days != null
       ? parseFloat(account.lowest_projected_balance_30_days)
-      : null;
-  const lowestProjectedDate = account.lowest_projected_balance_date_30_days ?? null;
+      : null);
+  const lowestProjectedDate =
+    ledgerLowestProjectedDate ?? account.lowest_projected_balance_date_30_days ?? null;
   const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
 
   const earliestWarning = householdWarnings.length

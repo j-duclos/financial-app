@@ -39,7 +39,6 @@ type Props = {
   onDeleteTransaction: (transactionId: number, label: string) => void;
   deletePending: boolean;
   minimumBuffer: number | null;
-  riskDate: string | null;
 };
 
 export default function ForecastCardsSection({
@@ -58,7 +57,6 @@ export default function ForecastCardsSection({
   onDeleteTransaction,
   deletePending,
   minimumBuffer,
-  riskDate,
 }: Props) {
   const forecastRows = useMemo(
     () =>
@@ -124,7 +122,6 @@ export default function ForecastCardsSection({
                         balance: row.balance,
                         rowDate: row.txn.date,
                         minimumBuffer,
-                        riskDate,
                         isCredit,
                       })}
                       onEdit={editable ? () => onEditTransaction(row.txn) : undefined}
@@ -157,7 +154,6 @@ export default function ForecastCardsSection({
                         balance: row.balance,
                         rowDate: row.row.date,
                         minimumBuffer,
-                        riskDate,
                         isCredit,
                       })
                     )
@@ -165,7 +161,6 @@ export default function ForecastCardsSection({
                       balance: row.balance,
                       rowDate: row.row.date,
                       minimumBuffer,
-                      riskDate,
                       isCredit,
                     });
 

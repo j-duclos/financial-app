@@ -786,11 +786,11 @@ export default function Rules() {
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700">Amount</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={form.amount}
                     onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-                    className="mt-1 block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    className="mt-1 block w-full rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
                     required
                   />
                 </div>

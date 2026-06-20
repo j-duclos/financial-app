@@ -168,11 +168,70 @@ export function isForecastTimelineRow(row: TimelineRow, today: string): boolean 
 /** Rule-generated row still in PLANNED status (not cleared by a bank import). */
 export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
   if ((row.status || "").toUpperCase() !== "PLANNED") return false;
+  const matchStatus = (row.import_match_status ?? "").toLowerCase();
+  // Matched to a bank import — the scheduled leg was replaced (even if status stays PLANNED).
+  if (matchStatus === "matched") return false;
+  if ((row.plaid_transaction_id ?? "").trim()) return false;
   if (row.source === "rule") return true;
   const txnSrc = (row.txn_source ?? "").toLowerCase();
   if (txnSrc === "rule") return true;
   // Materialized rule occurrences use source=actual, txn_source=rule, rule_id set.
   return row.rule_id != null && row.source === "actual";
+}
+
+/** Match backend SAME_ACCOUNT_DATE_WINDOW_DAYS — payroll may post before the scheduled date. */
+const SCHEDULE_IMPORT_DATE_WINDOW_DAYS = 5;
+
+function daysBetweenIsoDates(a: string, b: string): number {
+  const [y1, m1, d1] = a.split("-").map(Number);
+  const [y2, m2, d2] = b.split("-").map(Number);
+  const t1 = new Date(y1, m1 - 1, d1).getTime();
+  const t2 = new Date(y2, m2 - 1, d2).getTime();
+  return Math.abs(Math.round((t2 - t1) / 86_400_000));
+}
+
+function amountsMatch(a: number, b: number): boolean {
+  return Math.abs(Math.abs(a) - Math.abs(b)) < 0.01;
+}
+
+function normalizePayee(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function descriptionsLikelySame(a: string, b: string): boolean {
+  const na = normalizePayee(a);
+  const nb = normalizePayee(b);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const short = na.length <= nb.length ? na : nb;
+  const long = na.length <= nb.length ? nb : na;
+  const tokens = short.split(/\s+/).filter((w) => w.length >= 4);
+  return tokens.length > 0 && tokens.some((t) => long.includes(t));
+}
+
+function isBankPostingTimelineRow(row: TimelineRow): boolean {
+  if (isImportedTimelineRow(row)) return true;
+  const status = (row.status || "").toUpperCase();
+  return status === "CLEARED" || status === "RECONCILED";
+}
+
+function plannedAndPostingLikelySame(planned: TimelineRow, posting: TimelineRow): boolean {
+  const amt = parseFloat(planned.amount);
+  const otherAmt = parseFloat(posting.amount);
+  if (Number.isNaN(amt) || Number.isNaN(otherAmt)) return false;
+  if (!amountsMatch(amt, otherAmt)) return false;
+  if (
+    planned.rule_id != null &&
+    posting.rule_id != null &&
+    planned.rule_id === posting.rule_id
+  ) {
+    return true;
+  }
+  return descriptionsLikelySame(planned.description || "", posting.description || "");
 }
 
 /** Bank import or cleared posting (not a forecast-only rule row). */
@@ -189,8 +248,8 @@ export function isImportedTimelineRow(row: TimelineRow): boolean {
 }
 
 /**
- * Highlight scheduled rows when imports exist on or after the scheduled date but no import
- * replaced this rule occurrence (still PLANNED, not superseded).
+ * Highlight scheduled rows when a likely bank import exists within the date window but the rows
+ * were not merged yet (still PLANNED, not superseded).
  */
 export function shouldHighlightUnmatchedScheduledRow(
   row: TimelineRow,
@@ -201,13 +260,14 @@ export function shouldHighlightUnmatchedScheduledRow(
   const accountId = Number(row.account_id);
   for (const other of timeline) {
     if (Number(other.account_id) !== accountId) continue;
-    if (other.date < row.date) continue;
-    if (isImportedTimelineRow(other)) return true;
+    if (!isBankPostingTimelineRow(other)) continue;
+    if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
+    if (plannedAndPostingLikelySame(row, other)) return true;
   }
   return false;
 }
 
-/** Drop a today/past PLANNED row when the same account+day already has a matching cleared posting. */
+/** Drop a PLANNED row when a matching bank posting exists same day or within the import window. */
 export function isSupersededPlannedTimelineRow(
   row: TimelineRow,
   timeline: TimelineRow[]
@@ -216,18 +276,18 @@ export function isSupersededPlannedTimelineRow(
   if (status !== "PLANNED") return false;
   const amt = parseFloat(row.amount);
   if (Number.isNaN(amt)) return false;
-  const absAmt = Math.abs(amt);
   for (const other of timeline) {
-    if (other === row || other.date !== row.date || other.account_id !== row.account_id) {
+    if (other === row || other.account_id !== row.account_id) continue;
+    if (other.date === row.date) {
+      const otherStatus = (other.status || "").toUpperCase();
+      if (otherStatus !== "CLEARED" && otherStatus !== "RECONCILED") continue;
+      if (row.rule_id != null && other.rule_id === row.rule_id) return true;
+      if (plannedAndPostingLikelySame(row, other)) return true;
       continue;
     }
-    const otherStatus = (other.status || "").toUpperCase();
-    if (otherStatus !== "CLEARED" && otherStatus !== "RECONCILED") continue;
-    if (row.rule_id != null && other.rule_id === row.rule_id) return true;
-    const otherAmt = parseFloat(other.amount);
-    if (!Number.isNaN(otherAmt) && Math.abs(Math.abs(otherAmt) - absAmt) < 0.01) {
-      return true;
-    }
+    if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
+    if (!isBankPostingTimelineRow(other)) continue;
+    if (plannedAndPostingLikelySame(row, other)) return true;
   }
   return false;
 }
@@ -390,6 +450,26 @@ export function timelineHasAccountRows(
   if (!Array.isArray(timeline) || timeline.length === 0) return false;
   const aid = Number(accountId);
   return timeline.some((r) => Number(r.account_id) === aid);
+}
+
+/** Lowest running balance in the forecast ledger (matches visible Transactions forecast rows). */
+export function lowestProjectedFromLedgerFuture(
+  future: LedgerRow[]
+): { balance: number; date: string } | null {
+  let result: { balance: number; date: string } | null = null;
+  for (const row of future) {
+    let rowDate: string | null = null;
+    if (row.type === "recurring" || row.type === "transaction_from_timeline") {
+      rowDate = row.row.date;
+    } else if (row.type === "transaction") {
+      rowDate = row.txn.date;
+    }
+    if (!rowDate) continue;
+    if (result === null || row.balance < result.balance) {
+      result = { balance: row.balance, date: rowDate };
+    }
+  }
+  return result;
 }
 
 export function splitLedgerSections(rows: LedgerRow[]) {

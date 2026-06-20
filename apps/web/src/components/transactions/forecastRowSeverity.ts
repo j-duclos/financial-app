@@ -11,11 +11,9 @@ export function forecastRowSeverityClasses(params: {
   balance: number;
   rowDate: string;
   minimumBuffer: number | null;
-  riskDate: string | null;
   isCredit: boolean;
 }): ForecastRowSeverityClasses {
-  const { balance, rowDate, minimumBuffer, riskDate, isCredit } = params;
-  const isRiskDate = riskDate != null && rowDate === riskDate;
+  const { balance, rowDate, minimumBuffer, isCredit } = params;
 
   let backgroundClass = "bg-white";
   let hoverClass = "hover:bg-gray-50/80";
@@ -30,9 +28,7 @@ export function forecastRowSeverityClasses(params: {
     }
   }
 
-  const borderClass = isRiskDate
-    ? "border-y-2 border-amber-400"
-    : "border-b border-gray-100";
+  const borderClass = "border-b border-gray-100";
 
   return { backgroundClass, hoverClass, borderClass };
 }

@@ -471,6 +471,64 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
         self.assertEqual(planned.import_match_status, Transaction.ImportMatchStatus.MATCHED)
 
+    def test_heal_links_payroll_import_day_before_rule_occurrence(self):
+        """Bank posts on the 18th; automation occurrence is on the 19th with the same payee text."""
+        from transactions.services.matching import heal_unmatched_rule_and_import_links
+
+        cat = Category.objects.create(
+            household=self.h,
+            name="Salary",
+            category_type=Category.CategoryType.INCOME,
+            sort_order=3,
+        )
+        rule = RecurringRule.objects.create(
+            household=self.h,
+            name="Payroll",
+            account=self.acc,
+            category=cat,
+            direction=RecurringRule.Direction.INCOME,
+            amount=Decimal("1835.52"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=19,
+            start_date=date(2026, 1, 1),
+            end_date=None,
+            active=True,
+        )
+        payee = "2930 JOHN GALT S PAYROLL PPD ID: 14409866"
+        amt = Decimal("1835.52")
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 18),
+            payee=payee,
+            memo="",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-payroll-early",
+            imported_description=payee,
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        planned = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 19),
+            payee=payee,
+            memo="",
+            amount=amt,
+            category_id=cat.id,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            status=Transaction.Status.PLANNED,
+        )
+        self.assertEqual(heal_unmatched_rule_and_import_links([planned, imp]), 1)
+        self.assertTrue(
+            TransactionMatch.objects.filter(
+                planned_transaction=planned, imported_transaction=imp
+            ).exists()
+        )
+
     def test_materialize_rule_occurrence_links_prior_plaid_import(self):
         from timeline.services.ledger import _materialize_rule_occurrence
 

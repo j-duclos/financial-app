@@ -45,6 +45,7 @@ import {
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
   splitLedgerSections,
+  lowestProjectedFromLedgerFuture,
   timelineHasAccountRows,
   isTransferCategoryName,
   accountLedgerDisplayBalance,
@@ -837,6 +838,11 @@ export default function Transactions() {
   /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
+  const ledgerLowestProjected = useMemo(
+    () => lowestProjectedFromLedgerFuture(ledgerSections.future),
+    [ledgerSections.future]
+  );
+
   const pastRowFilters = useMemo(
     () => ({
       kind: kindFilter,
@@ -1365,6 +1371,8 @@ export default function Transactions() {
               householdWarnings={householdWarnings}
               expanded={forecastSummaryExpanded}
               onToggle={() => setForecastSummaryExpanded((v) => !v)}
+              ledgerLowestProjected={ledgerLowestProjected?.balance ?? null}
+              ledgerLowestProjectedDate={ledgerLowestProjected?.date ?? null}
             />
           )}
 
@@ -1593,7 +1601,6 @@ export default function Transactions() {
                 ? parseFloat(String(account.minimum_buffer))
                 : null
             }
-            riskDate={account?.risk_date ?? null}
           />
         </div>
       )}

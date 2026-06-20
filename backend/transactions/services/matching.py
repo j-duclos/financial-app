@@ -1177,6 +1177,39 @@ def try_match_pending_imports_to_manual(planned: Transaction) -> Optional[Transa
     )
 
 
+def heal_unmatched_rule_and_import_links(txns: Iterable[Transaction]) -> int:
+    """
+    Link existing rule rows to pending Plaid imports (and vice versa).
+
+    Used when both sides already exist in the DB — e.g. payroll imported on the 18th and the
+    automation occurrence on the 19th — without requiring a fresh Plaid sync.
+    """
+    linked = 0
+    seen_planned: set[int] = set()
+    seen_imports: set[int] = set()
+    for txn in txns:
+        if txn.source == Transaction.Source.RULE and txn.rule_id and txn.pk not in seen_planned:
+            seen_planned.add(txn.pk)
+            if TransactionMatch.objects.filter(planned_transaction_id=txn.pk).exists():
+                continue
+            if try_match_rule_to_pending_imports(txn):
+                linked += 1
+        elif (
+            txn.source == Transaction.Source.PLAID
+            and txn.pk not in seen_imports
+            and txn.import_match_status
+            in (
+                Transaction.ImportMatchStatus.UNMATCHED,
+                Transaction.ImportMatchStatus.SUGGESTED,
+            )
+            and not TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists()
+        ):
+            seen_imports.add(txn.pk)
+            if match_imported_transaction(txn):
+                linked += 1
+    return linked
+
+
 def rematch_unmatched_manual_actuals(*, account_id: int | None = None) -> int:
     """Retry linking manual rows to pending Plaid imports (e.g. after user hand-enters a charge)."""
     qs = (
