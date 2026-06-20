@@ -1218,6 +1218,14 @@ def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
             continue
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return True
+        other_txn_src = (other.get("txn_source") or "").lower()
+        other_plaid_id = (other.get("plaid_transaction_id") or "").strip()
+        other_ims = (other.get("import_match_status") or "").lower()
+        is_pending_plaid = (
+            other_txn_src == "plaid" or bool(other_plaid_id)
+        ) and other_ims not in ("matched", "ignored", "duplicate")
+        if is_pending_plaid:
+            continue
         other_amt = Decimal(str(other.get("amount")))
         if abs(abs(other_amt) - abs_amt) < Decimal("0.01"):
             return True

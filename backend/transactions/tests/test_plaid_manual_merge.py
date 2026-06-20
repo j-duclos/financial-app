@@ -586,6 +586,64 @@ class TestPlaidMatching(TestCase):
             ).exists()
         )
 
+    def test_rematch_links_payroll_when_import_status_is_none(self):
+        """Legacy Plaid rows keep import_match_status=NONE until first match attempt."""
+        from transactions.services.matching import rematch_unmatched_for_accounts
+
+        cat = Category.objects.create(
+            household=self.h,
+            name="Salary",
+            category_type=Category.CategoryType.INCOME,
+            sort_order=5,
+        )
+        rule = RecurringRule.objects.create(
+            household=self.h,
+            name="Payroll",
+            account=self.acc,
+            category=cat,
+            direction=RecurringRule.Direction.INCOME,
+            amount=Decimal("1835.52"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=19,
+            start_date=date(2026, 1, 1),
+            end_date=None,
+            active=True,
+        )
+        payee = "2930 JOHN GALT S PAYROLL PPD ID: 14409866"
+        amt = Decimal("1835.52")
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 18),
+            payee=payee,
+            memo="",
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-payroll-none-status",
+            imported_description=payee,
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        planned = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 19),
+            payee=payee,
+            memo="",
+            amount=amt,
+            category_id=cat.id,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            status=Transaction.Status.PLANNED,
+        )
+        self.assertEqual(rematch_unmatched_for_accounts([self.acc.id]), 1)
+        self.assertTrue(
+            TransactionMatch.objects.filter(
+                planned_transaction=planned, imported_transaction=imp
+            ).exists()
+        )
+
     def test_materialize_rule_occurrence_links_prior_plaid_import(self):
         from timeline.services.ledger import _materialize_rule_occurrence
 

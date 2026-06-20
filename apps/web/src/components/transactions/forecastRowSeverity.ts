@@ -33,19 +33,19 @@ export function forecastRowSeverityClasses(params: {
   return { backgroundClass, hoverClass, borderClass };
 }
 
-/** Scheduled rule row still showing while bank imports exist on or after its date. */
+/** Scheduled rule row still showing while a matching bank import awaits merge. */
 export function unmatchedScheduleRowClasses(
   base?: ForecastRowSeverityClasses
 ): ForecastRowSeverityClasses {
   const highlight: ForecastRowSeverityClasses = {
-    backgroundClass: "bg-violet-100/80",
-    hoverClass: "hover:bg-violet-200/70",
-    borderClass: "border-l-4 border-violet-500 border-b border-violet-200",
+    backgroundClass: "bg-sky-100/90",
+    hoverClass: "hover:bg-sky-200/80",
+    borderClass: "border-l-4 border-sky-500 border-b border-sky-200",
   };
   if (!base) return highlight;
   const keepSeverityBg =
     base.backgroundClass !== "bg-white" &&
-    !base.backgroundClass.includes("violet");
+    !base.backgroundClass.includes("sky");
   return {
     backgroundClass: keepSeverityBg ? base.backgroundClass : highlight.backgroundClass,
     hoverClass: keepSeverityBg ? base.hoverClass : highlight.hoverClass,
@@ -54,4 +54,4 @@ export function unmatchedScheduleRowClasses(
 }
 
 export const UNMATCHED_SCHEDULE_ROW_TITLE =
-  "Scheduled payment — bank imports exist on or after this date but none matched this occurrence";
+  "Scheduled transaction — matching bank import found; will merge when linked";

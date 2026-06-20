@@ -6,6 +6,7 @@ or timeline rows; the paired *planned* row remains canonical for forecast-first 
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from decimal import Decimal
@@ -26,6 +27,8 @@ from .posting import attach_out_leg_for_existing_card_inflow
 if TYPE_CHECKING:
     pass
 
+logger = logging.getLogger(__name__)
+
 # Tunables (business constants — adjust here only).
 SAME_ACCOUNT_DATE_WINDOW_DAYS = 5
 TRANSFER_GROUP_DATE_WINDOW_DAYS = 7
@@ -33,6 +36,26 @@ TRANSFER_PAIR_IMPORTED_DATE_WINDOW_DAYS = 5
 AUTO_MATCH_THRESHOLD = 85
 SUGGEST_MATCH_THRESHOLD = 65
 AMOUNT_TOLERANCE = Decimal("0.01")
+
+# Plaid rows eligible for auto-match (NONE = legacy imports never classified at sync).
+PENDING_PLAID_IMPORT_STATUSES = (
+    Transaction.ImportMatchStatus.NONE,
+    Transaction.ImportMatchStatus.UNMATCHED,
+    Transaction.ImportMatchStatus.SUGGESTED,
+)
+
+
+def _pending_plaid_import_status_q() -> Q:
+    return Q(import_match_status__in=PENDING_PLAID_IMPORT_STATUSES)
+
+
+def _is_rule_backed_planned_row(planned: Transaction) -> bool:
+    """Scheduled / materialized automation occurrence (not a one-off manual row)."""
+    return bool(planned.rule_id) and planned.source in (
+        Transaction.Source.RULE,
+        Transaction.Source.ACTUAL,
+        Transaction.Source.ONE_TIME,
+    )
 # Auto-restore missing checking leg when a lone card inflow matches a Plaid outflow (see _try_orphan_card_inflow_repair).
 ORPHAN_REPAIR_MIN_SCORE = 70
 ORPHAN_REPAIR_SCORE_GAP = 10
@@ -110,6 +133,8 @@ _BANK_UNIQUE_REF_PATTERNS = (
     re.compile(r"jpm[a-z0-9]{5,}"),
     re.compile(r"transaction#:\s*\d+"),
     re.compile(r"cash app\*?\s*([a-z0-9]+(?:\s+[a-z0-9]+)?)"),
+    re.compile(r"ppd\s*id:?\s*(\d{4,})"),
+    re.compile(r"\bid:?\s*(\d{6,})\b"),
 )
 
 
@@ -205,6 +230,17 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
     if ref_i and ref_p:
         return bool(ref_i & ref_p)
     if not ref_i and not ref_p and _merchant_token_overlap_score(imported, planned) >= 16:
+        return True
+    # Rule-backed income/deposit: amount + account + date window is sufficient (payroll often posts early).
+    if (
+        _is_rule_backed_planned_row(planned)
+        and imported.amount is not None
+        and planned.amount is not None
+        and imported.amount > 0
+        and planned.amount > 0
+        and abs(imported.amount - planned.amount) <= AMOUNT_TOLERANCE
+        and abs((planned.date - imported.date).days) <= SAME_ACCOUNT_DATE_WINDOW_DAYS
+    ):
         return True
     return False
 
@@ -528,10 +564,25 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
     if import_families and planned_families and import_families.isdisjoint(planned_families):
         return 0, {"reject": "merchant_family_mismatch"}
 
+    if (
+        _is_rule_backed_planned_row(planned)
+        and imported.amount is not None
+        and planned.amount is not None
+        and imported.amount > 0
+        and planned.amount > 0
+        and abs(imported.amount - planned.amount) <= AMOUNT_TOLERANCE
+    ):
+        score += 22
+        parts["rule_income_amount"] = 22
+
     max_ratio = max(ratios) if ratios else 0.0
     has_ref = bool(ref_i and ref_p and (ref_i & ref_p))
     has_transfer = bool(planned.transfer_group_id)
-    has_rule_signal = bool(parts.get("rule_name_token") or parts.get("rule_name_sim"))
+    has_rule_signal = bool(
+        parts.get("rule_name_token")
+        or parts.get("rule_name_sim")
+        or parts.get("rule_income_amount")
+    )
     if not has_transfer and not has_ref and not has_rule_signal:
         if max_ratio < 0.35 and merchant_pts < 8:
             return 0, {"reject": "payee_mismatch"}
@@ -578,10 +629,7 @@ def _planned_candidate_base_qs(imported: Transaction) -> QuerySet[Transaction]:
         .exclude(source__in=[Transaction.Source.PLAID, Transaction.Source.INTEREST, Transaction.Source.SYSTEM])
         .filter(
             Q(source=Transaction.Source.RULE)
-            | (
-                Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])
-                & Q(rule__isnull=True)
-            )
+            | Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])
         )
         .filter(Q(plaid_transaction_id__isnull=True) | Q(plaid_transaction_id=""))
         .filter(
@@ -1063,10 +1111,14 @@ def _planned_row_eligible_as_import_match_candidate(planned: Transaction) -> boo
         Transaction.Source.SYSTEM,
     ):
         return False
-    eligible_source = planned.source == Transaction.Source.RULE or (
-        planned.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME) and planned.rule_id is None
-    )
-    if not eligible_source:
+    if planned.source == Transaction.Source.RULE:
+        pass
+    elif planned.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        if planned.rule_id is None:
+            pass  # manual / one-time
+        elif not _is_rule_backed_planned_row(planned):
+            return False
+    else:
         return False
     if (planned.plaid_transaction_id or "").strip():
         return False
@@ -1093,12 +1145,7 @@ def _unmatched_plaid_imports_for_planned(planned: Transaction) -> QuerySet[Trans
         )
         .exclude(plaid_transaction_id__isnull=True)
         .exclude(plaid_transaction_id="")
-        .filter(
-            import_match_status__in=[
-                Transaction.ImportMatchStatus.UNMATCHED,
-                Transaction.ImportMatchStatus.SUGGESTED,
-            ]
-        )
+        .filter(_pending_plaid_import_status_q())
         .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
     )
 
@@ -1128,7 +1175,7 @@ def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[Transact
     Keeps the forecast-side row as canonical and hides the import leg from balances — same as a
     successful match_imported_transaction.
     """
-    if planned.source != Transaction.Source.RULE or not planned.rule_id:
+    if not _is_rule_backed_planned_row(planned):
         return None
     if not _planned_row_eligible_as_import_match_candidate(planned):
         return None
@@ -1197,11 +1244,7 @@ def heal_unmatched_rule_and_import_links(txns: Iterable[Transaction]) -> int:
         elif (
             txn.source == Transaction.Source.PLAID
             and txn.pk not in seen_imports
-            and txn.import_match_status
-            in (
-                Transaction.ImportMatchStatus.UNMATCHED,
-                Transaction.ImportMatchStatus.SUGGESTED,
-            )
+            and txn.import_match_status in PENDING_PLAID_IMPORT_STATUSES
             and not TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists()
         ):
             seen_imports.add(txn.pk)
@@ -1219,34 +1262,46 @@ def rematch_unmatched_for_accounts(account_ids: Iterable[int]) -> int:
     for planned in (
         Transaction.objects.filter(
             account_id__in=ids,
-            source=Transaction.Source.RULE,
             rule_id__isnull=False,
             scenario__isnull=True,
+        )
+        .filter(
+            Q(source=Transaction.Source.RULE)
+            | Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])
         )
         .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
         .order_by("date", "id")
         .iterator(chunk_size=200)
     ):
-        if try_match_rule_to_pending_imports(planned):
-            linked += 1
+        try:
+            if try_match_rule_to_pending_imports(planned):
+                linked += 1
+        except Exception:
+            logger.exception(
+                "try_match_rule_to_pending_imports failed during rematch for transaction pk=%s",
+                planned.pk,
+            )
     for imp in (
         Transaction.objects.filter(
             account_id__in=ids,
             source=Transaction.Source.PLAID,
             scenario__isnull=True,
-            import_match_status__in=[
-                Transaction.ImportMatchStatus.UNMATCHED,
-                Transaction.ImportMatchStatus.SUGGESTED,
-            ],
         )
+        .filter(_pending_plaid_import_status_q())
         .exclude(plaid_transaction_id__isnull=True)
         .exclude(plaid_transaction_id="")
         .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
         .order_by("date", "id")
         .iterator(chunk_size=200)
     ):
-        if match_imported_transaction(imp):
-            linked += 1
+        try:
+            if match_imported_transaction(imp):
+                linked += 1
+        except Exception:
+            logger.exception(
+                "match_imported_transaction failed during rematch for transaction pk=%s",
+                imp.pk,
+            )
     return linked
 
 

@@ -43,10 +43,10 @@ describe("forecastRowSeverityClasses", () => {
     expect(c.backgroundClass).toBe("bg-white");
   });
 
-  it("uses violet tint for unmatched scheduled rows", () => {
+  it("uses sky tint for unmatched scheduled rows", () => {
     const c = unmatchedScheduleRowClasses();
-    expect(c.backgroundClass).toContain("violet");
-    expect(c.borderClass).toContain("border-violet");
+    expect(c.backgroundClass).toContain("sky");
+    expect(c.borderClass).toContain("border-sky");
   });
 
   it("keeps buffer severity background when merging schedule highlight", () => {
@@ -58,6 +58,6 @@ describe("forecastRowSeverityClasses", () => {
     });
     const merged = unmatchedScheduleRowClasses(base);
     expect(merged.backgroundClass).toBe(base.backgroundClass);
-    expect(merged.borderClass).toContain("border-violet");
+    expect(merged.borderClass).toContain("border-sky");
   });
 });

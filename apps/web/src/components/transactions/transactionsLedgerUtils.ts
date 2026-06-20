@@ -230,7 +230,8 @@ function plannedAndPostingLikelySame(planned: TimelineRow, posting: TimelineRow)
 
 /** Plaid row not yet linked to a scheduled/automation occurrence. */
 function isUnmatchedPlaidImportTimelineRow(row: TimelineRow): boolean {
-  if ((row.import_match_status ?? "").toLowerCase() === "matched") return false;
+  const status = (row.import_match_status ?? "").toLowerCase();
+  if (status === "matched" || status === "ignored" || status === "duplicate") return false;
   const txnSrc = (row.txn_source ?? "").toLowerCase();
   if (txnSrc === "plaid") return true;
   return Boolean((row.plaid_transaction_id ?? "").trim());
