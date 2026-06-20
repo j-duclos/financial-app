@@ -259,6 +259,7 @@ export function shouldHighlightUnmatchedScheduledRow(
   timeline: TimelineRow[]
 ): boolean {
   if (!isPlannedScheduledTimelineRow(row)) return false;
+  if (isShadowedByMatchedRuleSibling(row, timeline)) return false;
   if (isSupersededPlannedTimelineRow(row, timeline)) return false;
   const accountId = Number(row.account_id);
   for (const other of timeline) {
@@ -266,6 +267,25 @@ export function shouldHighlightUnmatchedScheduledRow(
     if (!isImportedTimelineRow(other)) continue;
     if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
     if (plannedAndPostingLikelySame(row, other)) return true;
+  }
+  return false;
+}
+
+/** Unmatched rule row superseded because a sibling occurrence already matched the bank import. */
+function isShadowedByMatchedRuleSibling(
+  row: TimelineRow,
+  timeline: TimelineRow[]
+): boolean {
+  if (row.rule_id == null) return false;
+  const accountId = Number(row.account_id);
+  const amt = parseFloat(row.amount);
+  if (Number.isNaN(amt)) return false;
+  for (const other of timeline) {
+    if (Number(other.account_id) !== accountId || other.rule_id !== row.rule_id) continue;
+    if ((other.import_match_status ?? "").toLowerCase() !== "matched") continue;
+    if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
+    const otherAmt = parseFloat(other.amount);
+    if (!Number.isNaN(otherAmt) && amountsMatch(amt, otherAmt)) return true;
   }
   return false;
 }
@@ -403,7 +423,7 @@ export function buildLedgerRowsFromTimeline(
 ): LedgerRow[] {
   const past = timeline
     .filter((r) => isPastTimelineRow(r, today))
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline))
+    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
   const future = timeline
     .filter((r) => isForecastTimelineRow(r, today))
@@ -513,7 +533,7 @@ export function creditCardSignedBalanceAtDate(
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
     .filter((r) => !isProjectedInterestRow(r))
     .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline))
+    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) return null;
 
@@ -554,7 +574,7 @@ export function assetBalanceAsOfDateFromTimeline(
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
     .filter((r) => !isProjectedInterestRow(r))
     .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline))
+    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) return null;
 

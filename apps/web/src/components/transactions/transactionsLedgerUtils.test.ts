@@ -851,6 +851,45 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
     expect(shouldHighlightUnmatchedScheduledRow(materialized, timeline)).toBe(true);
   });
 
+  it("does not highlight when a matched sibling rule row already absorbed the import", () => {
+    const payrollDesc = "2930 JOHN GALT S PAYROLL PPD ID: 14409866";
+    const matchedSibling: TimelineRow = {
+      date: "2026-06-18",
+      description: payrollDesc,
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 2,
+      category_name: "Paycheck / Salary",
+      amount: "1835.52",
+      type: "INFLOW",
+      status: "PLANNED",
+      source: "actual",
+      txn_source: "rule",
+      rule_id: 46,
+      import_match_status: "matched",
+      transaction_id: 5936,
+      running_balance: "2381.21",
+    };
+    const shadowScheduled: TimelineRow = {
+      date: "2026-06-19",
+      description: payrollDesc,
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 2,
+      category_name: "Paycheck / Salary",
+      amount: "1835.52",
+      type: "INFLOW",
+      status: "PLANNED",
+      source: "actual",
+      txn_source: "rule",
+      rule_id: 46,
+      transaction_id: 6444,
+      running_balance: "3176.24",
+    };
+    const timeline = [matchedSibling, shadowScheduled];
+    expect(shouldHighlightUnmatchedScheduledRow(shadowScheduled, timeline)).toBe(false);
+  });
+
   it("does not highlight when the scheduled row is already matched to a bank import", () => {
     const matched: TimelineRow = {
       date: "2026-06-15",

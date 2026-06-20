@@ -56,6 +56,125 @@ def _is_rule_backed_planned_row(planned: Transaction) -> bool:
         Transaction.Source.ACTUAL,
         Transaction.Source.ONE_TIME,
     )
+
+
+def _amounts_equal(a: Decimal | None, b: Decimal | None) -> bool:
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= AMOUNT_TOLERANCE
+
+
+def _matched_rule_occurrence_covers(
+    *,
+    rule_id: int,
+    account_id: int,
+    on_date: date,
+    amount: Decimal | None,
+) -> Transaction | None:
+    """Return a matched rule row that already satisfies this pay period (import posted nearby)."""
+    low = on_date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = on_date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    for txn in Transaction.objects.filter(
+        rule_id=rule_id,
+        account_id=account_id,
+        date__gte=low,
+        date__lte=high,
+        import_match_status=Transaction.ImportMatchStatus.MATCHED,
+        scenario__isnull=True,
+    ).order_by("-date", "-id"):
+        if amount is None or txn.amount is None or _amounts_equal(txn.amount, amount):
+            return txn
+    return None
+
+
+def purge_shadow_rule_occurrences_after_match(planned: Transaction) -> int:
+    """
+    Delete extra unmatched rule rows for the same paycheck after an import match.
+
+    Weekly rules can materialize 06-18 and 06-19 rows for one bank deposit — keep only the
+    matched canonical occurrence.
+    """
+    if not planned.rule_id or planned.source != Transaction.Source.RULE:
+        return 0
+    if planned.import_match_status != Transaction.ImportMatchStatus.MATCHED:
+        return 0
+    low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    removed = 0
+    dupes = (
+        Transaction.objects.filter(
+            rule_id=planned.rule_id,
+            account_id=planned.account_id,
+            date__gte=low,
+            date__lte=high,
+            source=Transaction.Source.RULE,
+            scenario__isnull=True,
+            status=Transaction.Status.PLANNED,
+        )
+        .exclude(pk=planned.pk)
+        .exclude(import_match_status=Transaction.ImportMatchStatus.MATCHED)
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    )
+    for dup in dupes:
+        if planned.amount is not None and not _amounts_equal(dup.amount, planned.amount):
+            continue
+        dup.delete()
+        removed += 1
+    return removed
+
+
+def repair_shadow_rule_occurrences_for_accounts(account_ids: Iterable[int]) -> int:
+    """Remove duplicate rule rows shadowed by an already-matched sibling on the same account."""
+    ids = list(account_ids)
+    if not ids:
+        return 0
+    removed = 0
+    for planned in (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            rule_id__isnull=False,
+            source=Transaction.Source.RULE,
+            import_match_status=Transaction.ImportMatchStatus.MATCHED,
+            scenario__isnull=True,
+        )
+        .order_by("date", "id")
+        .iterator(chunk_size=200)
+    ):
+        removed += purge_shadow_rule_occurrences_after_match(planned)
+    return removed
+
+
+def shadowed_rule_occurrence_ids(txns: Iterable[Transaction]) -> set[int]:
+    """Unmatched rule rows superseded by a matched sibling for the same pay period."""
+    rows = list(txns)
+    hidden: set[int] = set()
+    matched_rule_rows = [
+        t
+        for t in rows
+        if t.rule_id
+        and t.source == Transaction.Source.RULE
+        and t.import_match_status == Transaction.ImportMatchStatus.MATCHED
+    ]
+    if not matched_rule_rows:
+        return hidden
+    for t in rows:
+        if t.pk in hidden:
+            continue
+        if not t.rule_id or t.source != Transaction.Source.RULE:
+            continue
+        if t.import_match_status == Transaction.ImportMatchStatus.MATCHED:
+            continue
+        if TransactionMatch.objects.filter(planned_transaction_id=t.pk).exists():
+            continue
+        for m in matched_rule_rows:
+            if m.pk == t.pk or m.rule_id != t.rule_id or m.account_id != t.account_id:
+                continue
+            if not _amounts_equal(m.amount, t.amount):
+                continue
+            if abs((m.date - t.date).days) <= SAME_ACCOUNT_DATE_WINDOW_DAYS:
+                hidden.add(t.pk)
+                break
+    return hidden
 # Auto-restore missing checking leg when a lone card inflow matches a Plaid outflow (see _try_orphan_card_inflow_repair).
 ORPHAN_REPAIR_MIN_SCORE = 70
 ORPHAN_REPAIR_SCORE_GAP = 10
@@ -1095,6 +1214,7 @@ def _create_match_record(
             tg = TransferGroup.objects.filter(pk=planned.transfer_group_id).first()
             if tg:
                 _refresh_transfer_group_status(tg)
+        purge_shadow_rule_occurrences_after_match(planned)
         return tm
 
 
@@ -1302,6 +1422,7 @@ def rematch_unmatched_for_accounts(account_ids: Iterable[int]) -> int:
                 "match_imported_transaction failed during rematch for transaction pk=%s",
                 imp.pk,
             )
+    repair_shadow_rule_occurrences_for_accounts(ids)
     return linked
 
 

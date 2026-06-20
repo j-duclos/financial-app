@@ -644,6 +644,83 @@ class TestPlaidMatching(TestCase):
             ).exists()
         )
 
+    def test_matched_payroll_purges_shadow_rule_row_next_day(self):
+        """Import matched to 06-18 occurrence must remove duplicate 06-19 rule row."""
+        from transactions.services.matching import (
+            repair_shadow_rule_occurrences_for_accounts,
+            try_match_rule_to_pending_imports,
+        )
+
+        cat = Category.objects.create(
+            household=self.h,
+            name="Salary",
+            category_type=Category.CategoryType.INCOME,
+            sort_order=6,
+        )
+        rule = RecurringRule.objects.create(
+            household=self.h,
+            name="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            account=self.acc,
+            category=cat,
+            direction=RecurringRule.Direction.INCOME,
+            amount=Decimal("1835.52"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.WEEKLY,
+            interval=1,
+            start_date=date(2026, 1, 1),
+            end_date=None,
+            active=True,
+        )
+        payee = "2930 JOHN GALT S PAYROLL PPD ID: 14409866"
+        amt = Decimal("1835.52")
+        planned = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 18),
+            payee=payee,
+            amount=amt,
+            category_id=cat.id,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            status=Transaction.Status.PLANNED,
+        )
+        shadow = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 19),
+            payee=payee,
+            amount=amt,
+            category_id=cat.id,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            status=Transaction.Status.PLANNED,
+        )
+        imp = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 18),
+            payee=payee,
+            amount=amt,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-payroll-shadow",
+            imported_description=payee,
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        self.assertIsNotNone(try_match_rule_to_pending_imports(planned))
+        self.assertFalse(Transaction.objects.filter(pk=shadow.pk).exists())
+        # Idempotent repair for rows matched before purge existed.
+        shadow2 = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 6, 19),
+            payee=payee,
+            amount=amt,
+            category_id=cat.id,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            status=Transaction.Status.PLANNED,
+        )
+        self.assertEqual(repair_shadow_rule_occurrences_for_accounts([self.acc.id]), 1)
+        self.assertFalse(Transaction.objects.filter(pk=shadow2.pk).exists())
+
     def test_materialize_rule_occurrence_links_prior_plaid_import(self):
         from timeline.services.ledger import _materialize_rule_occurrence
 

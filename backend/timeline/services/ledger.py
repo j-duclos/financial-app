@@ -70,7 +70,9 @@ from transactions.models import Transaction
 from transactions.services.matching import (
     ledger_visible_transactions,
     rematch_unmatched_for_accounts,
+    shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
+    _matched_rule_occurrence_covers,
 )
 from timeline.services.rule_schedule import (
     generate_rule_occurrence_dates,
@@ -755,6 +757,16 @@ def _materialize_rule_occurrence(
                 record_materialization_skipped()
         _safe_try_match_rule_to_pending_imports(txn)
         return txn
+    covered = _matched_rule_occurrence_covers(
+        rule_id=rule.pk,
+        account_id=account_id,
+        on_date=d,
+        amount=amount,
+    )
+    if covered is not None:
+        if materialization_active():
+            record_materialization_skipped()
+        return covered
     if not _rule_allows_materialization(rule, d):
         raise ValueError(
             f"Cannot materialize rule {rule.pk} on {d}: rule is inactive or paused as of {rule.paused_at}"
@@ -1975,6 +1987,9 @@ def _build_timeline_impl(
                     "match_as_planned__imported_transaction",
                 ).order_by("date", "id")
             )
+        shadow_ids = shadowed_rule_occurrence_ids(actual)
+        if shadow_ids:
+            actual = [t for t in actual if t.pk not in shadow_ids]
         # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
         # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
         # one row per rule occurrence when duplicates exist (e.g. after account change + materialization).
