@@ -21,7 +21,7 @@ from common.services.cache import invalidate_financial_cache_for_household, inva
 from common.services.profiler import enter_materialization_context, exit_materialization_context, perf_enabled, perf_print
 from core.utils import get_households_for_user
 from timeline.models import RecurringRule
-from timeline.services.ledger import build_timeline
+from timeline.services.ledger import build_timeline, repair_unlinked_rule_transfer_pairs
 from timeline.services.rule_cleanup import delete_future_materialized_transactions_for_rule
 from timeline.services.rule_schedule import promote_due_schedules
 
@@ -105,6 +105,24 @@ def materialize_recurring_transactions_for_user(
         "transactions_updated": summary.get("transactions_updated", 0),
         "transactions_skipped": summary.get("transactions_skipped", 0),
     }
+
+    from transactions.services.matching import rematch_unmatched_for_accounts
+
+    rematch_ids: set[int] = set()
+    if account_ids:
+        rematch_ids.update(account_ids)
+        repair_unlinked_rule_transfer_pairs(account_ids)
+    if rule_ids:
+        for rid in rule_ids:
+            rule = RecurringRule.objects.filter(pk=rid).first()
+            if rule is None:
+                continue
+            if rule.account_id:
+                rematch_ids.add(rule.account_id)
+            if rule.transfer_to_account_id:
+                rematch_ids.add(rule.transfer_to_account_id)
+    if rematch_ids:
+        rematch_unmatched_for_accounts(rematch_ids)
 
     invalidate_user_financial_cache(user.pk)
     for household in households:

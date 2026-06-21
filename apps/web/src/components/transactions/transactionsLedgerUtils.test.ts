@@ -13,6 +13,7 @@ import {
   shouldHighlightUnmatchedScheduledRow,
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
+  creditSignedOpeningBalance,
   splitLedgerSections,
   lowestProjectedFromLedgerFuture,
   formatDateDisplay,
@@ -34,11 +35,11 @@ describe("timelineRangeForFilter", () => {
 });
 
 describe("projectionTimelineRangeForAsOf", () => {
-  it("uses ~3 years of history and no long future horizon", () => {
+  it("uses a short history window and no long future horizon", () => {
     const today = todayStr();
     const { start, end, as_of } = projectionTimelineRangeForAsOf("2020-06-15");
     expect(as_of).toBe(today);
-    expect(start).toBe(addDaysToIsoDate(as_of, -1095));
+    expect(start).toBe(addDaysToIsoDate(as_of, -120));
     expect(end).toBe(addDaysToIsoDate(as_of, 1));
   });
 });
@@ -487,8 +488,22 @@ describe("buildLedgerRowsFromTimeline", () => {
   });
 });
 
+describe("creditSignedOpeningBalance", () => {
+  it("negates positive opening debt for signed credit balance", () => {
+    expect(creditSignedOpeningBalance("110.01")).toBeCloseTo(-110.01, 2);
+    expect(creditSignedOpeningBalance("0")).toBe(0);
+    expect(creditSignedOpeningBalance(null)).toBe(0);
+  });
+});
+
 describe("creditOwedAsOfDateFromTimeline", () => {
   const today = todayStr();
+
+  it("uses opening balance when card timeline has no rows", () => {
+    expect(
+      creditOwedAsOfDateFromTimeline([], 40, "2026-06-26", new Set(), -110.01)
+    ).toBeCloseTo(110.01, 2);
+  });
 
   it("returns owed as abs of negative signed balance through as-of date", () => {
     const timeline: TimelineRow[] = [

@@ -112,6 +112,7 @@ def _rule_occurrence_keep_ids(
                 old_date=lookup_date,
                 old_amount=instance.amount,
                 old_account_id=instance.account_id,
+                transfer_group_id=instance.transfer_group_id,
             )
             if cp is not None:
                 keep_ids.add(cp.pk)
@@ -142,6 +143,14 @@ def _resolve_transfer_pair(
 
 def _find_likely_transfer_counterpart(instance: Transaction, *, on_date) -> Optional[Transaction]:
     """When the Transfer row is missing, find the other leg by date, amount, and payee."""
+    if instance.transfer_group_id:
+        other = (
+            Transaction.objects.filter(transfer_group_id=instance.transfer_group_id)
+            .exclude(pk=instance.pk)
+            .first()
+        )
+        if other is not None:
+            return other
     if instance.amount in (None, 0):
         return None
     abs_amt = abs(instance.amount)
@@ -300,6 +309,9 @@ class TransactionViewSet(ModelViewSet):
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        from common.services.cache import invalidate_financial_cache_for_household
+
+        invalidate_financial_cache_for_household(txn.account.household_id)
         serializer = self.get_serializer(txn)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -335,6 +347,7 @@ class TransactionViewSet(ModelViewSet):
                 old_date=old_date,
                 old_amount=old_amount,
                 old_account_id=old_account_id,
+                transfer_group_id=instance.transfer_group_id,
             )
             if paired is not None:
                 Transaction.objects.filter(pk=paired.pk).update(rule_id=None)
@@ -342,6 +355,12 @@ class TransactionViewSet(ModelViewSet):
         # Handled below for both Transfer-linked and rule-created pairs.
         transfer_to_account_id = serializer.validated_data.get("transfer_to_account_id")
         transfer, other = _resolve_transfer_pair(instance)
+        if other is None and instance.transfer_group_id:
+            other = (
+                Transaction.objects.filter(transfer_group_id=instance.transfer_group_id)
+                .exclude(pk=instance.pk)
+                .first()
+            )
         if other is None and "date" in serializer.validated_data:
             other = _find_likely_transfer_counterpart(instance, on_date=old_date)
 
@@ -417,6 +436,9 @@ class TransactionViewSet(ModelViewSet):
                 new_date=new_date,
                 other=other,
             )
+        from common.services.cache import invalidate_financial_cache_for_household
+
+        invalidate_financial_cache_for_household(instance.account.household_id)
         data = dict(serializer.data)
         if other is not None:
             data["synced_to_account_id"] = other.account_id

@@ -8,9 +8,9 @@ import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Collection, Optional
+from typing import Any, Collection, Iterable, Optional
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -66,9 +66,10 @@ from timeline.models import (
     ScenarioAddedRecurring,
     ScenarioRuleOverride,
 )
-from transactions.models import Transaction
+from transactions.models import Transaction, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
+    accounts_have_pending_match_work,
     rematch_unmatched_for_accounts,
     shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
@@ -487,6 +488,122 @@ def _category_name_allows_rule_transfer_destination(category_name: Optional[str]
     """
     n = (category_name or "").strip()
     return n in ("Credit Card Payment", "Bank Transfer")
+
+
+def _has_paired_rule_transfer_leg(txn: Transaction) -> bool:
+    """True when another RULE leg exists for the same rule occurrence (bank↔card transfer pair)."""
+    if txn.rule_id is None:
+        return False
+    return (
+        Transaction.objects.filter(
+            rule_id=txn.rule_id,
+            date=txn.date,
+            source=Transaction.Source.RULE,
+        )
+        .exclude(account_id=txn.account_id)
+        .exists()
+    )
+
+
+def _is_scheduled_rule_transfer(rule: RecurringRule, category_name: Optional[str]) -> bool:
+    return bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
+        category_name
+    )
+
+
+def _link_rule_transfer_pair_transactions(
+    *,
+    rule: RecurringRule,
+    d: date,
+    txn_from: Transaction,
+    txn_to: Transaction,
+    from_acc_id: int,
+    to_acc_id: int,
+    in_amount: Decimal,
+) -> None:
+    """Attach a TransferGroup so paired rule legs are never treated as standalone debt payments."""
+    if txn_from.transfer_group_id and txn_to.transfer_group_id:
+        return
+    existing_tg_id = txn_from.transfer_group_id or txn_to.transfer_group_id
+    if existing_tg_id:
+        updates: list[tuple[Transaction, list[str]]] = []
+        if not txn_from.transfer_group_id:
+            txn_from.transfer_group_id = existing_tg_id
+            updates.append((txn_from, ["transfer_group_id", "updated_at"]))
+        if not txn_to.transfer_group_id:
+            txn_to.transfer_group_id = existing_tg_id
+            updates.append((txn_to, ["transfer_group_id", "updated_at"]))
+        for txn, fields in updates:
+            txn.save(update_fields=fields)
+        return
+    from_acc = Account.objects.filter(pk=from_acc_id).first()
+    if from_acc is None:
+        return
+    today = timezone.localdate()
+    tg_status = TransferGroup.Status.PLANNED if d > today else TransferGroup.Status.CLEARED
+    tg = TransferGroup.objects.create(
+        household_id=from_acc.household_id,
+        from_account_id=from_acc_id,
+        to_account_id=to_acc_id,
+        amount=abs(in_amount),
+        scheduled_date=d,
+        status=tg_status,
+    )
+    txn_from.transfer_group = tg
+    txn_to.transfer_group = tg
+    txn_from.save(update_fields=["transfer_group_id", "updated_at"])
+    txn_to.save(update_fields=["transfer_group_id", "updated_at"])
+    cache = get_active_balance_cache()
+    if cache is not None:
+        cache.note_transaction_saved(txn_from)
+        cache.note_transaction_saved(txn_to)
+
+
+def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
+    """Backfill TransferGroup links on materialized bank→card rule pairs missing transfer_group_id."""
+    from collections import defaultdict
+
+    from timeline.models import RecurringRule
+
+    ids = list(account_ids)
+    if not ids:
+        return 0
+    repaired = 0
+    rules = RecurringRule.objects.filter(
+        Q(account_id__in=ids) | Q(transfer_to_account_id__in=ids),
+        transfer_to_account__isnull=False,
+        active=True,
+    ).select_related("category", "account", "transfer_to_account")
+    today = timezone.localdate()
+    for rule in rules:
+        cat_name = rule.category.name if rule.category else None
+        if not _is_scheduled_rule_transfer(rule, cat_name):
+            continue
+        by_date: dict[date, list[Transaction]] = defaultdict(list)
+        for txn in Transaction.objects.filter(
+            rule_id=rule.id,
+            source=Transaction.Source.RULE,
+            date__gte=today,
+            transfer_group_id__isnull=True,
+        ):
+            by_date[txn.date].append(txn)
+        for d, legs in by_date.items():
+            out_leg = next((t for t in legs if t.amount is not None and t.amount < 0), None)
+            in_leg = next((t for t in legs if t.amount is not None and t.amount > 0), None)
+            if out_leg is None or in_leg is None:
+                continue
+            in_amt = in_leg.amount if in_leg.amount is not None else Decimal("0")
+            _link_rule_transfer_pair_transactions(
+                rule=rule,
+                d=d,
+                txn_from=out_leg,
+                txn_to=in_leg,
+                from_acc_id=out_leg.account_id,
+                to_acc_id=in_leg.account_id,
+                in_amount=in_amt,
+            )
+            repaired += 1
+    return repaired
 
 
 def _db_card_postings_in_exclusive_range(
@@ -1934,6 +2051,9 @@ def _build_timeline_impl(
     if not account_ids:
         return []
 
+    if not projection_only:
+        repair_unlinked_rule_transfer_pairs(account_ids)
+
     if perf_enabled():
         requested_days = max((end_date - start_date).days, 0)
         perf_print(
@@ -1977,7 +2097,9 @@ def _build_timeline_impl(
                 "match_as_planned__imported_transaction",
             ).order_by("date", "id")
         )
-        if rematch_unmatched_for_accounts(account_ids):
+        if accounts_have_pending_match_work(account_ids) and rematch_unmatched_for_accounts(
+            account_ids
+        ):
             actual = list(
                 actual_qs.select_related(
                     "account",
@@ -1998,6 +2120,7 @@ def _build_timeline_impl(
         # Build map (rule_id, date) -> destination account name for transfer "from" legs so we can show "Move to CC (Savor)" in the list.
         from_leg_keys = [(t.rule_id, t.date) for t in actual if t.rule_id is not None and t.amount is not None and t.amount < 0]
         to_leg_account_name: dict[tuple[int, date], str] = {}
+        tg_to_account_name: dict[int, str] = {}
         if from_leg_keys:
             rule_dates = {(r, d) for r, d in from_leg_keys}
             to_legs = Transaction.objects.filter(
@@ -2007,6 +2130,14 @@ def _build_timeline_impl(
             for to_txn in to_legs:
                 if to_txn.account_id and to_txn.rule_id:
                     to_leg_account_name[(to_txn.rule_id, to_txn.date)] = getattr(to_txn.account, "name", "") or ""
+            tg_ids = {t.transfer_group_id for t in actual if t.transfer_group_id and t.amount is not None and t.amount < 0}
+            if tg_ids:
+                for to_txn in Transaction.objects.filter(
+                    transfer_group_id__in=tg_ids,
+                    amount__gt=0,
+                ).exclude(account_id__in=account_ids).select_related("account"):
+                    if to_txn.transfer_group_id and to_txn.account_id:
+                        tg_to_account_name[to_txn.transfer_group_id] = getattr(to_txn.account, "name", "") or ""
 
         today = as_of_date or timezone.localdate()
         accs = {
@@ -2068,8 +2199,15 @@ def _build_timeline_impl(
                 ids_in_rows.add(t.id)
                 continue
             # Per-occurrence: skip (and purge) debt payments when destination owes nothing that day.
+            # Never hide paired transfer legs — both sides must stay visible in the ledger.
             cat_nm = (t.category.name if getattr(t, "category", None) and t.category else None) or ""
-            if t.rule_id is not None and t.date >= today and amt is not None:
+            if (
+                t.rule_id is not None
+                and t.date >= today
+                and amt is not None
+                and not t.transfer_group_id
+                and not _has_paired_rule_transfer_leg(t)
+            ):
                 hide_paid_off = False
                 if t.account_id in credit_account_ids and amt > 0 and t.account:
                     hide_paid_off = _skip_payment_to_debt_destination(
@@ -2149,6 +2287,8 @@ def _build_timeline_impl(
                 pass
             if t.rule_id and amt is not None and amt < 0:
                 to_name = to_leg_account_name.get((t.rule_id, t.date))
+                if not to_name and t.transfer_group_id:
+                    to_name = tg_to_account_name.get(t.transfer_group_id)
                 if to_name and to_name not in desc:
                     desc = f"{desc} ({to_name})" if desc else to_name
             row_source = (
@@ -2515,6 +2655,15 @@ def _build_timeline_impl(
                     )
                     to_acc_id_actual = to_acc_id
                     to_name_actual = to_name
+                _link_rule_transfer_pair_transactions(
+                    rule=rule,
+                    d=d,
+                    txn_from=txn_from,
+                    txn_to=txn_to,
+                    from_acc_id=from_acc_id,
+                    to_acc_id=to_acc_id_actual,
+                    in_amount=in_amount,
+                )
                 if txn_from.id in ids_in_rows or txn_to.id in ids_in_rows:
                     continue
                 ids_in_rows.add(txn_from.id)

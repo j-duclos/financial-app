@@ -1373,6 +1373,39 @@ def heal_unmatched_rule_and_import_links(txns: Iterable[Transaction]) -> int:
     return linked
 
 
+def accounts_have_pending_match_work(account_ids: Iterable[int]) -> bool:
+    """Cheap exists() probe — skip full rematch on timeline reads when nothing is pending."""
+    ids = list(account_ids)
+    if not ids:
+        return False
+    if (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+            scenario__isnull=True,
+        )
+        .filter(_pending_plaid_import_status_q())
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+        .exists()
+    ):
+        return True
+    return (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            rule_id__isnull=False,
+            scenario__isnull=True,
+        )
+        .filter(
+            Q(source=Transaction.Source.RULE)
+            | Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])
+        )
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+        .exists()
+    )
+
+
 def rematch_unmatched_for_accounts(account_ids: Iterable[int]) -> int:
     """Retry pairing all unmatched rule rows and Plaid imports on the given accounts."""
     ids = list(account_ids)

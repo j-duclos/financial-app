@@ -41,6 +41,9 @@ import {
   formatDateDisplay,
   addMonths,
   creditOwedAsOfDateFromTimeline,
+  creditSignedOpeningBalance,
+  pickAccountTimelineForHint,
+  hintDateWithinLedgerRange,
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
@@ -142,8 +145,8 @@ export default function Transactions() {
     direction: "OUTFLOW" as "INFLOW" | "OUTFLOW",
     transfer_to_account_id: "" as number | "",
   });
-  const debouncedInlineDate = useDebouncedValue(inlineRow.date, 450);
-  const debouncedEditDate = useDebouncedValue(editForm.date, 450);
+  const debouncedInlineDate = useDebouncedValue(inlineRow.date, 1200);
+  const debouncedEditDate = useDebouncedValue(editForm.date, 1200);
   const debouncedAmountMinInput = useDebouncedValue(amountMinInput, 350);
   const debouncedAmountMaxInput = useDebouncedValue(amountMaxInput, 350);
   const queryClient = useQueryClient();
@@ -252,6 +255,18 @@ export default function Transactions() {
     if (!accountForecastData) return accountData;
     return { ...accountData, ...accountForecastData };
   }, [accountData, accountForecastData]);
+
+  const householdId =
+    account && typeof account.household === "object" && account.household != null && "id" in account.household
+      ? (account.household as { id: number }).id
+      : typeof account?.household === "number"
+        ? account.household
+        : null;
+
+  const ledgerRange = useMemo(
+    () => ({ start: timelineStart, end: timelineEnd }),
+    [timelineStart, timelineEnd]
+  );
 
   const [loadHouseholdWarnings, setLoadHouseholdWarnings] = useState(false);
   useEffect(() => {
@@ -367,6 +382,26 @@ export default function Transactions() {
     );
   }, [account, accountId, accounts, selectedCategory?.name]);
 
+  const needsTransferHints =
+    Boolean(inlineRow.transfer_to_account_id) ||
+    Boolean(editing) ||
+    loadHouseholdWarnings;
+
+  const { data: householdTimelineData, isFetching: householdTimelineFetching } = useQuery({
+    queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, todayStr()],
+    queryFn: () =>
+      getTimeline({
+        start: timelineStart,
+        end: timelineEnd,
+        as_of: todayStr(),
+        household_id: householdId ?? undefined,
+      }),
+    enabled: !!householdId && !!timelineStart && !!timelineEnd && needsTransferHints,
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+
   /** When adding a CC payment from a bank account, show how much is owed on the selected card (same row). */
   const inlinePayToCardAccountId =
     selectedCategory?.name === "Credit Card Payment" &&
@@ -379,6 +414,16 @@ export default function Transactions() {
     () => (debouncedInlineDate ? projectionTimelineRangeForAsOf(debouncedInlineDate) : null),
     [debouncedInlineDate]
   );
+
+  const inlineCardHintInLedgerRange =
+    inlinePayToCardAccountId != null &&
+    inlineRow.date !== "" &&
+    hintDateWithinLedgerRange(inlineRow.date, ledgerRange);
+
+  const inlineCardNeedsDedicatedTimeline =
+    inlinePayToCardAccountId != null &&
+    inlineProjectionRange != null &&
+    !inlineCardHintInLedgerRange;
 
   const { data: inlineCardTimelineData, isFetching: inlineCardTimelineLoading } = useQuery({
     queryKey: [
@@ -398,20 +443,49 @@ export default function Transactions() {
         account_id: inlinePayToCardAccountId!,
       });
     },
-    enabled: inlinePayToCardAccountId != null && inlineProjectionRange != null,
-    staleTime: 60_000,
+    enabled: inlineCardNeedsDedicatedTimeline,
+    staleTime: 300_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
-  const inlineOwedAsOfPaymentDate = useMemo(() => {
-    if (inlinePayToCardAccountId == null || !inlineRow.date || !inlineCardTimelineData?.timeline) return null;
-    return creditOwedAsOfDateFromTimeline(
-      inlineCardTimelineData.timeline,
+  const inlineCardTimelineForHint = useMemo(
+    () =>
+      pickAccountTimelineForHint(
+        inlinePayToCardAccountId ?? 0,
+        inlineRow.date,
+        ledgerRange,
+        householdTimelineData?.timeline,
+        inlineCardTimelineData?.timeline
+      ),
+    [
       inlinePayToCardAccountId,
       inlineRow.date,
-      new Set()
+      ledgerRange,
+      householdTimelineData?.timeline,
+      inlineCardTimelineData?.timeline,
+    ]
+  );
+
+  const inlineCardTimelineLoadingResolved =
+    inlineCardHintInLedgerRange && householdTimelineFetching
+      ? true
+      : inlineCardNeedsDedicatedTimeline && inlineCardTimelineLoading;
+
+  const inlineOwedAsOfPaymentDate = useMemo(() => {
+    if (inlinePayToCardAccountId == null || !inlineRow.date) return null;
+    const cardAccount = accounts.find((a) => a.id === inlinePayToCardAccountId);
+    const openingSigned = cardAccount
+      ? creditSignedOpeningBalance(cardAccount.starting_balance)
+      : null;
+    return creditOwedAsOfDateFromTimeline(
+      inlineCardTimelineForHint,
+      inlinePayToCardAccountId,
+      inlineRow.date,
+      new Set(),
+      openingSigned
     );
-  }, [inlinePayToCardAccountId, inlineRow.date, inlineCardTimelineData?.timeline]);
+  }, [inlinePayToCardAccountId, inlineRow.date, inlineCardTimelineForHint, accounts]);
 
   const inlineTransferToId =
     typeof inlineRow.transfer_to_account_id === "number" && inlineRow.transfer_to_account_id > 0
@@ -426,6 +500,16 @@ export default function Transactions() {
     String(inlineDestPickAccount.account_type ?? "").toUpperCase() !== "CREDIT"
       ? inlineTransferToId
       : null;
+
+  const inlineBankHintInLedgerRange =
+    inlineBankTransferDestId != null &&
+    inlineRow.date !== "" &&
+    hintDateWithinLedgerRange(inlineRow.date, ledgerRange);
+
+  const inlineBankNeedsDedicatedTimeline =
+    inlineBankTransferDestId != null &&
+    inlineProjectionRange != null &&
+    !inlineBankHintInLedgerRange;
 
   const { data: inlineBankDestTimelineData, isFetching: inlineBankDestTimelineLoading } = useQuery({
     queryKey: [
@@ -445,20 +529,44 @@ export default function Transactions() {
         account_id: inlineBankTransferDestId!,
       });
     },
-    enabled: inlineBankTransferDestId != null && inlineProjectionRange != null,
-    staleTime: 60_000,
+    enabled: inlineBankNeedsDedicatedTimeline,
+    staleTime: 300_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
+  const inlineBankTimelineForHint = useMemo(
+    () =>
+      pickAccountTimelineForHint(
+        inlineBankTransferDestId ?? 0,
+        inlineRow.date,
+        ledgerRange,
+        householdTimelineData?.timeline,
+        inlineBankDestTimelineData?.timeline
+      ),
+    [
+      inlineBankTransferDestId,
+      inlineRow.date,
+      ledgerRange,
+      householdTimelineData?.timeline,
+      inlineBankDestTimelineData?.timeline,
+    ]
+  );
+
+  const inlineBankDestTimelineLoadingResolved =
+    inlineBankHintInLedgerRange && householdTimelineFetching
+      ? true
+      : inlineBankNeedsDedicatedTimeline && inlineBankDestTimelineLoading;
+
   const inlineBankDestBalanceBefore = useMemo(() => {
-    if (inlineBankTransferDestId == null || !inlineRow.date || !inlineBankDestTimelineData?.timeline) return null;
+    if (inlineBankTransferDestId == null || !inlineRow.date) return null;
     return assetBalanceAsOfDateFromTimeline(
-      inlineBankDestTimelineData.timeline,
+      inlineBankTimelineForHint,
       inlineBankTransferDestId,
       inlineRow.date,
       new Set()
     );
-  }, [inlineBankTransferDestId, inlineRow.date, inlineBankDestTimelineData?.timeline]);
+  }, [inlineBankTransferDestId, inlineRow.date, inlineBankTimelineForHint]);
 
   const inlineBankDestBalanceAfter = useMemo(() => {
     if (inlineBankDestBalanceBefore == null) return null;
@@ -574,6 +682,14 @@ export default function Transactions() {
     [debouncedEditDate]
   );
 
+  const editCardHintInLedgerRange =
+    editPayToCardId != null &&
+    editForm.date !== "" &&
+    hintDateWithinLedgerRange(editForm.date, ledgerRange);
+
+  const editCardNeedsDedicatedTimeline =
+    editPayToCardId != null && editProjectionRange != null && !editCardHintInLedgerRange;
+
   const { data: editCardTimelineData, isFetching: editCardTimelineLoading } = useQuery({
     queryKey: [
       "timeline",
@@ -593,20 +709,57 @@ export default function Transactions() {
         account_id: editPayToCardId!,
       });
     },
-    enabled: editPayToCardId != null && editProjectionRange != null,
-    staleTime: 60_000,
+    enabled: editCardNeedsDedicatedTimeline,
+    staleTime: 300_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
-  const editOwedAsOfPaymentDate = useMemo(() => {
-    if (editPayToCardId == null || !editForm.date || !editCardTimelineData?.timeline) return null;
-    return creditOwedAsOfDateFromTimeline(
-      editCardTimelineData.timeline,
+  const editCardTimelineForHint = useMemo(
+    () =>
+      pickAccountTimelineForHint(
+        editPayToCardId ?? 0,
+        editForm.date,
+        ledgerRange,
+        householdTimelineData?.timeline,
+        editCardTimelineData?.timeline
+      ),
+    [
       editPayToCardId,
       editForm.date,
-      editExcludeTxnIds
+      ledgerRange,
+      householdTimelineData?.timeline,
+      editCardTimelineData?.timeline,
+    ]
+  );
+
+  const editCardTimelineLoadingResolved =
+    editCardHintInLedgerRange && householdTimelineFetching
+      ? true
+      : editCardNeedsDedicatedTimeline && editCardTimelineLoading;
+
+  const editOwedAsOfPaymentDate = useMemo(() => {
+    if (editPayToCardId == null || !editForm.date) return null;
+    const cardAccount = accounts.find((a) => a.id === editPayToCardId);
+    const openingSigned = cardAccount
+      ? creditSignedOpeningBalance(cardAccount.starting_balance)
+      : null;
+    return creditOwedAsOfDateFromTimeline(
+      editCardTimelineForHint,
+      editPayToCardId,
+      editForm.date,
+      editExcludeTxnIds,
+      openingSigned
     );
-  }, [editPayToCardId, editForm.date, editCardTimelineData?.timeline, editExcludeTxnIds]);
+  }, [editPayToCardId, editForm.date, editCardTimelineForHint, editExcludeTxnIds, accounts]);
+
+  const editBankHintInLedgerRange =
+    editBankTransferDestId != null &&
+    editForm.date !== "" &&
+    hintDateWithinLedgerRange(editForm.date, ledgerRange);
+
+  const editBankNeedsDedicatedTimeline =
+    editBankTransferDestId != null && editProjectionRange != null && !editBankHintInLedgerRange;
 
   const { data: editBankDestTimelineData, isFetching: editBankDestTimelineLoading } = useQuery({
     queryKey: [
@@ -627,20 +780,44 @@ export default function Transactions() {
         account_id: editBankTransferDestId!,
       });
     },
-    enabled: editBankTransferDestId != null && editProjectionRange != null,
-    staleTime: 60_000,
+    enabled: editBankNeedsDedicatedTimeline,
+    staleTime: 300_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
+  const editBankTimelineForHint = useMemo(
+    () =>
+      pickAccountTimelineForHint(
+        editBankTransferDestId ?? 0,
+        editForm.date,
+        ledgerRange,
+        householdTimelineData?.timeline,
+        editBankDestTimelineData?.timeline
+      ),
+    [
+      editBankTransferDestId,
+      editForm.date,
+      ledgerRange,
+      householdTimelineData?.timeline,
+      editBankDestTimelineData?.timeline,
+    ]
+  );
+
+  const editBankDestTimelineLoadingResolved =
+    editBankHintInLedgerRange && householdTimelineFetching
+      ? true
+      : editBankNeedsDedicatedTimeline && editBankDestTimelineLoading;
+
   const editBankDestBalanceExcludingTransfer = useMemo(() => {
-    if (editBankTransferDestId == null || !editForm.date || !editBankDestTimelineData?.timeline) return null;
+    if (editBankTransferDestId == null || !editForm.date) return null;
     return assetBalanceAsOfDateFromTimeline(
-      editBankDestTimelineData.timeline,
+      editBankTimelineForHint,
       editBankTransferDestId,
       editForm.date,
       editExcludeTxnIds
     );
-  }, [editBankTransferDestId, editForm.date, editBankDestTimelineData?.timeline, editExcludeTxnIds]);
+  }, [editBankTransferDestId, editForm.date, editBankTimelineForHint, editExcludeTxnIds]);
 
   const editBankDestBalanceAfterTransfer = useMemo(() => {
     if (editBankDestBalanceExcludingTransfer == null) return null;
@@ -670,13 +847,6 @@ export default function Transactions() {
     account && String((account as { account_type?: string; accountType?: string }).account_type ?? (account as { accountType?: string }).accountType ?? "").toUpperCase() === "CREDIT"
   );
 
-  const householdId =
-    account && typeof account.household === "object" && account.household != null && "id" in account.household
-      ? (account.household as { id: number }).id
-      : typeof account?.household === "number"
-        ? account.household
-        : null;
-
   const plaidHouseholdId = householdId ?? profile?.default_household ?? null;
 
   const timelinePatchScope = useMemo((): TimelinePatchScope | null => {
@@ -703,21 +873,6 @@ export default function Transactions() {
       return ahId === householdId && st === "active";
     });
   }, [accounts, householdId]);
-
-  const { data: householdTimelineData } = useQuery({
-    queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, todayStr()],
-    queryFn: () =>
-      getTimeline({
-        start: timelineStart,
-        end: timelineEnd,
-        as_of: todayStr(),
-        household_id: householdId ?? undefined,
-      }),
-    enabled: !!householdId && !!timelineStart && !!timelineEnd && loadHouseholdWarnings,
-    staleTime: 120_000,
-    placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
-  });
 
   const today = todayStr();
   /** For each non-credit account: first date on or after today when balance goes negative (if any). */
@@ -896,7 +1051,6 @@ export default function Transactions() {
     mutationFn: createTransaction,
     onSuccess: () => {
       refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
-      void queryClient.invalidateQueries({ queryKey: ["timeline"], type: "active" });
     },
   });
 
@@ -904,7 +1058,6 @@ export default function Transactions() {
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
     onSuccess: (_data, variables) => {
       refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
-      void queryClient.invalidateQueries({ queryKey: ["timeline"], type: "active" });
       void queryClient.refetchQueries({ queryKey: ["account", variables.from_account], type: "active" });
       void queryClient.refetchQueries({ queryKey: ["account", variables.to_account], type: "active" });
     },
@@ -1069,11 +1222,25 @@ export default function Transactions() {
   async function resolveTimelineRowTransactionId(row: TimelineRow): Promise<number | null> {
     if (row.transaction_id != null) return row.transaction_id;
     if (row.rule_id == null || typeof accountId !== "number") return null;
+    const rowAccountId = Number(row.account_id);
     await materializeRecurring({
       account_id: accountId,
       rule_id: row.rule_id,
       forecast_days: 90,
     });
+    const txns = await listTransactions({
+      account: rowAccountId,
+      date_after: row.date,
+      date_before: row.date,
+      page_size: 100,
+    });
+    const direct = txns.results.find((t) => {
+      const tid = (t as { rule_id?: number | null }).rule_id;
+      const aid = t.account_id ?? (t.account as { id?: number } | undefined)?.id;
+      return tid === row.rule_id && t.date === row.date && Number(aid) === rowAccountId;
+    });
+    if (direct?.id) return direct.id;
+
     const refreshed = await queryClient.fetchQuery({
       queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
       queryFn: () =>
@@ -1564,10 +1731,10 @@ export default function Transactions() {
             isPending={createMu.isPending || createTransferMu.isPending}
             currency={currency}
             inlinePayToCardAccountId={inlinePayToCardAccountId}
-            inlineCardTimelineLoading={inlineCardTimelineLoading}
+            inlineCardTimelineLoading={inlineCardTimelineLoadingResolved}
             inlineOwedAsOfPaymentDate={inlineOwedAsOfPaymentDate}
             inlineBankTransferDestId={inlineBankTransferDestId}
-            inlineBankDestTimelineLoading={inlineBankDestTimelineLoading}
+            inlineBankDestTimelineLoading={inlineBankDestTimelineLoadingResolved}
             inlineDestPickAccount={inlineDestPickAccount}
             inlineBankDestBalanceBefore={inlineBankDestBalanceBefore}
             inlineBankDestBalanceAfter={inlineBankDestBalanceAfter}
@@ -1742,7 +1909,7 @@ export default function Transactions() {
                   <div className="text-xs font-medium text-gray-700">
                     Projected balance owed on card (as of {formatDateDisplay(editForm.date)})
                   </div>
-                  {editCardTimelineLoading ? (
+                  {editCardTimelineLoadingResolved ? (
                     <p className="text-xs text-gray-500 mt-1">Loading…</p>
                   ) : (
                     <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">
@@ -1766,7 +1933,7 @@ export default function Transactions() {
                     {editDestinationAccount?.name ?? "Destination"} — balance on{" "}
                     {formatDateDisplay(editForm.date)} (from your timeline)
                   </div>
-                  {editBankDestTimelineLoading ? (
+                  {editBankDestTimelineLoadingResolved ? (
                     <p className="text-xs text-gray-500 mt-1">Loading…</p>
                   ) : (
                     <>

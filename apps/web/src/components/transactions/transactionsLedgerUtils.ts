@@ -60,7 +60,10 @@ export function timelineRangeForFilter(filter: TimeFilter): { start: string; end
   };
 }
 
-/** Narrow window for transfer/CC payoff hints — avoids building 15+ years of timeline on every date change. */
+/** Past history loaded for transfer/CC payoff hints (keep small — full rematch timeline builds are expensive). */
+export const PROJECTION_HINT_HISTORY_DAYS = 120;
+
+/** Narrow window for transfer/CC payoff hints — avoids building years of timeline on every date change. */
 export function projectionTimelineRangeForAsOf(asOfDate: string): {
   start: string;
   end: string;
@@ -68,10 +71,32 @@ export function projectionTimelineRangeForAsOf(asOfDate: string): {
 } {
   const as_of = maxIsoDate(asOfDate, todayStr());
   return {
-    start: addDaysToIsoDate(as_of, -1095),
+    start: addDaysToIsoDate(as_of, -PROJECTION_HINT_HISTORY_DAYS),
     end: addDaysToIsoDate(as_of, 1),
     as_of,
   };
+}
+
+/** Prefer household ledger timeline for hints when the as-of date is inside the main ledger window. */
+export function pickAccountTimelineForHint(
+  accountId: number,
+  asOfDate: string,
+  ledgerRange: { start: string; end: string },
+  householdTimeline: TimelineRow[] | undefined,
+  dedicatedTimeline: TimelineRow[] | undefined
+): TimelineRow[] {
+  const inLedgerRange = asOfDate >= ledgerRange.start && asOfDate <= ledgerRange.end;
+  if (inLedgerRange && householdTimeline != null) {
+    return householdTimeline.filter((r) => Number(r.account_id) === accountId);
+  }
+  return dedicatedTimeline ?? [];
+}
+
+export function hintDateWithinLedgerRange(
+  asOfDate: string,
+  ledgerRange: { start: string; end: string }
+): boolean {
+  return asOfDate >= ledgerRange.start && asOfDate <= ledgerRange.end;
 }
 
 export type LedgerRow =
@@ -276,6 +301,7 @@ function isShadowedByMatchedRuleSibling(
   row: TimelineRow,
   timeline: TimelineRow[]
 ): boolean {
+  if (isPairedTransferTimelineRow(row)) return false;
   if (row.rule_id == null) return false;
   const accountId = Number(row.account_id);
   const amt = parseFloat(row.amount);
@@ -290,11 +316,17 @@ function isShadowedByMatchedRuleSibling(
   return false;
 }
 
+/** Paired transfer leg — never hide from ledger when matching imports or debt skip logic. */
+function isPairedTransferTimelineRow(row: TimelineRow): boolean {
+  return row.transfer_group_id != null;
+}
+
 /** Drop a today/past PLANNED row when the same account+day already has a matching cleared posting. */
 export function isSupersededPlannedTimelineRow(
   row: TimelineRow,
   timeline: TimelineRow[]
 ): boolean {
+  if (isPairedTransferTimelineRow(row)) return false;
   const status = (row.status || "").toUpperCase();
   if (status !== "PLANNED") return false;
   const amt = parseFloat(row.amount);
@@ -351,6 +383,16 @@ export function ledgerOpeningBalance(
   const sb = parseFloat(String(startingBalance));
   if (Number.isNaN(sb)) return 0;
   return isCredit ? Math.abs(sb) : sb;
+}
+
+/** Signed opening for credit cards (- = debt). Matches backend `_opening_balance`. */
+export function creditSignedOpeningBalance(
+  startingBalance: string | number | null | undefined
+): number {
+  if (startingBalance == null || String(startingBalance).trim() === "") return 0;
+  const sb = parseFloat(String(startingBalance));
+  if (Number.isNaN(sb)) return 0;
+  return sb > 0 ? -sb : sb;
 }
 
 /**
@@ -526,7 +568,9 @@ export function creditCardSignedBalanceAtDate(
   timeline: TimelineRow[],
   cardAccountId: number,
   asOfDate: string,
-  excludeTransactionIds: Set<number>
+  excludeTransactionIds: Set<number>,
+  /** When the card has no timeline rows (starting balance only), use signed opening. */
+  openingSignedBalance?: number | null
 ): number | null {
   const aid = Number(cardAccountId);
   const rows = timeline
@@ -535,7 +579,9 @@ export function creditCardSignedBalanceAtDate(
     .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
     .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    return openingSignedBalance ?? null;
+  }
 
   const rb0 = parseFloat(rows[0].running_balance);
   const a0 = parseFloat(rows[0].amount);
@@ -551,13 +597,15 @@ export function creditOwedAsOfDateFromTimeline(
   timeline: TimelineRow[],
   cardAccountId: number,
   paymentDate: string,
-  excludeTransactionIds: Set<number>
+  excludeTransactionIds: Set<number>,
+  openingSignedBalance?: number | null
 ): number | null {
   const signed = creditCardSignedBalanceAtDate(
     timeline,
     cardAccountId,
     paymentDate,
-    excludeTransactionIds
+    excludeTransactionIds,
+    openingSignedBalance
   );
   if (signed == null) return null;
   return signed < 0 ? Math.abs(signed) : 0;
