@@ -650,10 +650,10 @@ class TestBuildTimeline:
             f"expected exactly one projected payment when card is paid off by first; got {len(rule_rows)}: {rule_rows}"
         )
 
-    def test_card_payment_shows_in_projection_only_when_destination_paid_off(
+    def test_card_payment_hidden_in_forecast_when_destination_paid_off(
         self, user, household, db
     ):
-        """Forecast UI must list every scheduled automation; skip paid-off cards only when materializing."""
+        """Do not forecast bank→card payments when the card has no debt on that date."""
         from datetime import timedelta
 
         today = date.today()
@@ -669,7 +669,7 @@ class TestBuildTimeline:
         card = Account.objects.create(
             household=household,
             account_type=Account.AccountType.CREDIT,
-            name="Savor",
+            name="Platinum",
             currency="USD",
             starting_balance=Decimal("0"),
         )
@@ -682,12 +682,12 @@ class TestBuildTimeline:
         dom = min(max((today + timedelta(days=7)).day, 1), 28)
         rule = RecurringRule.objects.create(
             household=household,
-            name="Electric - Move to Savor",
+            name="Platinum",
             account=bank,
             transfer_to_account=card,
             category=cat,
             direction=RecurringRule.Direction.EXPENSE,
-            amount=Decimal("450.00"),
+            amount=Decimal("25.00"),
             currency="USD",
             frequency=RecurringRule.Frequency.MONTHLY_DAY,
             interval=1,
@@ -699,9 +699,79 @@ class TestBuildTimeline:
             user, start, end, account_id=bank.id, as_of_date=today, projection_only=True
         )
         bank_rows = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
-        assert len(bank_rows) >= 1, (
-            f"forecast must show scheduled card payment on source account; got {bank_rows}"
+        assert len(bank_rows) == 0, (
+            f"forecast must hide card payments when destination is paid off; got {bank_rows}"
         )
+
+    def test_projection_only_timeline_keeps_edited_rule_occurrence_amount(self, user, household, db):
+        """Timeline reads must use materialized DB rows, not re-project rule defaults."""
+        from datetime import timedelta
+
+        today = date.today()
+        pay_date = today + timedelta(days=7)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("-200.00"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Water - Move to Savor",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("164.30"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=pay_date.day,
+            start_date=today,
+            active=True,
+        )
+        Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("-99.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        rows = build_timeline(
+            user,
+            today,
+            today + timedelta(days=30),
+            account_id=bank.id,
+            as_of_date=today,
+            projection_only=True,
+        )
+        hit = [
+            r
+            for r in rows
+            if r.get("rule_id") == rule.id
+            and r.get("account_id") == bank.id
+            and r.get("date") == pay_date
+        ]
+        assert len(hit) == 1, hit
+        assert hit[0].get("transaction_id") is not None
+        assert Decimal(str(hit[0]["amount"])) == Decimal("-99.00")
 
     def test_credit_card_minimum_payment_rule_hidden_when_card_balance_zero(self, user, household, db):
         """Do not project bank→card minimum payments when the card has no debt (uses DB balance)."""

@@ -124,6 +124,30 @@ def materialize_recurring_transactions_for_user(
     if rematch_ids:
         rematch_unmatched_for_accounts(rematch_ids)
 
+    from transactions.models import Transaction
+
+    occurrence_rows: list[dict[str, object]] = []
+    occ_qs = Transaction.objects.filter(
+        account__household__in=households,
+        source=Transaction.Source.RULE,
+        date__gte=today,
+        rule_id__isnull=False,
+    )
+    if rule_ids:
+        occ_qs = occ_qs.filter(rule_id__in=rule_ids)
+    if account_ids:
+        occ_qs = occ_qs.filter(account_id__in=account_ids)
+    for txn in occ_qs.order_by("date", "id").values("id", "rule_id", "account_id", "date"):
+        occurrence_rows.append(
+            {
+                "transaction_id": txn["id"],
+                "rule_id": txn["rule_id"],
+                "account_id": txn["account_id"],
+                "date": txn["date"].isoformat(),
+            }
+        )
+    result["occurrences"] = occurrence_rows
+
     invalidate_user_financial_cache(user.pk)
     for household in households:
         invalidate_financial_cache_for_household(household.pk)

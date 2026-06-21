@@ -1223,11 +1223,19 @@ export default function Transactions() {
     if (row.transaction_id != null) return row.transaction_id;
     if (row.rule_id == null || typeof accountId !== "number") return null;
     const rowAccountId = Number(row.account_id);
-    await materializeRecurring({
-      account_id: accountId,
+    const materialized = await materializeRecurring({
+      account_id: rowAccountId,
       rule_id: row.rule_id,
       forecast_days: 90,
     });
+    const fromMaterialize = materialized.occurrences?.find(
+      (o) =>
+        o.rule_id === row.rule_id &&
+        o.date === row.date &&
+        Number(o.account_id) === rowAccountId
+    );
+    if (fromMaterialize?.transaction_id) return fromMaterialize.transaction_id;
+
     const txns = await listTransactions({
       account: rowAccountId,
       date_after: row.date,
@@ -1241,6 +1249,7 @@ export default function Transactions() {
     });
     if (direct?.id) return direct.id;
 
+    void queryClient.invalidateQueries({ queryKey: ["timeline"] });
     const refreshed = await queryClient.fetchQuery({
       queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
       queryFn: () =>

@@ -854,24 +854,8 @@ def _materialize_rule_occurrence(
             .first()
         )
     if txn is not None:
-        amount_updated = False
-        if (
-            d >= timezone.localdate()
-            and txn.source == Transaction.Source.RULE
-            and amount is not None
-            and txn.amount != amount
-        ):
-            txn.amount = amount
-            txn.save(update_fields=["amount", "updated_at"])
-            amount_updated = True
-            cache = get_active_balance_cache()
-            if cache is not None:
-                cache.note_transaction_saved(txn)
         if materialization_active():
-            if amount_updated:
-                record_materialization_updated()
-            else:
-                record_materialization_skipped()
+            record_materialization_skipped()
         _safe_try_match_rule_to_pending_imports(txn)
         return txn
     covered = _matched_rule_occurrence_covers(
@@ -2181,8 +2165,7 @@ def _build_timeline_impl(
         _phase_load = phase_start(timer, "load_transactions")
         for t in actual:
             # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
-            # Re-project rule occurrences with scenario overrides — do not double-count DB rows.
-            if scenario_projection_only and t.rule_id is not None and t.date >= today:
+            if scenario is not None and t.rule_id is not None and t.date >= today:
                 continue
             amt = t.amount
             sign = 1 if (amt is not None and amt >= 0) else -1
@@ -2568,8 +2551,15 @@ def _build_timeline_impl(
                             record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
-                            continue
+                        continue
                 if scenario_projection_only:
+                    if any(
+                        r.get("rule_id") == rule.id
+                        and r.get("date") == d
+                        and r.get("account_id") in (from_acc_id, to_acc_id)
+                        for r in rows
+                    ):
+                        continue
                     proj_key = (rule.id, d, "transfer")
                     if proj_key in seen_scenario_rule_keys:
                         continue
@@ -2718,7 +2708,7 @@ def _build_timeline_impl(
                             record_materialization_skipped()
                         if not scenario_projection_only:
                             _purge_skipped_rule_occurrence(rule.id, d, today)
-                            continue
+                        continue
                 if scenario_projection_only:
                     proj_key = (rule.id, d, acc_id)
                     if proj_key in seen_scenario_rule_keys:

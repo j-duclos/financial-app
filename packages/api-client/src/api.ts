@@ -1584,6 +1584,12 @@ export async function materializeRecurring(params?: {
   transactions_created: number;
   transactions_updated: number;
   transactions_skipped: number;
+  occurrences?: Array<{
+    transaction_id: number;
+    rule_id: number;
+    account_id: number;
+    date: string;
+  }>;
 }> {
   return requestRequired("/api/timeline/materialize/", {
     method: "POST",
