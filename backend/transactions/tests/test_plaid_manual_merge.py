@@ -71,7 +71,7 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(manual.date, d_bank)
         self.assertEqual(manual.payee, "STARBUCKS STORE 123")
 
-    def test_manual_entered_after_plaid_import_links_and_hides_import(self):
+    def test_manual_entered_after_plaid_import_links_and_hides_planned(self):
         d = date(2026, 6, 10)
         amt = Decimal("-77.65")
         imp = Transaction.objects.create(
@@ -100,8 +100,8 @@ class TestPlaidMatching(TestCase):
                 "pk", flat=True
             )
         )
-        self.assertIn(manual.pk, visible)
-        self.assertNotIn(imp.pk, visible)
+        self.assertIn(imp.pk, visible)
+        self.assertNotIn(manual.pk, visible)
 
     def test_post_transaction_accepts_iso_date_string_with_pending_plaid(self):
         """Regression: JSON date strings must not break auto-match after create."""
@@ -218,7 +218,7 @@ class TestPlaidMatching(TestCase):
                 "pk", flat=True
             )
         )
-        self.assertEqual(visible, {manual.pk})
+        self.assertEqual(visible, {imp.pk})
 
     def test_merchant_token_overlap_scores_long_manual_payee(self):
         d = date(2026, 6, 10)
@@ -295,7 +295,7 @@ class TestPlaidMatching(TestCase):
         self.assertIsNotNone(m)
         self.assertEqual(m.planned_transaction_id, out_leg.pk)
 
-    def test_matched_import_hidden_from_ledger_sum(self):
+    def test_matched_planned_hidden_from_ledger_sum(self):
         planned = Transaction.objects.create(
             account=self.acc,
             date=date(2026, 1, 10),
@@ -305,18 +305,28 @@ class TestPlaidMatching(TestCase):
         )
         imp = Transaction.objects.create(
             account=self.acc,
-            date=date(2026, 1, 11),
+            date=date(2026, 1, 10),
             payee="SBUX",
             amount=Decimal("-5.00"),
             source=Transaction.Source.PLAID,
             plaid_transaction_id="plaid-x",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
-        match_imported_transaction(imp)
+        TransactionMatch.objects.create(
+            planned_transaction=planned,
+            imported_transaction=imp,
+            match_type=TransactionMatch.MatchType.MANUAL,
+            confidence=TransactionMatch.Confidence.MANUAL,
+            score=100,
+        )
+        planned.import_match_status = Transaction.ImportMatchStatus.MATCHED
+        imp.import_match_status = Transaction.ImportMatchStatus.MATCHED
+        planned.save(update_fields=["import_match_status", "updated_at"])
+        imp.save(update_fields=["import_match_status", "updated_at"])
         qs = ledger_visible_transactions(Transaction.objects.filter(account=self.acc))
         pks = set(qs.values_list("pk", flat=True))
-        self.assertIn(planned.pk, pks)
-        self.assertNotIn(imp.pk, pks)
+        self.assertIn(imp.pk, pks)
+        self.assertNotIn(planned.pk, pks)
 
     def test_transfer_payee_generic_matches_plaid_using_destination_account_name(self):
         amazon = Account.objects.create(
@@ -818,8 +828,8 @@ class TestPlaidMatching(TestCase):
                 "pk", flat=True
             )
         )
-        self.assertIn(out_leg.pk, visible)
-        self.assertNotIn(first.pk, visible)
+        self.assertIn(first.pk, visible)
+        self.assertNotIn(out_leg.pk, visible)
         self.assertIn(second.pk, visible)
 
     def test_reconcile_orphan_matched_plaid_import(self):
@@ -975,8 +985,8 @@ class TestPlaidMatching(TestCase):
         )
         visible_pks = set(visible.values_list("pk", flat=True))
         self.assertEqual(len(visible_pks), 4)
-        for manual in manuals:
-            self.assertIn(manual.pk, visible_pks)
+        for imp in imports[:3]:
+            self.assertIn(imp.pk, visible_pks)
         self.assertIn(imports[3].pk, visible_pks)
         self.assertEqual(TransactionMatch.objects.filter(imported_transaction__in=imports).count(), 3)
 
@@ -988,7 +998,7 @@ class TestPlaidMatching(TestCase):
             Transaction.objects.create(
                 account=self.acc,
                 date=d_bank,
-                payee="Manual",
+                payee="POS DEBIT ARIZONA HUMANE SOCIETY PHOENIX AZ",
                 amount=amt,
                 source=Transaction.Source.ACTUAL,
             )
@@ -1302,7 +1312,7 @@ class TestPlaidMatching(TestCase):
         before = ledger_visible_transactions(
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
-        self.assertEqual(before.count(), 0)
+        self.assertEqual(before.count(), 4)
 
         removed = repair_invalid_transaction_matches(account_id=self.acc.id)
         self.assertEqual(removed, 4)
@@ -1354,8 +1364,10 @@ class TestPlaidMatching(TestCase):
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
         self.assertEqual(visible.count(), 2)
-        self.assertIn(planned.pk, set(visible.values_list("pk", flat=True)))
-        self.assertIn(resync.pk, set(visible.values_list("pk", flat=True)))
+        visible_pks = set(visible.values_list("pk", flat=True))
+        self.assertIn(first.pk, visible_pks)
+        self.assertIn(resync.pk, visible_pks)
+        self.assertNotIn(planned.pk, visible_pks)
 
     def test_resync_import_not_matched_to_orphan_when_transfer_already_matched(self):
         """Re-sync must not latch onto a ghost ACTUAL row when the transfer leg is already matched."""
@@ -1423,8 +1435,10 @@ class TestPlaidMatching(TestCase):
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
         self.assertGreaterEqual(visible.count(), 2)
-        self.assertIn(transfer_out.pk, set(visible.values_list("pk", flat=True)))
-        self.assertIn(resync.pk, set(visible.values_list("pk", flat=True)))
+        visible_pks = set(visible.values_list("pk", flat=True))
+        self.assertIn(first.pk, visible_pks)
+        self.assertIn(resync.pk, visible_pks)
+        self.assertNotIn(transfer_out.pk, visible_pks)
         ghost.delete()
 
 

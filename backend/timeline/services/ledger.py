@@ -70,8 +70,6 @@ from timeline.models import (
 from transactions.models import Transaction, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
-    accounts_have_pending_match_work,
-    rematch_unmatched_for_accounts,
     shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
     _matched_rule_occurrence_covers,
@@ -669,6 +667,9 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     Remove all RULE-sourced rows for this occurrence (any status) so skipped payments do not
     respawn. Old rows were often status=CLEARED (model default) before we forced PLANNED, so
     filtering only PLANNED left ghosts in the DB.
+
+    Never purge when a Plaid import is matched to this occurrence — the bank row must stay
+    linked and visible even if the forecast row is skipped.
     """
     if occurrence_date < as_of_today:
         return
@@ -677,6 +678,15 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
         date=occurrence_date,
         source=Transaction.Source.RULE,
     )
+    if not deleted.exists():
+        return
+    matched_import_on_occurrence = TransactionMatch.objects.filter(
+        planned_transaction__rule_id=rule_id,
+        planned_transaction__date=occurrence_date,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).exists()
+    if matched_import_on_occurrence:
+        return
     account_ids = list(deleted.values_list("account_id", flat=True).distinct())
     deleted.delete()
     cache = get_active_balance_cache()
@@ -2063,7 +2073,7 @@ def _build_timeline_impl(
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
         # 1) Actual transactions: fetch with date <= end_date so nothing is ever hidden in opening balance.
-        #    Exclude Plaid rows that are matched as imports (canonical row is the planned side).
+        #    Matched Plaid imports stay visible; the matched planned/manual twin is excluded instead.
         #    When exclude_reconciled_past, omit reconciled rows at the database (ledger UI default).
         actual_qs = ledger_visible_transactions(
             Transaction.objects.filter(
@@ -2082,18 +2092,6 @@ def _build_timeline_impl(
                 "match_as_planned__imported_transaction",
             ).order_by("date", "id")
         )
-        if accounts_have_pending_match_work(account_ids) and rematch_unmatched_for_accounts(
-            account_ids
-        ):
-            actual = list(
-                actual_qs.select_related(
-                    "account",
-                    "category",
-                    "rule",
-                    "rule__transfer_to_account",
-                    "match_as_planned__imported_transaction",
-                ).order_by("date", "id")
-            )
         shadow_ids = shadowed_rule_occurrence_ids(actual)
         if shadow_ids:
             actual = [t for t in actual if t.pk not in shadow_ids]

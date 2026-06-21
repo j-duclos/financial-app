@@ -66,7 +66,8 @@ def test_last_activity_date_from_latest_visible_transaction(auth_client, checkin
     assert row["last_activity_date"] == "2025-05-24"
 
 
-def test_last_activity_date_excludes_matched_plaid_import(auth_client, checking):
+def test_last_activity_date_uses_matched_plaid_import_date(auth_client, checking):
+    """Last activity follows the visible bank import, not the hidden planned twin."""
     planned = Transaction.objects.create(
         account=checking,
         date=date(2025, 5, 20),
@@ -92,7 +93,7 @@ def test_last_activity_date_excludes_matched_plaid_import(auth_client, checking)
 
     r = auth_client.get(f"/api/accounts/{checking.id}/")
     assert r.status_code == 200
-    assert r.json()["last_activity_date"] == "2025-05-20"
+    assert r.json()["last_activity_date"] == "2025-05-25"
 
 
 def test_last_activity_date_null_when_no_transactions(auth_client, checking):

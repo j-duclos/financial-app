@@ -407,13 +407,16 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
 
     Reconciled rows are always visible — user-confirmed ledger lines must never disappear.
 
-    Hidden rows: (1) Plaid import leg of a TransactionMatch (matched ACTUAL twin is shown);
+    Bank imports (Plaid) are always shown when matched to a planned/manual row — the import
+    is the real bank post and must never disappear from the ledger.
+
+    Hidden rows: (1) planned/manual leg of a TransactionMatch (import is canonical);
     (2) unreconciled Plaid rows marked ignored/duplicate.
     """
-    matched_plaid_import_pks = TransactionMatch.objects.filter(
+    matched_planned_pks = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
-    ).values("imported_transaction_id")
-    hide = Q(pk__in=Subquery(matched_plaid_import_pks)) | (
+    ).values("planned_transaction_id")
+    hide = Q(pk__in=Subquery(matched_planned_pks)) | (
         Q(reconciled=False)
         & Q(source=Transaction.Source.PLAID)
         & Q(
@@ -432,10 +435,10 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
 
     Mirrors :func:`ledger_visible_transactions` exclusion rules.
     """
-    matched_plaid_imports = TransactionMatch.objects.filter(
+    matched_planned = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
-    ).values("imported_transaction_id")
-    hide = Q(**{f"{prefix}__pk__in": Subquery(matched_plaid_imports)}) | (
+    ).values("planned_transaction_id")
+    hide = Q(**{f"{prefix}__pk__in": Subquery(matched_planned)}) | (
         Q(**{f"{prefix}__reconciled": False})
         & Q(**{f"{prefix}__source": Transaction.Source.PLAID})
         & Q(
@@ -1292,8 +1295,8 @@ def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[Transact
     Link an existing unmatched Plaid row to a rule transaction when the rule row was created or
     surfaced after Plaid sync (match_imported_transaction only runs on import).
 
-    Keeps the forecast-side row as canonical and hides the import leg from balances — same as a
-    successful match_imported_transaction.
+    Keeps the bank import visible in the ledger and hides the forecast-side twin from balances —
+    same as a successful match_imported_transaction.
     """
     if not _is_rule_backed_planned_row(planned):
         return None
