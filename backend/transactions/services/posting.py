@@ -321,6 +321,189 @@ def _create_missing_transfer_leg_for_group(
     )
 
 
+def _find_existing_from_account_payment(
+    *,
+    tg: TransferGroup,
+    in_leg: Transaction,
+    pay_dt: date,
+    amount: Decimal,
+    exclude_pks: set[int] | None = None,
+    synthetic_min_pk: int | None = None,
+) -> Transaction | None:
+    """
+    Locate a real bank outflow that already paid this card inflow so we do not insert a duplicate leg.
+    """
+    exclude = set(exclude_pks or set())
+    if synthetic_min_pk is not None:
+        exclude.update(
+            Transaction.objects.filter(pk__gte=synthetic_min_pk).values_list("pk", flat=True)
+        )
+    from_id = tg.from_account_id
+    out_amt = -abs(amount)
+    exact = (
+        Transaction.objects.filter(
+            account_id=from_id,
+            date=pay_dt,
+            amount=out_amt,
+        )
+        .exclude(pk__in=exclude)
+        .exclude(transfer_group_id=tg.pk)
+        .order_by("id")
+        .first()
+    )
+    if exact is not None:
+        return exact
+    tol = Decimal("1.00")
+    window_start = pay_dt - timedelta(days=5)
+    window_end = pay_dt + timedelta(days=5)
+    candidates = (
+        Transaction.objects.filter(
+            account_id=from_id,
+            date__gte=window_start,
+            date__lte=window_end,
+            amount__lt=0,
+        )
+        .exclude(pk__in=exclude)
+        .exclude(transfer_group_id=tg.pk)
+        .order_by("date", "id")
+    )
+    card_name = (getattr(tg.to_account, "name", None) or "").lower()
+    for cand in candidates:
+        if abs(abs(cand.amount) - abs(out_amt)) > tol:
+            continue
+        payee = (cand.payee or "").upper()
+        if any(
+            token in payee
+            for token in (
+                "CAPITAL ONE",
+                "SYNCHRONY",
+                "AMAZON",
+                "ONLINE PMT",
+                "ONLINE PYMT",
+                "SYF PAYMNT",
+                "TRANSFER TO SAV",
+                "TRANSFER FROM CHK",
+            )
+        ):
+            return cand
+        if card_name and card_name[:8] in payee.lower():
+            return cand
+    return None
+
+
+def _wire_transfer_legs(
+    *,
+    out_leg: Transaction,
+    in_leg: Transaction,
+    tg: TransferGroup,
+    amount: Decimal,
+    pay_dt: date,
+) -> None:
+    if not out_leg.transfer_group_id:
+        out_leg.transfer_group = tg
+        out_leg.save(update_fields=["transfer_group_id", "updated_at"])
+    if not in_leg.transfer_group_id:
+        in_leg.transfer_group = tg
+        in_leg.save(update_fields=["transfer_group_id", "updated_at"])
+    if not Transfer.objects.filter(from_transaction=out_leg, to_transaction=in_leg).exists():
+        Transfer.objects.create(
+            from_transaction=out_leg,
+            to_transaction=in_leg,
+            amount=abs(amount),
+            date=pay_dt,
+            memo=(out_leg.memo or "")[:2000],
+        )
+
+
+def rollback_bogus_repair_transfer_legs(
+    *,
+    synthetic_min_pk: int = 6510,
+    account_ids: Iterable[int] | None = None,
+) -> dict[str, int]:
+    """
+    Remove synthetic outflow legs created by a bad orphan repair when a real bank payment already exists.
+
+    Rewires ``Transfer`` to the existing row; drops synthetic rows that duplicate Plaid/historical posts.
+    """
+    today = timezone.localdate()
+    ids = list(account_ids) if account_ids else []
+    synth_qs = Transaction.objects.filter(
+        pk__gte=synthetic_min_pk,
+        amount__lt=0,
+        source=Transaction.Source.ACTUAL,
+        transfer_group_id__isnull=False,
+        plaid_transaction_id__isnull=True,
+    ).select_related("account", "transfer_group", "transfer_group__to_account")
+    if ids:
+        synth_qs = synth_qs.filter(account_id__in=ids)
+    removed = 0
+    rewired = 0
+    kept = 0
+    for fake in synth_qs.iterator(chunk_size=200):
+        tg = fake.transfer_group
+        if tg is None:
+            continue
+        in_leg = (
+            Transaction.objects.filter(transfer_group_id=tg.pk, amount__gt=0)
+            .exclude(pk=fake.pk)
+            .first()
+        )
+        pay_dt = fake.date or tg.scheduled_date
+        real = _find_existing_from_account_payment(
+            tg=tg,
+            in_leg=in_leg or fake,
+            pay_dt=pay_dt,
+            amount=abs(fake.amount),
+            exclude_pks={fake.pk},
+            synthetic_min_pk=synthetic_min_pk,
+        )
+        if real is None and pay_dt > today:
+            kept += 1
+            continue
+        with transaction.atomic():
+            try:
+                tr = fake.transfer_out
+            except Transfer.DoesNotExist:
+                tr = None
+            if real is not None:
+                if in_leg is not None:
+                    try:
+                        real.transfer_out
+                        has_out = True
+                    except Transfer.DoesNotExist:
+                        has_out = False
+                    if not has_out:
+                        if tr is not None:
+                            tr.from_transaction = real
+                            tr.save(update_fields=["from_transaction_id"])
+                        else:
+                            _wire_transfer_legs(
+                                out_leg=real,
+                                in_leg=in_leg,
+                                tg=tg,
+                                amount=abs(fake.amount),
+                                pay_dt=real.date,
+                            )
+                        if not real.transfer_group_id:
+                            real.transfer_group_id = tg.pk
+                            real.save(update_fields=["transfer_group_id", "updated_at"])
+                if tr is not None and tr.from_transaction_id == fake.pk:
+                    tr.delete()
+                fake.delete()
+                rewired += 1
+                continue
+            if pay_dt > today or fake.status == Transaction.Status.PLANNED:
+                kept += 1
+                continue
+            if tr is not None:
+                tr.delete()
+            fake.delete()
+            if in_leg is not None:
+                Transaction.objects.filter(pk=in_leg.pk).update(transfer_group_id=None)
+            removed += 1
+    return {"rewired": rewired, "removed": removed, "kept": kept}
+
+
 def repair_orphan_transfer_group_legs(
     account_ids: Iterable[int] | None = None,
 ) -> int:
@@ -370,21 +553,69 @@ def repair_orphan_transfer_group_legs(
         pay_dt = sole.date or tg.scheduled_date
         with transaction.atomic():
             if sole.account_id == tg.to_account_id and sole.amount is not None and sole.amount > 0:
+                in_leg = sole
+                existing_out = _find_existing_from_account_payment(
+                    tg=tg,
+                    in_leg=in_leg,
+                    pay_dt=pay_dt,
+                    amount=amount,
+                )
+                if existing_out is not None:
+                    _wire_transfer_legs(
+                        out_leg=existing_out,
+                        in_leg=in_leg,
+                        tg=tg,
+                        amount=amount,
+                        pay_dt=existing_out.date,
+                    )
+                    if pay_dt > today:
+                        tg.status = TransferGroup.Status.PLANNED
+                    else:
+                        tg.status = TransferGroup.Status.CLEARED
+                    tg.save(update_fields=["status", "updated_at"])
+                    repaired += 1
+                    continue
+                if pay_dt <= today and sole.source == Transaction.Source.ACTUAL:
+                    continue
                 out_leg = _create_missing_transfer_leg_for_group(
                     tg=tg,
                     existing=sole,
                     missing_account_id=tg.from_account_id,
                     signed_amount=-amount,
                 )
-                in_leg = sole
             elif sole.account_id == tg.from_account_id and sole.amount is not None and sole.amount < 0:
+                out_leg = sole
+                existing_in = (
+                    Transaction.objects.filter(
+                        account_id=tg.to_account_id,
+                        date=pay_dt,
+                        amount=amount,
+                    )
+                    .exclude(pk=sole.pk)
+                    .exclude(transfer_group_id=tg.pk)
+                    .first()
+                )
+                if existing_in is not None:
+                    _wire_transfer_legs(
+                        out_leg=out_leg,
+                        in_leg=existing_in,
+                        tg=tg,
+                        amount=amount,
+                        pay_dt=pay_dt,
+                    )
+                    if pay_dt > today:
+                        tg.status = TransferGroup.Status.PLANNED
+                    else:
+                        tg.status = TransferGroup.Status.CLEARED
+                    tg.save(update_fields=["status", "updated_at"])
+                    repaired += 1
+                    continue
                 in_leg = _create_missing_transfer_leg_for_group(
                     tg=tg,
                     existing=sole,
                     missing_account_id=tg.to_account_id,
                     signed_amount=amount,
                 )
-                out_leg = sole
             else:
                 continue
             Transfer.objects.create(

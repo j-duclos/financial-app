@@ -14,7 +14,10 @@ from accounts.models import Account
 from common.services.cache import invalidate_financial_cache_for_household
 from core.timeline_cache import bump_timeline_cache_for_household
 from transactions.models import Transfer, TransferGroup, Transaction
-from transactions.services.posting import repair_orphan_transfer_group_legs
+from transactions.services.posting import (
+    repair_orphan_transfer_group_legs,
+    rollback_bogus_repair_transfer_legs,
+)
 
 
 class Command(BaseCommand):
@@ -23,6 +26,17 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--account-id", type=int, help="Repair groups touching this account.")
         parser.add_argument("--household-id", type=int, help="Repair all accounts in a household.")
+        parser.add_argument(
+            "--rollback-synthetics",
+            action="store_true",
+            help="Remove duplicate synthetic outflows from a prior bad repair (rewire to real bank rows).",
+        )
+        parser.add_argument(
+            "--synthetic-min-pk",
+            type=int,
+            default=6510,
+            help="Minimum transaction pk treated as synthetic repair output (default 6510).",
+        )
         parser.add_argument(
             "--dry-run",
             action="store_true",
@@ -71,6 +85,22 @@ class Command(BaseCommand):
         )
 
         if options["dry_run"]:
+            return
+
+        if options["rollback_synthetics"]:
+            stats = rollback_bogus_repair_transfer_legs(
+                synthetic_min_pk=options["synthetic_min_pk"],
+                account_ids=account_ids,
+            )
+            for hid in {h for h in household_ids if h is not None}:
+                bump_timeline_cache_for_household(hid)
+                invalidate_financial_cache_for_household(hid)
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Rollback — rewired {stats['rewired']}, removed {stats['removed']} bogus synthetic leg(s); "
+                    f"kept {stats['kept']} future forecast leg(s)."
+                )
+            )
             return
 
         repaired = repair_orphan_transfer_group_legs(account_ids)
