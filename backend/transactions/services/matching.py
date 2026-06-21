@@ -10,8 +10,9 @@ ledger UI and in running-balance math (once per bank post).
 When a Plaid row is matched to a planned/manual/rule row via TransactionMatch:
   - SHOW the Plaid import (imported_transaction)
   - HIDE the planned twin (planned_transaction) from ledger_visible_transactions
-  - NEVER hide, filter out, or delete matched Plaid imports to "dedupe" the UI
-  - NEVER run rematch_unmatched_for_accounts() inside build_timeline() reads
+  - NEVER hide matched Plaid imports to "dedupe" the UI
+  - DELETE or hide (DUPLICATE) extra Plaid re-sync rows that duplicate an already-visible post
+  - NEVER auto-restore all DUPLICATE rows on timeline read — that resurrects junk duplicates
 
 Wrong approach (broke production repeatedly): hide matched Plaid imports and show only
 the forecast row — users see transactions vanish and balances swing by thousands.
@@ -431,18 +432,25 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
     ---------------------------------------------------------------------------
 
     Hidden rows: (1) planned/manual leg of a TransactionMatch (import is canonical);
-    (2) unreconciled Plaid rows explicitly marked IGNORED by the user.
+    (2) unreconciled Plaid rows marked IGNORED or DUPLICATE (re-sync dupes of a visible post).
 
-    DUPLICATE Plaid rows stay visible — many were wrongly auto-suppressed and must not
-    vanish from the ledger. True re-sync dupes are rare; missing bank posts are not.
+    Matched imports are never hidden. DUPLICATE hides only *extra* Plaid rows — not the
+    canonical matched import.
     """
-    # Hide the forecast/manual twin of any import match (import leg stays visible).
     matched_planned_pks = TransactionMatch.objects.values("planned_transaction_id")
+    matched_import_pks = TransactionMatch.objects.filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).values("imported_transaction_id")
     hide = Q(pk__in=Subquery(matched_planned_pks)) | (
-        # Only user-marked IGNORED Plaid rows are hidden — never matched or DUPLICATE imports.
         Q(reconciled=False)
         & Q(source=Transaction.Source.PLAID)
-        & Q(import_match_status=Transaction.ImportMatchStatus.IGNORED)
+        & Q(
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.IGNORED,
+                Transaction.ImportMatchStatus.DUPLICATE,
+            ]
+        )
+        & ~Q(pk__in=Subquery(matched_import_pks))
     )
     return qs.exclude(hide)
 
@@ -455,10 +463,21 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
     PLAID INVARIANT: same as ledger_visible_transactions — never hide matched imports.
     """
     matched_planned = TransactionMatch.objects.values("planned_transaction_id")
+    matched_imports = TransactionMatch.objects.filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).values("imported_transaction_id")
     hide = Q(**{f"{prefix}__pk__in": Subquery(matched_planned)}) | (
         Q(**{f"{prefix}__reconciled": False})
         & Q(**{f"{prefix}__source": Transaction.Source.PLAID})
-        & Q(**{f"{prefix}__import_match_status": Transaction.ImportMatchStatus.IGNORED})
+        & Q(
+            **{
+                f"{prefix}__import_match_status__in": [
+                    Transaction.ImportMatchStatus.IGNORED,
+                    Transaction.ImportMatchStatus.DUPLICATE,
+                ]
+            }
+        )
+        & ~Q(**{f"{prefix}__pk__in": Subquery(matched_imports)})
     )
     return ~hide
 
@@ -1053,8 +1072,93 @@ def _plaid_sibling_imports_qs(anchor: Transaction) -> QuerySet[Transaction]:
 
 
 def mark_redundant_plaid_imports_after_match(anchor_import: Transaction) -> int:
-    """Disabled — Plaid rows are only duplicates when plaid_transaction_id matches exactly."""
-    return 0
+    """
+    After a transfer/rule match, delete sibling Plaid re-sync rows (same account/amount/window).
+
+    Keeps the matched import; permanently removes extras — not hide/unhide churn.
+    """
+    if anchor_import.source != Transaction.Source.PLAID:
+        return 0
+    match = (
+        TransactionMatch.objects.filter(imported_transaction=anchor_import)
+        .select_related("planned_transaction")
+        .first()
+    )
+    if match is None:
+        return 0
+    planned = match.planned_transaction
+    if not _planned_match_allows_import_dedup(planned):
+        return 0
+    return _delete_redundant_plaid_siblings(anchor_import)
+
+
+def _delete_redundant_plaid_siblings(anchor: Transaction) -> int:
+    """Delete unmatched Plaid siblings of ``anchor`` (same amount, ±date window)."""
+    from transactions.services.posting import _delete_transaction_cascade
+
+    removed = 0
+    for sib in _plaid_sibling_imports_qs(anchor).iterator(chunk_size=50):
+        if sib.reconciled:
+            continue
+        if TransactionMatch.objects.filter(imported_transaction_id=sib.pk).exists():
+            continue
+        TransactionMatch.objects.filter(imported_transaction_id=sib.pk).delete()
+        MatchSuggestion.objects.filter(imported_transaction_id=sib.pk).delete()
+        _delete_transaction_cascade(sib)
+        removed += 1
+    return removed
+
+
+def delete_redundant_plaid_imports_for_accounts(
+    account_ids: Iterable[int],
+    *,
+    dry_run: bool = False,
+) -> int:
+    """
+    Permanently delete Plaid rows that duplicate an already-visible ledger post.
+
+    Use after bad auto-restore resurrected re-sync duplicates (e.g. extra Capital One PMT rows).
+    Never deletes matched imports or reconciled rows.
+    """
+    ids = list({int(a) for a in account_ids if a is not None})
+    if not ids:
+        return 0
+    from transactions.services.posting import _delete_transaction_cascade
+
+    removed = 0
+    qs = (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(import_match_status=Transaction.ImportMatchStatus.IGNORED)
+    )
+    for imp in qs.select_related("account").iterator(chunk_size=200):
+        if imp.reconciled:
+            continue
+        if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
+            continue
+        if not duplicate_plaid_import_has_visible_ledger_twin(imp):
+            continue
+        if dry_run:
+            removed += 1
+            continue
+        TransactionMatch.objects.filter(imported_transaction_id=imp.pk).delete()
+        MatchSuggestion.objects.filter(imported_transaction_id=imp.pk).delete()
+        _delete_transaction_cascade(imp)
+        removed += 1
+    if removed and not dry_run:
+        from accounts.models import Account
+        from common.services.cache import invalidate_financial_cache_for_household
+        from core.timeline_cache import bump_timeline_cache_for_household
+
+        for hid in Account.objects.filter(pk__in=ids).values_list("household_id", flat=True).distinct():
+            if hid is not None:
+                bump_timeline_cache_for_household(hid)
+                invalidate_financial_cache_for_household(hid)
+    return removed
 
 
 def try_mark_plaid_import_as_duplicate_of_existing_match(imported: Transaction) -> bool:
@@ -1183,6 +1287,99 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
     return update_fields
 
 
+def _should_absorb_planned_into_import(planned: Transaction, imported: Transaction) -> bool:
+    """
+    True when ``planned`` is a shadow of the same bank post as ``imported`` (including transfer outflows).
+
+    Rule forecast rows stay matched (hidden); ACTUAL/materialized duplicates are deleted.
+    """
+    if imported.source != Transaction.Source.PLAID:
+        return False
+    if planned.source not in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        return False
+    if planned.rule_id or planned.scenario_id:
+        return False
+    return True
+
+
+def _rewire_transfer_from_leg(*, old_from: Transaction, new_from: Transaction) -> None:
+    transfer = Transfer.objects.filter(from_transaction_id=old_from.pk).first()
+    if transfer is None:
+        return
+    transfer.from_transaction = new_from
+    transfer.save(update_fields=["from_transaction_id"])
+
+
+def _absorb_planned_duplicate_into_import(
+    planned: Transaction,
+    imported: Transaction,
+    match: TransactionMatch,
+) -> None:
+    """Merge metadata onto the Plaid row, rewire transfer legs, delete the ACTUAL shadow and match."""
+    from transactions.services.posting import _delete_transaction_cascade
+
+    update_fields: list[str] = []
+    if planned.category_id and not imported.category_id:
+        imported.category_id = planned.category_id
+        update_fields.append("category_id")
+    if planned.tags and (not imported.tags or imported.tags == []):
+        imported.tags = list(planned.tags) if isinstance(planned.tags, list) else planned.tags
+        update_fields.append("tags")
+    if (planned.memo or "").strip() and not (imported.memo or "").strip():
+        imported.memo = planned.memo
+        update_fields.append("memo")
+    if planned.transfer_group_id and not imported.transfer_group_id:
+        imported.transfer_group_id = planned.transfer_group_id
+        update_fields.append("transfer_group_id")
+    if planned.reconciled:
+        imported.reconciled = True
+        imported.cleared = True
+        imported.status = Transaction.Status.RECONCILED
+        update_fields.extend(["reconciled", "cleared", "status"])
+    imported.import_match_status = Transaction.ImportMatchStatus.NONE
+    update_fields.append("import_match_status")
+    if update_fields:
+        imported.save(update_fields=[*update_fields, "updated_at"])
+    _rewire_transfer_from_leg(old_from=planned, new_from=imported)
+    if imported.transfer_group_id:
+        tg = TransferGroup.objects.filter(pk=imported.transfer_group_id).first()
+        if tg:
+            _refresh_transfer_group_status(tg)
+    match.delete()
+    _delete_transaction_cascade(planned)
+
+
+def collapse_matched_actual_planned_duplicates(*, account_id: int | None = None) -> int:
+    """
+    One bank post must be one row. Remove ACTUAL shadows already linked to a Plaid import match.
+    """
+    qs = TransactionMatch.objects.filter(
+        imported_transaction__source=Transaction.Source.PLAID,
+        planned_transaction__source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME],
+        planned_transaction__rule__isnull=True,
+    ).select_related("planned_transaction", "imported_transaction")
+    if account_id is not None:
+        qs = qs.filter(planned_transaction__account_id=account_id)
+    collapsed = 0
+    for match in qs.iterator(chunk_size=200):
+        planned = match.planned_transaction
+        imported = match.imported_transaction
+        if not _should_absorb_planned_into_import(planned, imported):
+            continue
+        _absorb_planned_duplicate_into_import(planned, imported, match)
+        collapsed += 1
+    if collapsed and account_id is not None:
+        from accounts.models import Account
+        from common.services.cache import invalidate_financial_cache_for_household
+        from core.timeline_cache import bump_timeline_cache_for_household
+
+        hid = Account.objects.filter(pk=account_id).values_list("household_id", flat=True).first()
+        if hid is not None:
+            bump_timeline_cache_for_household(hid)
+            invalidate_financial_cache_for_household(hid)
+    return collapsed
+
+
 def _create_match_record(
     *,
     planned: Transaction,
@@ -1232,7 +1429,12 @@ def _create_match_record(
             tg = TransferGroup.objects.filter(pk=planned.transfer_group_id).first()
             if tg:
                 _refresh_transfer_group_status(tg)
+        if _should_absorb_planned_into_import(planned, imported):
+            _absorb_planned_duplicate_into_import(planned, imported, tm)
+            mark_redundant_plaid_imports_after_match(imported)
+            return tm
         purge_shadow_rule_occurrences_after_match(planned)
+        mark_redundant_plaid_imports_after_match(imported)
         return tm
 
 
@@ -1842,6 +2044,12 @@ def repair_wrongly_suppressed_plaid_ledger(*, account_id: int | None = None) -> 
 
     restored = 0
     for imp in hidden_qs.select_related("account").iterator(chunk_size=200):
+        if imp.import_match_status == Transaction.ImportMatchStatus.IGNORED:
+            if not should_restore_duplicate_plaid_import(imp):
+                continue
+        elif imp.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+            if not should_restore_duplicate_plaid_import(imp):
+                continue
         imp.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
         imp.save(update_fields=["import_match_status", "updated_at"])
         restored += 1
@@ -1932,11 +2140,13 @@ def restore_all_duplicate_plaid_imports(*, account_id: int | None = None) -> int
 
 
 def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> int:
-    """
-    No-op during sync — restoring DUPLICATE rows on every Plaid refresh is expensive and can
-    inflate the ledger. Run ``repair_plaid_ledger_imports`` once after dedup rule changes.
-    """
-    return 0
+    """Delete Plaid re-sync duplicates that already have a visible ledger twin."""
+    if account_id is None:
+        from accounts.models import Account
+
+        ids = list(Account.objects.values_list("pk", flat=True))
+        return delete_redundant_plaid_imports_for_accounts(ids)
+    return delete_redundant_plaid_imports_for_accounts([account_id])
 
 
 def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int:

@@ -17,6 +17,7 @@ from common.services.cache import invalidate_financial_cache_for_household
 from core.timeline_cache import bump_timeline_cache_for_household
 from transactions.services.matching import (
     collapse_materialized_actual_duplicates,
+    delete_redundant_plaid_imports_for_accounts,
     repair_wrongly_suppressed_plaid_ledger,
     materialize_unmatched_plaid_imports,
     rematch_unmatched_manual_actuals,
@@ -25,6 +26,7 @@ from transactions.services.matching import (
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_orphan_absorbed_resync_matches,
+    collapse_matched_actual_planned_duplicates,
 )
 
 
@@ -93,6 +95,8 @@ class Command(BaseCommand):
         reconciled_restored = 0
         flags_fixed_total = 0
         orphans_removed_total = 0
+        redundant_deleted = 0
+        collapsed_actual = 0
         for aid in account_ids:
             repair = repair_wrongly_suppressed_plaid_ledger(account_id=aid)
             n_reconciled = repair["restored"]
@@ -106,6 +110,8 @@ class Command(BaseCommand):
             n_collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             n_manual = rematch_unmatched_manual_actuals(account_id=aid)
             n_materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            n_deleted = delete_redundant_plaid_imports_for_accounts([aid])
+            n_collapsed_actual = collapse_matched_actual_planned_duplicates(account_id=aid)
             stale_text += n_stale
             cross_merchant += n_cross
             invalid_matches += n_invalid
@@ -115,6 +121,8 @@ class Command(BaseCommand):
             collapsed += n_collapsed
             manual_linked += n_manual
             materialized += n_materialized
+            redundant_deleted += n_deleted
+            collapsed_actual += n_collapsed_actual
             reconciled_restored += n_reconciled
             flags_fixed_total += flags_fixed
             orphans_removed_total += orphans_removed
@@ -124,7 +132,8 @@ class Command(BaseCommand):
                 f"  {label}: restored={n_reconciled} orphans_removed={orphans_removed} "
                 f"reconciled_flags_fixed={flags_fixed} cross_merchant={n_cross} stale_text={n_stale} "
                 f"invalid_matches={n_invalid} orphan_resync={n_orphan} resync_dupes={n_resync} "
-                f"collapsed={n_collapsed} manual_linked={n_manual} materialized={n_materialized}"
+                f"collapsed={n_collapsed} manual_linked={n_manual} materialized={n_materialized} "
+                f"redundant_deleted={n_deleted} collapsed_actual={n_collapsed_actual}"
             )
 
         for hid in {h for h in household_ids if h is not None}:
@@ -138,6 +147,7 @@ class Command(BaseCommand):
                 f"unlinked {cross_merchant} cross-merchant match(es), removed {invalid_matches} invalid match(es), "
                 f"fixed {orphan_resync} orphan re-sync match(es), dropped {resync_dupes} re-sync "
                 f"duplicate(s), collapsed {collapsed} materialized duplicate(s), linked {manual_linked} manual "
-                f"row(s) to imports, materialized {materialized} orphan import(s)."
+                f"row(s) to imports, materialized {materialized} orphan import(s), deleted {redundant_deleted} "
+                f"redundant Plaid re-sync row(s)."
             )
         )

@@ -70,8 +70,6 @@ from timeline.models import (
 from transactions.models import Transaction, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
-    restore_suppressed_plaid_imports_for_accounts,
-    accounts_have_suppressed_plaid_imports,
     shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
     _matched_rule_occurrence_covers,
@@ -2051,10 +2049,6 @@ def _build_timeline_impl(
 
     if not projection_only:
         repair_unlinked_rule_transfer_pairs(account_ids)
-
-    # Auto-restore Plaid rows still marked DUPLICATE/IGNORED from old suppression logic.
-    if accounts_have_suppressed_plaid_imports(account_ids):
-        restore_suppressed_plaid_imports_for_accounts(account_ids)
 
     if perf_enabled():
         requested_days = max((end_date - start_date).days, 0)

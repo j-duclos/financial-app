@@ -136,19 +136,21 @@ class TestReconciledPeriodImportLock:
             plaid_transaction_id="plaid-cap-one-stray",
             import_match_status=Transaction.ImportMatchStatus.DUPLICATE,
         )
-        from transactions.services.matching import repair_wrongly_suppressed_plaid_ledger
+        from transactions.services.matching import (
+            delete_redundant_plaid_imports_for_accounts,
+            repair_wrongly_suppressed_plaid_ledger,
+        )
 
         result = repair_wrongly_suppressed_plaid_ledger(account_id=account.pk)
         hidden_dup.refresh_from_db()
-        assert result["restored"] == 1
-        assert result["orphans_removed"] == 1
-        assert hidden_dup.import_match_status == Transaction.ImportMatchStatus.UNMATCHED
-        assert not Transaction.objects.filter(pk=anchor.pk).exists()
-        assert hidden_dup.pk in set(
-            ledger_visible_transactions(Transaction.objects.filter(account=account)).values_list(
-                "pk", flat=True
-            )
-        )
+        assert result["restored"] == 0
+        assert hidden_dup.import_match_status == Transaction.ImportMatchStatus.DUPLICATE
+        assert Transaction.objects.filter(pk=anchor.pk).exists()
+
+        deleted = delete_redundant_plaid_imports_for_accounts([account.pk])
+        assert deleted == 1
+        assert not Transaction.objects.filter(pk=hidden_dup.pk).exists()
+        assert Transaction.objects.filter(pk=anchor.pk).exists()
 
     def test_restore_duplicate_restores_canonical_locked_period_import(self, account):
         hidden = Transaction.objects.create(
@@ -258,7 +260,7 @@ class TestReconciledPeriodImportLock:
             )
         )
         assert reconciled_cap_one.pk in visible
-        assert hidden_stray.pk in visible
+        assert hidden_stray.pk not in visible
 
     def test_ensure_reconciled_plaid_ledger_visibility_restores_cap_one_66(self, account):
         cap_one = Transaction.objects.create(

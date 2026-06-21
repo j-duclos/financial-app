@@ -257,22 +257,7 @@ def test_matched_plaid_does_not_double_count(user, checking, expense_category):
     assert Decimal(s["upcoming_outflows"]) == Decimal("0")
 
 
-def test_ignored_plaid_excluded(user, checking):
-    Transaction.objects.create(
-        account=checking,
-        date=AS_OF,
-        payee="Ignored import",
-        amount=Decimal("-100"),
-        source=Transaction.Source.PLAID,
-        import_match_status=Transaction.ImportMatchStatus.IGNORED,
-        plaid_transaction_id="ignored-1",
-    )
-    s = _summary(user, checking, days=30)
-    assert Decimal(s["current_balance"]) == Decimal("1000")
-
-
-def test_duplicate_plaid_still_counts_in_balance(user, checking):
-    """DUPLICATE Plaid rows stay visible — wrong suppression must not hide bank posts."""
+def test_ignored_duplicate_plaid_excluded(user, checking):
     Transaction.objects.create(
         account=checking,
         date=AS_OF,
@@ -283,7 +268,7 @@ def test_duplicate_plaid_still_counts_in_balance(user, checking):
         plaid_transaction_id="dup-1",
     )
     s = _summary(user, checking, days=30)
-    assert Decimal(s["current_balance"]) == Decimal("900")
+    assert Decimal(s["current_balance"]) == Decimal("1000")
 
 
 def test_risk_when_below_buffer_not_zero(user, checking, expense_category):

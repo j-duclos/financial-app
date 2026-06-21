@@ -37,7 +37,8 @@ import_match_status__in=[IGNORED, DUPLICATE]
 ## Timeline / transaction list reads
 
 - **Never** call `rematch_unmatched_for_accounts()` inside `build_timeline()`
-- **Do** call `restore_suppressed_plaid_imports_for_accounts()` when `accounts_have_suppressed_plaid_imports()` — un-hides DUPLICATE/IGNORED rows from old bugs
+- **Never** call `restore_suppressed_plaid_imports_for_accounts()` on read — it resurrected DUPLICATE junk
+- **Do** delete redundant re-sync Plaid rows via `delete_redundant_plaid_imports_for_accounts()` (management command or post-sync)
 
 ## Before changing matching or ledger code
 
