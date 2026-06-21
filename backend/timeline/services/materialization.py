@@ -82,7 +82,10 @@ def materialize_recurring_transactions_for_user(
 
     promote_due_schedules(as_of_date=today)
 
-    enter_materialization_context(rules_processed=rules_processed)
+    enter_materialization_context(
+        rules_processed=rules_processed,
+        rule_ids=frozenset(r.id for r in rules) if rule_ids else None,
+    )
     wall_start = time.perf_counter()
     try:
         build_timeline(
@@ -90,6 +93,7 @@ def materialize_recurring_transactions_for_user(
             start_date=today,
             end_date=through_date,
             as_of_date=today,
+            account_id=account_ids[0] if account_ids and len(account_ids) == 1 else None,
             projection_only=False,
             caller="materialization",
         )

@@ -36,6 +36,7 @@ from common.services.profiler import (
     record_materialized_transaction,
     set_materialization_existing_loaded,
     set_materialization_occurrences_generated,
+    should_materialize_rule,
 )
 from core.utils import get_households_for_user
 from timeline.services.balance_cache import TimelineBalanceCache, get_active_balance_cache
@@ -2165,7 +2166,10 @@ def _build_timeline_impl(
         _phase_load = phase_start(timer, "load_transactions")
         for t in actual:
             # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
-            if scenario is not None and t.rule_id is not None and t.date >= today:
+            # Projection-only reads also skip materialized rule rows — the occurrence loop re-adds
+            # them via _materialized_rule_timeline_row_if_exists (preserves edited amounts without
+            # double-counting every DB materialized row in the ledger balance).
+            if scenario_projection_only and t.rule_id is not None and t.date >= today:
                 continue
             amt = t.amount
             sign = 1 if (amt is not None and amt >= 0) else -1
@@ -2626,6 +2630,8 @@ def _build_timeline_impl(
                             )
                         )
                     continue
+                if not should_materialize_rule(rule.id):
+                    continue
                 txn_from = _materialize_rule_occurrence(
                     rule, d, from_acc_id, out_amount, rule.name, cat_id
                 )
@@ -2751,6 +2757,8 @@ def _build_timeline_impl(
                                 sort_key=(d, 1, rule.id),
                             )
                         )
+                    continue
+                if not should_materialize_rule(rule.id):
                     continue
                 txn = _materialize_rule_occurrence(
                     rule, d, acc_id, amount_decimal, rule.name, cat_id

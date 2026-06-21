@@ -80,6 +80,9 @@ def get_perf_caller() -> str | None:
 
 
 _materialization_active: ContextVar[bool] = ContextVar("materialization_active", default=False)
+_materialization_rule_filter: ContextVar[frozenset[int] | None] = ContextVar(
+    "materialization_rule_filter", default=None
+)
 _materialization_stats: ContextVar[dict[str, int]] = ContextVar(
     "materialization_stats",
     default={
@@ -93,9 +96,14 @@ _materialization_stats: ContextVar[dict[str, int]] = ContextVar(
 )
 
 
-def enter_materialization_context(*, rules_processed: int) -> None:
+def enter_materialization_context(
+    *,
+    rules_processed: int,
+    rule_ids: frozenset[int] | None = None,
+) -> None:
     """Begin dedicated materialization run; track create/update/skip counts."""
     _materialization_active.set(True)
+    _materialization_rule_filter.set(rule_ids)
     _materialization_stats.set(
         {
             "rules_processed": rules_processed,
@@ -112,6 +120,7 @@ def exit_materialization_context() -> dict[str, int]:
     """End materialization run and return summary counters."""
     summary = dict(_materialization_stats.get())
     _materialization_active.set(False)
+    _materialization_rule_filter.set(None)
     _materialization_stats.set(
         {
             "rules_processed": 0,
@@ -127,6 +136,16 @@ def exit_materialization_context() -> dict[str, int]:
 
 def materialization_active() -> bool:
     return _materialization_active.get()
+
+
+def materialization_rule_filter() -> frozenset[int] | None:
+    """When set, only these rule ids may create/update materialized rows."""
+    return _materialization_rule_filter.get()
+
+
+def should_materialize_rule(rule_id: int) -> bool:
+    filt = materialization_rule_filter()
+    return filt is None or rule_id in filt
 
 
 def _bump_materialization_stat(key: str, delta: int = 1) -> None:
