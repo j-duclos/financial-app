@@ -2049,6 +2049,9 @@ def _build_timeline_impl(
 
     if not projection_only:
         repair_unlinked_rule_transfer_pairs(account_ids)
+        from transactions.services.posting import repair_orphan_transfer_group_legs
+
+        repair_orphan_transfer_group_legs(account_ids)
 
     if perf_enabled():
         requested_days = max((end_date - start_date).days, 0)

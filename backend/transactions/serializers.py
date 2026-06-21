@@ -2,8 +2,9 @@ from decimal import Decimal
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .models import Transaction, TransactionMatch, Transfer
+from .models import Transaction, TransactionMatch, Transfer, TransferGroup
 from .services.immutability import reject_if_reconciled
+from .services.posting import get_transfer_group_sibling
 from accounts.models import Account
 from accounts.serializers import AccountSerializer
 from categories.models import Category
@@ -65,6 +66,20 @@ class TransactionSerializer(serializers.ModelSerializer):
             return AccountSerializer(t.from_transaction.account).data
         except Transfer.DoesNotExist:
             pass
+        if obj.transfer_group_id:
+            sibling = get_transfer_group_sibling(obj)
+            if sibling is not None:
+                return AccountSerializer(sibling.account).data
+            tg = (
+                TransferGroup.objects.filter(pk=obj.transfer_group_id)
+                .select_related("from_account", "to_account")
+                .first()
+            )
+            if tg is not None:
+                if obj.account_id == tg.to_account_id:
+                    return AccountSerializer(tg.from_account).data
+                if obj.account_id == tg.from_account_id:
+                    return AccountSerializer(tg.to_account).data
         if obj.rule_id:
             from timeline.models import RecurringRule
             rule = RecurringRule.objects.filter(pk=obj.rule_id).select_related("transfer_to_account").first()
@@ -100,6 +115,10 @@ class TransactionSerializer(serializers.ModelSerializer):
             return t.from_transaction_id
         except Transfer.DoesNotExist:
             pass
+        if obj.transfer_group_id:
+            sibling = get_transfer_group_sibling(obj)
+            if sibling is not None:
+                return sibling.pk
         if obj.rule_id:
             paired_pk = (
                 Transaction.objects.filter(rule_id=obj.rule_id, date=obj.date)

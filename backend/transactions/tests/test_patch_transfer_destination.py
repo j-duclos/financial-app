@@ -283,3 +283,71 @@ class TestPatchTransferDestinationCreatesLeg(TestCase):
         )
         card_only = Transaction.objects.get(account=self.care)
         self.assertEqual(card_only.amount, Decimal("174.47"))
+
+
+class TestRepairOrphanTransferGroupLegs(TestCase):
+    def setUp(self):
+        self.h = Household.objects.create(name="H")
+        self.chase = Account.objects.create(
+            household=self.h, account_type=Account.AccountType.CHECKING, name="Chase", currency="USD"
+        )
+        self.savor = Account.objects.create(
+            household=self.h, account_type=Account.AccountType.CREDIT, name="Savor", currency="USD"
+        )
+        self.cat, _ = Category.objects.get_or_create(
+            household=self.h,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 1},
+        )
+
+    def test_repair_creates_missing_checking_outflow(self):
+        from transactions.services.posting import repair_orphan_transfer_group_legs
+
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.chase,
+            to_account=self.savor,
+            amount=Decimal("500.00"),
+            scheduled_date=date(2026, 7, 4),
+            status=TransferGroup.Status.PLANNED,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.savor,
+            date=date(2026, 7, 4),
+            payee="Credit Card Pmt",
+            amount=Decimal("500.00"),
+            source=Transaction.Source.ACTUAL,
+            category=self.cat,
+            transfer_group=tg,
+        )
+        self.assertEqual(Transaction.objects.filter(account=self.chase).count(), 0)
+        repaired = repair_orphan_transfer_group_legs([self.chase.id, self.savor.id])
+        self.assertEqual(repaired, 1)
+        out_leg = Transaction.objects.get(account=self.chase)
+        self.assertEqual(out_leg.amount, Decimal("-500.00"))
+        Transfer.objects.get(from_transaction=out_leg, to_transaction=in_leg)
+
+    def test_serializer_exposes_counterparty_from_transfer_group(self):
+        from transactions.serializers import TransactionSerializer
+
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.chase,
+            to_account=self.savor,
+            amount=Decimal("700.00"),
+            scheduled_date=date(2026, 6, 24),
+            status=TransferGroup.Status.PLANNED,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.savor,
+            date=date(2026, 6, 24),
+            payee="Credit Card Pmt (Savor)",
+            amount=Decimal("700.00"),
+            source=Transaction.Source.ACTUAL,
+            category=self.cat,
+            transfer_group=tg,
+        )
+        data = TransactionSerializer(in_leg).data
+        self.assertEqual(data["transfer_to_account"]["id"], self.chase.id)
+        self.assertIsNone(data["linked_transaction_id"])

@@ -1,6 +1,7 @@
 """Atomic transaction posting, transfer creation, and manual-clear helpers."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -254,6 +255,154 @@ def attach_out_leg_for_existing_card_inflow(
     return out_txn
 
 
+def get_transfer_group_sibling(txn: Transaction) -> Transaction | None:
+    """Other transaction row sharing ``txn.transfer_group_id``, if any."""
+    if not txn.transfer_group_id:
+        return None
+    return (
+        Transaction.objects.filter(transfer_group_id=txn.transfer_group_id)
+        .exclude(pk=txn.pk)
+        .select_related("account")
+        .first()
+    )
+
+
+def _txn_has_transfer_bridge(txn: Transaction) -> bool:
+    try:
+        txn.transfer_out
+        return True
+    except Transfer.DoesNotExist:
+        pass
+    try:
+        txn.transfer_in
+        return True
+    except Transfer.DoesNotExist:
+        return False
+
+
+def _create_missing_transfer_leg_for_group(
+    *,
+    tg: TransferGroup,
+    existing: Transaction,
+    missing_account_id: int,
+    signed_amount: Decimal,
+) -> Transaction:
+    """Create the missing leg for a one-sided ``TransferGroup``."""
+    pay_dt = existing.date or tg.scheduled_date
+    today = timezone.localdate()
+    txn_status = Transaction.Status.PLANNED if pay_dt > today else Transaction.Status.CLEARED
+    payee_text = (existing.payee or "").strip() or f"Payment — {tg.to_account.name}"
+    to_acct = tg.to_account
+    in_type = (
+        Transaction.TransactionType.CREDIT_CARD_PAYMENT
+        if to_acct.is_credit_card() and signed_amount > 0
+        else Transaction.TransactionType.TRANSFER
+    )
+    out_type = Transaction.TransactionType.TRANSFER
+    txn_type = in_type if signed_amount > 0 else out_type
+    category_id = existing.category_id if signed_amount < 0 else None
+    if signed_amount > 0 and existing.category_id:
+        category_id = existing.category_id
+    return Transaction.objects.create(
+        account_id=missing_account_id,
+        date=pay_dt,
+        payee=payee_text[:255],
+        memo=(existing.memo or "")[:2000],
+        amount=signed_amount,
+        category_id=category_id,
+        cleared=False,
+        tags=list(existing.tags) if isinstance(existing.tags, list) else [],
+        status=txn_status,
+        planned_date=pay_dt,
+        transfer_group=tg,
+        source=existing.source,
+        rule_id=existing.rule_id,
+        transaction_type=txn_type,
+    )
+
+
+def repair_orphan_transfer_group_legs(
+    account_ids: Iterable[int] | None = None,
+) -> int:
+    """
+    Backfill missing legs and ``Transfer`` rows for broken transfer groups.
+
+    A group with exactly one transaction (common after the paying-account leg was deleted without
+    a ``Transfer`` bridge) leaves card-side payments with no outflow on checking.
+    """
+    ids = list(account_ids) if account_ids else []
+    tg_qs = TransferGroup.objects.select_related("from_account", "to_account")
+    if ids:
+        tg_qs = tg_qs.filter(Q(from_account_id__in=ids) | Q(to_account_id__in=ids))
+    repaired = 0
+    today = timezone.localdate()
+    for tg in tg_qs.iterator(chunk_size=200):
+        legs = list(
+            Transaction.objects.filter(transfer_group_id=tg.pk).select_related("account")
+        )
+        if not legs:
+            tg.delete()
+            continue
+        if len(legs) >= 2:
+            out_leg = next(
+                (t for t in legs if t.account_id == tg.from_account_id and t.amount is not None and t.amount < 0),
+                None,
+            )
+            in_leg = next(
+                (t for t in legs if t.account_id == tg.to_account_id and t.amount is not None and t.amount > 0),
+                None,
+            )
+            if out_leg and in_leg and not _txn_has_transfer_bridge(out_leg):
+                with transaction.atomic():
+                    Transfer.objects.create(
+                        from_transaction=out_leg,
+                        to_transaction=in_leg,
+                        amount=abs(in_leg.amount),
+                        date=out_leg.date or tg.scheduled_date,
+                        memo=(out_leg.memo or "")[:2000],
+                    )
+                repaired += 1
+            continue
+        sole = legs[0]
+        if _txn_has_transfer_bridge(sole):
+            continue
+        amount = tg.amount
+        pay_dt = sole.date or tg.scheduled_date
+        with transaction.atomic():
+            if sole.account_id == tg.to_account_id and sole.amount is not None and sole.amount > 0:
+                out_leg = _create_missing_transfer_leg_for_group(
+                    tg=tg,
+                    existing=sole,
+                    missing_account_id=tg.from_account_id,
+                    signed_amount=-amount,
+                )
+                in_leg = sole
+            elif sole.account_id == tg.from_account_id and sole.amount is not None and sole.amount < 0:
+                in_leg = _create_missing_transfer_leg_for_group(
+                    tg=tg,
+                    existing=sole,
+                    missing_account_id=tg.to_account_id,
+                    signed_amount=amount,
+                )
+                out_leg = sole
+            else:
+                continue
+            Transfer.objects.create(
+                from_transaction=out_leg,
+                to_transaction=in_leg,
+                amount=amount,
+                date=pay_dt,
+                memo=(out_leg.memo or "")[:2000],
+            )
+            if pay_dt > today:
+                tg.status = TransferGroup.Status.PLANNED
+            else:
+                tg.status = TransferGroup.Status.CLEARED
+            tg.save(update_fields=["status", "updated_at"])
+        repaired += 1
+    return repaired
+
+
 def prepare_outflow_txn_for_card_payment_link(out_txn: Transaction) -> None:
     """
     Remove state that makes ``link_in_leg_from_existing_out_leg`` bail out when the user fixes a
@@ -454,7 +603,7 @@ def delete_transaction_respecting_partner_ledger(
             tr = None
 
     if not tr:
-        # Rule-based transfers are two Transaction rows with the same rule_id but no Transfer row.
+        # Rule-based and transfer_group pairs may have no Transfer row.
         today = timezone.localdate()
         removed_here = 0
         counterpart = None
@@ -466,7 +615,18 @@ def delete_transaction_respecting_partner_ledger(
                 old_amount=txn.amount,
                 old_account_id=txn.account_id,
             )
+        if counterpart is None and txn.transfer_group_id:
+            counterpart = get_transfer_group_sibling(txn)
         if counterpart is not None:
+            if getattr(counterpart.account, "preserve_partner_transfer_legs", False):
+                tg_ids = {tid for tid in (txn.transfer_group_id, counterpart.transfer_group_id) if tid}
+                txn.delete()
+                Transaction.objects.filter(pk=counterpart.pk).update(transfer_group_id=None)
+                if deleted is not None:
+                    deleted.add(txn.pk)
+                for gid in tg_ids:
+                    TransferGroup.objects.filter(pk=gid).annotate(c=Count("transactions")).filter(c=0).delete()
+                return removed_here + 1
             if counterpart.rule_id is not None and counterpart.date >= today:
                 RecurringRuleSkip.objects.get_or_create(rule_id=counterpart.rule_id, date=counterpart.date)
             _delete_transaction_cascade(counterpart)

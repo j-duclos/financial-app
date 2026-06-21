@@ -116,6 +116,9 @@ def materialize_recurring_transactions_for_user(
     if account_ids:
         rematch_ids.update(account_ids)
         repair_unlinked_rule_transfer_pairs(account_ids)
+        from transactions.services.posting import repair_orphan_transfer_group_legs
+
+        repair_orphan_transfer_group_legs(account_ids)
     if rule_ids:
         for rid in rule_ids:
             rule = RecurringRule.objects.filter(pk=rid).first()
