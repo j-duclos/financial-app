@@ -1,8 +1,23 @@
 """
 Plaid / manual forecast matching — score candidates by account, amount, date window, not raw description.
 
-Ledger rule: rows that are the *import* side of a TransactionMatch must not double-count balances
-or timeline rows; the paired *planned* row remains canonical for forecast-first UX.
+================================================================================
+INVARIANT — PLAID IMPORTS (do not change without explicit user approval)
+================================================================================
+Bank imports (source=PLAID) are the user's real money. They must ALWAYS appear in the
+ledger UI and in running-balance math (once per bank post).
+
+When a Plaid row is matched to a planned/manual/rule row via TransactionMatch:
+  - SHOW the Plaid import (imported_transaction)
+  - HIDE the planned twin (planned_transaction) from ledger_visible_transactions
+  - NEVER hide, filter out, or delete matched Plaid imports to "dedupe" the UI
+  - NEVER run rematch_unmatched_for_accounts() inside build_timeline() reads
+
+Wrong approach (broke production repeatedly): hide matched Plaid imports and show only
+the forecast row — users see transactions vanish and balances swing by thousands.
+
+See also: .cursor/rules/plaid-imports-never-hide.mdc
+================================================================================
 """
 from __future__ import annotations
 
@@ -93,6 +108,8 @@ def purge_shadow_rule_occurrences_after_match(planned: Transaction) -> int:
 
     Weekly rules can materialize 06-18 and 06-19 rows for one bank deposit — keep only the
     matched canonical occurrence.
+
+    PLAID INVARIANT: only deletes source=RULE rows. Never delete source=PLAID.
     """
     if not planned.rule_id or planned.source != Transaction.Source.RULE:
         return 0
@@ -407,24 +424,25 @@ def ledger_visible_transactions(qs: QuerySet[Transaction]) -> QuerySet[Transacti
 
     Reconciled rows are always visible — user-confirmed ledger lines must never disappear.
 
-    Bank imports (Plaid) are always shown when matched to a planned/manual row — the import
-    is the real bank post and must never disappear from the ledger.
+    ---------------------------------------------------------------------------
+    PLAID INVARIANT (critical — do not invert this logic):
+      Matched Plaid imports STAY VISIBLE. Hide the planned/manual twin instead.
+      Never exclude imported_transaction from this queryset when source=PLAID.
+    ---------------------------------------------------------------------------
 
     Hidden rows: (1) planned/manual leg of a TransactionMatch (import is canonical);
-    (2) unreconciled Plaid rows marked ignored/duplicate.
+    (2) unreconciled Plaid rows explicitly marked IGNORED by the user.
+
+    DUPLICATE Plaid rows stay visible — many were wrongly auto-suppressed and must not
+    vanish from the ledger. True re-sync dupes are rare; missing bank posts are not.
     """
-    matched_planned_pks = TransactionMatch.objects.filter(
-        imported_transaction__source=Transaction.Source.PLAID,
-    ).values("planned_transaction_id")
+    # Hide the forecast/manual twin of any import match (import leg stays visible).
+    matched_planned_pks = TransactionMatch.objects.values("planned_transaction_id")
     hide = Q(pk__in=Subquery(matched_planned_pks)) | (
+        # Only user-marked IGNORED Plaid rows are hidden — never matched or DUPLICATE imports.
         Q(reconciled=False)
         & Q(source=Transaction.Source.PLAID)
-        & Q(
-            import_match_status__in=[
-                Transaction.ImportMatchStatus.IGNORED,
-                Transaction.ImportMatchStatus.DUPLICATE,
-            ]
-        )
+        & Q(import_match_status=Transaction.ImportMatchStatus.IGNORED)
     )
     return qs.exclude(hide)
 
@@ -434,21 +452,13 @@ def ledger_visible_account_transactions_q(*, prefix: str = "transactions") -> Q:
     Q filter for Account → Transaction relations (annotations, aggregates).
 
     Mirrors :func:`ledger_visible_transactions` exclusion rules.
+    PLAID INVARIANT: same as ledger_visible_transactions — never hide matched imports.
     """
-    matched_planned = TransactionMatch.objects.filter(
-        imported_transaction__source=Transaction.Source.PLAID,
-    ).values("planned_transaction_id")
+    matched_planned = TransactionMatch.objects.values("planned_transaction_id")
     hide = Q(**{f"{prefix}__pk__in": Subquery(matched_planned)}) | (
         Q(**{f"{prefix}__reconciled": False})
         & Q(**{f"{prefix}__source": Transaction.Source.PLAID})
-        & Q(
-            **{
-                f"{prefix}__import_match_status__in": [
-                    Transaction.ImportMatchStatus.IGNORED,
-                    Transaction.ImportMatchStatus.DUPLICATE,
-                ]
-            }
-        )
+        & Q(**{f"{prefix}__import_match_status": Transaction.ImportMatchStatus.IGNORED})
     )
     return ~hide
 
@@ -1181,7 +1191,12 @@ def _create_match_record(
     score: int,
     confidence: str,
 ) -> TransactionMatch:
-    """Persist match and update row metadata (planned stays canonical for ledger)."""
+    """
+    Persist match and update row metadata.
+
+    PLAID INVARIANT: after match, ledger_visible_transactions shows the Plaid import and
+    hides this planned row — the bank post is what the user must see.
+    """
     if imported.source != Transaction.Source.PLAID:
         raise ValueError("Import side of a match must be a Plaid row.")
     if planned.source == Transaction.Source.PLAID:
@@ -1374,6 +1389,50 @@ def heal_unmatched_rule_and_import_links(txns: Iterable[Transaction]) -> int:
             if match_imported_transaction(txn):
                 linked += 1
     return linked
+
+
+def accounts_have_suppressed_plaid_imports(account_ids: Iterable[int]) -> bool:
+    """True when Plaid rows are still marked DUPLICATE/IGNORED and hidden from the ledger."""
+    ids = list(account_ids)
+    if not ids:
+        return False
+    return (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.DUPLICATE,
+                Transaction.ImportMatchStatus.IGNORED,
+            ],
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exists()
+    )
+
+
+def restore_suppressed_plaid_imports_for_accounts(account_ids: Iterable[int]) -> int:
+    """
+    Unhide Plaid rows wrongly marked DUPLICATE/IGNORED (auto-repair on timeline/ledger read).
+
+    Safe to call repeatedly — only touches suppressed Plaid imports, never deletes rows.
+    """
+    ids = list({int(a) for a in account_ids if a is not None})
+    if not ids:
+        return 0
+    restored = 0
+    for aid in ids:
+        restored += repair_wrongly_suppressed_plaid_ledger(account_id=aid)["restored"]
+    if restored:
+        from accounts.models import Account
+        from common.services.cache import invalidate_financial_cache_for_household
+        from core.timeline_cache import bump_timeline_cache_for_household
+
+        for hid in Account.objects.filter(pk__in=ids).values_list("household_id", flat=True).distinct():
+            if hid is not None:
+                bump_timeline_cache_for_household(hid)
+                invalidate_financial_cache_for_household(hid)
+    return restored
 
 
 def accounts_have_pending_match_work(account_ids: Iterable[int]) -> bool:

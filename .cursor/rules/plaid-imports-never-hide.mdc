@@ -1,0 +1,46 @@
+---
+description: Plaid bank imports must never be hidden or deleted from the ledger
+globs: backend/transactions/**/*.py,backend/timeline/**/*.py,backend/plaid_link/**/*.py
+alwaysApply: false
+---
+
+# Plaid imports — do not hide, do not delete, do not rematch on read
+
+Bank imports (`Transaction.source=PLAID`) are the user's real money. Treat them as sacred.
+
+## Ledger visibility (`ledger_visible_transactions`)
+
+When a Plaid row is matched to a planned/manual/rule row via `TransactionMatch`:
+
+- **SHOW** the Plaid import (`imported_transaction`)
+- **HIDE** the planned twin (`planned_transaction`) to avoid double-counting balance
+- **NEVER** hide matched Plaid imports — inverting this broke production repeatedly
+
+```python
+# ✅ CORRECT — hide planned twin only; IGNORED is the only hidden Plaid status
+matched_planned_pks = TransactionMatch.objects.values("planned_transaction_id")
+hide = Q(pk__in=Subquery(matched_planned_pks)) | ignored_plaid_only
+
+# ❌ FORBIDDEN — never hide matched imports
+matched_plaid_import_pks = TransactionMatch.objects.filter(...).values("imported_transaction_id")
+hide = Q(pk__in=Subquery(matched_plaid_import_pks))
+
+# ❌ FORBIDDEN — never hide DUPLICATE Plaid (many were wrongly auto-suppressed)
+import_match_status__in=[IGNORED, DUPLICATE]
+```
+
+## Deletes
+
+- **Never** `.delete()` rows with `source=PLAID` except explicit user/admin dedupe commands
+- `_purge_skipped_rule_occurrence` and `purge_shadow_rule_occurrences_after_match` are **RULE-only**
+
+## Timeline / transaction list reads
+
+- **Never** call `rematch_unmatched_for_accounts()` inside `build_timeline()`
+- **Do** call `restore_suppressed_plaid_imports_for_accounts()` when `accounts_have_suppressed_plaid_imports()` — un-hides DUPLICATE/IGNORED rows from old bugs
+
+## Before changing matching or ledger code
+
+1. Read the module docstring in `transactions/services/matching.py`
+2. Run `pytest transactions/tests/test_plaid_manual_merge.py`
+3. Confirm matched imports stay visible in tests

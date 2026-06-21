@@ -258,7 +258,7 @@ class TestReconciledPeriodImportLock:
             )
         )
         assert reconciled_cap_one.pk in visible
-        assert hidden_stray.pk not in visible
+        assert hidden_stray.pk in visible
 
     def test_ensure_reconciled_plaid_ledger_visibility_restores_cap_one_66(self, account):
         cap_one = Transaction.objects.create(

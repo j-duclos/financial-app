@@ -70,6 +70,8 @@ from timeline.models import (
 from transactions.models import Transaction, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
+    restore_suppressed_plaid_imports_for_accounts,
+    accounts_have_suppressed_plaid_imports,
     shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
     _matched_rule_occurrence_covers,
@@ -668,6 +670,7 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     respawn. Old rows were often status=CLEARED (model default) before we forced PLANNED, so
     filtering only PLANNED left ghosts in the DB.
 
+    PLAID INVARIANT: only deletes source=RULE. Never delete source=PLAID.
     Never purge when a Plaid import is matched to this occurrence — the bank row must stay
     linked and visible even if the forecast row is skipped.
     """
@@ -2049,6 +2052,10 @@ def _build_timeline_impl(
     if not projection_only:
         repair_unlinked_rule_transfer_pairs(account_ids)
 
+    # Auto-restore Plaid rows still marked DUPLICATE/IGNORED from old suppression logic.
+    if accounts_have_suppressed_plaid_imports(account_ids):
+        restore_suppressed_plaid_imports_for_accounts(account_ids)
+
     if perf_enabled():
         requested_days = max((end_date - start_date).days, 0)
         perf_print(
@@ -2073,7 +2080,8 @@ def _build_timeline_impl(
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
         # 1) Actual transactions: fetch with date <= end_date so nothing is ever hidden in opening balance.
-        #    Matched Plaid imports stay visible; the matched planned/manual twin is excluded instead.
+        #    PLAID INVARIANT: Matched Plaid imports stay visible; hide the matched planned/manual twin
+        #    via ledger_visible_transactions (see matching.py). Do NOT re-hide imports here.
         #    When exclude_reconciled_past, omit reconciled rows at the database (ledger UI default).
         actual_qs = ledger_visible_transactions(
             Transaction.objects.filter(
@@ -2092,6 +2100,8 @@ def _build_timeline_impl(
                 "match_as_planned__imported_transaction",
             ).order_by("date", "id")
         )
+        # DO NOT call rematch_unmatched_for_accounts() here — timeline reads must not mutate matches
+        # or re-link imports (caused imports to disappear from UI and balances to swing).
         shadow_ids = shadowed_rule_occurrence_ids(actual)
         if shadow_ids:
             actual = [t for t in actual if t.pk not in shadow_ids]

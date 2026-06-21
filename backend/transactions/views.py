@@ -14,6 +14,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
+from accounts.models import Account
 from .models import Transaction, TransactionMatch, Transfer
 from .serializers import TransactionSerializer, TransferCreateSerializer, TransferSerializer
 from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
@@ -263,9 +264,19 @@ class TransactionViewSet(ModelViewSet):
     ordering = ["-date", "-id"]
 
     def get_queryset(self):
-        from .services.matching import ledger_visible_transactions
+        from .services.matching import (
+            ledger_visible_transactions,
+            accounts_have_suppressed_plaid_imports,
+            restore_suppressed_plaid_imports_for_accounts,
+        )
 
         households = get_households_for_user(self.request.user)
+        account_ids = list(
+            Account.objects.filter(household__in=households).values_list("pk", flat=True)
+        )
+        if accounts_have_suppressed_plaid_imports(account_ids):
+            restore_suppressed_plaid_imports_for_accounts(account_ids)
+
         qs = ledger_visible_transactions(
             Transaction.objects.filter(account__household__in=households)
         ).select_related(

@@ -1312,7 +1312,7 @@ class TestPlaidMatching(TestCase):
         before = ledger_visible_transactions(
             Transaction.objects.filter(account=self.acc, date=d, amount=amt)
         )
-        self.assertEqual(before.count(), 4)
+        self.assertEqual(before.count(), 0)
 
         removed = repair_invalid_transaction_matches(account_id=self.acc.id)
         self.assertEqual(removed, 4)
