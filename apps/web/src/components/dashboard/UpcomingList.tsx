@@ -105,20 +105,29 @@ function UpcomingDayGroup({
   onToggleCollapse,
   txnListExpanded,
   onToggleTxnListExpand,
+  maxVisibleItems,
 }: {
   group: DashboardUpcomingGroup;
   collapsed: boolean;
   onToggleCollapse: () => void;
   txnListExpanded: boolean;
   onToggleTxnListExpand: () => void;
+  /** Cap rows shown for this day (preview mode). */
+  maxVisibleItems?: number;
 }) {
   const dayLimit = group.visible_transaction_limit ?? UPCOMING_PER_DAY_VISIBLE;
   const net = dailyNetFromTotals(group.income_total, group.expense_total);
   const displayTxns = upcomingDisplayTransactions(group);
   const txnCount = upcomingDayTransactionCount(group);
-  const hidden = Math.max(0, displayTxns.length - dayLimit);
+  const effectiveDayLimit =
+    maxVisibleItems != null ? Math.min(dayLimit, maxVisibleItems) : dayLimit;
+  const hidden = Math.max(0, displayTxns.length - effectiveDayLimit);
   const showAllTxns = txnListExpanded || hidden === 0;
-  const visibleTxns = showAllTxns ? displayTxns : displayTxns.slice(0, dayLimit);
+  const visibleTxns = showAllTxns
+    ? maxVisibleItems != null
+      ? displayTxns.slice(0, maxVisibleItems)
+      : displayTxns
+    : displayTxns.slice(0, effectiveDayLimit);
   const recoveryChip = formatRecoveryChip(group);
 
   const dateTitle = formatDateDisplay(group.date);
@@ -198,10 +207,18 @@ export default function UpcomingList({
   groups,
   days,
   truncated,
+  showCalendarLink = true,
+  emptyDays,
+  maxTotalItems,
 }: {
   groups: DashboardUpcomingGroup[];
   days: number;
   truncated?: boolean;
+  showCalendarLink?: boolean;
+  /** Override empty-state horizon copy (defaults to `days`). */
+  emptyDays?: number;
+  /** Stop rendering after this many transaction rows (dashboard preview). */
+  maxTotalItems?: number;
 }) {
   const [collapsedDays, setCollapsedDays] = useState<Record<string, boolean>>(() =>
     initialUpcomingDayCollapsed(groups)
@@ -211,7 +228,7 @@ export default function UpcomingList({
   if (groups.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-3 text-sm text-gray-600">
-        {upcomingEmptyMessage().replace("14", String(days))}
+        {upcomingEmptyMessage(emptyDays ?? days)}
       </div>
     );
   }
@@ -219,6 +236,7 @@ export default function UpcomingList({
   const anyTransferNote = groups.some(groupShowsTransferNote);
   const monthGroups = groupUpcomingByMonth(groups);
   const stickyMonths = upcomingListUsesStickyScroll(groups);
+  let itemsRemaining = maxTotalItems;
 
   const listBody = (
     <>
@@ -231,26 +249,41 @@ export default function UpcomingList({
             compact
             stickyTopClass="top-0"
           />
-          {dayGroups.map((group) => (
-            <UpcomingDayGroup
-              key={group.date}
-              group={group}
-              collapsed={!!collapsedDays[group.date]}
-              onToggleCollapse={() =>
-                setCollapsedDays((prev) => ({
-                  ...prev,
-                  [group.date]: !prev[group.date],
-                }))
-              }
-              txnListExpanded={!!expandedTxnDays[group.date]}
-              onToggleTxnListExpand={() =>
-                setExpandedTxnDays((prev) => ({
-                  ...prev,
-                  [group.date]: !prev[group.date],
-                }))
-              }
-            />
-          ))}
+          {dayGroups.map((group) => {
+            if (itemsRemaining != null && itemsRemaining <= 0) return null;
+            const isCollapsed = !!collapsedDays[group.date];
+            const dayCap = itemsRemaining ?? undefined;
+            const displayLen = upcomingDisplayTransactions(group).length;
+            const shownCount = isCollapsed
+              ? 0
+              : dayCap != null
+                ? Math.min(displayLen, dayCap)
+                : displayLen;
+            if (itemsRemaining != null && !isCollapsed) {
+              itemsRemaining -= shownCount;
+            }
+            return (
+              <UpcomingDayGroup
+                key={group.date}
+                group={group}
+                collapsed={isCollapsed}
+                onToggleCollapse={() =>
+                  setCollapsedDays((prev) => ({
+                    ...prev,
+                    [group.date]: !prev[group.date],
+                  }))
+                }
+                txnListExpanded={!!expandedTxnDays[group.date]}
+                onToggleTxnListExpand={() =>
+                  setExpandedTxnDays((prev) => ({
+                    ...prev,
+                    [group.date]: !prev[group.date],
+                  }))
+                }
+                maxVisibleItems={dayCap}
+              />
+            );
+          })}
         </div>
       ))}
     </>
@@ -258,7 +291,7 @@ export default function UpcomingList({
 
   return (
     <div className="bg-white rounded-lg shadow p-3 space-y-3">
-      {truncated && (
+      {truncated && showCalendarLink && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
           <span>{upcomingTruncatedMessage()}</span>
           <Link
@@ -269,22 +302,31 @@ export default function UpcomingList({
           </Link>
         </div>
       )}
+      {truncated && !showCalendarLink && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+          {upcomingTruncatedMessage()}
+        </div>
+      )}
       {listBody}
 
-      <div
-        className={`flex flex-wrap items-center gap-2 pt-1.5 border-t border-gray-100 ${
-          anyTransferNote ? "justify-between" : "justify-end"
-        }`}
-      >
-        {anyTransferNote && (
-          <p className="text-xs text-gray-500">
-            Transfers are shown but excluded from daily net.
-          </p>
-        )}
-        <Link to={UPCOMING_CALENDAR_PATH} className="text-sm text-blue-600 hover:underline shrink-0">
-          {upcomingTimelineLinkLabel()}
-        </Link>
-      </div>
+      {(anyTransferNote || showCalendarLink) && (
+        <div
+          className={`flex flex-wrap items-center gap-2 pt-1.5 border-t border-gray-100 ${
+            anyTransferNote ? "justify-between" : "justify-end"
+          }`}
+        >
+          {anyTransferNote && (
+            <p className="text-xs text-gray-500">
+              Transfers are shown but excluded from daily net.
+            </p>
+          )}
+          {showCalendarLink && (
+            <Link to={UPCOMING_CALENDAR_PATH} className="text-sm text-blue-600 hover:underline shrink-0">
+              {upcomingTimelineLinkLabel()}
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

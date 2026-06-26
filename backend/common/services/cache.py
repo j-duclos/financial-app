@@ -88,6 +88,38 @@ def get_dashboard_summary_cache_key(
     )
 
 
+def get_dashboard_summary_fast_cache_key(
+    *,
+    user_id: int,
+    household_ids: Iterable[int | None],
+    forecast_days: int,
+    as_of_date: date,
+) -> str:
+    """Cache key for above-the-fold dashboard summary (fast paint)."""
+    ver = get_user_dashboard_cache_version(user_id)
+    return (
+        f"dashboard_summary_fast:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
+        f":households:{_sorted_scope_ids(household_ids)}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+    )
+
+
+def get_dashboard_summary_details_cache_key(
+    *,
+    user_id: int,
+    household_ids: Iterable[int | None],
+    forecast_days: int,
+    as_of_date: date,
+) -> str:
+    """Cache key for lazy-loaded dashboard sections."""
+    ver = get_user_dashboard_cache_version(user_id)
+    return (
+        f"dashboard_summary_details:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
+        f":households:{_sorted_scope_ids(household_ids)}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+    )
+
+
 def invalidate_user_forecast_cache(user_id: int) -> None:
     """Bump per-user version so all forecast summary keys for this user are stale."""
     key = _user_forecast_version_key(user_id)

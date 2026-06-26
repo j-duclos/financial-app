@@ -4,11 +4,19 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
 import { formatDateDisplay } from "../lib/dateDisplay";
-import { getTimeline, getTimelineCalendar, listScenarios, getProfile, listHouseholds } from "@budget-app/api-client";
+import {
+  getTimeline,
+  getTimelineCalendar,
+  getDashboardSummary,
+  listScenarios,
+  getProfile,
+  listHouseholds,
+} from "@budget-app/api-client";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import TimelineCalendar from "../components/timeline/TimelineCalendar";
 import TimelineDayPanel from "../components/timeline/TimelineDayPanel";
 import TimelineListView from "../components/timeline/TimelineListView";
+import UpcomingMoneyFlowSection from "../components/dashboard/UpcomingMoneyFlowSection";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "../components/dashboard/metricTileLayout";
 import QuickTransactionModal, {
@@ -28,6 +36,8 @@ import {
 } from "../lib/timelineCalendarUtils";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import { CALENDAR_SUMMARY } from "../lib/timelineTerminology";
+import { UPCOMING_PAGE_TITLE } from "../lib/upcomingDisplay";
+import { DEFAULT_PASSIVE_FORECAST_DAYS } from "../lib/safeToSpendLabels";
 
 type Horizon = TimelineHorizon;
 
@@ -146,6 +156,11 @@ export default function Timeline() {
   }, [urlFocusDate]);
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
+  const { data: dashboardSummary, isLoading: upcomingLoading } = useQuery({
+    queryKey: ["dashboard-summary", "calendar-upcoming", DEFAULT_PASSIVE_FORECAST_DAYS],
+    queryFn: () => getDashboardSummary({ forecast_days: DEFAULT_PASSIVE_FORECAST_DAYS }),
+    staleTime: 60_000,
+  });
   const { data: accountsData } = useOperationalAccounts();
   const { data: scenariosData } = useQuery({ queryKey: ["scenarios"], queryFn: () => listScenarios() });
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
@@ -204,6 +219,22 @@ export default function Timeline() {
 
   return (
     <div className={`${PAGE_SHELL} py-4`}>
+      <h1 className="text-lg font-semibold text-gray-900 mb-4">{UPCOMING_PAGE_TITLE}</h1>
+
+      {upcomingLoading && (
+        <div className="mb-6 h-32 rounded-lg bg-white shadow animate-pulse" aria-hidden />
+      )}
+      {dashboardSummary && !upcomingLoading && (
+        <UpcomingMoneyFlowSection
+          groups={dashboardSummary.upcoming_groups ?? []}
+          days={dashboardSummary.upcoming_days}
+          truncated={dashboardSummary.upcoming_truncated}
+        />
+      )}
+
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">
+        Calendar view
+      </h2>
       <div className="flex flex-wrap gap-4 mb-4 items-end">
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">Date Range</label>

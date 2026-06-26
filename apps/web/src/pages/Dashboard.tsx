@@ -1,18 +1,17 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FinancialGoal } from "@budget-app/shared";
-import { getDashboardSummary, listAccounts, listAllBuckets } from "@budget-app/api-client";
+import type { DashboardSummaryFast, FinancialGoal } from "@budget-app/shared";
+import { getDashboardDetails, getDashboardSummaryFast, listAccounts, listAllBuckets } from "@budget-app/api-client";
 import { topActiveGoalsForDashboard } from "../lib/goalsDashboard";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
-import DashboardSkeleton from "../components/dashboard/DashboardSkeleton";
+import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashboard/DashboardSkeleton";
 import { AttentionCardGrid } from "../components/dashboard/AttentionCard";
-import RecommendationsSection from "../components/dashboard/RecommendationsSection";
+import RecommendationsPreviewSection from "../components/dashboard/RecommendationsPreviewSection";
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import type { DashboardAttentionItem } from "@budget-app/shared";
-import UpcomingList from "../components/dashboard/UpcomingList";
+import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
 import FinancialSnapshotCard from "../components/dashboard/FinancialSnapshotCard";
 import GoalsProgressSection from "../components/dashboard/GoalsProgressSection";
 import QuickTransactionModal, {
@@ -26,11 +25,7 @@ import {
   type ForecastDays,
 } from "../lib/safeToSpendLabels";
 import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
-import {
-  UPCOMING_SECTION_TITLE,
-  upcomingSectionCollapsedSummary,
-  upcomingSectionCollapseLabel,
-} from "../lib/upcomingDisplay";
+import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 function DashboardOnboarding() {
@@ -65,15 +60,20 @@ export default function Dashboard() {
   );
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [upcomingCollapsed, setUpcomingCollapsed] = useState(false);
   const [resolveRiskTarget, setResolveRiskTarget] = useState<DashboardAttentionItem | null>(
     null
   );
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
 
-  const { data: summary, isLoading, isError } = useQuery({
-    queryKey: ["dashboard-summary", forecastDays],
-    queryFn: () => getDashboardSummary({ forecast_days: forecastDays }),
+  const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
+    queryKey: ["dashboard-summary-fast", forecastDays],
+    queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
+  });
+
+  const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery({
+    queryKey: ["dashboard-summary-details", forecastDays],
+    queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
+    enabled: !!summaryFast && !fastError,
   });
 
   const { data: accountsData } = useQuery({
@@ -89,31 +89,31 @@ export default function Dashboard() {
     refetchOnMount: "always",
   });
   const dashboardGoals = useMemo(() => {
-    if (summary?.goals?.length) return summary.goals as FinancialGoal[];
+    if (details?.goals?.length) return details.goals as FinancialGoal[];
     return topActiveGoalsForDashboard(allGoals, 3);
-  }, [summary?.goals, allGoals]);
+  }, [details?.goals, allGoals]);
   const showOnboarding =
-    summary &&
+    summaryFast &&
     accounts.length === 0 &&
-    summary.attention.length === 0 &&
-    (summary.recommendations?.length ?? summary.insights.length) === 0;
+    summaryFast.attention.length === 0 &&
+    (summaryFast.recommendations?.length ?? summaryFast.insights.length) === 0;
 
-  usePerfPageLoad("dashboard", !isLoading && !isError, { forecast_days: forecastDays });
+  usePerfPageLoad("dashboard", !fastLoading && !fastError, { forecast_days: forecastDays });
 
   return (
     <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
       <section aria-label={DASHBOARD_SECTION.financialHealth}>
         <DashboardTopSummaryBar
-          summary={summary}
+          summary={summaryFast}
           forecastDays={forecastDays}
           onForecastDaysChange={setForecastDays}
-          loading={isLoading}
+          loading={fastLoading}
         />
       </section>
 
-      {isLoading && <DashboardSkeleton omitHealth />}
+      {fastLoading && <DashboardSkeleton omitHealth />}
 
-      {isError && (
+      {fastError && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
           <p className="font-medium">Could not load dashboard data.</p>
           <p className="mt-1">
@@ -122,7 +122,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {summary && (
+      {summaryFast && (
         <>
           {showOnboarding && <DashboardOnboarding />}
 
@@ -131,90 +131,90 @@ export default function Dashboard() {
               Attention Required
             </h2>
             <AttentionCardGrid
-              items={summary.attention}
-              windowDays={summary.safe_to_spend.window_days}
-              totalCount={summary.attention_total_count}
+              items={summaryFast.attention}
+              windowDays={summaryFast.safe_to_spend.window_days}
+              totalCount={summaryFast.attention_total_count}
               onMoveMoney={(item) => setTxnPreset(attentionTransferPreset(item))}
               onResolveRisk={setResolveRiskTarget}
             />
           </section>
 
-          <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-              Recommendations
-            </h2>
-            <RecommendationsSection
-              summary={summary}
-              onExecuteTransfer={(rec) => {
-                const preset = recommendationTransferPreset(rec);
-                if (preset) setTxnPreset(preset);
-              }}
-              onResolveRisk={(accountId) => setResolveRiskAccountId(accountId)}
-            />
-          </section>
+          <RecommendationsPreviewSection
+            summary={summaryFast}
+            onExecuteTransfer={(rec) => {
+              const preset = recommendationTransferPreset(rec);
+              if (preset) setTxnPreset(preset);
+            }}
+            onResolveRisk={(accountId) => setResolveRiskAccountId(accountId)}
+          />
 
-          <section aria-label={UPCOMING_SECTION_TITLE}>
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-              <button
-                type="button"
-                onClick={() => setUpcomingCollapsed((v) => !v)}
-                aria-expanded={!upcomingCollapsed}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700"
-              >
-                {upcomingCollapsed ? (
-                  <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
-                ) : (
-                  <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
-                )}
-                {UPCOMING_SECTION_TITLE}
-                <span className="sr-only">{upcomingSectionCollapseLabel(upcomingCollapsed)}</span>
-              </button>
-              {upcomingCollapsed && (
-                <p className="text-xs text-gray-500">
-                  {upcomingSectionCollapsedSummary(
-                    summary.upcoming_groups ?? [],
-                    summary.upcoming_days
-                  )}
-                </p>
+          {detailsError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Some dashboard sections could not load. Refresh to try again.
+            </div>
+          ) : (
+            <>
+              {!details || detailsLoading ? (
+                <section aria-label={UPCOMING_SECTION_TITLE}>
+                  <DashboardSectionSkeleton rows={2} />
+                </section>
+              ) : (
+                <UpcomingMoneyFlowPreviewSection
+                  groups={details.upcoming_groups ?? []}
+                  nextIssue={summaryFast.safe_to_spend.next_issue}
+                />
               )}
-            </div>
-            {!upcomingCollapsed && (
-              <UpcomingList
-                groups={summary.upcoming_groups ?? []}
-                days={summary.upcoming_days}
-                truncated={summary.upcoming_truncated}
-              />
-            )}
-          </section>
 
-          <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
-            <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
-              {DASHBOARD_SECTION.resourceBreakdown}
-            </h2>
-            <FinancialSnapshotCard snapshot={summary.snapshot} />
-          </section>
+              {!details || detailsLoading ? (
+                <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
+                  <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                    {DASHBOARD_SECTION.resourceBreakdown}
+                  </h2>
+                  <DashboardSectionSkeleton rows={1} />
+                </section>
+              ) : (
+                <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
+                  <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                    {DASHBOARD_SECTION.resourceBreakdown}
+                  </h2>
+                  <FinancialSnapshotCard snapshot={details.snapshot} />
+                </section>
+              )}
 
-          <section>
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Goals &amp; Progress
-              </h2>
-              <div className="flex items-center gap-3 shrink-0 text-xs">
-                <Link to="/goals?new=1" className="text-blue-600 hover:underline">
-                  Add goal
-                </Link>
-                <Link to="/goals" className="text-blue-600 hover:underline">
-                  View goals
-                </Link>
-              </div>
-            </div>
-            <GoalsProgressSection
-              goals={dashboardGoals}
-              goalsLoading={goalsLoading}
-              goalsSummary={summary.goals_summary}
-              warnings={summary.goal_warnings ?? []}
-            />
-          </section>
+              {!details || detailsLoading ? (
+                <section>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Goals &amp; Progress
+                    </h2>
+                  </div>
+                  <DashboardSectionSkeleton rows={2} />
+                </section>
+              ) : (
+                <section>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Goals &amp; Progress
+                    </h2>
+                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                      <Link to="/goals?new=1" className="text-blue-600 hover:underline">
+                        Add goal
+                      </Link>
+                      <Link to="/goals" className="text-blue-600 hover:underline">
+                        View goals
+                      </Link>
+                    </div>
+                  </div>
+                  <GoalsProgressSection
+                    goals={dashboardGoals}
+                    goalsLoading={goalsLoading}
+                    goalsSummary={details.goals_summary}
+                    warnings={details.goal_warnings ?? []}
+                  />
+                </section>
+              )}
+            </>
+          )}
 
         </>
       )}
@@ -240,7 +240,8 @@ export default function Dashboard() {
             setResolveRiskAccountId(null);
           }}
           onSnoozed={() => {
-            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
+            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
           }}
         />
       )}
@@ -252,7 +253,8 @@ export default function Dashboard() {
         onClose={() => setTxnPreset(null)}
         onSuccess={async (message) => {
           setToast(message);
-          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
+          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
         }}
       />
     </div>

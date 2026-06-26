@@ -5,6 +5,7 @@ import { createAppQueryClient } from "./lib/queryClient";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import ActionCenter from "./pages/ActionCenter";
 import Dashboard from "./pages/Dashboard";
 import Goals from "./pages/Goals";
 import GoalDetail from "./pages/GoalDetail";
@@ -61,6 +62,7 @@ function AppRoutes() {
         }
       >
         <Route index element={<Dashboard />} />
+        <Route path="action-center" element={<ActionCenter />} />
         <Route path="timeline" element={<Timeline />} />
         <Route path="accounts" element={<Accounts />} />
         <Route path="automation" element={<Rules />} />

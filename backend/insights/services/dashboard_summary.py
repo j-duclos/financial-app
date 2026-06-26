@@ -17,6 +17,8 @@ from django.db.models.functions import Coalesce
 from common.services.cache import (
     DASHBOARD_SUMMARY_CACHE_SECONDS,
     get_dashboard_summary_cache_key,
+    get_dashboard_summary_details_cache_key,
+    get_dashboard_summary_fast_cache_key,
 )
 from common.services.profiler import (
     PerfTimer,
@@ -920,11 +922,65 @@ def build_upcoming_events(
     return events
 
 
+def _forecast_risk_from_aggregate(st_aggregate: dict[str, Any]) -> dict[str, Any]:
+    worst = st_aggregate.get("worst_projected_account") or {}
+    return {
+        "next_risk_date": st_aggregate.get("next_risk_date"),
+        "lowest_projected_balance": worst.get("lowest_projected_balance"),
+        "lowest_projected_balance_account_id": worst.get("account_id"),
+        "lowest_projected_balance_account_name": worst.get("account_name"),
+    }
+
+
+def _forecast_risk_from_full_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("forecast_risk"):
+        return payload["forecast_risk"]
+    next_issue = (payload.get("safe_to_spend") or {}).get("next_issue") or {}
+    return {
+        "next_risk_date": next_issue.get("risk_date"),
+        "lowest_projected_balance": None,
+        "lowest_projected_balance_account_id": next_issue.get("account_id"),
+        "lowest_projected_balance_account_name": next_issue.get("account_name"),
+    }
+
+
+def _extract_dashboard_fast(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "safe_to_spend": payload["safe_to_spend"],
+        "top_summary": payload.get("top_summary"),
+        "attention": payload.get("attention", []),
+        "attention_total_count": payload.get("attention_total_count", 0),
+        "debt": payload.get("debt"),
+        "insights": payload.get("insights", []),
+        "recommendations": payload.get("recommendations", []),
+        "forecast_risk": _forecast_risk_from_full_payload(payload),
+    }
+
+
+def _extract_dashboard_details(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "upcoming": payload.get("upcoming", []),
+        "upcoming_groups": payload.get("upcoming_groups", []),
+        "upcoming_truncated": payload.get("upcoming_truncated", False),
+        "upcoming_total_count": payload.get("upcoming_total_count", 0),
+        "upcoming_days": payload.get("upcoming_days", UPCOMING_DAYS),
+        "snapshot": payload.get("snapshot", {}),
+        "goals": payload.get("goals", []),
+        "goal_warnings": payload.get("goal_warnings", []),
+        "goals_summary": payload.get("goals_summary"),
+        "bills": payload.get("bills"),
+        "recommendation_hints": payload.get("recommendation_hints", []),
+        "net_worth": payload.get("net_worth", "0"),
+        "month_to_date": payload.get("month_to_date"),
+    }
+
+
 def _build_dashboard_summary(
     user,
     *,
     days: int = 30,
     as_of_date: date | None = None,
+    mode: str = "full",
 ) -> dict[str, Any]:
     """Uncached dashboard aggregation (forecast, health, upcoming, bills, recommendations)."""
     timer = PerfTimer() if perf_enabled() else None
@@ -1028,16 +1084,18 @@ def _build_dashboard_summary(
     )
 
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
-    upcoming_grouped = build_upcoming_groups(
-        upcoming_events,
-        transfer_rule_ids=transfer_rule_ids,
-        transfer_rule_targets=transfer_rule_targets,
-        transfer_rule_sources=transfer_rule_sources,
-        accounts_by_id=accounts_by_id,
-        health_by_id=health_by_id,
-        today=today,
-        max_transactions=UPCOMING_MAX_TRANSACTIONS,
-    )
+    upcoming_grouped: dict[str, Any] | None = None
+    if mode != "fast":
+        upcoming_grouped = build_upcoming_groups(
+            upcoming_events,
+            transfer_rule_ids=transfer_rule_ids,
+            transfer_rule_targets=transfer_rule_targets,
+            transfer_rule_sources=transfer_rule_sources,
+            accounts_by_id=accounts_by_id,
+            health_by_id=health_by_id,
+            today=today,
+            max_transactions=UPCOMING_MAX_TRANSACTIONS,
+        )
     phase_end(timer, _phase_upcoming)
 
     _phase_widgets = phase_start(timer, "widgets")
@@ -1101,7 +1159,7 @@ def _build_dashboard_summary(
         forecasts=forecasts,
         st_aggregate=st_aggregate,
         upcoming_events=upcoming_events,
-        upcoming_groups=upcoming_grouped["groups"],
+        upcoming_groups=(upcoming_grouped or {}).get("groups", []),
         transfer_rule_ids=transfer_rule_ids,
         transfer_rule_targets=transfer_rule_targets,
         dashboard_goals=dashboard_goals,
@@ -1135,6 +1193,47 @@ def _build_dashboard_summary(
     )
     recommendation_hints = recommendation_timeline_hints(recommendations)
     phase_end(timer, _phase_recommendations)
+
+    forecast_risk = _forecast_risk_from_aggregate(st_aggregate)
+
+    if mode == "fast":
+        _phase_snapshot = phase_start(timer, "snapshot_top_summary")
+        snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
+        snapshot_light = _compute_snapshot(snapshot_accounts, today=today, goals=[], mtd_net=None)
+        top_summary = _compute_top_summary(snapshot_accounts, snapshot_light, today=today)
+        phase_end(timer, _phase_snapshot)
+
+        if perf_enabled() and wall_start is not None:
+            if query_profiler is not None:
+                query_profiler.stop()
+            bt_count = get_build_timeline_count()
+            total_ms = (time.perf_counter() - wall_start) * 1000
+            callers = get_build_timeline_callers()
+            perf_print(
+                f"[PERF] dashboard_fast_total build_timeline_count={bt_count} total_ms={total_ms:.0f}"
+            )
+            if bt_count > 1 and callers:
+                perf_print(f"[PERF] dashboard_fast build_timeline_callers={','.join(callers)}")
+            if query_profiler is not None:
+                perf_print(f"[PERF] query_count={query_profiler.query_count}")
+
+        return {
+            "safe_to_spend": {
+                "window_days": days,
+                "amount": str(total_sts.quantize(Decimal("0.01"))),
+                "status": sts_status,
+                "next_issue": next_issue,
+            },
+            "top_summary": top_summary,
+            "attention": attention,
+            "attention_total_count": len(attention_all),
+            "debt": debt_summary,
+            "insights": insights,
+            "recommendations": recommendations,
+            "forecast_risk": forecast_risk,
+        }
+
+    assert upcoming_grouped is not None
 
     _phase_snapshot = phase_start(timer, "snapshot")
     snapshot_goal_rows = [
@@ -1198,6 +1297,7 @@ def _build_dashboard_summary(
         "insights": insights,
         "recommendations": recommendations,
         "recommendation_hints": recommendation_hints,
+        "forecast_risk": forecast_risk,
     }
 
 
@@ -1246,3 +1346,125 @@ def build_dashboard_summary(
     )
     cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     return result
+
+
+def build_dashboard_summary_fast(
+    user,
+    *,
+    days: int = 30,
+    as_of_date: date | None = None,
+) -> dict[str, Any]:
+    """Above-the-fold dashboard payload for fast first paint."""
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    households = get_households_for_user(user)
+    household_ids = list(households.values_list("id", flat=True))
+
+    full_key = get_dashboard_summary_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    full_cached = cache.get(full_key)
+    if full_cached is not None:
+        log_perf(
+            "dashboard_summary_fast",
+            cache="HIT_FULL",
+            user=user.pk,
+            days=days,
+            households=len(household_ids),
+        )
+        return _extract_dashboard_fast(full_cached)
+
+    cache_key = get_dashboard_summary_fast_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "dashboard_summary_fast",
+            cache="HIT",
+            user=user.pk,
+            days=days,
+            households=len(household_ids),
+        )
+        return cached
+
+    wall_start = time.perf_counter()
+    result = _build_dashboard_summary(user, days=days, as_of_date=today, mode="fast")
+    log_perf(
+        "dashboard_summary_fast",
+        cache="MISS",
+        user=user.pk,
+        days=days,
+        households=len(household_ids),
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+    return result
+
+
+def build_dashboard_summary_details(
+    user,
+    *,
+    days: int = 30,
+    as_of_date: date | None = None,
+) -> dict[str, Any]:
+    """Lazy-loaded dashboard sections (upcoming, snapshot, goals, bills)."""
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    households = get_households_for_user(user)
+    household_ids = list(households.values_list("id", flat=True))
+
+    full_key = get_dashboard_summary_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    full_cached = cache.get(full_key)
+    if full_cached is not None:
+        log_perf(
+            "dashboard_summary_details",
+            cache="HIT_FULL",
+            user=user.pk,
+            days=days,
+            households=len(household_ids),
+        )
+        return _extract_dashboard_details(full_cached)
+
+    cache_key = get_dashboard_summary_details_cache_key(
+        user_id=user.pk,
+        household_ids=household_ids,
+        forecast_days=days,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log_perf(
+            "dashboard_summary_details",
+            cache="HIT",
+            user=user.pk,
+            days=days,
+            households=len(household_ids),
+        )
+        return cached
+
+    wall_start = time.perf_counter()
+    full_result = _build_dashboard_summary(user, days=days, as_of_date=today, mode="full")
+    log_perf(
+        "dashboard_summary_details",
+        cache="MISS",
+        user=user.pk,
+        days=days,
+        households=len(household_ids),
+        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+    )
+    cache.set(full_key, full_result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+    details = _extract_dashboard_details(full_result)
+    cache.set(cache_key, details, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+    return details

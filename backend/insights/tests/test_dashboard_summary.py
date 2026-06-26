@@ -19,8 +19,12 @@ from insights.services.dashboard_summary import (
     ATTENTION_TOP_LIMIT,
     _active_credit_accounts_for_available_credit,
     _build_dashboard_summary,
+    _extract_dashboard_details,
+    _extract_dashboard_fast,
     build_attention_items,
     build_dashboard_summary,
+    build_dashboard_summary_details,
+    build_dashboard_summary_fast,
     _next_safe_to_spend_issue,
 )
 from accounts.services.available_to_spend import dashboard_safe_to_spend_aggregate, calculate_forecast_summaries_for_accounts
@@ -114,6 +118,41 @@ def test_dashboard_summary_api_returns_safe_to_spend(auth_client, checking):
     assert data["safe_to_spend"]["window_days"] == 30
     assert "amount" in data["safe_to_spend"]
     assert data["safe_to_spend"]["status"] in ("healthy", "watch", "critical")
+
+
+def test_dashboard_summary_fast_api_returns_above_the_fold(auth_client, checking):
+    r = auth_client.get("/api/insights/dashboard/summary-fast/?days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert "safe_to_spend" in data
+    assert "top_summary" in data
+    assert "attention" in data
+    assert "forecast_risk" in data
+    assert "upcoming_groups" not in data
+    assert "snapshot" not in data
+    assert "goals" not in data
+
+
+def test_dashboard_summary_details_api_returns_lazy_sections(auth_client, checking):
+    r = auth_client.get("/api/insights/dashboard/details/?days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert "upcoming_groups" in data
+    assert "snapshot" in data
+    assert "goals" in data
+    assert "safe_to_spend" not in data
+
+
+def test_dashboard_fast_and_details_match_full_summary(user, checking):
+    full = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    fast = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
+    details = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
+
+    assert fast["safe_to_spend"] == full["safe_to_spend"]
+    assert fast["top_summary"] == full["top_summary"]
+    assert fast["attention"] == full["attention"]
+    assert _extract_dashboard_fast(full) == fast
+    assert _extract_dashboard_details(full) == details
 
 
 def test_safe_to_spend_next_issue_uses_cash_forecast_not_credit_attention(

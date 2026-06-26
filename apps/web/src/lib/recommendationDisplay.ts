@@ -1,12 +1,28 @@
 import type { DashboardInsight, DashboardRecommendation } from "@budget-app/shared";
 import type { QuickTransactionPreset } from "../components/quickActions/QuickTransactionModal";
-import { normalizeSeverity, severityShowsAlert, severityTokens } from "./severity";
+import { normalizeSeverity, severityRank, severityShowsAlert, severityTokens } from "./severity";
 
 const DISMISS_STORAGE_KEY = "budget-app.dashboard.dismissedRecommendations";
 const SNOOZE_STORAGE_KEY = "budget-app.dashboard.snoozedRecommendations";
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const RECOMMENDATION_LIMIT = 5;
+
+/** Dashboard preview: highest-priority actions only. */
+export const DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT = 3;
+
+export const ACTION_CENTER_PATH = "/action-center";
+
+export const RECOMMENDATIONS_SECTION_TITLE = "Recommendations";
+
+export const ACTION_CENTER_PAGE_TITLE = "Action Center";
+
+export type RecommendationDisplayState = "active" | "snoozed" | "dismissed";
+
+export type RecommendationListEntry = {
+  rec: DashboardRecommendation;
+  displayState: RecommendationDisplayState;
+};
 
 import { normalizePaymentActionLabel, PAYMENT_PLANNER_LABEL } from "./paymentPlannerDisplay";
 import { SPENDING_GOALS_PATH, VIEW_SPENDING_LIMITS_LABEL } from "./spendingTargetDisplay";
@@ -45,6 +61,18 @@ export function snoozeRecommendation(id: string): void {
   writeMap(SNOOZE_STORAGE_KEY, map);
 }
 
+export function unsnoozeRecommendation(id: string): void {
+  const map = readMap(SNOOZE_STORAGE_KEY);
+  delete map[id];
+  writeMap(SNOOZE_STORAGE_KEY, map);
+}
+
+export function restoreRecommendation(id: string): void {
+  const map = readMap(DISMISS_STORAGE_KEY);
+  delete map[id];
+  writeMap(DISMISS_STORAGE_KEY, map);
+}
+
 export function loadSnoozedRecommendationIds(now = Date.now()): Set<string> {
   const map = readMap(SNOOZE_STORAGE_KEY);
   const active = new Set<string>();
@@ -59,21 +87,85 @@ export function loadSnoozedRecommendationIds(now = Date.now()): Set<string> {
   return active;
 }
 
+function recommendationSource(
+  recommendations: DashboardRecommendation[] | undefined,
+  insights: DashboardInsight[] | undefined
+): DashboardRecommendation[] {
+  return recommendations && recommendations.length > 0
+    ? recommendations
+    : insights?.map(insightToRecommendation) ?? [];
+}
+
+export function compareRecommendationsByPriority(
+  a: DashboardRecommendation,
+  b: DashboardRecommendation
+): number {
+  const rankDiff =
+    severityRank(normalizeSeverity(a.severity)) - severityRank(normalizeSeverity(b.severity));
+  if (rankDiff !== 0) return rankDiff;
+  return (b.priority_score ?? 0) - (a.priority_score ?? 0);
+}
+
 export function recommendationsForDisplay(
+  recommendations: DashboardRecommendation[] | undefined,
+  insights: DashboardInsight[] | undefined,
+  dismissed: Set<string>,
+  snoozed: Set<string>,
+  limit: number = RECOMMENDATION_LIMIT
+): DashboardRecommendation[] {
+  return recommendationSource(recommendations, insights)
+    .filter((r) => !dismissed.has(r.id) && !snoozed.has(r.id))
+    .filter((r) => !isHealthyRecommendationSeverity(r.severity))
+    .sort(compareRecommendationsByPriority)
+    .slice(0, limit);
+}
+
+export function recommendationsForDashboardPreview(
   recommendations: DashboardRecommendation[] | undefined,
   insights: DashboardInsight[] | undefined,
   dismissed: Set<string>,
   snoozed: Set<string>
 ): DashboardRecommendation[] {
-  const source =
-    recommendations && recommendations.length > 0
-      ? recommendations
-      : insights?.map(insightToRecommendation) ?? [];
-  return source
-    .filter((r) => !dismissed.has(r.id) && !snoozed.has(r.id))
+  return recommendationsForDisplay(
+    recommendations,
+    insights,
+    dismissed,
+    snoozed,
+    DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT
+  );
+}
+
+/** Full Action Center list — includes snoozed and dismissed entries with state labels. */
+export function recommendationsForActionCenter(
+  recommendations: DashboardRecommendation[] | undefined,
+  insights: DashboardInsight[] | undefined,
+  dismissed: Set<string>,
+  snoozed: Set<string>
+): RecommendationListEntry[] {
+  return recommendationSource(recommendations, insights)
     .filter((r) => !isHealthyRecommendationSeverity(r.severity))
-    .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0))
-    .slice(0, RECOMMENDATION_LIMIT);
+    .map((rec) => ({
+      rec,
+      displayState: dismissed.has(rec.id)
+        ? "dismissed"
+        : snoozed.has(rec.id)
+          ? "snoozed"
+          : "active",
+    }))
+    .sort((a, b) => {
+      const stateOrder = { active: 0, snoozed: 1, dismissed: 2 };
+      const stateDiff = stateOrder[a.displayState] - stateOrder[b.displayState];
+      if (stateDiff !== 0) return stateDiff;
+      return compareRecommendationsByPriority(a.rec, b.rec);
+    });
+}
+
+export function actionCenterLinkLabel(): string {
+  return "View all actions";
+}
+
+export function recommendationsPreviewEmptyMessage(): string {
+  return "No urgent actions — open Action Center for the full list.";
 }
 
 /** Stable / positive cards are not shown in the recommendations grid. */

@@ -17,6 +17,14 @@ export const UPCOMING_CALENDAR_PATH = "/timeline";
 
 export const UPCOMING_SECTION_TITLE = "Upcoming Money Flow";
 
+export const UPCOMING_PAGE_TITLE = "Money Flow Calendar";
+
+/** Dashboard preview: next N days only. */
+export const UPCOMING_PREVIEW_DAYS = 7;
+
+/** Dashboard preview: max transaction rows across all preview days. */
+export const UPCOMING_PREVIEW_MAX_ITEMS = 5;
+
 export const UPCOMING_MAX_VISIBLE_TRANSACTIONS = 25;
 
 /** Default visible rows per day before "show more" (matches backend UPCOMING_PER_DAY_VISIBLE). */
@@ -127,8 +135,132 @@ export function initialUpcomingDayCollapsed(
   return collapsed;
 }
 
-export function upcomingEmptyMessage(): string {
-  return "No upcoming transactions in the next 14 days.";
+export function upcomingEmptyMessage(days = 14): string {
+  return `No upcoming transactions in the next ${days} days.`;
+}
+
+function todayIsoLocal(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  const ny = dt.getFullYear();
+  const nm = String(dt.getMonth() + 1).padStart(2, "0");
+  const nd = String(dt.getDate()).padStart(2, "0");
+  return `${ny}-${nm}-${nd}`;
+}
+
+/** Keep groups whose date falls within [today, today + maxDays]. */
+export function filterUpcomingGroupsForPreview(
+  groups: DashboardUpcomingGroup[],
+  maxDays: number = UPCOMING_PREVIEW_DAYS,
+  today: string = todayIsoLocal()
+): DashboardUpcomingGroup[] {
+  const end = addDaysIso(today, maxDays);
+  return groups.filter((g) => g.date >= today && g.date <= end);
+}
+
+/**
+ * Trim groups to at most maxItems display transactions (post transfer collapse).
+ * Returns cloned groups with shortened transaction lists when needed.
+ */
+export function limitUpcomingGroupsByItemCount(
+  groups: DashboardUpcomingGroup[],
+  maxItems: number = UPCOMING_PREVIEW_MAX_ITEMS
+): { groups: DashboardUpcomingGroup[]; truncated: boolean } {
+  const out: DashboardUpcomingGroup[] = [];
+  let remaining = maxItems;
+  let truncated = false;
+
+  for (const group of groups) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const displayTxns = upcomingDisplayTransactions(group);
+    if (displayTxns.length === 0) {
+      out.push(group);
+      continue;
+    }
+    if (displayTxns.length <= remaining) {
+      out.push(group);
+      remaining -= displayTxns.length;
+      continue;
+    }
+    const keepIds = new Set(displayTxns.slice(0, remaining).map((t) => t.id));
+    out.push({
+      ...group,
+      transactions: group.transactions.filter((t) => keepIds.has(t.id)),
+    });
+    remaining = 0;
+    truncated = true;
+  }
+
+  if (out.length < groups.length && remaining <= 0) {
+    truncated = true;
+  }
+
+  return { groups: out, truncated };
+}
+
+export type UpcomingPreviewRisk = {
+  date: string;
+  accountName?: string | null;
+  reason?: string | null;
+};
+
+/** First at-risk day in preview window, or dashboard next_issue fallback. */
+export function upcomingPreviewNextRiskDay(
+  groups: DashboardUpcomingGroup[],
+  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null
+): UpcomingPreviewRisk | null {
+  const risky = groups.find((g) => g.has_risk);
+  if (risky) {
+    return {
+      date: risky.date,
+      accountName: risky.affected_account_name,
+      reason: risky.risk_reason ?? risky.heat_reason,
+    };
+  }
+  if (nextIssue?.risk_date) {
+    return {
+      date: nextIssue.risk_date,
+      accountName: nextIssue.account_name,
+      reason: nextIssue.reason,
+    };
+  }
+  return null;
+}
+
+export function buildUpcomingDashboardPreview(
+  groups: DashboardUpcomingGroup[],
+  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null
+): {
+  groups: DashboardUpcomingGroup[];
+  days: number;
+  truncated: boolean;
+  nextRisk: UpcomingPreviewRisk | null;
+  maxTotalItems: number;
+} {
+  const dayFiltered = filterUpcomingGroupsForPreview(groups);
+  const totalItems = dayFiltered.reduce(
+    (sum, g) => sum + upcomingDisplayTransactionCount(g),
+    0
+  );
+  return {
+    groups: dayFiltered,
+    days: UPCOMING_PREVIEW_DAYS,
+    truncated: totalItems > UPCOMING_PREVIEW_MAX_ITEMS || dayFiltered.length < groups.length,
+    nextRisk: upcomingPreviewNextRiskDay(dayFiltered, nextIssue),
+    maxTotalItems: UPCOMING_PREVIEW_MAX_ITEMS,
+  };
 }
 
 function isPlaidOrImportedSource(source: string | null | undefined): boolean {

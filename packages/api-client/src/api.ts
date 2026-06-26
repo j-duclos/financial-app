@@ -5,6 +5,8 @@ import type {
   AccountForecastSummary,
   SafeToSpendDashboard,
   DashboardSummary,
+  DashboardSummaryDetails,
+  DashboardSummaryFast,
   DashboardRecommendation,
   MonthlyBillChecklist,
   BillsOverviewResponse,
@@ -946,6 +948,26 @@ export async function getDashboardSummary(params?: {
 }): Promise<DashboardSummary> {
   const horizon = params?.forecast_days ?? params?.days ?? 30;
   return requestRequired("/api/insights/dashboard/summary/", {
+    params: { forecast_days: String(horizon) },
+  });
+}
+
+export async function getDashboardSummaryFast(params?: {
+  days?: number;
+  forecast_days?: number;
+}): Promise<DashboardSummaryFast> {
+  const horizon = params?.forecast_days ?? params?.days ?? 30;
+  return requestRequired("/api/insights/dashboard/summary-fast/", {
+    params: { forecast_days: String(horizon) },
+  });
+}
+
+export async function getDashboardDetails(params?: {
+  days?: number;
+  forecast_days?: number;
+}): Promise<DashboardSummaryDetails> {
+  const horizon = params?.forecast_days ?? params?.days ?? 30;
+  return requestRequired("/api/insights/dashboard/details/", {
     params: { forecast_days: String(horizon) },
   });
 }

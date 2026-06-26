@@ -15,6 +15,7 @@ export default function Layout() {
 
   const primaryNav = [
     { to: "/", label: "Dashboard" },
+    { to: "/action-center", label: "Action Center" },
     { to: "/timeline", label: "Calendar" },
     { to: "/accounts", label: "Accounts" },
     { to: "/transactions", label: "Transactions" },

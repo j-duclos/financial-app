@@ -853,6 +853,42 @@ export interface DashboardTopSummary {
   net_position: string;
 }
 
+export interface DashboardForecastRisk {
+  next_risk_date: string | null;
+  lowest_projected_balance: string | null;
+  lowest_projected_balance_account_id?: number | null;
+  lowest_projected_balance_account_name?: string | null;
+}
+
+/** Above-the-fold dashboard payload for fast first paint. */
+export interface DashboardSummaryFast {
+  safe_to_spend: DashboardSummary["safe_to_spend"];
+  top_summary?: DashboardTopSummary;
+  attention: DashboardAttentionItem[];
+  attention_total_count: number;
+  debt?: DashboardDebtSummary;
+  insights: DashboardInsight[];
+  recommendations?: DashboardRecommendation[];
+  forecast_risk: DashboardForecastRisk;
+}
+
+/** Lazy-loaded dashboard sections loaded after first paint. */
+export interface DashboardSummaryDetails {
+  upcoming: DashboardUpcomingItem[];
+  upcoming_groups: DashboardUpcomingGroup[];
+  upcoming_truncated?: boolean;
+  upcoming_total_count?: number;
+  upcoming_days: number;
+  snapshot: DashboardSnapshot;
+  goals: DashboardGoalSummary[];
+  goal_warnings?: GoalWarning[];
+  goals_summary?: GoalsAggregateSummary;
+  bills?: DashboardBillsSummary;
+  recommendation_hints?: RecommendationTimelineHint[];
+  net_worth: string;
+  month_to_date: DashboardSummary["month_to_date"];
+}
+
 export interface DashboardSummary {
   safe_to_spend: {
     window_days: number;
@@ -867,6 +903,7 @@ export interface DashboardSummary {
     } | null;
   };
   top_summary?: DashboardTopSummary;
+  forecast_risk?: DashboardForecastRisk;
   net_worth: string;
   month_to_date: {
     month: string;

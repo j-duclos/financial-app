@@ -11,7 +11,11 @@ from accounts.models import Account
 from common.services.forecast_horizon import parse_forecast_days_param
 from accounts.services.balances import signed_ledger_balance
 from transactions.models import Transaction
-from .services.dashboard_summary import build_dashboard_summary
+from .services.dashboard_summary import (
+    build_dashboard_summary,
+    build_dashboard_summary_details,
+    build_dashboard_summary_fast,
+)
 from .services.reporting import exclude_internal_transfers
 from .services.subscription_intelligence import build_subscription_intelligence
 
@@ -111,6 +115,30 @@ class DashboardSummaryView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         data = build_dashboard_summary(request.user, days=days)
+        return Response(data)
+
+
+class DashboardSummaryFastView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            days = parse_forecast_days_param(request)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        data = build_dashboard_summary_fast(request.user, days=days)
+        return Response(data)
+
+
+class DashboardSummaryDetailsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            days = parse_forecast_days_param(request)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        data = build_dashboard_summary_details(request.user, days=days)
         return Response(data)
 
 

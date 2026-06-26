@@ -13,8 +13,8 @@ describe("Dashboard page structure", () => {
   it("includes command-center sections", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);
-    expect(dashboardSource).toMatch(/RecommendationsSection/);
-    expect(dashboardSource).toMatch(/UpcomingList/);
+    expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
+    expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
     expect(dashboardSource).toMatch(/GoalsProgressSection/);
     expect(dashboardSource).toMatch(/FinancialSnapshotCard/);
   });
@@ -27,15 +27,15 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).not.toMatch(/<h1[^>]*>Dashboard<\/h1>/);
   });
 
-  it("renders recommendations section", () => {
-    expect(dashboardSource).toMatch(/RecommendationsSection/);
+  it("renders recommendations preview section", () => {
+    expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
   });
 
   it("orders operational sections before resource breakdown", () => {
     const healthIdx = dashboardSource.indexOf("DashboardTopSummaryBar");
     const attentionIdx = dashboardSource.indexOf("Attention Required");
-    const recommendationsIdx = dashboardSource.indexOf("Recommendations");
-    const upcomingIdx = dashboardSource.indexOf("UPCOMING_SECTION_TITLE");
+    const recommendationsIdx = dashboardSource.indexOf("RecommendationsPreviewSection");
+    const upcomingIdx = dashboardSource.indexOf("UpcomingMoneyFlowPreviewSection");
     const resourceIdx = dashboardSource.indexOf("<FinancialSnapshotCard");
     const goalsIdx = dashboardSource.indexOf("Goals &amp; Progress");
     expect(healthIdx).toBeGreaterThan(-1);

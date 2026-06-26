@@ -22,6 +22,10 @@ import {
   groupUpcomingByMonth,
   upcomingMonthLabel,
   upcomingListUsesStickyScroll,
+  UPCOMING_PREVIEW_DAYS,
+  UPCOMING_PREVIEW_MAX_ITEMS,
+  buildUpcomingDashboardPreview,
+  filterUpcomingGroupsForPreview,
 } from "./upcomingDisplay";
 
 function txn(overrides: Partial<DashboardUpcomingTransaction> = {}): DashboardUpcomingTransaction {
@@ -301,5 +305,45 @@ describe("upcomingDisplay", () => {
         group({ date: "2026-07-01" }),
       ])
     ).toBe(true);
+  });
+
+  it("filters dashboard preview to seven days from today", () => {
+    const today = "2026-06-26";
+    const filtered = filterUpcomingGroupsForPreview(
+      [
+        group({ date: "2026-06-26" }),
+        group({ date: "2026-07-01" }),
+        group({ date: "2026-06-20" }),
+      ],
+      UPCOMING_PREVIEW_DAYS,
+      today
+    );
+    expect(filtered.map((g) => g.date)).toEqual(["2026-06-26", "2026-07-01"]);
+  });
+
+  it("buildUpcomingDashboardPreview caps items and surfaces risk", () => {
+    const today = "2026-06-26";
+    const preview = buildUpcomingDashboardPreview(
+      [
+        group({
+          date: "2026-06-27",
+          has_risk: true,
+          risk_reason: "Low buffer",
+          transactions: [
+            txn({ id: "a", date: "2026-06-27" }),
+            txn({ id: "b", date: "2026-06-27" }),
+            txn({ id: "c", date: "2026-06-27" }),
+            txn({ id: "d", date: "2026-06-27" }),
+            txn({ id: "e", date: "2026-06-27" }),
+            txn({ id: "f", date: "2026-06-27" }),
+          ],
+        }),
+      ],
+      null
+    );
+    expect(preview.days).toBe(UPCOMING_PREVIEW_DAYS);
+    expect(preview.maxTotalItems).toBe(UPCOMING_PREVIEW_MAX_ITEMS);
+    expect(preview.truncated).toBe(true);
+    expect(preview.nextRisk?.date).toBe("2026-06-27");
   });
 });

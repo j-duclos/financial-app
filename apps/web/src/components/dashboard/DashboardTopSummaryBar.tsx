@@ -1,5 +1,5 @@
 import { formatCurrency } from "@budget-app/shared";
-import type { DashboardDebtSummary, DashboardSummary } from "@budget-app/shared";
+import type { DashboardDebtSummary, DashboardSummaryFast } from "@budget-app/shared";
 import { DASHBOARD_SECTION, FINANCIAL_HEALTH } from "../../lib/dashboardTerminology";
 import {
   FORECAST_DAY_OPTIONS,
@@ -19,7 +19,7 @@ import DebtPayoffInsight from "./DebtPayoffInsight";
 import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "./metricTileLayout";
 
 type Props = {
-  summary: DashboardSummary | undefined;
+  summary: DashboardSummaryFast | undefined;
   forecastDays: ForecastDays;
   onForecastDaysChange: (days: ForecastDays) => void;
   loading?: boolean;

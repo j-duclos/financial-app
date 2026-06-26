@@ -1,11 +1,23 @@
-import type { DashboardSummary, DashboardTopSummary } from "@budget-app/shared";
+import type { DashboardSummary, DashboardSummaryFast, DashboardTopSummary } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 import { formatHealthRiskDate } from "./accountHealthDisplay";
 import { riskStatusClass, riskStatusLabel } from "./safeToSpendLabels";
 
-export function topSummaryFromDashboard(summary: DashboardSummary): DashboardTopSummary {
+export function topSummaryFromDashboard(
+  summary: Pick<DashboardSummaryFast, "top_summary"> &
+    Partial<Pick<DashboardSummary, "snapshot">>
+): DashboardTopSummary {
   if (summary.top_summary) return summary.top_summary;
   const snap = summary.snapshot;
+  if (!snap) {
+    return {
+      liquid_cash: "0",
+      available_credit: "0",
+      total_credit_limit: null,
+      credit_utilization: null,
+      net_position: "0",
+    };
+  }
   const cash = parseFloat(snap.cash || "0");
   const savings = parseFloat(snap.savings || "0");
   return {
