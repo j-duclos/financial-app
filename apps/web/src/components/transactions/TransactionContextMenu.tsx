@@ -4,13 +4,19 @@ import { MoreHorizontal } from "lucide-react";
 
 export type PastActions = "edit" | "duplicate" | "delete";
 export type FutureActions = "edit" | "skip" | "delete";
+export type ExpectedActions = "confirm" | "skip" | "edit" | "moveDate" | "match" | "delete";
 
 type Props = {
-  variant: "past" | "future";
+  variant: "past" | "future" | "expected";
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
+  onConfirm?: () => void;
+  onMoveDate?: () => void;
+  onMatch?: () => void;
+  /** When false, Match is hidden (no import candidates). */
+  showMatch?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
 };
@@ -23,6 +29,10 @@ export default function TransactionContextMenu({
   onDuplicate,
   onDelete,
   onSkip,
+  onConfirm,
+  onMoveDate,
+  onMatch,
+  showMatch = true,
   disabled,
   readOnly,
 }: Props) {
@@ -67,18 +77,33 @@ export default function TransactionContextMenu({
     return <span className="text-xs text-amber-700">Projected</span>;
   }
 
-  const items: MenuItem[] =
-    variant === "past"
+  const primaryItems: MenuItem[] =
+    variant === "expected"
       ? ([
-          onEdit && { key: "edit", label: "Edit", action: onEdit },
-          onDuplicate && { key: "duplicate", label: "Duplicate", action: onDuplicate },
-          onDelete && { key: "delete", label: "Delete", action: onDelete, danger: true },
-        ].filter(Boolean) as MenuItem[])
-      : ([
-          onEdit && { key: "edit", label: "Edit", action: onEdit },
+          onConfirm && { key: "confirm", label: "Confirm / Mark as Posted", action: onConfirm },
           onSkip && { key: "skip", label: "Skip", action: onSkip },
-          onDelete && { key: "delete", label: "Delete", action: onDelete, danger: true },
-        ].filter(Boolean) as MenuItem[]);
+          onEdit && { key: "edit", label: "Edit", action: onEdit },
+          onMoveDate && { key: "moveDate", label: "Move Date", action: onMoveDate },
+          showMatch && onMatch && { key: "match", label: "Match to Import", action: onMatch },
+        ].filter(Boolean) as MenuItem[])
+      : variant === "past"
+        ? ([
+            onEdit && { key: "edit", label: "Edit", action: onEdit },
+            onDuplicate && { key: "duplicate", label: "Duplicate", action: onDuplicate },
+            onDelete && { key: "delete", label: "Delete", action: onDelete, danger: true },
+          ].filter(Boolean) as MenuItem[])
+        : ([
+            onEdit && { key: "edit", label: "Edit", action: onEdit },
+            onSkip && { key: "skip", label: "Skip", action: onSkip },
+            onDelete && { key: "delete", label: "Delete", action: onDelete, danger: true },
+          ].filter(Boolean) as MenuItem[]);
+
+  const moreItems: MenuItem[] =
+    variant === "expected" && onDelete
+      ? [{ key: "delete", label: "Delete (advanced)", action: onDelete, danger: true }]
+      : [];
+
+  const items = [...primaryItems, ...moreItems];
 
   if (items.length === 0) return null;
 
@@ -87,11 +112,11 @@ export default function TransactionContextMenu({
       ? createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[100] min-w-[8rem] -translate-x-full rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+            className="fixed z-[100] min-w-[10rem] -translate-x-full rounded-md border border-gray-200 bg-white py-1 shadow-lg"
             style={{ top: menuPos.top, left: menuPos.left }}
             role="menu"
           >
-            {items.map((item) => (
+            {primaryItems.map((item) => (
               <button
                 key={item.key}
                 type="button"
@@ -103,6 +128,23 @@ export default function TransactionContextMenu({
                 className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 ${
                   item.danger ? "text-red-600" : "text-gray-800"
                 }`}
+              >
+                {item.label}
+              </button>
+            ))}
+            {moreItems.length > 0 && primaryItems.length > 0 && (
+              <div className="my-1 border-t border-gray-100" aria-hidden />
+            )}
+            {moreItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  item.action();
+                }}
+                className="block w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-gray-50"
               >
                 {item.label}
               </button>

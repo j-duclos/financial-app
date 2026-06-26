@@ -1,9 +1,18 @@
 """Transaction services: posting, transfers, Plaid matching."""
 
+from .expected_lifecycle import (
+    confirm_expected_transaction,
+    is_expected_eligible,
+    is_planned_scheduled_eligible,
+    match_expected_to_import,
+    move_scheduled_date,
+    skip_scheduled_transaction,
+)
 from .matching import (
     AUTO_MATCH_THRESHOLD,
     SUGGEST_MATCH_THRESHOLD,
     find_candidate_matches,
+    find_import_candidates_for_planned,
     ignore_imported_transaction,
     ledger_visible_transactions,
     manual_match_transactions,
@@ -47,6 +56,13 @@ __all__ = [
     "delete_transaction_respecting_partner_ledger",
     "delete_transactions_with_transfer_pairs_for_queryset",
     "eligible_manual_transactions_queryset",
+    "confirm_expected_transaction",
+    "find_import_candidates_for_planned",
+    "is_expected_eligible",
+    "is_planned_scheduled_eligible",
+    "match_expected_to_import",
+    "move_scheduled_date",
+    "skip_scheduled_transaction",
     "find_candidate_matches",
     "ignore_imported_transaction",
     "ledger_visible_transactions",

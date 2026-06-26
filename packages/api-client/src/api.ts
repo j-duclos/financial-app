@@ -631,6 +631,51 @@ export async function deleteTransaction(id: number): Promise<void> {
   await request(`/api/transactions/${id}/`, { method: "DELETE" });
 }
 
+/** Mark a due scheduled transaction as manually posted (non-Plaid workflow). */
+export async function confirmTransaction(id: number): Promise<Transaction> {
+  return requestRequired(`/api/transactions/${id}/confirm/`, { method: "POST" });
+}
+
+/** Skip a scheduled occurrence without deleting past actuals. */
+export async function skipTransactionOccurrence(id: number): Promise<void> {
+  await request(`/api/transactions/${id}/skip/`, { method: "POST" });
+}
+
+/** Move a planned occurrence to a new date. */
+export async function moveTransactionDate(id: number, date: string): Promise<Transaction> {
+  return requestRequired(`/api/transactions/${id}/move-date/`, {
+    method: "POST",
+    body: JSON.stringify({ date }),
+  });
+}
+
+export type ImportMatchCandidate = {
+  imported_transaction_id: number;
+  score: number;
+  parts: Record<string, unknown>;
+  date: string;
+  payee: string;
+  amount: string;
+};
+
+/** Unmatched Plaid imports that could match this planned row. */
+export async function getTransactionImportCandidates(
+  id: number
+): Promise<{ candidates: ImportMatchCandidate[] }> {
+  return requestRequired(`/api/transactions/${id}/import-candidates/`);
+}
+
+/** Link a planned row to an unmatched Plaid import. */
+export async function matchTransactionToImport(
+  plannedId: number,
+  importedTransactionId: number
+): Promise<{ match_id: number }> {
+  return requestRequired(`/api/transactions/${plannedId}/match/`, {
+    method: "POST",
+    body: JSON.stringify({ imported_transaction_id: importedTransactionId }),
+  });
+}
+
 /** Bulk-remove future rows left when a recurring rule was deleted (source=rule, no rule link). */
 export async function cleanupOrphanedRuleRows(): Promise<{ deleted: number }> {
   return requestRequired("/api/transactions/cleanup-orphaned-rule-rows/", { method: "POST" });

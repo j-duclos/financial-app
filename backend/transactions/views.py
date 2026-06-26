@@ -19,9 +19,14 @@ from .serializers import TransactionSerializer, TransferCreateSerializer, Transf
 from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
 from .services import (
     cleanup_orphaned_rule_materializations_for_user,
+    confirm_expected_transaction,
     create_transfer,
     delete_transaction_respecting_partner_ledger,
+    find_import_candidates_for_planned,
+    match_expected_to_import,
+    move_scheduled_date,
     post_transaction,
+    skip_scheduled_transaction,
 )
 from .services.immutability import reject_if_reconciled
 from .services.matching import (
@@ -444,6 +449,82 @@ class TransactionViewSet(ModelViewSet):
             data["synced_to_account_id"] = other.account_id
         return Response(data)
 
+    @action(detail=True, methods=["post"], url_path="confirm")
+    def confirm(self, request: Request, pk=None):
+        """Mark a due scheduled transaction as manually posted (non-Plaid workflow)."""
+        txn = self.get_object()
+        try:
+            txn = confirm_expected_transaction(txn, user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        ser = self.get_serializer(txn)
+        return Response(ser.data)
+
+    @action(detail=True, methods=["post"], url_path="skip")
+    def skip_occurrence(self, request: Request, pk=None):
+        """Skip a scheduled occurrence without deleting past actuals."""
+        txn = self.get_object()
+        try:
+            skip_scheduled_transaction(txn, user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="move-date")
+    def move_date(self, request: Request, pk=None):
+        """Move a planned occurrence to a new date."""
+        txn = self.get_object()
+        raw = request.data.get("date")
+        if not raw:
+            return Response({"detail": "date is required (YYYY-MM-DD)."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            txn = move_scheduled_date(txn, raw, user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        ser = self.get_serializer(txn)
+        return Response(ser.data)
+
+    @action(detail=True, methods=["get"], url_path="import-candidates")
+    def import_candidates(self, request: Request, pk=None):
+        """Unmatched Plaid imports that could match this planned row."""
+        planned = self.get_object()
+        ranked = find_import_candidates_for_planned(planned)
+        return Response(
+            {
+                "candidates": [
+                    {
+                        "imported_transaction_id": imp.pk,
+                        "score": sc,
+                        "parts": parts,
+                        "date": imp.date.isoformat(),
+                        "payee": imp.payee,
+                        "amount": str(imp.amount),
+                    }
+                    for imp, sc, parts in ranked[:20]
+                ]
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="match")
+    def match_import(self, request: Request, pk=None):
+        """Link this planned row to an unmatched Plaid import."""
+        planned = self.get_object()
+        raw = request.data.get("imported_transaction_id")
+        if raw is None:
+            return Response(
+                {"detail": "imported_transaction_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            m = match_expected_to_import(
+                planned,
+                imported_id=int(raw),
+                user=request.user,
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"match_id": m.pk}, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=["get"], url_path="import-unmatched")
     def import_unmatched(self, request: Request):
         """Plaid rows not yet matched to a forecast transaction."""
@@ -544,9 +625,11 @@ class TransactionViewSet(ModelViewSet):
                 account_id=instance.account_id,
                 cycle_end_date=anchor,
             )
-        # Only record a skip for future rule occurrences — timeline only re-materializes those.
-        # Past/posted transactions are never re-created, so no skip needed.
-        if instance.rule_id is not None and instance.date >= today:
+        # Record skip for any planned rule occurrence so materialization does not recreate it.
+        if (
+            instance.rule_id is not None
+            and instance.status == Transaction.Status.PLANNED
+        ):
             from timeline.models import RecurringRuleSkip
             RecurringRuleSkip.objects.get_or_create(rule_id=instance.rule_id, date=instance.date)
         # Transfer pairs: delete both legs unless counterparty account is manual-only

@@ -22,14 +22,17 @@ type Props = {
   isCredit: boolean;
   hiddenByPast: boolean;
   onEditRow: (row: TimelineRow) => void;
+  onConfirmRow: (row: TimelineRow) => void;
   onSkipRow: (row: TimelineRow) => void;
+  onMoveDateRow: (row: TimelineRow) => void;
+  onMatchRow: (row: TimelineRow) => void;
   onDeleteRow: (row: TimelineRow) => void;
-  deletePending: boolean;
+  actionsPending: boolean;
 };
 
 /**
  * Scheduled/rule rows whose date has arrived but no actual bank/manual posting has confirmed them.
- * These are not Past actuals; they are still expected and need a match/skip/confirmation decision.
+ * Resolved via Confirm, Skip, Edit, Move Date, or Match — not manual delete.
  */
 export default function PendingExpectedSection({
   pending,
@@ -38,9 +41,12 @@ export default function PendingExpectedSection({
   isCredit,
   hiddenByPast,
   onEditRow,
+  onConfirmRow,
   onSkipRow,
+  onMoveDateRow,
+  onMatchRow,
   onDeleteRow,
-  deletePending,
+  actionsPending,
 }: Props) {
   if (pending.length === 0) return null;
 
@@ -67,7 +73,7 @@ export default function PendingExpectedSection({
         >
           {pending.map((row, index) => {
             if (row.type !== "transaction_from_timeline") return null;
-            const data = timelineRowToData(row.row, row.balance, "future");
+            const data = timelineRowToData(row.row, row.balance, "expected");
             const rowKey =
               row.row.transaction_id != null
                 ? `pending-txn-${row.row.transaction_id}`
@@ -80,17 +86,21 @@ export default function PendingExpectedSection({
               <TransactionRow
                 key={rowKey}
                 row={{ ...data, id: rowKey }}
-                variant="future"
+                variant="expected"
                 currency={currency}
                 isCredit={isCredit}
                 rowSurface={unmatchedScheduleRowClasses()}
                 scheduleHighlightTitle={
                   scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : "Expected transaction waiting for confirmation"
                 }
+                onConfirm={editable ? () => onConfirmRow(row.row) : undefined}
                 onEdit={editable ? () => onEditRow(row.row) : undefined}
                 onSkip={editable ? () => onSkipRow(row.row) : undefined}
+                onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
+                onMatch={editable ? () => onMatchRow(row.row) : undefined}
+                showMatch
                 onDelete={editable ? () => onDeleteRow(row.row) : undefined}
-                actionsDisabled={deletePending}
+                actionsDisabled={actionsPending}
               />
             );
           })}

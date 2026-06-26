@@ -1521,6 +1521,28 @@ def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction]
     return best_imp, best_score
 
 
+def find_import_candidates_for_planned(
+    planned: Transaction,
+) -> list[tuple[Transaction, int, dict[str, Any]]]:
+    """Return sorted unmatched Plaid imports that could fulfill this planned row."""
+    if not _planned_row_eligible_as_import_match_candidate(planned):
+        return []
+    out: list[tuple[Transaction, int, dict[str, Any]]] = []
+    for imp in _unmatched_plaid_imports_for_planned(planned).select_related("account"):
+        if imp.amount is None or planned.amount is None:
+            continue
+        if abs(imp.amount - planned.amount) > AMOUNT_TOLERANCE:
+            continue
+        if not _plaid_ids_compatible_for_match(imp, planned):
+            continue
+        sc, parts = score_candidate(imp, planned)
+        if sc <= 0:
+            continue
+        out.append((imp, sc, parts))
+    out.sort(key=lambda x: (-x[1], x[0].pk))
+    return out
+
+
 def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[TransactionMatch]:
     """
     Link an existing unmatched Plaid row to a rule transaction when the rule row was created or

@@ -12,6 +12,10 @@ import {
   updateTransaction,
   updateRule,
   deleteTransaction,
+  confirmTransaction,
+  skipTransactionOccurrence,
+  moveTransactionDate,
+  matchTransactionToImport,
   getProfile,
   getAccount,
   getTimeline,
@@ -25,6 +29,7 @@ import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
 import PendingExpectedSection from "../components/transactions/PendingExpectedSection";
+import ExpectedMatchDialog from "../components/transactions/ExpectedMatchDialog";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
 import {
@@ -137,6 +142,10 @@ export default function Transactions() {
   const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [matchDialog, setMatchDialog] = useState<{
+    transactionId: number;
+    label: string;
+  } | null>(null);
   const [editForm, setEditForm] = useState({
     date: todayStr(),
     payee: "",
@@ -1176,6 +1185,68 @@ export default function Transactions() {
     },
   });
 
+  const skipOccurrenceMu = useMutation({
+    mutationFn: skipTransactionOccurrence,
+    onSuccess: () => {
+      setDeleteError(null);
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to skip transaction");
+    },
+  });
+
+  const confirmMu = useMutation({
+    mutationFn: confirmTransaction,
+    onSuccess: () => {
+      setDeleteError(null);
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to confirm transaction");
+    },
+  });
+
+  const moveDateMu = useMutation({
+    mutationFn: ({ id, date }: { id: number; date: string }) => moveTransactionDate(id, date),
+    onSuccess: () => {
+      setDeleteError(null);
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to move transaction date");
+    },
+  });
+
+  const matchMu = useMutation({
+    mutationFn: ({
+      plannedId,
+      importedTransactionId,
+    }: {
+      plannedId: number;
+      importedTransactionId: number;
+    }) => matchTransactionToImport(plannedId, importedTransactionId),
+    onSuccess: () => {
+      setDeleteError(null);
+      setMatchDialog(null);
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to match transaction");
+    },
+  });
+
+  const lifecyclePending =
+    skipOccurrenceMu.isPending ||
+    confirmMu.isPending ||
+    moveDateMu.isPending ||
+    matchMu.isPending ||
+    deleteMu.isPending;
+
   function openEdit(txn: Transaction) {
     if (txn.reconciled) {
       setDeleteError("Reconciled transactions cannot be edited.");
@@ -1322,10 +1393,78 @@ export default function Transactions() {
         setDeleteError("Could not load this scheduled transaction to skip.");
         return;
       }
-      confirmSkip(transactionId, row.description);
+      confirmSkipOccurrence(transactionId, row.description);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not skip transaction");
+    }
+  }
+
+  async function confirmExpectedRow(row: TimelineRow) {
+    if (row.reconciled) {
+      setDeleteError("Reconciled transactions cannot be confirmed.");
+      return;
+    }
+    setDeleteError(null);
+    try {
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this expected transaction to confirm.");
+        return;
+      }
+      if (
+        window.confirm(
+          `Mark "${row.description}" as posted? It will move to Past as a confirmed transaction.`
+        )
+      ) {
+        confirmMu.mutate(transactionId);
+      }
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not confirm transaction");
+    }
+  }
+
+  async function moveDateExpectedRow(row: TimelineRow) {
+    if (row.reconciled) {
+      setDeleteError("Reconciled transactions cannot be moved.");
+      return;
+    }
+    setDeleteError(null);
+    try {
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this expected transaction to move.");
+        return;
+      }
+      const input = window.prompt(
+        `Move "${row.description}" to a new date (YYYY-MM-DD):`,
+        row.date
+      );
+      if (input == null || !input.trim()) return;
+      moveDateMu.mutate({ id: transactionId, date: input.trim() });
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not move transaction date");
+    }
+  }
+
+  async function openMatchExpectedRow(row: TimelineRow) {
+    if (row.reconciled) return;
+    setDeleteError(null);
+    try {
+      const transactionId =
+        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+      if (transactionId == null) {
+        setDeleteError("Could not load this expected transaction to match.");
+        return;
+      }
+      setMatchDialog({ transactionId, label: row.description });
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not open match dialog");
     }
   }
 
@@ -1488,14 +1627,14 @@ export default function Transactions() {
     if (window.confirm(`Delete ${label}?`)) deleteMu.mutate(id);
   }
 
-  function confirmSkip(id: number, label: string) {
+  function confirmSkipOccurrence(id: number, label: string) {
     setDeleteError(null);
     if (
       window.confirm(
-        `Skip this occurrence of "${label}"? This removes only this scheduled transaction.`
+        `Skip this occurrence of "${label}"? It will not affect your balance and won't happen again on this date.`
       )
     ) {
-      deleteMu.mutate(id);
+      skipOccurrenceMu.mutate(id);
     }
   }
 
@@ -1735,9 +1874,12 @@ export default function Transactions() {
             isCredit={isCredit}
             hiddenByPast={pastExpanded || forecastExpanded}
             onEditRow={openEditByLedgerRow}
+            onConfirmRow={confirmExpectedRow}
             onSkipRow={confirmSkipRow}
+            onMoveDateRow={moveDateExpectedRow}
+            onMatchRow={openMatchExpectedRow}
             onDeleteRow={confirmDeleteRow}
-            deletePending={deleteMu.isPending}
+            actionsPending={lifecyclePending}
           />
 
           <div className="flex-none shrink-0 z-10">
@@ -2084,6 +2226,22 @@ export default function Transactions() {
             </form>
           </div>
         </div>
+      )}
+
+      {matchDialog && (
+        <ExpectedMatchDialog
+          transactionId={matchDialog.transactionId}
+          label={matchDialog.label}
+          currency={currency}
+          pending={matchMu.isPending}
+          onClose={() => setMatchDialog(null)}
+          onMatch={(importedTransactionId) =>
+            matchMu.mutate({
+              plannedId: matchDialog.transactionId,
+              importedTransactionId,
+            })
+          }
+        />
       )}
 
     </div>

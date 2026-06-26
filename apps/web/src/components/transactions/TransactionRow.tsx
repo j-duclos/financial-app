@@ -28,13 +28,17 @@ export type TransactionRowData = {
 
 type Props = {
   row: TransactionRowData;
-  variant: "past" | "future";
+  variant: "past" | "future" | "expected";
   currency: string;
   isCredit: boolean;
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
+  onConfirm?: () => void;
+  onMoveDate?: () => void;
+  onMatch?: () => void;
+  showMatch?: boolean;
   actionsDisabled?: boolean;
   /** Row background / border styling (forecast buffer/risk or schedule highlight). */
   rowSurface?: ForecastRowSeverityClasses;
@@ -110,6 +114,10 @@ export default function TransactionRow({
   onDuplicate,
   onDelete,
   onSkip,
+  onConfirm,
+  onMoveDate,
+  onMatch,
+  showMatch,
   actionsDisabled,
   rowSurface,
   scheduleHighlightTitle,
@@ -183,7 +191,11 @@ export default function TransactionRow({
           onEdit={onEdit}
           onDuplicate={variant === "past" ? onDuplicate : undefined}
           onDelete={onDelete}
-          onSkip={variant === "future" ? onSkip : undefined}
+          onSkip={variant === "future" || variant === "expected" ? onSkip : undefined}
+          onConfirm={variant === "expected" ? onConfirm : undefined}
+          onMoveDate={variant === "expected" ? onMoveDate : undefined}
+          onMatch={variant === "expected" ? onMatch : undefined}
+          showMatch={showMatch}
           disabled={actionsDisabled}
           readOnly={row.readOnly}
         />
