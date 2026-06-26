@@ -74,6 +74,20 @@ def _is_rule_backed_planned_row(planned: Transaction) -> bool:
     )
 
 
+def planned_leg_suppressed_by_import_match(txn: Transaction) -> bool:
+    """
+    True when a matched Plaid import is the canonical ledger row for this rule occurrence.
+
+    The planned/rule twin is hidden from balances; timeline must not emit a second row on the
+    scheduled occurrence date when the bank import already posted nearby.
+    """
+    if not txn.rule_id:
+        return False
+    if txn.import_match_status == Transaction.ImportMatchStatus.MATCHED:
+        return True
+    return TransactionMatch.objects.filter(planned_transaction_id=txn.pk).exists()
+
+
 def _amounts_equal(a: Decimal | None, b: Decimal | None) -> bool:
     if a is None or b is None:
         return False
@@ -1670,12 +1684,60 @@ def accounts_have_pending_match_work(account_ids: Iterable[int]) -> bool:
     )
 
 
+def heal_actual_plaid_rows_to_rule_matches(*, account_id: int | None = None) -> int:
+    """
+    Link ACTUAL rows that still carry a plaid_transaction_id to their rule occurrence twin.
+
+    These are usually imports materialized as ACTUAL before rule matching ran; they duplicate
+    forecast rows in the timeline until matched.
+    """
+    qs = (
+        Transaction.objects.filter(
+            source=Transaction.Source.ACTUAL,
+            rule__isnull=True,
+            scenario__isnull=True,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    )
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    healed = 0
+    for actual in qs.order_by("date", "id").iterator(chunk_size=200):
+        rule_row = (
+            Transaction.objects.filter(
+                account_id=actual.account_id,
+                rule_id__isnull=False,
+                source=Transaction.Source.RULE,
+                date__gte=actual.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS),
+                date__lte=actual.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS),
+            )
+            .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+            .order_by("date", "id")
+            .first()
+        )
+        if rule_row is None or actual.amount is None or rule_row.amount is None:
+            continue
+        if not _amounts_equal(actual.amount, rule_row.amount):
+            continue
+        actual.source = Transaction.Source.PLAID
+        actual.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+        actual.save(update_fields=["source", "import_match_status", "updated_at"])
+        if match_imported_transaction(actual):
+            healed += 1
+    return healed
+
+
 def rematch_unmatched_for_accounts(account_ids: Iterable[int]) -> int:
     """Retry pairing all unmatched rule rows and Plaid imports on the given accounts."""
     ids = list(account_ids)
     if not ids:
         return 0
     linked = 0
+    for aid in ids:
+        linked += heal_actual_plaid_rows_to_rule_matches(account_id=aid)
     for planned in (
         Transaction.objects.filter(
             account_id__in=ids,

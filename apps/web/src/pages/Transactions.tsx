@@ -24,6 +24,7 @@ import {
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
+import PendingExpectedSection from "../components/transactions/PendingExpectedSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
 import {
@@ -990,7 +991,7 @@ export default function Transactions() {
     return timelineData.timeline.filter((r) => Number(r.account_id) === aid);
   }, [accountId, timelineData?.timeline]);
 
-  /** Split into: start, past, today, future (scheduled transactions under Today's Ending Balance). */
+  /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
   const ledgerLowestProjected = useMemo(
@@ -1724,6 +1725,18 @@ export default function Transactions() {
             onDuplicate={duplicateTransaction}
             onDeleteRow={confirmDeleteRow}
             onDelete={confirmDelete}
+            deletePending={deleteMu.isPending}
+          />
+
+          <PendingExpectedSection
+            pending={ledgerSections.pending}
+            accountTimeline={accountTimeline}
+            currency={currency}
+            isCredit={isCredit}
+            hiddenByPast={pastExpanded || forecastExpanded}
+            onEditRow={openEditByLedgerRow}
+            onSkipRow={confirmSkipRow}
+            onDeleteRow={confirmDeleteRow}
             deletePending={deleteMu.isPending}
           />
 

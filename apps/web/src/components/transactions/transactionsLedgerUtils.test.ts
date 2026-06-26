@@ -193,7 +193,7 @@ describe("buildLedgerRowsFromTimeline", () => {
     expect(sections.future[0].type).toBe("recurring");
   });
 
-  it("puts today planned rule rows in past, not forecast", () => {
+  it("puts today planned rule rows in pending expected, not past or forecast", () => {
     const timeline: TimelineRow[] = [
       {
         date: today,
@@ -231,8 +231,12 @@ describe("buildLedgerRowsFromTimeline", () => {
     expect(isForecastTimelineRow(timeline[1], today)).toBe(false);
 
     const sections = splitLedgerSections(buildLedgerRowsFromTimeline(timeline, today, 0, false));
-    expect(sections.past).toHaveLength(2);
+    expect(sections.past).toHaveLength(1);
+    expect(sections.pending).toHaveLength(1);
     expect(sections.future).toHaveLength(0);
+    if (sections.pending[0].type === "transaction_from_timeline") {
+      expect(sections.pending[0].row.description).toBe("Geico");
+    }
   });
 
   it("uses past opening override when all past rows are hidden", () => {

@@ -440,6 +440,10 @@ def _materialized_rule_timeline_row_if_exists(
         )
     if existing is None or existing.pk in ids_in_rows:
         return None
+    from transactions.services.matching import planned_leg_suppressed_by_import_match
+
+    if planned_leg_suppressed_by_import_match(existing):
+        return None
     ids_in_rows.add(existing.pk)
     amt = existing.amount if existing.amount is not None else amount_decimal
     cat_id = category_id if category_id is not None else existing.category_id
@@ -2765,6 +2769,11 @@ def _build_timeline_impl(
                 txn = _materialize_rule_occurrence(
                     rule, d, acc_id, amount_decimal, rule.name, cat_id
                 )
+                from transactions.services.matching import planned_leg_suppressed_by_import_match
+
+                if planned_leg_suppressed_by_import_match(txn):
+                    ids_in_rows.add(txn.id)
+                    continue
                 if txn.id in ids_in_rows:
                     continue
                 ids_in_rows.add(txn.id)

@@ -179,17 +179,6 @@ export function isProjectedInterestRow(row: TimelineRow): boolean {
   return row.source === "interest";
 }
 
-/** Past ledger rows: on or before today, excluding projected interest (estimates only). */
-export function isPastTimelineRow(row: TimelineRow, today: string): boolean {
-  if (isProjectedInterestRow(row)) return false;
-  return row.date <= today;
-}
-
-/** Forecast = strictly after today. Same-day rows (including planned rules) live in Past. */
-export function isForecastTimelineRow(row: TimelineRow, today: string): boolean {
-  return row.date > today;
-}
-
 /** Rule-generated row still in PLANNED status (not cleared by a bank import). */
 export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
   if ((row.status || "").toUpperCase() !== "PLANNED") return false;
@@ -202,6 +191,24 @@ export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
   if (txnSrc === "rule") return true;
   // Materialized rule occurrences use source=actual, txn_source=rule, rule_id set.
   return row.rule_id != null && row.source === "actual";
+}
+
+/** Expected automation row whose scheduled date has arrived but no bank/manual posting has confirmed it. */
+export function isPendingExpectedTimelineRow(row: TimelineRow, today: string): boolean {
+  if (isProjectedInterestRow(row)) return false;
+  return row.date <= today && isPlannedScheduledTimelineRow(row);
+}
+
+/** Past ledger rows: confirmed actuals only, excluding unconfirmed expected automations. */
+export function isPastTimelineRow(row: TimelineRow, today: string): boolean {
+  if (isProjectedInterestRow(row)) return false;
+  if (isPendingExpectedTimelineRow(row, today)) return false;
+  return row.date <= today;
+}
+
+/** Forecast = strictly after today. Same-day/past planned rules move to Pending Expected. */
+export function isForecastTimelineRow(row: TimelineRow, today: string): boolean {
+  return row.date > today;
 }
 
 /** Match backend SAME_ACCOUNT_DATE_WINDOW_DAYS — payroll may post before the scheduled date. */
@@ -463,11 +470,16 @@ export function buildLedgerRowsFromTimeline(
   isCredit: boolean,
   pastOpeningOverride?: number | null,
 ): LedgerRow[] {
-  const past = timeline
+  const visibleTimeline = timeline.filter(
+    (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
+  );
+  const past = visibleTimeline
     .filter((r) => isPastTimelineRow(r, today))
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
-  const future = timeline
+  const pending = visibleTimeline
+    .filter((r) => isPendingExpectedTimelineRow(r, today))
+    .sort(compareTimelineRows);
+  const future = visibleTimeline
     .filter((r) => isForecastTimelineRow(r, today))
     .sort(compareTimelineRows);
 
@@ -495,7 +507,23 @@ export function buildLedgerRowsFromTimeline(
   const todayBalance = running;
   rows.push({ type: "today_balance", balance: todayBalance });
 
+  // Pending expected rows are scheduled/rule items whose date has arrived but no
+  // bank/manual posting has confirmed them yet. They do not belong in Past
+  // actual history, but they still affect the projected balance if they clear.
   let forecastRunning = todayBalance;
+  for (const r of pending) {
+    forecastRunning = applyTimelineAmountToBalance(
+      forecastRunning,
+      parseFloat(r.amount),
+      isCredit
+    );
+    rows.push({
+      type: "transaction_from_timeline",
+      row: r,
+      balance: forecastRunning,
+    });
+  }
+
   for (const r of future) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,
@@ -546,10 +574,12 @@ export function splitLedgerSections(rows: LedgerRow[]) {
   const start = rows.find((r) => r.type === "starting_balance") ?? null;
   const todayRow = rows.find((r) => r.type === "today_balance") ?? null;
   const past: LedgerRow[] = [];
+  const pending: LedgerRow[] = [];
   const future: LedgerRow[] = [];
   for (const r of rows) {
     if (r.type === "transaction_from_timeline") {
-      past.push(r);
+      if (isPendingExpectedTimelineRow(r.row, today)) pending.push(r);
+      else past.push(r);
     } else if (r.type === "transaction") {
       if (r.txn.date <= today) past.push(r);
       else future.push(r);
@@ -557,7 +587,7 @@ export function splitLedgerSections(rows: LedgerRow[]) {
       future.push(r);
     }
   }
-  return { start, past, today: todayRow, future };
+  return { start, past, pending, today: todayRow, future };
 }
 
 /**
