@@ -132,6 +132,7 @@ export default function Accounts() {
     promotional_apr: "",
     promotional_end_date: "",
     preserve_partner_transfer_legs: false,
+    include_in_available_credit: true,
   });
   const queryClient = useQueryClient();
 

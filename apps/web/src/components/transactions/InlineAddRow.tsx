@@ -81,7 +81,6 @@ export default function InlineAddRow({
         title="New transaction"
         expanded={false}
         onToggleExpanded={() => {}}
-        totalCount={0}
         tone="entry"
         showExpand={false}
       />

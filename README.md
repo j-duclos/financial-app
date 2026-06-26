@@ -30,6 +30,8 @@ budget-app/
 
 Edit files under **`apps/web/src/`** (pages, components, hooks). This is the same code Render deploys. Local UI work uses the **Vite dev server** (`apps/web/`) for hot reload; production and Render use `vite build` output served by Django.
 
+See **[Web UI — app tour](#web-ui--app-tour)** for what each page and nav item does.
+
 ### Running Vite
 
 **One-time setup** (from repo root — installs web, mobile, and shared packages):
@@ -396,3 +398,278 @@ Export
 
 |   Current Balance Next Risk Date  Lowest Projected In Date Range  View Forecast   |   Date Range      |   Account                     |   
 |       $xxxx.xx      MM-DD-YY         $xxxx.xx on MM-DD-YY                         |   Hide Reconciled |   Reconciled | Type | Amount  |
+
+
+
+
+
+
+## Monorepo layout
+
+```
+budget-app/
+├── backend/          # Django API (+ build.sh copies React build to frontend_dist/ for Render)
+├── apps/
+│   ├── web/          # React web UI — edit these .tsx files
+│   │   └── src/
+│   │       ├── pages/
+│   │       │   ├── Accounts.tsx            (/accounts)
+│   │       │   ├── Categories.tsx          (/categories)
+│   │       │   ├── CreditCards.tsx         (/credit-cards)
+│   │       │   ├── Dashboard.tsx           (/)
+│   │       │   ├── GoalDetail.tsx          (/goals/:id)
+│   │       │   ├── Goals.tsx               (/goals)
+│   │       │   ├── Login.tsx               (/login)
+│   │       │   ├── PlaidOAuthReturn.tsx    (Plaid OAuth callback)
+│   │       │   ├── Profile.tsx             (/profile)
+│   │       │   ├── Reconcile.tsx           (/reconcile)
+│   │       │   ├── Recurring.tsx           (/recurring)
+│   │       │   ├── Register.tsx            (/register)
+│   │       │   ├── Reports.tsx             (/reports)
+│   │       │   ├── Rules.tsx               (/automation)
+│   │       │   ├── Scenarios.tsx           (/scenarios)
+│   │       │   ├── SpendingTargets.tsx     (/spending-goals)
+│   │       │   ├── Timeline.tsx            (/timeline)
+│   │       │   └── Transactions.tsx        (/transactions)
+│   │       └── components/
+│   │           ├── accounts/               → Accounts.tsx
+│   │           ├── bills/                    → Recurring.tsx, Timeline.tsx
+│   │           ├── dashboard/                → Dashboard.tsx (+ metric tiles on Timeline, Recurring, Goals, SpendingTargets, Reports, CreditCards)
+│   │           ├── goals/                    → Goals.tsx (+ Dashboard.tsx via GoalsProgressSection)
+│   │           ├── paymentPlanner/           → CreditCards.tsx
+│   │           ├── quickActions/             → Dashboard.tsx, Accounts.tsx, Timeline.tsx
+│   │           ├── reconcile/                → Reconcile.tsx
+│   │           ├── recurring/                → Recurring.tsx
+│   │           ├── resolveRisk/              → Dashboard.tsx, Accounts.tsx
+│   │           ├── rules/                    → Rules.tsx
+│   │           ├── scenarios/                → Scenarios.tsx
+│   │           ├── shared/                   → Dashboard.tsx, Timeline.tsx, Reconcile.tsx, …
+│   │           ├── spendingTargets/          → SpendingTargets.tsx
+│   │           ├── timeline/                 → Timeline.tsx
+│   │           └── transactions/             → Transactions.tsx (+ Reconcile, Accounts, CreditCards)
+│   └── mobile/       # Expo + React Native
+├── packages/
+│   ├── api-client/   # Typed API client (web + mobile)
+│   └── shared/       # Types and utils
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+## Web UI — app tour
+
+The web app is a **cash-flow forecasting** tool, not just a transaction log. Django holds the business logic (balances, projections, rules, goals). React pages in `apps/web/src/pages/` load data via `@budget-app/api-client` and compose UI from `apps/web/src/components/<feature>/`.
+
+### Shell and routing
+
+After login, every main screen shares **`Layout.tsx`**: sticky top nav, notifications, username, logout. The active page renders below the header via React Router (`App.tsx`).
+
+Login and Register are full-screen (no nav). Plaid OAuth banks redirect to `/plaid/oauth-return` (standalone page), then back to Accounts.
+
+Some URLs redirect to current names: `/rules` → `/automation`, `/bills` → `/recurring`, `/budget` and `/spending-targets` → `/spending-goals`.
+
+### Navigation
+
+| Nav label | URL | Page file |
+|-----------|-----|-----------|
+| Dashboard | `/` | `Dashboard.tsx` |
+| Calendar | `/timeline` | `Timeline.tsx` |
+| Accounts | `/accounts` | `Accounts.tsx` |
+| Transactions | `/transactions` | `Transactions.tsx` |
+| Recurring | `/recurring` | `Recurring.tsx` |
+| Spending Limits | `/spending-goals` | `SpendingTargets.tsx` |
+| Goals | `/goals` | `Goals.tsx` |
+| Payment Planner | `/credit-cards` | `CreditCards.tsx` |
+| What-If | `/scenarios` | `Scenarios.tsx` |
+| Reports | `/reports` | `Reports.tsx` |
+| Automation | `/automation` | `Rules.tsx` |
+| Categories | `/categories` | `Categories.tsx` |
+| Reconcile | `/reconcile` | `Reconcile.tsx` |
+| Profile | `/profile` | `Profile.tsx` |
+
+Also: `GoalDetail.tsx` at `/goals/:id`, `Login.tsx`, `Register.tsx`, `PlaidOAuthReturn.tsx`.
+
+### How the main screens relate
+
+Three layers:
+
+1. **Setup** — Accounts, Categories, Automation (rules)
+2. **Day-to-day** — Transactions, Calendar, Recurring
+3. **Planning & review** — Goals, Spending Limits, Payment Planner, What-If, Reports, Reconcile
+
+**Automation rules** (paychecks, rent, subscriptions, transfers, card payments) feed projected rows into **Transactions** and daily balances on **Calendar**. **Recurring** is the operations view for those obligations (paid? matched to a bank txn?) — not the forecast itself.
+
+### Each page
+
+#### Dashboard (`/`)
+
+Command center: “Am I okay? What needs attention? What’s coming up?”
+
+- Safe-to-spend summary with configurable forecast window (14 / 30 / 90 days)
+- **Attention Required** — accounts at risk; actions to move money or resolve
+- **Recommendations** — suggested transfers or fixes
+- **Upcoming** — next bills/income by day (collapsible)
+- **Financial snapshot** — where money sits (checking, savings, debt, etc.)
+- **Goals progress** — compact active goals
+- Onboarding if no accounts yet; quick-action modals for transactions
+
+#### Calendar (`/timeline`)
+
+Time-based cash-flow view — not a transaction editor.
+
+- Calendar or list view of projected daily activity
+- Summary tiles (safe-until-next-income, lowest balance in range, etc.)
+- Filter by account, horizon (14d–24m), optional what-if scenario
+- Click a day for that day’s inflows/outflows
+- Answers: “When do I run out of money?” / “What happens in March?”
+
+#### Accounts (`/accounts`)
+
+Account management hub.
+
+- Connect banks (Plaid) or add manual accounts
+- Create/edit: type, role, balances, credit terms, autopay
+- Group, sort, filter; per-account health and forecast alerts
+- Quick actions: add transaction, add recurring rule, view forecast, resolve risk
+- Jump to Transactions ledger for a specific account
+
+#### Transactions (`/transactions`)
+
+Per-account ledger — past and projected future.
+
+- **Past** — historical transactions; filters (date, type, amount, reconciled)
+- **Pending / expected** — uncleared or rule-generated items
+- **Forecast** — future rows from automation rules
+- Summary bar: balance, next risk date, lowest projected balance
+- Inline add/edit/delete; credit-card payoff quick calc
+- Remembers filters in browser storage
+
+#### Recurring (`/recurring`)
+
+Bill and subscription **operations** — not the forecast view.
+
+- Monthly checklist: due, paid, overdue, unmatched
+- Subscription intelligence (detected recurring charges)
+- Detail panel: link a bank transaction to a rule, edit rule
+- Summary metrics (monthly obligations, paid vs remaining)
+- For day-by-day balances, use Calendar
+
+#### Automation (`/automation`, file `Rules.tsx`)
+
+Rules engine — where recurring behavior is defined.
+
+- CRUD for rules grouped by: income, bills, card/loan payments, transfers, subscriptions
+- Frequency, amounts, accounts, categories
+- Estimated monthly cash flow summary
+- Changes propagate to Transactions forecasts and Calendar
+
+#### Spending Limits (`/spending-goals`)
+
+Monthly **category caps** (spending, not saving).
+
+- Limits tied to expense categories (e.g. Groceries $600/mo)
+- Spent vs limit, on-track / over status
+- Distinct from **Goals** (savings targets)
+
+#### Goals (`/goals`) and Goal Detail (`/goals/:id`)
+
+Savings goals with targets and optional auto-funding.
+
+- Create goals (emergency fund, vacation, debt payoff, etc.)
+- Active / paused / completed / archived
+- Monthly contributions or paycheck-linked funding
+- **Goal Detail** — progress, pace, funding source, contribution history, growth chart, optional scenario overlay
+
+#### Payment Planner (`/credit-cards`)
+
+Credit card **debt strategy**.
+
+- All cards with balances and health
+- Household plan: avalanche vs snowball, extra monthly, lump-sum what-if
+- Per-card: minimum vs statement vs custom payment → payoff date and interest
+
+#### What-If (`/scenarios`)
+
+Hypothetical planning without changing real data.
+
+- Named scenarios (blank or templates)
+- Overrides to existing rules, one-time events, category shocks, new recurring items, debt paydown
+- Compare scenario vs baseline (12–36 months)
+- View on Calendar with `?scenario_id=…`
+
+#### Reports (`/reports`)
+
+**Backward-looking** monthly summaries (read-only).
+
+- Income, expenses, net for selected month
+- Category breakdown; credit card interest paid
+- Goals progress; spending limits status
+
+#### Reconcile (`/reconcile`)
+
+Bank statement matching.
+
+- Pick account and statement period; enter bank balance
+- Check off transactions; running variance vs bank
+- Add missing transactions; complete when variance is zero
+- Reconciliation history
+
+#### Categories (`/categories`)
+
+Chart of accounts for labeling transactions.
+
+- Expense vs income; hierarchical (parent/child)
+- Create, rename, archive
+
+#### Profile (`/profile`)
+
+User settings: display name, phone (Plaid SMS), default household/account, password.
+
+#### Auth and Plaid
+
+- **Login / Register** — JWT auth; protected routes redirect if logged out
+- **Plaid OAuth Return** — technical landing page for OAuth banks (e.g. Chase); resumes connection and returns to Accounts
+
+### Component folders → pages
+
+| Folder | Primary page(s) | Role |
+|--------|-----------------|------|
+| `dashboard/` | Dashboard (+ metric tiles elsewhere) | Summary cards, attention, recommendations, upcoming |
+| `timeline/` | Calendar | Calendar grid, day panel, list view |
+| `accounts/` | Accounts | List, grouping, lifecycle modals |
+| `transactions/` | Transactions (+ utils elsewhere) | Ledger sections, filters, forecast bars |
+| `recurring/` | Recurring | Bill detail, subscription panel |
+| `bills/` | Recurring, Calendar | Link-transaction-to-bill modal |
+| `goals/` | Goals, Dashboard | Goal cards, forms, funding UI |
+| `spendingTargets/` | Spending Limits | Limit cards and form |
+| `paymentPlanner/` | Payment Planner | Debt strategy cards and drawer |
+| `scenarios/` | What-If | Debt payment modals |
+| `reconcile/` | Reconcile | Reconciliation panels and history |
+| `rules/` | Automation | Rule action menus |
+| `quickActions/` | Dashboard, Accounts, Calendar | Fast add transaction/recurring modals |
+| `resolveRisk/` | Dashboard, Accounts | Fix negative-balance wizard |
+| `shared/` | Many pages | Badges, month headers, day heat indicators |
+
+Supporting code: `hooks/`, `lib/` (display helpers), `packages/api-client/` (typed API, shared with mobile).
+
+### One-liner cheat sheet
+
+| Screen | Question it answers |
+|--------|---------------------|
+| Dashboard | What should I worry about right now? |
+| Calendar | What does cash flow look like day by day? |
+| Accounts | What accounts do I have and how healthy are they? |
+| Transactions | Everything on this one account, past and future |
+| Recurring | Are my bills paid and matched to real transactions? |
+| Automation | What repeating money moves have I configured? |
+| Spending Limits | Am I staying within monthly category caps? |
+| Goals | Am I on track for savings targets? |
+| Payment Planner | Fastest/cheapest way to pay off cards? |
+| What-If | What happens if I change something before I commit? |
+| Reports | How did last month actually go? |
+| Reconcile | Does the app match my bank statement? |
+| Categories | What labels do I use for income and expenses? |
+| Profile | What are my defaults and account settings? |
+
+
+

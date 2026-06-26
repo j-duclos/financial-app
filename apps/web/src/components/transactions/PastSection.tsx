@@ -64,12 +64,6 @@ export default function PastSection({
   const creditClass = (bal: number) => creditBalanceColorClass(isCredit, bal);
 
   const showBody = !minimized;
-  const countLabel =
-    totalUnfilteredCount != null && totalUnfilteredCount !== past.length
-      ? `${past.length} of ${totalUnfilteredCount} shown — scroll to browse`
-      : past.length > 0
-        ? `${past.length} total — scroll to browse`
-        : undefined;
 
   useEffect(() => {
     if (!showBody) return;
@@ -92,11 +86,10 @@ export default function PastSection({
   return (
     <section className={`flex flex-col overflow-hidden border-b-4 border-gray-300 ${sectionClass}`}>
       <LedgerSectionHeader
-        title="Past"
+        title="Past Transactions"
         expanded={showBody && expanded}
         onToggleExpanded={onToggleExpanded}
-        totalCount={past.length}
-        countLabel={countLabel}
+        hasRows={past.length > 0}
         tone="past"
         expandChevron="past"
       />

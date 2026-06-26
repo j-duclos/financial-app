@@ -26,11 +26,10 @@ type SectionHeaderProps = {
   subtitle?: string;
   expanded: boolean;
   onToggleExpanded: () => void;
-  totalCount: number;
-  /** Override default "{totalCount} total — scroll to browse" label. */
-  countLabel?: string;
   tone?: "past" | "entry" | "forecast";
   showExpand?: boolean;
+  /** Past sections: hide expand when there are no rows. */
+  hasRows?: boolean;
   /** Past: › collapsed / ˅ expanded. Forecast: ˄ collapsed / ˅ expanded. */
   expandChevron?: "past" | "forecast";
   className?: string;
@@ -47,32 +46,26 @@ export function LedgerSectionHeader({
   subtitle,
   expanded,
   onToggleExpanded,
-  totalCount,
-  countLabel,
   tone = "past",
   showExpand = true,
+  hasRows = true,
   expandChevron,
   className = "",
 }: SectionHeaderProps) {
   const styles = toneStyles[tone];
   const chevron = expandChevron ?? (tone === "forecast" ? "forecast" : "past");
   const canExpand =
-    showExpand && (tone === "entry" ? false : tone === "forecast" ? true : totalCount > 0);
+    showExpand && (tone === "entry" ? false : tone === "forecast" ? true : hasRows);
   const expandTip = canExpand ? ledgerSectionExpandTooltip(chevron, expanded) : null;
 
   return (
     <header
-      className={`px-4 py-2 border-b flex items-center justify-between gap-3 shrink-0 ${styles.header} ${className}`}
+      className={`px-4 py-1 border-b flex items-center justify-between gap-3 shrink-0 ${styles.header} ${className}`}
     >
-      <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <h2 className="text-sm font-bold uppercase tracking-wide shrink-0">{title}</h2>
-        {tone !== "entry" && (totalCount > 0 || countLabel) && (
-          <span className="text-xs opacity-70 whitespace-nowrap">
-            {countLabel ?? `${totalCount} total — scroll to browse`}
-          </span>
-        )}
+      <div className="min-w-0 flex-1 flex items-center gap-x-2">
+        <h2 className="text-sm font-semibold shrink-0">{title}</h2>
         {subtitle && (
-          <p className="text-xs opacity-80 w-full basis-full">{subtitle}</p>
+          <span className="text-xs opacity-80 truncate">{subtitle}</span>
         )}
       </div>
       {canExpand && expandTip && (
