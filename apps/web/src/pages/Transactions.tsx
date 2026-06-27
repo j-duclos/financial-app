@@ -122,6 +122,7 @@ export default function Transactions() {
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
+  const consumedNavAccountRef = useRef(false);
   const hasAppliedBillPrefill = useRef(false);
   const inlineAddInFlight = useRef(false);
 
@@ -220,7 +221,6 @@ export default function Transactions() {
       }),
     enabled: !!accountId && !!pastTransactionsDateAfter && !!pastRangeEnd,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
   const {
@@ -247,7 +247,6 @@ export default function Transactions() {
       }),
     enabled: typeof accountId === "number",
     staleTime: 60_000,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -274,11 +273,10 @@ export default function Transactions() {
       }),
     enabled: typeof accountId === "number" && !hideReconciledPast,
     staleTime: 60_000,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
     retry: 1,
   });
-  const { data: accountData } = useQuery({
+  const { data: accountData, isFetching: accountFetching } = useQuery({
     queryKey: ["account", accountId, "transactions-page"],
     queryFn: () =>
       getAccount(accountId as number, true, {
@@ -288,7 +286,6 @@ export default function Transactions() {
       }),
     enabled: !!accountId,
     staleTime: 120_000,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
   const { data: accountsData } = useQuery({
@@ -345,6 +342,10 @@ export default function Transactions() {
 
   const transactions = txnsData?.results ?? [];
   const account = accountData;
+  const accountMatchesSelection =
+    typeof accountId === "number" &&
+    account != null &&
+    Number(account.id) === Number(accountId);
 
   const householdId =
     account && typeof account.household === "object" && account.household != null && "id" in account.household
@@ -397,6 +398,11 @@ export default function Transactions() {
   }, [amountMinInput, amountMaxInput]);
 
   useEffect(() => {
+    consumedNavAccountRef.current = false;
+    hasSetInitialAccount.current = false;
+  }, [location.key]);
+
+  useEffect(() => {
     if (accountId !== "" && !accounts.some((a) => a.id === accountId)) {
       setAccountId("");
       hasSetInitialAccount.current = false;
@@ -405,10 +411,11 @@ export default function Transactions() {
 
   useEffect(() => {
     if (accounts.length === 0) return;
-    if (navState?.accountId != null) {
+    if (navState?.accountId != null && !consumedNavAccountRef.current) {
       const navId = Number(navState.accountId);
       if (accounts.some((a) => a.id === navId)) {
         setAccountId(navId);
+        consumedNavAccountRef.current = true;
         hasSetInitialAccount.current = true;
         if (navState.focus === "view_upcoming") {
           setForecastExpanded(true);
@@ -429,7 +436,7 @@ export default function Transactions() {
         : null;
     setAccountId(defaultActive ?? accounts[0].id);
     hasSetInitialAccount.current = true;
-  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts, accountId]);
+  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts]);
 
   useEffect(() => {
     if (hasAppliedBillPrefill.current || accountId === "") return;
@@ -1028,7 +1035,7 @@ export default function Transactions() {
   }, [householdTimelineData?.timeline, accountsForHousehold, today]);
 
   const ledgerRows = useMemo(() => {
-    if (!account || typeof accountId !== "number") return [];
+    if (!account || typeof accountId !== "number" || !accountMatchesSelection) return [];
     const today = todayStr();
     const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
     const pastOpeningOverride =
@@ -1089,6 +1096,7 @@ export default function Transactions() {
   }, [
     account,
     accountId,
+    accountMatchesSelection,
     transactions,
     upcomingTimelineData,
     upcomingTimelineData?.timeline,
@@ -1984,7 +1992,12 @@ export default function Transactions() {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col bg-white rounded-lg shadow overflow-hidden">
-          {upcomingTimelineFetching && transactions.length > 0 ? (
+          {!accountMatchesSelection && accountFetching ? (
+            <p className="shrink-0 text-sm text-gray-600 bg-gray-50 border-b border-gray-200 px-4 py-2" role="status">
+              Loading account…
+            </p>
+          ) : null}
+          {upcomingTimelineFetching && transactions.length > 0 && accountMatchesSelection ? (
             <p
               className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5"
               role="status"
