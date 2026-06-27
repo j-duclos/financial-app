@@ -1299,7 +1299,12 @@ export default function Transactions() {
       account_id: rowAccountId,
       rule_id: row.rule_id,
       forecast_days: 90,
+      occurrence_date: row.date,
     });
+    if (materialized.resolved_transaction_id != null) {
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+      return materialized.resolved_transaction_id;
+    }
     const fromMaterialize = materialized.occurrences?.find(
       (o) =>
         o.rule_id === row.rule_id &&

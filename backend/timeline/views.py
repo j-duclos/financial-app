@@ -601,6 +601,13 @@ class MaterializeRecurringView(APIView):
         account_id = data.get("account_id")
         rule_id = data.get("rule_id")
         force = bool(data.get("force", False))
+        occurrence_date = None
+        raw_occurrence_date = data.get("occurrence_date")
+        if raw_occurrence_date is not None and str(raw_occurrence_date).strip() != "":
+            try:
+                occurrence_date = date.fromisoformat(str(raw_occurrence_date).strip()[:10])
+            except ValueError:
+                return Response({"detail": "occurrence_date must be YYYY-MM-DD."}, status=400)
 
         account_ids = None
         if account_id is not None and str(account_id).strip() != "":
@@ -623,6 +630,7 @@ class MaterializeRecurringView(APIView):
                 rule_ids=rule_ids,
                 force=force,
                 forecast_days=forecast_days,
+                occurrence_date=occurrence_date,
             )
         except Exception as exc:
             return Response(

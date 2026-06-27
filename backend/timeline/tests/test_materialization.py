@@ -115,3 +115,71 @@ def test_timeline_read_does_not_create_transactions(user, monthly_rule, checking
     )
     after = Transaction.objects.filter(rule=monthly_rule).count()
     assert after == before
+
+
+@pytest.mark.django_db
+def test_materialize_resolves_due_occurrence_date(user, household, checking):
+    from django.utils import timezone
+
+    from categories.models import Category
+    from timeline.services.ledger import build_timeline
+
+    today = timezone.localdate()
+    income_category = Category.objects.create(
+        household=household,
+        name="Payroll",
+        category_type=Category.CategoryType.INCOME,
+        sort_order=1,
+    )
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Payroll",
+        account=checking,
+        category=income_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("1835.52"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        start_date=today,
+        active=True,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Payroll",
+        memo="",
+        amount=Decimal("1835.52"),
+        category=income_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-test-import",
+    )
+    assert Transaction.objects.filter(rule=rule, date=today).count() == 0
+
+    build_timeline(
+        user,
+        start_date=today - timedelta(days=7),
+        end_date=today + timedelta(days=30),
+        as_of_date=today,
+        projection_only=True,
+    )
+    assert Transaction.objects.filter(rule=rule, date=today).count() == 0
+
+    summary = materialize_recurring_transactions_for_user(
+        user,
+        account_ids=[checking.pk],
+        rule_ids=[rule.pk],
+        occurrence_date=today,
+    )
+    resolved_id = summary.get("resolved_transaction_id")
+    assert resolved_id is not None, summary
+    txn = Transaction.objects.get(pk=resolved_id)
+    assert txn.date == today
+    assert txn.rule_id == rule.pk
+    assert txn.status == Transaction.Status.PLANNED
+    assert txn.source == Transaction.Source.RULE
+    assert any(
+        o["transaction_id"] == resolved_id and o["date"] == today.isoformat()
+        for o in summary["occurrences"]
+    )

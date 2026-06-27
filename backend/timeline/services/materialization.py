@@ -16,6 +16,7 @@ from typing import Any
 
 from django.utils import timezone
 
+from accounts.models import Account
 from accounts.services.available_to_spend import normalize_forecast_days
 from common.services.cache import invalidate_financial_cache_for_household, invalidate_user_financial_cache
 from common.services.profiler import enter_materialization_context, exit_materialization_context, perf_enabled, perf_print
@@ -24,10 +25,131 @@ from timeline.models import RecurringRule
 from timeline.services.ledger import build_timeline, repair_unlinked_rule_transfer_pairs
 from timeline.services.rule_cleanup import delete_future_materialized_transactions_for_rule
 from timeline.services.rule_schedule import promote_due_schedules
+from transactions.models import Transaction
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MATERIALIZE_DAYS = 90
+
+
+def _occurrence_row_from_txn(txn: Transaction) -> dict[str, object]:
+    return {
+        "transaction_id": txn.id,
+        "rule_id": txn.rule_id,
+        "account_id": txn.account_id,
+        "date": txn.date.isoformat(),
+    }
+
+
+def _find_planned_occurrence_transaction(
+    *,
+    households,
+    rule_id: int,
+    account_id: int,
+    occurrence_date: date,
+) -> Transaction | None:
+    return (
+        Transaction.objects.filter(
+            account__household__in=households,
+            rule_id=rule_id,
+            account_id=account_id,
+            date=occurrence_date,
+            source=Transaction.Source.RULE,
+        )
+        .order_by("-id")
+        .first()
+    )
+
+
+def _materialize_single_planned_occurrence(
+    rule: RecurringRule,
+    *,
+    account_id: int,
+    occurrence_date: date,
+) -> Transaction:
+    from timeline.services.ledger import _materialize_rule_occurrence
+    from timeline.services.rule_schedule import resolve_rule_params
+
+    params = resolve_rule_params(rule, occurrence_date)
+    enter_materialization_context(
+        rules_processed=1,
+        rule_ids=frozenset({rule.pk}),
+    )
+    try:
+        return _materialize_rule_occurrence(
+            rule,
+            occurrence_date,
+            account_id,
+            params.amount,
+            rule.name,
+            rule.category_id,
+        )
+    finally:
+        exit_materialization_context()
+
+
+def ensure_planned_occurrence_transaction(
+    user,
+    *,
+    rule_id: int,
+    account_id: int,
+    occurrence_date: date,
+    forecast_days: int = DEFAULT_MATERIALIZE_DAYS,
+    skip_bulk_materialize: bool = False,
+) -> Transaction | None:
+    """Find or create the RULE row for a due expected occurrence (match / edit)."""
+
+    def _usable_rule_occurrence(txn: Transaction | None) -> Transaction | None:
+        if txn is None or txn.source != Transaction.Source.RULE or txn.rule_id is None:
+            return None
+        if txn.reconciled:
+            return None
+        return txn
+
+    households = get_households_for_user(user)
+    rule = RecurringRule.objects.filter(pk=rule_id, household__in=households).first()
+    if rule is None:
+        return None
+    if not Account.objects.filter(pk=account_id, household__in=households).exists():
+        return None
+
+    txn = _usable_rule_occurrence(
+        _find_planned_occurrence_transaction(
+            households=households,
+            rule_id=rule_id,
+            account_id=account_id,
+            occurrence_date=occurrence_date,
+        )
+    )
+    if txn is not None:
+        return txn
+
+    if not skip_bulk_materialize:
+        materialize_recurring_transactions_for_user(
+            user,
+            account_ids=[account_id],
+            rule_ids=[rule_id],
+            forecast_days=forecast_days,
+            _skip_occurrence_resolve=True,
+        )
+        txn = _usable_rule_occurrence(
+            _find_planned_occurrence_transaction(
+                households=households,
+                rule_id=rule_id,
+                account_id=account_id,
+                occurrence_date=occurrence_date,
+            )
+        )
+        if txn is not None:
+            return txn
+
+    try:
+        txn = _materialize_single_planned_occurrence(
+            rule, account_id=account_id, occurrence_date=occurrence_date
+        )
+    except ValueError:
+        return None
+    return _usable_rule_occurrence(txn)
 
 
 def materialize_recurring_transactions_for_user(
@@ -38,6 +160,8 @@ def materialize_recurring_transactions_for_user(
     rule_ids: list[int] | None = None,
     force: bool = False,
     forecast_days: int = DEFAULT_MATERIALIZE_DAYS,
+    occurrence_date: date | None = None,
+    _skip_occurrence_resolve: bool = False,
 ) -> dict[str, Any]:
     """
     Materialize future rule occurrences as PLANNED/RULE Transaction rows.
@@ -128,13 +252,14 @@ def materialize_recurring_transactions_for_user(
     if rematch_ids:
         rematch_unmatched_for_accounts(rematch_ids)
 
-    from transactions.models import Transaction
-
     occurrence_rows: list[dict[str, object]] = []
+    occ_date_min = today
+    if occurrence_date is not None and occurrence_date < today:
+        occ_date_min = occurrence_date
     occ_qs = Transaction.objects.filter(
         account__household__in=households,
         source=Transaction.Source.RULE,
-        date__gte=today,
+        date__gte=occ_date_min,
         rule_id__isnull=False,
     )
     if rule_ids:
@@ -151,6 +276,29 @@ def materialize_recurring_transactions_for_user(
             }
         )
     result["occurrences"] = occurrence_rows
+
+    if (
+        not _skip_occurrence_resolve
+        and occurrence_date is not None
+        and rule_ids
+        and len(rule_ids) == 1
+        and account_ids
+        and len(account_ids) == 1
+    ):
+        resolved = ensure_planned_occurrence_transaction(
+            user,
+            rule_id=rule_ids[0],
+            account_id=account_ids[0],
+            occurrence_date=occurrence_date,
+            forecast_days=days,
+            skip_bulk_materialize=True,
+        )
+        if resolved is not None:
+            row = _occurrence_row_from_txn(resolved)
+            if not any(o.get("transaction_id") == resolved.pk for o in occurrence_rows):
+                occurrence_rows.insert(0, row)
+                result["occurrences"] = occurrence_rows
+            result["resolved_transaction_id"] = resolved.pk
 
     invalidate_user_financial_cache(user.pk)
     for household in households:

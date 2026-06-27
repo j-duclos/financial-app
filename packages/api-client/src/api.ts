@@ -1644,6 +1644,7 @@ export async function materializeRecurring(params?: {
   rule_id?: number;
   forecast_days?: number;
   force?: boolean;
+  occurrence_date?: string;
 }): Promise<{
   rules_processed: number;
   occurrences_generated: number;
@@ -1651,6 +1652,7 @@ export async function materializeRecurring(params?: {
   transactions_created: number;
   transactions_updated: number;
   transactions_skipped: number;
+  resolved_transaction_id?: number;
   occurrences?: Array<{
     transaction_id: number;
     rule_id: number;
@@ -1664,6 +1666,7 @@ export async function materializeRecurring(params?: {
       ...(params?.account_id != null ? { account_id: params.account_id } : {}),
       ...(params?.rule_id != null ? { rule_id: params.rule_id } : {}),
       ...(params?.forecast_days != null ? { forecast_days: params.forecast_days } : {}),
+      ...(params?.occurrence_date ? { occurrence_date: params.occurrence_date } : {}),
       ...(params?.force ? { force: true } : {}),
     }),
   });
