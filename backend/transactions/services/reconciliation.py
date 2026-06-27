@@ -450,6 +450,122 @@ def balances_within_tolerance(diff: Decimal, tolerance: Decimal = BALANCE_TOLERA
     return abs(diff) <= tolerance
 
 
+def unreconciled_ids_through_balance_delta(
+    account: Account,
+    *,
+    period_start: date,
+    balance_delta: Decimal,
+    exclude_ids: Iterable[int] = (),
+) -> list[int]:
+    """
+    Unreconciled rows (date order from period_start) whose amounts sum to balance_delta.
+
+    Handles import dates after period_end when those rows still belong on the closed statement.
+    """
+    delta = Decimal(str(balance_delta))
+    if balances_within_tolerance(delta):
+        return []
+    pending = list(
+        ledger_visible_transactions(
+            Transaction.objects.filter(
+                account=account,
+                reconciled=False,
+                date__gte=period_start,
+            ).exclude(pk__in=list(exclude_ids))
+        ).order_by("date", "id")
+    )
+    if not pending:
+        return []
+    cumulative = Decimal("0")
+    ids: list[int] = []
+    for txn in pending:
+        cumulative += txn.amount
+        ids.append(txn.pk)
+        if balances_within_tolerance(cumulative - delta):
+            return ids
+    return []
+
+
+def _mark_transactions_reconciled_for_session(
+    *,
+    account: Account,
+    session: Reconciliation,
+    transaction_ids: list[int],
+    opening_balance: Decimal,
+    reconciled_at,
+    prefix_transactions: Iterable[Transaction] = (),
+) -> None:
+    if not transaction_ids:
+        return
+    pending = list(
+        Transaction.objects.filter(pk__in=transaction_ids, account=account).order_by(
+            "date", "id"
+        )
+    )
+    ordered = sorted(
+        list(prefix_transactions) + pending,
+        key=lambda t: (t.date, t.pk),
+    )
+    running = checked_transaction_running_balances(opening_balance, ordered)
+    Transaction.objects.filter(pk__in=transaction_ids).update(
+        reconciled=True,
+        reconciled_at=reconciled_at,
+        reconciliation=session,
+        cleared=True,
+        status=Transaction.Status.RECONCILED,
+    )
+    existing = set(
+        ReconciliationEntry.objects.filter(session=session).values_list(
+            "transaction_id", flat=True
+        )
+    )
+    ReconciliationEntry.objects.bulk_create(
+        [
+            ReconciliationEntry(
+                session=session,
+                transaction_id=pk,
+                reconciled_balance=running.get(pk),
+            )
+            for pk in transaction_ids
+            if pk not in existing
+        ]
+    )
+
+
+def repair_unreconciled_in_last_closed_period(account: Account) -> int:
+    """
+    Mark unreconciled rows from the last closed statement that sum to its bank balance.
+
+    Closes the gap when complete_reconciliation only flagged checked_transaction_ids while
+    the saved bank_current_balance already includes the full statement activity.
+    """
+    prev = last_completed_reconciliation(account)
+    if prev is None or prev.period_end_date is None:
+        return 0
+    period_start = prev.period_start_date or prev.period_end_date
+    opening = Decimal(str(prev.last_reconciled_balance))
+    target = Decimal(str(prev.bank_current_balance))
+    ids = unreconciled_ids_through_balance_delta(
+        account,
+        period_start=period_start,
+        balance_delta=target - opening,
+    )
+    if not ids:
+        return 0
+    now = timezone.now()
+    _mark_transactions_reconciled_for_session(
+        account=account,
+        session=prev,
+        transaction_ids=ids,
+        opening_balance=opening,
+        reconciled_at=now,
+    )
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    invalidate_financial_cache_for_household(account.household_id)
+    return len(ids)
+
+
 def get_setup_data(
     account: Account,
     as_of: Optional[date] = None,
@@ -458,6 +574,7 @@ def get_setup_data(
     end: Optional[date] = None,
 ) -> dict[str, Any]:
     as_of = _as_of_date(as_of)
+    repair_unreconciled_in_last_closed_period(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (
@@ -604,6 +721,7 @@ def complete_reconciliation(
                 for pk in checked_ids
             ]
         )
+
     if user is not None and getattr(user, "pk", None):
         invalidate_user_financial_cache(user.pk)
     return rec

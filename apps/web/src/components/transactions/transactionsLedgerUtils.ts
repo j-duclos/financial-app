@@ -118,16 +118,10 @@ export function ledgerPastTransactionStart(
 export function filterPastTransactionsAfterReconcileClose(
   txns: Transaction[],
   lastReconcilePeriodEnd: string | null | undefined,
-  reconcileFloor: string | null | undefined
+  _reconcileFloor?: string | null | undefined
 ): Transaction[] {
   if (!lastReconcilePeriodEnd) return txns;
-  return txns.filter((t) => {
-    if (t.date > lastReconcilePeriodEnd) return true;
-    if (t.date === lastReconcilePeriodEnd && reconcileFloor === lastReconcilePeriodEnd) {
-      return true;
-    }
-    return false;
-  });
+  return txns.filter((t) => t.date > lastReconcilePeriodEnd);
 }
 
 /** Upcoming projection window: today through today + 90 days. */
@@ -659,6 +653,8 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     todayBalanceOverride?: number | null;
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
+    /** When set, shift past running balances so the last past row equals this (API ledger total). */
+    anchorPastEndBalance?: number | null;
   }
 ): LedgerRow[] {
   const pastSource = filterPastTransactionsAfterReconcileClose(
@@ -687,10 +683,29 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     rows.push({ type: "transaction", txn, balance: running });
   }
 
+  if (
+    options?.anchorPastEndBalance != null &&
+    Number.isFinite(options.anchorPastEndBalance) &&
+    pastTxns.length > 0
+  ) {
+    const target = options.anchorPastEndBalance;
+    const delta = target - running;
+    if (Math.abs(delta) > 0.005) {
+      for (const row of rows) {
+        if (row.type === "starting_balance" || row.type === "transaction") {
+          row.balance += delta;
+        }
+      }
+      running = target;
+    }
+  }
+
   const todayBalance =
-    options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
-      ? options.todayBalanceOverride
-      : running;
+    options?.anchorPastEndBalance != null && Number.isFinite(options.anchorPastEndBalance)
+      ? options.anchorPastEndBalance
+      : options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
+        ? options.todayBalanceOverride
+        : running;
   rows.push({ type: "today_balance", balance: todayBalance });
 
   const visibleTimeline = upcomingTimeline.filter(

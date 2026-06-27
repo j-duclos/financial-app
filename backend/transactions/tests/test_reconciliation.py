@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Account
@@ -891,3 +892,63 @@ def test_filter_superseded_planned_transactions(account):
     )
     filtered = filter_superseded_planned_transactions([planned, bank])
     assert [t.pk for t in filtered] == [bank.pk]
+
+
+class TestReconciliationSeal:
+    def test_repair_marks_orphan_statement_rows_on_setup(self, account, user):
+        opening = Decimal("1000.00")
+        account.starting_balance = opening
+        account.save(update_fields=["starting_balance"])
+        t1 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 5),
+            payee="AT&T",
+            amount=Decimal("-257.08"),
+        )
+        t2 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 13),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=Decimal("250.00"),
+        )
+        t3 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 3),
+            payee="INTEREST CHARGE",
+            amount=Decimal("-19.87"),
+        )
+        bank = opening + t1.amount + t2.amount + t3.amount
+        assert bank == Decimal("973.05")
+        rec = Reconciliation.objects.create(
+            user=user,
+            account=account,
+            bank_current_balance=bank,
+            app_current_balance=bank,
+            last_reconciled_balance=opening,
+            final_reconciled_balance=bank,
+            difference=Decimal("0"),
+            period_start_date=date(2026, 5, 5),
+            period_end_date=date(2026, 6, 2),
+            transaction_count=3,
+            status=Reconciliation.Status.COMPLETED,
+            is_active=True,
+            completed_at=timezone.now(),
+        )
+        # Simulate legacy bug: session saved but rows stayed unreconciled.
+        assert all(not t.reconciled for t in (t1, t2, t3))
+
+        from transactions.services.reconciliation import repair_unreconciled_in_last_closed_period
+
+        repaired = repair_unreconciled_in_last_closed_period(account)
+        assert repaired == 3
+        for txn in (t1, t2, t3):
+            txn.refresh_from_db()
+            assert txn.reconciled is True
+            assert txn.reconciliation_id == rec.pk
+
+        get_setup_data(account)
+        assert Transaction.objects.filter(account=account, reconciled=False).count() == 0
+

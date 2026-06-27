@@ -1026,6 +1026,7 @@ export default function Transactions() {
           pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
           lastReconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
           reconcileFloor: reconcileSetupData?.min_start_date ?? null,
+          anchorPastEndBalance: hideReconciledPast ? apiBalance : null,
         }
       );
     }

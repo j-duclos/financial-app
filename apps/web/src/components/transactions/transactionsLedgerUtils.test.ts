@@ -276,6 +276,24 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.past).toHaveLength(1);
     expect(sections.past[0].balance).toBeCloseTo(824.83, 2);
   });
+
+  it("anchors past running balance to API total when hide-reconciled walk drifts", () => {
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        { id: 1, date: "2026-06-17", payee: "Store", amount: "-67.45", status: "CLEARED" } as never,
+        { id: 2, date: "2026-06-26", payee: "Autopay", amount: "27.00", status: "CLEARED" } as never,
+      ],
+      [],
+      "2026-06-27",
+      0,
+      true,
+      { pastOpeningOverride: 2100, anchorPastEndBalance: 2828.04 }
+    );
+    const sections = splitLedgerSections(rows);
+    const lastPast = sections.past[sections.past.length - 1];
+    expect(lastPast.balance).toBeCloseTo(2828.04, 2);
+    expect(sections.today?.balance).toBeCloseTo(2828.04, 2);
+  });
 });
 
 describe("projectionTimelineRangeForAsOf", () => {
