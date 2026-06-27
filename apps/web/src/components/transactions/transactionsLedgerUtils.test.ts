@@ -22,7 +22,8 @@ import {
   upcomingTimelineRange,
   UPCOMING_FORECAST_DAYS,
   pastTransactionsRange,
-  effectivePastTransactionsStart,
+  ledgerPastTransactionStart,
+  filterPastTransactionsAfterReconcileClose,
   buildLedgerRowsFromPastAndUpcomingTimeline,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
@@ -48,13 +49,36 @@ describe("upcomingTimelineRange", () => {
   });
 });
 
-describe("effectivePastTransactionsStart", () => {
-  it("extends query start to reconcile floor when hiding reconciled rows", () => {
-    const today = todayStr();
-    const threeMonthStart = pastTransactionsRange("3m").start;
-    const floor = addDaysToIsoDate(today, -200);
-    expect(effectivePastTransactionsStart("3m", true, floor)).toBe(floor);
-    expect(effectivePastTransactionsStart("3m", false, floor)).toBe(threeMonthStart);
+describe("ledgerPastTransactionStart", () => {
+  it("starts after closed reconcile period when statement was reconciled", () => {
+    const periodEnd = "2026-06-02";
+    const start = ledgerPastTransactionStart("3m", true, {
+      min_start_date: "2026-05-05",
+      last_reconcile_period_end: periodEnd,
+    });
+    expect(start).toBe("2026-06-03");
+  });
+
+  it("includes same-day post-reconcile rows on period end", () => {
+    const periodEnd = "2026-06-02";
+    const start = ledgerPastTransactionStart("3m", true, {
+      min_start_date: periodEnd,
+      last_reconcile_period_end: periodEnd,
+    });
+    expect(start).toBe(periodEnd);
+  });
+});
+
+describe("filterPastTransactionsAfterReconcileClose", () => {
+  it("does not re-walk statement rows already in opening bank balance", () => {
+    const periodEnd = "2026-06-02";
+    const txns = [
+      { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08" },
+      { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87" },
+      { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52" },
+    ] as never[];
+    const kept = filterPastTransactionsAfterReconcileClose(txns, periodEnd, "2026-05-05");
+    expect(kept.map((t) => t.id)).toEqual([3]);
   });
 });
 
@@ -228,6 +252,29 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.start?.balance).toBeCloseTo(110.01, 2);
     expect(sections.past[0].balance).toBeCloseTo(252.19, 2);
     expect(sections.future[0].balance).toBeCloseTo(142.18, 2);
+  });
+
+  it("does not double-count unreconciled rows inside a closed reconcile period", () => {
+    const periodEnd = "2026-06-02";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08", status: "CLEARED" } as never,
+        { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87", status: "CLEARED" } as never,
+        { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", status: "CLEARED" } as never,
+      ],
+      [],
+      "2026-06-27",
+      0,
+      true,
+      {
+        pastOpeningOverride: 759.31,
+        lastReconcilePeriodEnd: periodEnd,
+        reconcileFloor: "2026-05-05",
+      }
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    expect(sections.past[0].balance).toBeCloseTo(824.83, 2);
   });
 });
 

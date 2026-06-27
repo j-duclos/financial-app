@@ -78,17 +78,56 @@ export function pastTransactionsRange(filter: TimeFilter): { start: string; end:
 }
 
 /**
- * When hiding reconciled rows, the ledger opening includes all unreconciled history —
- * date_after must reach back to the reconcile floor, not only the UI time filter.
+ * First date for listTransactions when hide reconciled is on.
+ * After a completed reconcile, opening = bank balance through period_end — only
+ * activity after that close (or same-day post-reconcile on period_end) may change running balance.
  */
-export function effectivePastTransactionsStart(
+export function ledgerPastTransactionStart(
   filter: TimeFilter,
   hideReconciledPast: boolean,
-  reconcileFloor: string | null | undefined
+  reconcileMeta: {
+    min_start_date?: string | null;
+    last_reconcile_period_end?: string | null;
+  } | null | undefined
 ): string {
-  const { start } = pastTransactionsRange(filter);
-  if (!hideReconciledPast || !reconcileFloor) return start;
-  return minIsoDate(start, reconcileFloor);
+  const { start: filterStart } = pastTransactionsRange(filter);
+  if (!hideReconciledPast) return filterStart;
+
+  const periodEnd = reconcileMeta?.last_reconcile_period_end ?? null;
+  const floor = reconcileMeta?.min_start_date ?? null;
+
+  if (periodEnd) {
+    const dayAfterClose = addDaysToIsoDate(periodEnd, 1);
+    if (floor && floor === periodEnd) {
+      return maxIsoDate(filterStart, floor);
+    }
+    if (floor && floor < periodEnd) {
+      return maxIsoDate(filterStart, dayAfterClose);
+    }
+    if (floor && floor > periodEnd) {
+      return maxIsoDate(filterStart, floor);
+    }
+    return maxIsoDate(filterStart, dayAfterClose);
+  }
+
+  if (floor) return maxIsoDate(filterStart, floor);
+  return filterStart;
+}
+
+/** Drop unreconciled rows inside a closed reconcile period — already in opening bank balance. */
+export function filterPastTransactionsAfterReconcileClose(
+  txns: Transaction[],
+  lastReconcilePeriodEnd: string | null | undefined,
+  reconcileFloor: string | null | undefined
+): Transaction[] {
+  if (!lastReconcilePeriodEnd) return txns;
+  return txns.filter((t) => {
+    if (t.date > lastReconcilePeriodEnd) return true;
+    if (t.date === lastReconcilePeriodEnd && reconcileFloor === lastReconcilePeriodEnd) {
+      return true;
+    }
+    return false;
+  });
 }
 
 /** Upcoming projection window: today through today + 90 days. */
@@ -618,9 +657,16 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   options?: {
     pastOpeningOverride?: number | null;
     todayBalanceOverride?: number | null;
+    lastReconcilePeriodEnd?: string | null;
+    reconcileFloor?: string | null;
   }
 ): LedgerRow[] {
-  const pastTxns = pastTransactions
+  const pastSource = filterPastTransactionsAfterReconcileClose(
+    pastTransactions,
+    options?.lastReconcilePeriodEnd,
+    options?.reconcileFloor
+  );
+  const pastTxns = pastSource
     .filter((t) => t.date <= today && (t.source || "").toUpperCase() !== "INTEREST")
     .filter((t) => !isPendingExpectedTransaction(t, today))
     .sort((a, b) => a.date.localeCompare(b.date));

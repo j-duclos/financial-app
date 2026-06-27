@@ -61,7 +61,7 @@ import {
   accountLedgerDisplayBalance,
   ledgerOpeningBalance,
   pastTransactionsRange,
-  effectivePastTransactionsStart,
+  ledgerPastTransactionStart,
   upcomingTimelineRange,
   ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
@@ -178,12 +178,16 @@ export default function Transactions() {
   });
   const pastTransactionsDateAfter = useMemo(
     () =>
-      effectivePastTransactionsStart(
-        timeFilter,
-        hideReconciledPast,
-        reconcileSetupData?.min_start_date
-      ),
-    [timeFilter, hideReconciledPast, reconcileSetupData?.min_start_date]
+      ledgerPastTransactionStart(timeFilter, hideReconciledPast, {
+        min_start_date: reconcileSetupData?.min_start_date,
+        last_reconcile_period_end: reconcileSetupData?.last_reconcile_period_end,
+      }),
+    [
+      timeFilter,
+      hideReconciledPast,
+      reconcileSetupData?.min_start_date,
+      reconcileSetupData?.last_reconcile_period_end,
+    ]
   );
   const upcomingRange = useMemo(() => upcomingTimelineRange(todayStr()), []);
   const ledgerRange = useMemo(
@@ -1020,6 +1024,8 @@ export default function Transactions() {
         isCreditAccount,
         {
           pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
+          lastReconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
+          reconcileFloor: reconcileSetupData?.min_start_date ?? null,
         }
       );
     }
@@ -1044,6 +1050,8 @@ export default function Transactions() {
     upcomingTimelineError,
     isCreditAccount,
     hideReconciledPast,
+    reconcileSetupData?.last_reconcile_period_end,
+    reconcileSetupData?.min_start_date,
   ]);
 
   const accountTimeline = useMemo(() => {
