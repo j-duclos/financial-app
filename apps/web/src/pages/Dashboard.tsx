@@ -25,6 +25,7 @@ import {
   type ForecastDays,
 } from "../lib/safeToSpendLabels";
 import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
+import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 function DashboardOnboarding() {

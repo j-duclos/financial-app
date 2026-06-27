@@ -68,14 +68,10 @@ export default function ForecastCardsSection({
   );
 
   const showBody = !hiddenByPast;
-  const sectionClass = hiddenByPast
-    ? "flex-none shrink-0"
-    : expanded
-      ? "flex-1 min-h-0"
-      : "flex-none shrink-0";
+  const sectionClass = hiddenByPast ? "flex-none shrink-0" : "flex-1 min-h-0";
 
   return (
-    <section className={`flex flex-col border-t-4 border-amber-400 min-h-0 overflow-hidden ${sectionClass}`}>
+    <section className={`flex flex-col border-t-4 border-amber-400 min-h-0 overflow-hidden bg-white ${sectionClass}`}>
       <div className="sticky top-0 z-10 shrink-0 bg-amber-50 border-b border-amber-200">
         <LedgerSectionHeader
           title="Upcoming Transactions"
@@ -97,14 +93,8 @@ export default function ForecastCardsSection({
             <p className="px-4 py-6 text-sm text-amber-800 text-center">No future transactions in this time range.</p>
           ) : (
             <div
-              className={`ledger-scroll min-h-0 overflow-y-scroll overscroll-y-contain bg-white ${
-                expanded ? "flex-1" : ""
-              }`}
-              style={
-                expanded
-                  ? { minHeight: compactScrollHeight }
-                  : { height: compactScrollHeight, maxHeight: compactScrollHeight }
-              }
+              className="ledger-scroll flex-1 min-h-0 overflow-y-auto overscroll-y-contain bg-white"
+              style={{ minHeight: compactScrollHeight }}
             >
               {forecastRows.map((row, index) => {
                 if (row.type === "transaction") {

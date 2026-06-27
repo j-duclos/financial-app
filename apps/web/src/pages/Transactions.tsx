@@ -87,8 +87,6 @@ import {
   saveStoredTransactionsAmountRange,
   loadStoredTransactionsReconciledFilter,
   saveStoredTransactionsReconciledFilter,
-  loadStoredHideReconciledPast,
-  saveStoredHideReconciledPast,
 } from "../lib/transactionsPageState";
 import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
@@ -114,7 +112,8 @@ export default function Transactions() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
   const [reconciledFilter, setReconciledFilter] = useState(() => loadStoredTransactionsReconciledFilter());
-  const [hideReconciledPast, setHideReconciledPast] = useState(() => loadStoredHideReconciledPast());
+  /** Always default true on load — unreconciled-only queries; user may uncheck for this session. */
+  const [hideReconciledPast, setHideReconciledPast] = useState(true);
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
@@ -304,10 +303,6 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsReconciledFilter(reconciledFilter);
   }, [reconciledFilter]);
-
-  useEffect(() => {
-    saveStoredHideReconciledPast(hideReconciledPast);
-  }, [hideReconciledPast]);
 
   useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
@@ -1691,7 +1686,7 @@ export default function Transactions() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden w-full px-4 sm:px-6 lg:px-8 pt-2 pb-6">
+    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden w-full px-4 sm:px-6 lg:px-8 pt-2 pb-2">
       {isPlaidOAuthReturn ? (
         <div className="sr-only" aria-hidden>
           <PlaidConnectBar householdId={plaidHouseholdId} />

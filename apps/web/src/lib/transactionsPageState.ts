@@ -7,7 +7,6 @@ const KIND_FILTER_KEY = "budget-app:transactions:kindFilter";
 const AMOUNT_MIN_KEY = "budget-app:transactions:amountMin";
 const AMOUNT_MAX_KEY = "budget-app:transactions:amountMax";
 const RECONCILED_FILTER_KEY = "budget-app:transactions:reconciledFilter";
-const HIDE_RECONCILED_PAST_KEY = "budget-app:transactions:hideReconciledPast";
 
 const KIND_FILTERS: TransactionKind[] = ["Expense", "Income", "Transfer", "Card Payment"];
 const RECONCILED_FILTERS = ["", "reconciled", "unreconciled"] as const;
@@ -128,27 +127,6 @@ export function saveStoredTransactionsReconciledFilter(filter: StoredReconciledF
     } else {
       sessionStorage.removeItem(RECONCILED_FILTER_KEY);
     }
-  } catch {
-    /* ignore */
-  }
-}
-
-export function loadStoredHideReconciledPast(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const raw = sessionStorage.getItem(HIDE_RECONCILED_PAST_KEY);
-    if (raw === "false") return false;
-    if (raw === "true") return true;
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-export function saveStoredHideReconciledPast(hide: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    sessionStorage.setItem(HIDE_RECONCILED_PAST_KEY, hide ? "true" : "false");
   } catch {
     /* ignore */
   }
