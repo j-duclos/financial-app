@@ -53,17 +53,19 @@ import {
   hintDateWithinLedgerRange,
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
-  buildLedgerRowsFromTimeline,
+  buildLedgerRowsFromPastAndUpcomingTimeline,
   splitLedgerSections,
   lowestProjectedFromLedgerFuture,
-  timelineHasAccountRows,
   isTransferCategoryName,
   accountLedgerDisplayBalance,
   ledgerOpeningBalance,
-  timelineRangeForFilter,
+  pastTransactionsRange,
+  upcomingTimelineRange,
+  ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
   type TimeFilter,
 } from "../components/transactions/transactionsLedgerUtils";
+import { logTransactionsPageLoadPlan } from "../lib/transactionsPageLoadPerf";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -161,8 +163,13 @@ export default function Transactions() {
   const debouncedAmountMaxInput = useDebouncedValue(amountMaxInput, 350);
   const queryClient = useQueryClient();
 
-  const { start: timelineStart, end: timelineEnd } = useMemo(
-    () => timelineRangeForFilter(timeFilter),
+  const { start: pastRangeStart, end: pastRangeEnd } = useMemo(
+    () => pastTransactionsRange(timeFilter),
+    [timeFilter]
+  );
+  const upcomingRange = useMemo(() => upcomingTimelineRange(todayStr()), []);
+  const ledgerRange = useMemo(
+    () => ledgerHintDateRange(timeFilter),
     [timeFilter]
   );
 
@@ -171,8 +178,8 @@ export default function Transactions() {
       "transactions",
       {
         account: accountId || undefined,
-        date_after: timelineStart,
-        date_before: timelineEnd,
+        date_after: pastRangeStart,
+        date_before: pastRangeEnd,
         unreconciled_only: hideReconciledPast,
       },
     ],
@@ -181,28 +188,36 @@ export default function Transactions() {
         ...(accountId
           ? {
               account: accountId as number,
-              date_after: timelineStart,
-              date_before: timelineEnd,
+              date_after: pastRangeStart,
+              date_before: pastRangeEnd,
               page_size: 2000,
               ...(hideReconciledPast ? { reconciled: false } : {}),
             }
           : {}),
       }),
-    enabled: !!accountId && !!timelineStart && !!timelineEnd,
+    enabled: !!accountId && !!pastRangeStart && !!pastRangeEnd,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
   const {
-    data: timelineData,
-    isFetching: timelineFetching,
-    isError: timelineError,
+    data: upcomingTimelineData,
+    isFetching: upcomingTimelineFetching,
+    isError: upcomingTimelineError,
   } = useQuery({
-    queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
+    queryKey: [
+      "timeline",
+      "upcoming",
+      upcomingRange.start,
+      upcomingRange.end,
+      accountId,
+      todayStr(),
+      hideReconciledPast,
+    ],
     queryFn: () =>
       getTimeline({
-        start: timelineStart,
-        end: timelineEnd,
+        start: upcomingRange.start,
+        end: upcomingRange.end,
         as_of: todayStr(),
         account_id: typeof accountId === "number" ? accountId : undefined,
         exclude_reconciled_past: hideReconciledPast,
@@ -214,79 +229,102 @@ export default function Transactions() {
     retry: 1,
   });
   const { data: accountData } = useQuery({
-    queryKey: ["account", accountId, "ledger"],
-    queryFn: () => getAccount(accountId as number, true),
-    enabled: !!accountId,
-    staleTime: 60_000,
-    placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
-  });
-  const { data: accountForecastData } = useQuery({
-    queryKey: ["account", accountId, "forecast", "health"],
+    queryKey: ["account", accountId, "transactions-page"],
     queryFn: () =>
-      getAccount(accountId as number, true, { forecast_summary: true, health: true, days: 30 }),
-    enabled: !!accountId && !!accountData,
+      getAccount(accountId as number, true, {
+        forecast_summary: true,
+        health: true,
+        days: 90,
+      }),
+    enabled: !!accountId,
     staleTime: 120_000,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "transactions-picker"],
     queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
+  const accounts = useMemo(() => {
+    const rows = accountsData?.results ?? [];
+    return rows.filter((a) => accountLifecycleStatus(a) === "active");
+  }, [accountsData?.results]);
+
+  const categoryHouseholdId = useMemo(() => {
+    if (typeof accountId !== "number") return null;
+    const fromAccount = accountData?.household;
+    if (typeof fromAccount === "object" && fromAccount != null && "id" in fromAccount) {
+      return (fromAccount as { id: number }).id;
+    }
+    if (typeof fromAccount === "number") return fromAccount;
+    const fromList = accounts.find((a) => a.id === accountId);
+    const h = fromList?.household;
+    if (typeof h === "object" && h != null && "id" in h) return (h as { id: number }).id;
+    if (typeof h === "number") return h;
+    return null;
+  }, [accountId, accountData?.household, accounts]);
+
   const { data: categoriesData } = useQuery({
-    queryKey: ["categories", "transactions", accountData?.household?.id ?? "all"],
+    queryKey: ["categories", "transactions", categoryHouseholdId ?? "all"],
     queryFn: () =>
       listCategories({
         page_size: 500,
-        ...(accountData?.household?.id ? { household: accountData.household.id } : {}),
+        ...(categoryHouseholdId ? { household: categoryHouseholdId } : {}),
       }),
     enabled: !!accountId,
-    staleTime: 60_000,
+    staleTime: 15 * 60_000,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
   const ledgerReady =
     typeof accountId === "number" &&
     accountData != null &&
-    !timelineFetching &&
-    (timelineData != null || timelineError);
+    !upcomingTimelineFetching &&
+    (upcomingTimelineData != null || upcomingTimelineError);
 
   usePerfPageLoad("transactions", ledgerReady, {
     account_id: accountId || "",
-    start: timelineStart,
-    end: timelineEnd,
+    past_start: pastRangeStart,
+    past_end: pastRangeEnd,
+    upcoming_end: upcomingRange.end,
   });
 
   const transactions = txnsData?.results ?? [];
-  const account = useMemo(() => {
-    if (!accountData) return accountForecastData;
-    if (!accountForecastData) return accountData;
-    return { ...accountData, ...accountForecastData };
-  }, [accountData, accountForecastData]);
+  const account = accountData;
 
   const householdId =
     account && typeof account.household === "object" && account.household != null && "id" in account.household
       ? (account.household as { id: number }).id
       : typeof account?.household === "number"
         ? account.household
-        : null;
+        : categoryHouseholdId;
 
-  const ledgerRange = useMemo(
-    () => ({ start: timelineStart, end: timelineEnd }),
-    [timelineStart, timelineEnd]
-  );
+  const needsTransferHints =
+    Boolean(inlineRow.transfer_to_account_id) || Boolean(editing);
 
-  const [loadHouseholdWarnings, setLoadHouseholdWarnings] = useState(false);
   useEffect(() => {
-    const t = window.setTimeout(() => setLoadHouseholdWarnings(true), 3000);
-    return () => window.clearTimeout(t);
-  }, []);
-  const accounts = useMemo(() => {
-    const rows = accountsData?.results ?? [];
-    return rows.filter((a) => accountLifecycleStatus(a) === "active");
-  }, [accountsData?.results]);
+    if (typeof accountId !== "number") return;
+    logTransactionsPageLoadPlan({
+      accountId,
+      pastRange: { start: pastRangeStart, end: pastRangeEnd },
+      upcomingRange,
+      hideReconciledPast,
+      householdTimelineEnabled: needsTransferHints && householdId != null,
+      duplicateAccountCallsRemoved: true,
+    });
+  }, [
+    accountId,
+    pastRangeStart,
+    pastRangeEnd,
+    upcomingRange,
+    hideReconciledPast,
+    needsTransferHints,
+    householdId,
+  ]);
 
   useEffect(() => {
     saveStoredTransactionsAccountId(accountId);
@@ -388,21 +426,23 @@ export default function Transactions() {
     );
   }, [account, accountId, accounts, selectedCategory?.name]);
 
-  const needsTransferHints =
-    Boolean(inlineRow.transfer_to_account_id) ||
-    Boolean(editing) ||
-    loadHouseholdWarnings;
-
   const { data: householdTimelineData, isFetching: householdTimelineFetching } = useQuery({
-    queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, todayStr()],
+    queryKey: [
+      "timeline",
+      "household",
+      upcomingRange.start,
+      upcomingRange.end,
+      householdId,
+      todayStr(),
+    ],
     queryFn: () =>
       getTimeline({
-        start: timelineStart,
-        end: timelineEnd,
+        start: upcomingRange.start,
+        end: upcomingRange.end,
         as_of: todayStr(),
         household_id: householdId ?? undefined,
       }),
-    enabled: !!householdId && !!timelineStart && !!timelineEnd && needsTransferHints,
+    enabled: !!householdId && needsTransferHints,
     staleTime: 120_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
@@ -424,7 +464,8 @@ export default function Transactions() {
   const inlineCardHintInLedgerRange =
     inlinePayToCardAccountId != null &&
     inlineRow.date !== "" &&
-    hintDateWithinLedgerRange(inlineRow.date, ledgerRange);
+    hintDateWithinLedgerRange(inlineRow.date, ledgerRange) &&
+    householdTimelineData != null;
 
   const inlineCardNeedsDedicatedTimeline =
     inlinePayToCardAccountId != null &&
@@ -510,7 +551,8 @@ export default function Transactions() {
   const inlineBankHintInLedgerRange =
     inlineBankTransferDestId != null &&
     inlineRow.date !== "" &&
-    hintDateWithinLedgerRange(inlineRow.date, ledgerRange);
+    hintDateWithinLedgerRange(inlineRow.date, ledgerRange) &&
+    householdTimelineData != null;
 
   const inlineBankNeedsDedicatedTimeline =
     inlineBankTransferDestId != null &&
@@ -691,7 +733,8 @@ export default function Transactions() {
   const editCardHintInLedgerRange =
     editPayToCardId != null &&
     editForm.date !== "" &&
-    hintDateWithinLedgerRange(editForm.date, ledgerRange);
+    hintDateWithinLedgerRange(editForm.date, ledgerRange) &&
+    householdTimelineData != null;
 
   const editCardNeedsDedicatedTimeline =
     editPayToCardId != null && editProjectionRange != null && !editCardHintInLedgerRange;
@@ -762,7 +805,8 @@ export default function Transactions() {
   const editBankHintInLedgerRange =
     editBankTransferDestId != null &&
     editForm.date !== "" &&
-    hintDateWithinLedgerRange(editForm.date, ledgerRange);
+    hintDateWithinLedgerRange(editForm.date, ledgerRange) &&
+    householdTimelineData != null;
 
   const editBankNeedsDedicatedTimeline =
     editBankTransferDestId != null && editProjectionRange != null && !editBankHintInLedgerRange;
@@ -858,13 +902,15 @@ export default function Transactions() {
   const timelinePatchScope = useMemo((): TimelinePatchScope | null => {
     if (typeof accountId !== "number") return null;
     return {
-      timelineStart,
-      timelineEnd,
+      timelineStart: upcomingRange.start,
+      timelineEnd: upcomingRange.end,
       accountId,
       today: todayStr(),
       householdId,
+      upcoming: true,
+      hideReconciledPast,
     };
-  }, [timelineStart, timelineEnd, accountId, householdId]);
+  }, [upcomingRange.start, upcomingRange.end, accountId, householdId, hideReconciledPast]);
 
   const accountsForHousehold = useMemo(() => {
     if (householdId == null) return [];
@@ -935,39 +981,38 @@ export default function Transactions() {
     if (!account || typeof accountId !== "number") return [];
     const today = todayStr();
     const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
-    const start = openingBalance;
-    const timeline = timelineData?.timeline;
     const pastOpeningOverride =
-      hideReconciledPast && timelineData?.past_opening_balance != null
-        ? parseFloat(timelineData.past_opening_balance)
+      hideReconciledPast && upcomingTimelineData?.past_opening_balance != null
+        ? parseFloat(upcomingTimelineData.past_opening_balance)
         : null;
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
-    const canUseTimelineLedger =
-      !timelineError &&
-      timelineData != null &&
-      (timelineHasAccountRows(timeline, accountId) ||
-        (hideReconciledPast && hasPastOpeningOverride));
-    if (canUseTimelineLedger) {
+    const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
+
+    if (!upcomingTimelineError && upcomingTimelineData?.timeline != null) {
       const aid = Number(accountId);
-      const timelineForAccount = (timeline ?? []).filter((r) => Number(r.account_id) === aid);
-      return buildLedgerRowsFromTimeline(
-        timelineForAccount,
+      const upcomingForAccount = upcomingTimelineData.timeline.filter(
+        (r) => Number(r.account_id) === aid
+      );
+      return buildLedgerRowsFromPastAndUpcomingTimeline(
+        transactions,
+        upcomingForAccount,
         today,
         openingBalance,
         isCreditAccount,
-        hasPastOpeningOverride ? pastOpeningOverride : undefined
+        {
+          pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
+          todayBalanceOverride: apiBalance,
+        }
       );
     }
-    // Timeline missing, slow, errored, or empty — posted transactions only.
-    // Starting Balance always comes from the account record; header uses API ledger balance.
+
     const fallbackTxns = hideReconciledPast
       ? transactions.filter((t) => !t.reconciled)
       : transactions;
-    const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
     return buildLedgerRows(
       fallbackTxns,
-      start,
+      openingBalance,
       account.currency,
       isCreditAccount,
       apiBalance
@@ -976,25 +1021,25 @@ export default function Transactions() {
     account,
     accountId,
     transactions,
-    timelineData,
-    timelineData?.timeline,
-    timelineData?.past_opening_balance,
-    timelineError,
+    upcomingTimelineData,
+    upcomingTimelineData?.timeline,
+    upcomingTimelineData?.past_opening_balance,
+    upcomingTimelineError,
     isCreditAccount,
     hideReconciledPast,
   ]);
 
   const pastOpeningBalance = useMemo(() => {
-    if (!hideReconciledPast || timelineData?.past_opening_balance == null) return null;
-    const n = parseFloat(timelineData.past_opening_balance);
+    if (!hideReconciledPast || upcomingTimelineData?.past_opening_balance == null) return null;
+    const n = parseFloat(upcomingTimelineData.past_opening_balance);
     return Number.isFinite(n) ? n : null;
-  }, [hideReconciledPast, timelineData?.past_opening_balance]);
+  }, [hideReconciledPast, upcomingTimelineData?.past_opening_balance]);
 
   const accountTimeline = useMemo(() => {
-    if (typeof accountId !== "number" || !timelineData?.timeline) return [];
+    if (typeof accountId !== "number" || !upcomingTimelineData?.timeline) return [];
     const aid = Number(accountId);
-    return timelineData.timeline.filter((r) => Number(r.account_id) === aid);
-  }, [accountId, timelineData?.timeline]);
+    return upcomingTimelineData.timeline.filter((r) => Number(r.account_id) === aid);
+  }, [accountId, upcomingTimelineData?.timeline]);
 
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
@@ -1045,12 +1090,12 @@ export default function Transactions() {
         "transactions",
         {
           account: accountId || undefined,
-          date_after: timelineStart,
-          date_before: timelineEnd,
+          date_after: pastRangeStart,
+          date_before: pastRangeEnd,
           unreconciled_only: hideReconciledPast,
         },
       ] as const,
-    [accountId, timelineStart, timelineEnd, hideReconciledPast]
+    [accountId, pastRangeStart, pastRangeEnd, hideReconciledPast]
   );
 
   const createMu = useMutation({
@@ -1348,11 +1393,19 @@ export default function Transactions() {
 
     void queryClient.invalidateQueries({ queryKey: ["timeline"] });
     const refreshed = await queryClient.fetchQuery({
-      queryKey: ["timeline", timelineStart, timelineEnd, accountId, todayStr(), hideReconciledPast],
+      queryKey: [
+        "timeline",
+        "upcoming",
+        upcomingRange.start,
+        upcomingRange.end,
+        accountId,
+        todayStr(),
+        hideReconciledPast,
+      ],
       queryFn: () =>
         getTimeline({
-          start: timelineStart,
-          end: timelineEnd,
+          start: upcomingRange.start,
+          end: upcomingRange.end,
           as_of: todayStr(),
           account_id: accountId,
           exclude_reconciled_past: hideReconciledPast,
@@ -1699,7 +1752,7 @@ export default function Transactions() {
             <ForecastSummaryBar
               account={account}
               currentBalance={
-                timelineError || timelineData == null
+                upcomingTimelineError || upcomingTimelineData == null
                   ? accountLedgerDisplayBalance(account, isCredit)
                   : ledgerSections.today?.balance ??
                     pastOpeningBalance ??
@@ -1848,7 +1901,7 @@ export default function Transactions() {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col bg-white rounded-lg shadow overflow-hidden">
-          {timelineFetching && transactions.length > 0 ? (
+          {upcomingTimelineFetching && transactions.length > 0 ? (
             <p
               className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5"
               role="status"
@@ -1856,7 +1909,7 @@ export default function Transactions() {
               Updating forecast in the background…
             </p>
           ) : null}
-          {timelineError && !timelineFetching && transactions.length > 0 ? (
+          {upcomingTimelineError && !upcomingTimelineFetching && transactions.length > 0 ? (
             <p
               className="shrink-0 text-sm text-amber-900 bg-amber-50 border-b border-amber-200 px-4 py-2"
               role="status"

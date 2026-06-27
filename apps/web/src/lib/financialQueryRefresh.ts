@@ -20,6 +20,8 @@ export type TimelinePatchScope = {
   accountId: number;
   today: string;
   householdId?: number | null;
+  upcoming?: boolean;
+  hideReconciledPast?: boolean;
 };
 
 export type TimelineTransactionPatch = {
@@ -30,9 +32,18 @@ export type TimelineTransactionPatch = {
 };
 
 function timelineQueryKeys(scope: TimelinePatchScope): readonly (readonly unknown[])[] {
-  const keys: (readonly unknown[])[] = [
-    ["timeline", scope.timelineStart, scope.timelineEnd, scope.accountId, scope.today],
-  ];
+  const accountKey = scope.upcoming
+    ? ([
+        "timeline",
+        "upcoming",
+        scope.timelineStart,
+        scope.timelineEnd,
+        scope.accountId,
+        scope.today,
+        scope.hideReconciledPast ?? false,
+      ] as const)
+    : (["timeline", scope.timelineStart, scope.timelineEnd, scope.accountId, scope.today] as const);
+  const keys: (readonly unknown[])[] = [accountKey];
   if (scope.householdId != null) {
     keys.push([
       "timeline",

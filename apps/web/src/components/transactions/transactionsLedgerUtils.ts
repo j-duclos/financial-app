@@ -63,6 +63,34 @@ export function timelineRangeForFilter(filter: TimeFilter): { start: string; end
 /** Past history loaded for transfer/CC payoff hints (keep small — full rematch timeline builds are expensive). */
 export const PROJECTION_HINT_HISTORY_DAYS = 120;
 
+/** Upcoming forecast on Transactions page — always 90 days (3 months), independent of past filter. */
+export const UPCOMING_FORECAST_DAYS = 90;
+
+/** Past window for listTransactions (history through today). */
+export function pastTransactionsRange(filter: TimeFilter): { start: string; end: string } {
+  const today = todayStr();
+  const { start } = timelineRangeForFilter(filter);
+  return { start, end: today };
+}
+
+/** Upcoming projection window: today through today + 90 days. */
+export function upcomingTimelineRange(asOf: string = todayStr()): { start: string; end: string } {
+  return {
+    start: asOf,
+    end: addDaysToIsoDate(asOf, UPCOMING_FORECAST_DAYS),
+  };
+}
+
+/** Combined range for transfer-hint date checks (past filter + upcoming forecast). */
+export function ledgerHintDateRange(
+  filter: TimeFilter,
+  asOf: string = todayStr()
+): { start: string; end: string } {
+  const past = pastTransactionsRange(filter);
+  const upcoming = upcomingTimelineRange(asOf);
+  return { start: past.start, end: upcoming.end };
+}
+
 /** Narrow window for transfer/CC payoff hints — avoids building years of timeline on every date change. */
 export function projectionTimelineRangeForAsOf(asOfDate: string): {
   start: string;
@@ -524,6 +552,88 @@ export function buildLedgerRowsFromTimeline(
     });
   }
 
+  for (const r of future) {
+    forecastRunning = applyTimelineAmountToBalance(
+      forecastRunning,
+      parseFloat(r.amount),
+      isCredit
+    );
+    rows.push({
+      type: "recurring",
+      row: r,
+      balance: forecastRunning,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Past ledger from posted transactions; pending + upcoming from a narrow projection timeline.
+ * Avoids building months of past timeline on the server while keeping 90-day forecast.
+ */
+export function buildLedgerRowsFromPastAndUpcomingTimeline(
+  pastTransactions: Transaction[],
+  upcomingTimeline: TimelineRow[],
+  today: string,
+  openingBalance: number,
+  isCredit: boolean,
+  options?: {
+    pastOpeningOverride?: number | null;
+    todayBalanceOverride?: number | null;
+  }
+): LedgerRow[] {
+  const pastTxns = pastTransactions
+    .filter((t) => t.date <= today && (t.source || "").toUpperCase() !== "INTEREST")
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
+  const start =
+    options?.pastOpeningOverride != null && Number.isFinite(options.pastOpeningOverride)
+      ? options.pastOpeningOverride
+      : configuredOpening;
+
+  const rows: LedgerRow[] = [{ type: "starting_balance", balance: start }];
+  let running = start;
+
+  for (const txn of pastTxns) {
+    const amt = parseFloat(txn.amount);
+    if (Number.isNaN(amt)) continue;
+    const effective = isCredit && amt > 0 ? -amt : amt;
+    running += effective;
+    rows.push({ type: "transaction", txn, balance: running });
+  }
+
+  const todayBalance =
+    options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
+      ? options.todayBalanceOverride
+      : running;
+  rows.push({ type: "today_balance", balance: todayBalance });
+
+  const visibleTimeline = upcomingTimeline.filter(
+    (r) =>
+      !isSupersededPlannedTimelineRow(r, upcomingTimeline) &&
+      !isShadowedByMatchedRuleSibling(r, upcomingTimeline)
+  );
+  const pending = visibleTimeline
+    .filter((r) => isPendingExpectedTimelineRow(r, today))
+    .sort(compareTimelineRows);
+  const future = visibleTimeline
+    .filter((r) => isForecastTimelineRow(r, today))
+    .sort(compareTimelineRows);
+
+  let forecastRunning = todayBalance;
+  for (const r of pending) {
+    forecastRunning = applyTimelineAmountToBalance(
+      forecastRunning,
+      parseFloat(r.amount),
+      isCredit
+    );
+    rows.push({
+      type: "transaction_from_timeline",
+      row: r,
+      balance: forecastRunning,
+    });
+  }
   for (const r of future) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,

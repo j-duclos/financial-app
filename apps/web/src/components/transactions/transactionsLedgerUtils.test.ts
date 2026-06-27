@@ -19,6 +19,10 @@ import {
   formatDateDisplay,
   todayStr,
   timelineRangeForFilter,
+  upcomingTimelineRange,
+  UPCOMING_FORECAST_DAYS,
+  pastTransactionsRange,
+  buildLedgerRowsFromPastAndUpcomingTimeline,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
   timelineHasAccountRows,
@@ -31,6 +35,60 @@ describe("timelineRangeForFilter", () => {
     const { start, end } = timelineRangeForFilter("14d");
     expect(start).toBe(addDaysToIsoDate(today, -14));
     expect(end).toBe(addDaysToIsoDate(today, 14));
+  });
+});
+
+describe("upcomingTimelineRange", () => {
+  it("spans today through 90 days forward", () => {
+    const today = todayStr();
+    const { start, end } = upcomingTimelineRange(today);
+    expect(start).toBe(today);
+    expect(end).toBe(addDaysToIsoDate(today, UPCOMING_FORECAST_DAYS));
+  });
+});
+
+describe("pastTransactionsRange", () => {
+  it("ends at today for history queries", () => {
+    const today = todayStr();
+    const { end } = pastTransactionsRange("3m");
+    expect(end).toBe(today);
+  });
+});
+
+describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
+  it("combines posted past rows with upcoming projection rows", () => {
+    const today = todayStr();
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 1,
+          date: today,
+          payee: "Coffee",
+          amount: "-5.00",
+          source: "PLAID",
+        } as never,
+      ],
+      [
+        {
+          date: addDaysToIsoDate(today, 7),
+          description: "Rent",
+          account_id: 1,
+          amount: "-1200.00",
+          type: "OUTFLOW",
+          status: "planned",
+          source: "rule",
+          rule_id: 9,
+          transaction_id: null,
+          running_balance: "500",
+        } as TimelineRow,
+      ],
+      today,
+      1000,
+      false
+    );
+    const future = splitLedgerSections(rows).future;
+    expect(future.length).toBe(1);
+    expect(future[0].type).toBe("recurring");
   });
 });
 
