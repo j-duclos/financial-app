@@ -18,6 +18,7 @@ import {
   upcomingSectionTitle,
   upcomingTimelineLinkLabel,
   upcomingTransferAccountsLabel,
+  upcomingPreviewTruncatedMessage,
   upcomingTruncatedMessage,
   groupUpcomingByMonth,
   upcomingMonthLabel,
@@ -26,6 +27,7 @@ import {
   UPCOMING_PREVIEW_MAX_ITEMS,
   buildUpcomingDashboardPreview,
   filterUpcomingGroupsForPreview,
+  upcomingDisplayTransactionCount,
 } from "./upcomingDisplay";
 
 function txn(overrides: Partial<DashboardUpcomingTransaction> = {}): DashboardUpcomingTransaction {
@@ -233,6 +235,10 @@ describe("upcomingDisplay", () => {
     expect(upcomingSectionTitle(14)).toBe("Upcoming Money Flow");
     expect(upcomingSectionTitle(7)).toBe("Upcoming Money Flow");
     expect(upcomingTruncatedMessage()).toMatch(/first 25/i);
+    expect(upcomingPreviewTruncatedMessage()).toMatch(/up to 5/i);
+    expect(upcomingPreviewTruncatedMessage(5, 7, { dayWindowTruncated: true })).toMatch(
+      /next 7 days/i
+    );
     expect(upcomingTimelineLinkLabel()).toBe("Open calendar");
     expect(upcomingSectionCollapsedSummary([], 30)).toMatch(/No upcoming activity/);
     expect(upcomingSectionCollapsedSummary([group({ date: "2026-06-01" })], 30)).toBe(
@@ -344,6 +350,9 @@ describe("upcomingDisplay", () => {
     expect(preview.days).toBe(UPCOMING_PREVIEW_DAYS);
     expect(preview.maxTotalItems).toBe(UPCOMING_PREVIEW_MAX_ITEMS);
     expect(preview.truncated).toBe(true);
+    expect(preview.truncatedMessage).toMatch(/up to 5/i);
+    expect(preview.groups).toHaveLength(1);
+    expect(upcomingDisplayTransactionCount(preview.groups[0]!)).toBe(5);
     expect(preview.nextRisk?.date).toBe("2026-06-27");
   });
 });

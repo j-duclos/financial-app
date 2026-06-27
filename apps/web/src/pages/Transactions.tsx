@@ -138,7 +138,7 @@ export default function Transactions() {
   const [payoffResult, setPayoffResult] = useState<PayoffProjection | null>(null);
   const [payoffError, setPayoffError] = useState<string | null>(null);
   const [payoffLoading, setPayoffLoading] = useState(false);
-  const [pastExpanded, setPastExpanded] = useState(true);
+  const [pastExpanded, setPastExpanded] = useState(false);
   const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);

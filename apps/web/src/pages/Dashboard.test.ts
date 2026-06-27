@@ -2,10 +2,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
 
 const dashboardSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "Dashboard.tsx"),
+  "utf8"
+);
+
+const accountsSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "Accounts.tsx"),
   "utf8"
 );
 
@@ -16,7 +20,12 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
     expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
     expect(dashboardSource).toMatch(/GoalsProgressSection/);
-    expect(dashboardSource).toMatch(/FinancialSnapshotCard/);
+    expect(dashboardSource).toMatch(/DashboardFinancialSnapshotLine/);
+  });
+
+  it("does not render large resource breakdown cards", () => {
+    expect(dashboardSource).not.toMatch(/FinancialSnapshotCard/);
+    expect(dashboardSource).not.toMatch(/resourceBreakdown/);
   });
 
   it("does not render page title or legacy health cards", () => {
@@ -27,26 +36,26 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).not.toMatch(/<h1[^>]*>Dashboard<\/h1>/);
   });
 
-  it("renders recommendations preview section", () => {
-    expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
+  it("places compact snapshot after goals", () => {
+    const goalsIdx = dashboardSource.indexOf("<GoalsProgressSection");
+    const snapshotIdx = dashboardSource.indexOf("<DashboardFinancialSnapshotLine");
+    expect(goalsIdx).toBeGreaterThan(-1);
+    expect(snapshotIdx).toBeGreaterThan(goalsIdx);
+  });
+});
+
+describe("Accounts page structure", () => {
+  it("includes compact portfolio summary above account groups", () => {
+    expect(accountsSource).toMatch(/PortfolioSummaryBar/);
+    expect(accountsSource).toMatch(/computePortfolioSummary/);
+    const portfolioIdx = accountsSource.indexOf("<PortfolioSummaryBar");
+    const groupsIdx = accountsSource.indexOf("<AccountGroupSection");
+    expect(portfolioIdx).toBeGreaterThan(-1);
+    expect(groupsIdx).toBeGreaterThan(portfolioIdx);
   });
 
-  it("orders operational sections before resource breakdown", () => {
-    const healthIdx = dashboardSource.indexOf("DashboardTopSummaryBar");
-    const attentionIdx = dashboardSource.indexOf("Attention Required");
-    const recommendationsIdx = dashboardSource.indexOf("RecommendationsPreviewSection");
-    const upcomingIdx = dashboardSource.indexOf("UpcomingMoneyFlowPreviewSection");
-    const resourceIdx = dashboardSource.indexOf("<FinancialSnapshotCard");
-    const goalsIdx = dashboardSource.indexOf("Goals &amp; Progress");
-    expect(healthIdx).toBeGreaterThan(-1);
-    expect(resourceIdx).toBeGreaterThan(upcomingIdx);
-    expect(resourceIdx).toBeLessThan(goalsIdx);
-    expect(attentionIdx).toBeLessThan(resourceIdx);
-    expect(recommendationsIdx).toBeLessThan(resourceIdx);
-    expect(dashboardSource).toContain("DASHBOARD_SECTION.resourceBreakdown");
-  });
-
-  it("does not use deprecated financial snapshot section title", () => {
-    expect(dashboardSource).not.toContain("Financial Snapshot");
+  it("does not call dashboard summary from accounts", () => {
+    expect(accountsSource).not.toMatch(/getDashboardSummary/);
+    expect(accountsSource).not.toMatch(/getDashboardDetails/);
   });
 });

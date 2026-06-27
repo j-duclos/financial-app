@@ -56,7 +56,7 @@ export default function PendingExpectedSection({
     <section className="flex-none shrink-0 border-t-4 border-blue-300 bg-blue-50/30">
       <div className="sticky top-0 z-10 shrink-0 bg-blue-50 border-b border-blue-200">
         <LedgerSectionHeader
-          title="Expected Transactions"
+          title="Pending Transactions"
           subtitle="Scheduled items due now but not confirmed by bank import or manual posting"
           expanded={showBody}
           onToggleExpanded={() => {}}

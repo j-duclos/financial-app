@@ -9,6 +9,7 @@ import { formatDateDisplay } from "../../lib/dateDisplay";
 import { formatRecoveryChip } from "../../lib/dayRecoveryDisplay";
 import {
   UPCOMING_CALENDAR_PATH,
+  UPCOMING_MAX_VISIBLE_TRANSACTIONS,
   UPCOMING_PER_DAY_VISIBLE,
   dailyNetFromTotals,
   groupShowsTransferNote,
@@ -210,6 +211,7 @@ export default function UpcomingList({
   showCalendarLink = true,
   emptyDays,
   maxTotalItems,
+  truncatedMessage,
 }: {
   groups: DashboardUpcomingGroup[];
   days: number;
@@ -219,6 +221,8 @@ export default function UpcomingList({
   emptyDays?: number;
   /** Stop rendering after this many transaction rows (dashboard preview). */
   maxTotalItems?: number;
+  /** Override default truncation banner copy (dashboard preview). */
+  truncatedMessage?: string | null;
 }) {
   const [collapsedDays, setCollapsedDays] = useState<Record<string, boolean>>(() =>
     initialUpcomingDayCollapsed(groups)
@@ -289,11 +293,15 @@ export default function UpcomingList({
     </>
   );
 
+  const truncationCopy =
+    truncatedMessage ??
+    upcomingTruncatedMessage(maxTotalItems ?? UPCOMING_MAX_VISIBLE_TRANSACTIONS);
+
   return (
     <div className="bg-white rounded-lg shadow p-3 space-y-3">
       {truncated && showCalendarLink && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
-          <span>{upcomingTruncatedMessage()}</span>
+          <span>{truncationCopy}</span>
           <Link
             to={UPCOMING_CALENDAR_PATH}
             className="font-medium text-blue-700 hover:underline shrink-0"
@@ -304,7 +312,7 @@ export default function UpcomingList({
       )}
       {truncated && !showCalendarLink && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
-          {upcomingTruncatedMessage()}
+          {truncationCopy}
         </div>
       )}
       {listBody}

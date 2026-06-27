@@ -12,7 +12,7 @@ import RecommendationsPreviewSection from "../components/dashboard/Recommendatio
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import type { DashboardAttentionItem } from "@budget-app/shared";
 import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
-import FinancialSnapshotCard from "../components/dashboard/FinancialSnapshotCard";
+import DashboardFinancialSnapshotLine from "../components/dashboard/DashboardFinancialSnapshotLine";
 import GoalsProgressSection from "../components/dashboard/GoalsProgressSection";
 import QuickTransactionModal, {
   type QuickTransactionPreset,
@@ -24,7 +24,6 @@ import {
   DEFAULT_PASSIVE_FORECAST_DAYS,
   type ForecastDays,
 } from "../lib/safeToSpendLabels";
-import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
 import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
@@ -166,22 +165,6 @@ export default function Dashboard() {
               )}
 
               {!details || detailsLoading ? (
-                <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
-                  <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
-                    {DASHBOARD_SECTION.resourceBreakdown}
-                  </h2>
-                  <DashboardSectionSkeleton rows={1} />
-                </section>
-              ) : (
-                <section aria-label={DASHBOARD_SECTION.resourceBreakdown} className="pt-1">
-                  <h2 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
-                    {DASHBOARD_SECTION.resourceBreakdown}
-                  </h2>
-                  <FinancialSnapshotCard snapshot={details.snapshot} />
-                </section>
-              )}
-
-              {!details || detailsLoading ? (
                 <section>
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -213,6 +196,12 @@ export default function Dashboard() {
                   />
                 </section>
               )}
+
+              {!details || detailsLoading ? (
+                <DashboardSectionSkeleton rows={1} />
+              ) : details.snapshot ? (
+                <DashboardFinancialSnapshotLine snapshot={details.snapshot} />
+              ) : null}
             </>
           )}
 

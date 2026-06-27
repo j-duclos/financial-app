@@ -78,7 +78,7 @@ export default function ForecastCardsSection({
     <section className={`flex flex-col border-t-4 border-amber-400 min-h-0 overflow-hidden ${sectionClass}`}>
       <div className="sticky top-0 z-10 shrink-0 bg-amber-50 border-b border-amber-200">
         <LedgerSectionHeader
-          title="Forecasted Transactions"
+          title="Upcoming Transactions"
           subtitle={
             expanded && isCreditAccount ? "Includes projected interest each billing cycle" : undefined
           }

@@ -54,6 +54,23 @@ export function upcomingTruncatedMessage(limit = UPCOMING_MAX_VISIBLE_TRANSACTIO
   return `Showing the first ${limit} upcoming transactions.`;
 }
 
+/** Dashboard preview banner — not the full calendar cap. */
+export function upcomingPreviewTruncatedMessage(
+  maxItems: number = UPCOMING_PREVIEW_MAX_ITEMS,
+  days: number = UPCOMING_PREVIEW_DAYS,
+  opts?: { itemTruncated?: boolean; dayWindowTruncated?: boolean }
+): string {
+  const itemTruncated = opts?.itemTruncated ?? true;
+  const dayWindowTruncated = opts?.dayWindowTruncated ?? false;
+  if (itemTruncated && dayWindowTruncated) {
+    return `Showing up to ${maxItems} transactions in the next ${days} days.`;
+  }
+  if (dayWindowTruncated) {
+    return `Showing the next ${days} days.`;
+  }
+  return `Showing up to ${maxItems} upcoming transactions.`;
+}
+
 export function upcomingTimelineLinkLabel(): string {
   return "Open calendar";
 }
@@ -246,18 +263,27 @@ export function buildUpcomingDashboardPreview(
   groups: DashboardUpcomingGroup[];
   days: number;
   truncated: boolean;
+  truncatedMessage: string | null;
   nextRisk: UpcomingPreviewRisk | null;
   maxTotalItems: number;
 } {
   const dayFiltered = filterUpcomingGroupsForPreview(groups);
-  const totalItems = dayFiltered.reduce(
-    (sum, g) => sum + upcomingDisplayTransactionCount(g),
-    0
+  const dayWindowTruncated = dayFiltered.length < groups.length;
+  const { groups: limitedGroups, truncated: itemTruncated } = limitUpcomingGroupsByItemCount(
+    dayFiltered,
+    UPCOMING_PREVIEW_MAX_ITEMS
   );
+  const truncated = itemTruncated || dayWindowTruncated;
   return {
-    groups: dayFiltered,
+    groups: limitedGroups,
     days: UPCOMING_PREVIEW_DAYS,
-    truncated: totalItems > UPCOMING_PREVIEW_MAX_ITEMS || dayFiltered.length < groups.length,
+    truncated,
+    truncatedMessage: truncated
+      ? upcomingPreviewTruncatedMessage(UPCOMING_PREVIEW_MAX_ITEMS, UPCOMING_PREVIEW_DAYS, {
+          itemTruncated,
+          dayWindowTruncated,
+        })
+      : null,
     nextRisk: upcomingPreviewNextRiskDay(dayFiltered, nextIssue),
     maxTotalItems: UPCOMING_PREVIEW_MAX_ITEMS,
   };

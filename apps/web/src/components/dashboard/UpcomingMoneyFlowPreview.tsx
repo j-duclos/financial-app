@@ -45,6 +45,7 @@ export default function UpcomingMoneyFlowPreview({ groups, nextIssue }: Props) {
         groups={preview.groups}
         days={preview.days}
         truncated={preview.truncated}
+        truncatedMessage={preview.truncatedMessage}
         showCalendarLink={false}
         emptyDays={UPCOMING_PREVIEW_DAYS}
         maxTotalItems={preview.maxTotalItems}

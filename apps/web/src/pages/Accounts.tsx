@@ -37,10 +37,12 @@ import {
   computeAccountsPageStats,
   formatAccountsPageSummaryLine,
 } from "../lib/accountPageSummary";
+import { computePortfolioSummary } from "../lib/portfolioSummary";
 import { useAccountOrganizationPreferences } from "../hooks/useAccountOrganizationPreferences";
 import AccountOrganizationToolbar from "../components/accounts/AccountOrganizationToolbar";
 import AccountGroupSection from "../components/accounts/AccountGroupSection";
 import AccountsForecastAlertsPanel from "../components/accounts/AccountsForecastAlertsPanel";
+import PortfolioSummaryBar from "../components/accounts/PortfolioSummaryBar";
 import AccountLifecycleModal, {
   type LifecycleAction,
 } from "../components/accounts/AccountLifecycleModal";
@@ -601,6 +603,11 @@ export default function Accounts() {
 
   const summaryLine = formatAccountsPageSummaryLine(pageStats);
 
+  const portfolioSummary = useMemo(
+    () => computePortfolioSummary(filteredAccounts),
+    [filteredAccounts]
+  );
+
   const [highlightedAccountId, setHighlightedAccountId] = useState<number | null>(null);
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -684,6 +691,10 @@ export default function Accounts() {
         forecastDays={forecastDays}
         onViewAccount={focusAccount}
       />
+
+      {!accountsLoading && filteredAccounts.length > 0 ? (
+        <PortfolioSummaryBar summary={portfolioSummary} />
+      ) : null}
 
       {accountsLoading ? (
         <div

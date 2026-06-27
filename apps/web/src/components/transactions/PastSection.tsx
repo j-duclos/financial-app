@@ -81,12 +81,13 @@ export default function PastSection({
     };
   }, [accountId, past.length, expanded, minimized, showBody]);
 
-  const sectionClass = minimized ? "flex-none shrink-0" : "flex-1 min-h-0";
+  const sectionClass =
+    minimized || !expanded ? "flex-none shrink-0" : "flex-1 min-h-0";
 
   return (
     <section className={`flex flex-col overflow-hidden border-b-4 border-gray-300 ${sectionClass}`}>
       <LedgerSectionHeader
-        title="Past Transactions"
+        title="Recent Transactions"
         expanded={showBody && expanded}
         onToggleExpanded={onToggleExpanded}
         hasRows={past.length > 0}
@@ -98,8 +99,14 @@ export default function PastSection({
           <LedgerColumnHeader className="shrink-0" />
           <div
             ref={scrollRef}
-            className="ledger-scroll flex-1 min-h-0 overflow-y-auto overscroll-y-contain border-b border-gray-100"
-            style={expanded ? undefined : { minHeight: compactScrollHeight }}
+            className={`ledger-scroll overflow-y-auto overscroll-y-contain border-b border-gray-100 ${
+              expanded ? "flex-1 min-h-0" : ""
+            }`}
+            style={
+              expanded
+                ? undefined
+                : { height: compactScrollHeight, maxHeight: compactScrollHeight }
+            }
           >
             {start?.type === "starting_balance" && (
               <div className={`${LEDGER_TABLE_GRID} px-4 py-2 bg-gray-50 border-b border-gray-100 text-sm`}>
