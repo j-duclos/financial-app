@@ -1002,7 +1002,6 @@ export default function Transactions() {
         isCreditAccount,
         {
           pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
-          todayBalanceOverride: apiBalance,
         }
       );
     }
@@ -1206,6 +1205,7 @@ export default function Transactions() {
       refreshAfterTransactionEdit(queryClient, timelinePatchScope, {
         refreshAccounts: affectsBalances,
         skipTransactionsInvalidate: affectsBalances,
+        immediateTimelineRefetch: true,
       });
       if (newAccountId != null) setAccountId(newAccountId);
       if (syncedToAccountId != null) {
@@ -1252,9 +1252,20 @@ export default function Transactions() {
 
   const moveDateMu = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) => moveTransactionDate(id, date),
+    onMutate: ({ id, date }) => {
+      if (timelinePatchScope) {
+        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
+          transactionId: id,
+          date,
+        });
+      }
+    },
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient, timelinePatchScope, {
+        refreshAccounts: true,
+        immediateTimelineRefetch: true,
+      });
     },
     onError: (err: Error) => {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;

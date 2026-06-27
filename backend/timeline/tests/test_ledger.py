@@ -773,6 +773,64 @@ class TestBuildTimeline:
         assert hit[0].get("transaction_id") is not None
         assert Decimal(str(hit[0]["amount"])) == Decimal("-99.00")
 
+    def test_projection_only_shows_rule_occurrence_moved_off_schedule(self, user, household, db):
+        """One-off date moves must appear even when the new date is not a generated occurrence."""
+        from datetime import timedelta
+
+        from timeline.models import RecurringRule, RecurringRuleSkip
+
+        today = date.today()
+        scheduled = (today + timedelta(days=45)).replace(day=1)
+        if scheduled <= today:
+            scheduled = (scheduled + timedelta(days=32)).replace(day=1)
+        moved_to = scheduled + timedelta(days=1)
+
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Checking",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Rent",
+            account=bank,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("1200.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=1,
+            start_date=scheduled - timedelta(days=60),
+            active=True,
+        )
+        txn = Transaction.objects.create(
+            account=bank,
+            date=moved_to,
+            payee="Rent",
+            amount=Decimal("-1200.00"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        RecurringRuleSkip.objects.create(rule=rule, date=scheduled)
+
+        rows = build_timeline(
+            user,
+            today,
+            today + timedelta(days=90),
+            account_id=bank.id,
+            as_of_date=today,
+            projection_only=True,
+        )
+        hit = [r for r in rows if r.get("transaction_id") == txn.pk]
+        assert len(hit) == 1, f"expected moved rent at {moved_to}; got {[r for r in rows if r.get('rule_id') == rule.id]}"
+        assert hit[0]["date"] == moved_to
+        assert not any(
+            r.get("rule_id") == rule.id and r.get("date") == scheduled for r in rows
+        ), "skipped scheduled date must not re-project"
+
     def test_credit_card_minimum_payment_rule_hidden_when_card_balance_zero(self, user, household, db):
         """Do not project bank→card minimum payments when the card has no debt (uses DB balance)."""
         from datetime import timedelta

@@ -70,15 +70,22 @@ function applyPatchToTimelineRow(
   };
 }
 
+function compareTimelineRows(a: TimelineRow, b: TimelineRow): number {
+  const byDate = a.date.localeCompare(b.date);
+  if (byDate !== 0) return byDate;
+  return (a.transaction_id ?? 0) - (b.transaction_id ?? 0);
+}
+
 function patchTimelinePayload(
   old: { timeline?: TimelineRow[] } | undefined,
   patch: TimelineTransactionPatch
 ): { timeline?: TimelineRow[] } | undefined {
   if (!old?.timeline) return old;
-  return {
-    ...old,
-    timeline: old.timeline.map((r) => applyPatchToTimelineRow(r, patch)),
-  };
+  const timeline = old.timeline.map((r) => applyPatchToTimelineRow(r, patch));
+  if (patch.date != null && timeline.some((r) => r.transaction_id === patch.transactionId)) {
+    timeline.sort(compareTimelineRows);
+  }
+  return { ...old, timeline };
 }
 
 /** Immediately update cached timeline rows so running balance stays correct before/after save. */
@@ -100,7 +107,7 @@ export function patchTimelineCachesForTransaction(
 function serverTimelineMatchesPending(timeline: TimelineRow[]): boolean {
   for (const [txnId, pending] of pendingTimelineEdits) {
     const row = timeline.find((r) => r.transaction_id === txnId);
-    if (!row) continue;
+    if (!row) return false;
     if (pending.date != null && row.date !== pending.date) return false;
     if (pending.amount != null && row.amount !== pending.amount) return false;
     if (pending.payee != null && row.description !== pending.payee) return false;
@@ -154,15 +161,7 @@ export function scheduleTimelineRefresh(
       .refetchQueries({ queryKey: ["timeline"], type: "active" })
       .finally(() => {
         if (!scope) return;
-        for (const key of timelineQueryKeys(scope)) {
-          const data = queryClient.getQueryData<{ timeline?: TimelineRow[] }>(key);
-          if (!data?.timeline) continue;
-          if (serverTimelineMatchesPending(data.timeline)) {
-            clearMatchingPendingEdits(data.timeline);
-          } else {
-            reapplyPendingTimelinePatches(queryClient, scope);
-          }
-        }
+        finalizeTimelineRefetch(queryClient, scope);
       });
   }, delayMs);
 }
@@ -180,18 +179,43 @@ export function scheduleAccountsRefresh(
   }, delayMs);
 }
 
+function finalizeTimelineRefetch(queryClient: QueryClient, scope: TimelinePatchScope): void {
+  for (const key of timelineQueryKeys(scope)) {
+    const data = queryClient.getQueryData<{ timeline?: TimelineRow[] }>(key);
+    if (!data?.timeline) continue;
+    if (serverTimelineMatchesPending(data.timeline)) {
+      clearMatchingPendingEdits(data.timeline);
+    } else {
+      reapplyPendingTimelinePatches(queryClient, scope);
+    }
+  }
+}
+
 /** Light refresh after a single transaction edit — timeline stays patched until server catches up. */
 export function refreshAfterTransactionEdit(
   queryClient: QueryClient,
   scope: TimelinePatchScope | null,
-  opts?: { refreshTimeline?: boolean; refreshAccounts?: boolean; skipTransactionsInvalidate?: boolean }
+  opts?: {
+    refreshTimeline?: boolean;
+    refreshAccounts?: boolean;
+    skipTransactionsInvalidate?: boolean;
+    /** Refetch upcoming timeline immediately so moved/edited planned rows stay visible. */
+    immediateTimelineRefetch?: boolean;
+  }
 ): void {
   if (!opts?.skipTransactionsInvalidate) {
     void queryClient.refetchQueries({ queryKey: ["transactions"], type: "active" });
   }
   if (scope == null) return;
   if (opts?.refreshTimeline !== false) {
-    scheduleTimelineRefresh(queryClient, scope);
+    const immediate = opts?.immediateTimelineRefetch !== false;
+    if (immediate) {
+      void queryClient
+        .refetchQueries({ queryKey: ["timeline"], type: "active" })
+        .finally(() => finalizeTimelineRefetch(queryClient, scope));
+    } else {
+      scheduleTimelineRefresh(queryClient, scope);
+    }
   }
   if (opts?.refreshAccounts) {
     scheduleAccountsRefresh(queryClient);

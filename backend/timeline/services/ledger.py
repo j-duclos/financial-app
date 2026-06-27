@@ -469,6 +469,85 @@ def _materialized_rule_timeline_row_if_exists(
     }
 
 
+def _append_rescheduled_rule_materializations(
+    *,
+    rows: list[dict],
+    ids_in_rows: set[int],
+    rule_ids: list[int],
+    forecastable_account_ids: set[int],
+    start_date: date,
+    end_date: date,
+    today: date,
+    seen_rule_actual_key: set[tuple],
+) -> None:
+    """
+    Include materialized rule transactions on dates outside the rule's generated schedule.
+
+    projection_only skips future rule rows in the main loop and re-adds them only when
+    iterating scheduled occurrence dates. One-off date moves (RecurringRuleSkip on the old
+    date) leave the transaction on a non-schedule day — pick those up here.
+    """
+    if not rule_ids:
+        return
+    window_start = max(start_date, today)
+    if window_start > end_date:
+        return
+
+    from transactions.services.matching import planned_leg_suppressed_by_import_match
+
+    extra = (
+        Transaction.objects.filter(
+            rule_id__in=rule_ids,
+            date__gte=window_start,
+            date__lte=end_date,
+            account_id__in=forecastable_account_ids,
+            source=Transaction.Source.RULE,
+        )
+        .exclude(pk__in=ids_in_rows)
+        .select_related("account", "category", "rule")
+        .order_by("date", "pk")
+    )
+    for t in extra:
+        if t.pk in ids_in_rows:
+            continue
+        if planned_leg_suppressed_by_import_match(t):
+            ids_in_rows.add(t.pk)
+            continue
+        amt = t.amount
+        sign = 1 if (amt is not None and amt >= 0) else -1
+        if t.rule_id is not None:
+            rule_actual_key = (t.account_id, t.date, t.rule_id, sign)
+            if rule_actual_key in seen_rule_actual_key:
+                ids_in_rows.add(t.pk)
+                continue
+            seen_rule_actual_key.add(rule_actual_key)
+        rule = t.rule
+        acc = t.account
+        acc_name = acc.effective_display_name if acc else ""
+        row_type = rule.direction if rule else RecurringRule.Direction.EXPENSE
+        cat_name = t.category.name if getattr(t, "category", None) else None
+        desc = (t.payee or (rule.name if rule else "")).strip() or "Scheduled"
+        ids_in_rows.add(t.pk)
+        rows.append(
+            {
+                "date": t.date,
+                "description": desc,
+                "account_id": t.account_id,
+                "account_name": acc_name,
+                "category_id": t.category_id,
+                "category_name": cat_name,
+                "amount": amt,
+                "type": row_type,
+                "status": t.status,
+                "source": "actual",
+                "rule_id": t.rule_id,
+                "transaction_id": t.pk,
+                "sort_key": (t.date, 1, t.rule_id or 0),
+                **_timeline_row_meta(t),
+            }
+        )
+
+
 def _category_suggests_loan_payment(category_name: Optional[str]) -> bool:
     if not category_name or not str(category_name).strip():
         return False
@@ -2795,6 +2874,17 @@ def _build_timeline_impl(
                     **_timeline_row_meta(txn),
                 })
         deactivate_rule_occurrence_store()
+        if scenario_projection_only and rule_ids:
+            _append_rescheduled_rule_materializations(
+                rows=rows,
+                ids_in_rows=ids_in_rows,
+                rule_ids=rule_ids,
+                forecastable_account_ids=forecastable_account_ids,
+                start_date=start_date,
+                end_date=end_date,
+                today=today,
+                seen_rule_actual_key=seen_rule_actual_key,
+            )
         phase_end(timer, _phase_materialize)
 
         if scenario_id and scenario:

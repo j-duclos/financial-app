@@ -90,6 +90,44 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(future.length).toBe(1);
     expect(future[0].type).toBe("recurring");
   });
+
+  it("continues upcoming balances from the last past row (no API balance jump)", () => {
+    const today = todayStr();
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 1,
+          date: today,
+          payee: "Coffee",
+          amount: "-5.00",
+          source: "PLAID",
+        } as never,
+      ],
+      [
+        {
+          date: addDaysToIsoDate(today, 1),
+          description: "Lowes",
+          account_id: 1,
+          amount: "-110.01",
+          type: "OUTFLOW",
+          status: "planned",
+          source: "rule",
+          rule_id: 9,
+          transaction_id: 50,
+          running_balance: "632.52",
+        } as TimelineRow,
+      ],
+      today,
+      1000,
+      false,
+      { pastOpeningOverride: 1005 }
+    );
+    const sections = splitLedgerSections(rows);
+    const lastPast = sections.past[sections.past.length - 1];
+    const firstFuture = sections.future[0];
+    expect(lastPast?.balance).toBeCloseTo(1000, 2);
+    expect(firstFuture?.balance).toBeCloseTo(1000 - 110.01, 2);
+  });
 });
 
 describe("projectionTimelineRangeForAsOf", () => {
