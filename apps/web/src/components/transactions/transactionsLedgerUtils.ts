@@ -221,6 +221,25 @@ export function isPlannedScheduledTimelineRow(row: TimelineRow): boolean {
   return row.rule_id != null && row.source === "actual";
 }
 
+/** Rule-backed or one-time planned row from /transactions/ (mirrors isPlannedScheduledTimelineRow). */
+export function isPlannedScheduledTransaction(txn: Transaction): boolean {
+  if ((txn.status || "").toUpperCase() !== "PLANNED") return false;
+  const matchStatus = (txn.import_match_status ?? "").toLowerCase();
+  if (matchStatus === "matched") return false;
+  if ((txn.plaid_transaction_id ?? "").trim()) return false;
+  const src = (txn.source || "").toUpperCase();
+  if (src === "INTEREST") return false;
+  if (src === "RULE") return true;
+  if (txn.rule_id != null) return true;
+  if (src === "ONE_TIME") return true;
+  return false;
+}
+
+/** Due scheduled row waiting for bank import or manual posting (Expected / Pending section). */
+export function isPendingExpectedTransaction(txn: Transaction, today: string): boolean {
+  return txn.date <= today && isPlannedScheduledTransaction(txn);
+}
+
 /** Expected automation row whose scheduled date has arrived but no bank/manual posting has confirmed it. */
 export function isPendingExpectedTimelineRow(row: TimelineRow, today: string): boolean {
   if (isProjectedInterestRow(row)) return false;
@@ -584,6 +603,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
 ): LedgerRow[] {
   const pastTxns = pastTransactions
     .filter((t) => t.date <= today && (t.source || "").toUpperCase() !== "INTEREST")
+    .filter((t) => !isPendingExpectedTransaction(t, today))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
@@ -691,8 +711,9 @@ export function splitLedgerSections(rows: LedgerRow[]) {
       if (isPendingExpectedTimelineRow(r.row, today)) pending.push(r);
       else past.push(r);
     } else if (r.type === "transaction") {
-      if (r.txn.date <= today) past.push(r);
-      else future.push(r);
+      if (r.txn.date > today) future.push(r);
+      else if (isPendingExpectedTransaction(r.txn, today)) pending.push(r);
+      else past.push(r);
     } else if (r.type === "recurring") {
       future.push(r);
     }

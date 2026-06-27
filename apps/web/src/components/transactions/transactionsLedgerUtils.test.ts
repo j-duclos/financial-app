@@ -128,6 +128,58 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(lastPast?.balance).toBeCloseTo(1000, 2);
     expect(firstFuture?.balance).toBeCloseTo(1000 - 110.01, 2);
   });
+
+  it("does not duplicate due planned rows in past and pending", () => {
+    const today = todayStr();
+    const plannedChewy = {
+      id: 10,
+      date: today,
+      payee: "Chewy",
+      amount: "-79.46",
+      status: "PLANNED",
+      source: "RULE",
+      rule_id: 34,
+    } as never;
+    const clearedCoffee = {
+      id: 11,
+      date: today,
+      payee: "Coffee Shop",
+      amount: "-5.00",
+      status: "CLEARED",
+      source: "PLAID",
+    } as never;
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [plannedChewy, clearedCoffee],
+      [
+        {
+          date: today,
+          description: "Chewy",
+          account_id: 1,
+          amount: "-79.46",
+          type: "OUTFLOW",
+          status: "PLANNED",
+          source: "actual",
+          txn_source: "rule",
+          rule_id: 34,
+          transaction_id: 10,
+          running_balance: "900",
+        } as TimelineRow,
+      ],
+      today,
+      1000,
+      false
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    if (sections.past[0].type === "transaction") {
+      expect(sections.past[0].txn.payee).toBe("Coffee Shop");
+    }
+    expect(sections.pending).toHaveLength(1);
+    if (sections.pending[0].type === "transaction_from_timeline") {
+      expect(sections.pending[0].row.description).toBe("Chewy");
+    }
+    expect(sections.pending[0].balance).toBeCloseTo(995 - 79.46, 2);
+  });
 });
 
 describe("projectionTimelineRangeForAsOf", () => {
