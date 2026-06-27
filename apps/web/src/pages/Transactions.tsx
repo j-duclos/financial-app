@@ -174,7 +174,7 @@ export default function Transactions() {
   const { data: reconcileSetupData } = useQuery({
     queryKey: ["reconcile-setup", accountId, "transactions-ledger"],
     queryFn: () => getReconcileSetup(accountId as number),
-    enabled: hideReconciledPast && typeof accountId === "number",
+    enabled: typeof accountId === "number",
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });

@@ -2233,6 +2233,54 @@ def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> 
     return delete_redundant_plaid_imports_for_accounts([account_id])
 
 
+def suppress_duplicate_plaid_imports_for_reconciled_transactions(
+    *, account_id: int | None = None
+) -> int:
+    """
+    Hide UNMATCHED Plaid imports when an already-reconciled ledger twin exists.
+
+    Stops re-synced bank rows from re-entering the ledger and double-counting balances.
+    """
+    plaid_qs = Transaction.objects.filter(
+        source=Transaction.Source.PLAID,
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        reconciled=False,
+    ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
+    if account_id is not None:
+        plaid_qs = plaid_qs.filter(account_id=account_id)
+
+    suppressed = 0
+    for imp in plaid_qs.select_related("account").iterator(chunk_size=200):
+        label = (imp.payee or imp.imported_description or "").strip()
+        twin_qs = Transaction.objects.filter(
+            account_id=imp.account_id,
+            reconciled=True,
+            date=imp.date,
+            amount=imp.amount,
+        ).exclude(pk=imp.pk)
+        if label:
+            twin_qs = twin_qs.filter(Q(payee=label) | Q(imported_description=label))
+        if not twin_qs.exists():
+            continue
+        imp.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+        imp.save(update_fields=["import_match_status", "updated_at"])
+        suppressed += 1
+    return suppressed
+
+
+def _reconciled_ledger_twin_exists(imp: Transaction) -> bool:
+    label = (imp.payee or imp.imported_description or "").strip()
+    twin_qs = Transaction.objects.filter(
+        account_id=imp.account_id,
+        reconciled=True,
+        date=imp.date,
+        amount=imp.amount,
+    ).exclude(pk=imp.pk)
+    if not label:
+        return twin_qs.exists()
+    return twin_qs.filter(Q(payee=label) | Q(imported_description=label)).exists()
+
+
 def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int:
     """
     Bank charges with no forecast/manual row to match become ACTUAL ledger lines (keep plaid id).
@@ -2252,6 +2300,10 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         if imp.reconciled:
             continue
         if is_import_date_locked(imp.account, imp.date):
+            continue
+        if _reconciled_ledger_twin_exists(imp):
+            imp.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+            imp.save(update_fields=["import_match_status", "updated_at"])
             continue
         match_imported_transaction(imp)
         imp.refresh_from_db()

@@ -733,6 +733,12 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     try:
         account_pks = list(plaid_item.linked_accounts.values_list("account_id", flat=True))
         for aid in account_pks:
+            from accounts.models import Account
+            from transactions.services.reconciliation import sync_reconciled_ledger_integrity
+
+            acc = Account.objects.filter(pk=aid).first()
+            if acc is not None:
+                sync_reconciled_ledger_integrity(acc)
             ensure_reconciled_plaid_ledger_visibility(account_id=aid)
             reconcile_orphan_matched_plaid_imports(account_id=aid)
             repair_invalid_transaction_matches(account_id=aid)
@@ -740,6 +746,11 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             repair_orphan_absorbed_resync_matches(account_id=aid)
             repair_materialized_plaid_resync_duplicates(account_id=aid)
             release_excess_duplicate_plaid_imports(account_id=aid)
+            from transactions.services.matching import (
+                suppress_duplicate_plaid_imports_for_reconciled_transactions,
+            )
+
+            suppress_duplicate_plaid_imports_for_reconciled_transactions(account_id=aid)
             collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             rematch_unmatched_manual_actuals(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)

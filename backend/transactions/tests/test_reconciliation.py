@@ -952,3 +952,47 @@ class TestReconciliationSeal:
         get_setup_data(account)
         assert Transaction.objects.filter(account=account, reconciled=False).count() == 0
 
+    def test_sync_restores_flags_from_session_entries(self, account, user):
+        opening = Decimal("1000.00")
+        account.starting_balance = opening
+        account.save(update_fields=["starting_balance"])
+        t1 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 13),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=Decimal("550.00"),
+        )
+        bank = opening + t1.amount
+        rec = Reconciliation.objects.create(
+            user=user,
+            account=account,
+            bank_current_balance=bank,
+            app_current_balance=bank,
+            last_reconciled_balance=opening,
+            final_reconciled_balance=bank,
+            difference=Decimal("0"),
+            period_start_date=date(2026, 5, 1),
+            period_end_date=date(2026, 5, 31),
+            transaction_count=1,
+            status=Reconciliation.Status.COMPLETED,
+            is_active=True,
+            completed_at=timezone.now(),
+        )
+        ReconciliationEntry.objects.create(
+            session=rec,
+            transaction=t1,
+            reconciled_balance=bank,
+        )
+        t1.reconciled = False
+        t1.reconciliation = None
+        t1.save(update_fields=["reconciled", "reconciliation"])
+
+        from transactions.services.reconciliation import sync_reconciled_ledger_integrity
+
+        result = sync_reconciled_ledger_integrity(account)
+        t1.refresh_from_db()
+        assert result["flags_from_entries"] == 1
+        assert t1.reconciled is True
+        assert t1.reconciliation_id == rec.pk
+

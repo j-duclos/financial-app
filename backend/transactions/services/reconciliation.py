@@ -486,6 +486,86 @@ def unreconciled_ids_through_balance_delta(
     return []
 
 
+def restore_reconciled_flags_from_session_entries(account: Account) -> int:
+    """Re-apply reconciled=True for rows still tied to active completed session entries."""
+    entry_qs = (
+        ReconciliationEntry.objects.filter(
+            session__account=account,
+            session__status=Reconciliation.Status.COMPLETED,
+            session__is_active=True,
+            transaction__reconciled=False,
+        )
+        .select_related("session", "transaction")
+        .order_by("session_id", "transaction__date", "transaction_id")
+    )
+    by_session: dict[int, list[int]] = {}
+    sessions: dict[int, Reconciliation] = {}
+    for entry in entry_qs:
+        by_session.setdefault(entry.session_id, []).append(entry.transaction_id)
+        sessions[entry.session_id] = entry.session
+
+    if not by_session:
+        return 0
+
+    now = timezone.now()
+    fixed = 0
+    for session_id, txn_ids in by_session.items():
+        session = sessions[session_id]
+        _mark_transactions_reconciled_for_session(
+            account=account,
+            session=session,
+            transaction_ids=txn_ids,
+            opening_balance=Decimal(str(session.last_reconciled_balance)),
+            reconciled_at=now,
+        )
+        fixed += len(txn_ids)
+    return fixed
+
+
+def restore_reconciled_flags_from_reconciliation_link(account: Account) -> int:
+    """Fix rows that still point at a completed session but lost reconciled=True."""
+    now = timezone.now()
+    qs = Transaction.objects.filter(
+        account=account,
+        reconciled=False,
+        reconciliation_id__isnull=False,
+        reconciliation__status=Reconciliation.Status.COMPLETED,
+        reconciliation__is_active=True,
+    )
+    return qs.update(
+        reconciled=True,
+        cleared=True,
+        status=Transaction.Status.RECONCILED,
+        reconciled_at=now,
+    )
+
+
+def sync_reconciled_ledger_integrity(account: Account) -> dict[str, int]:
+    """
+    Keep reconciled statement rows sealed and hide re-imported Plaid duplicates.
+
+    Safe to call on reconcile setup, timeline load, Plaid sync, and after complete.
+    """
+    from .matching import suppress_duplicate_plaid_imports_for_reconciled_transactions
+
+    flags_from_entries = restore_reconciled_flags_from_session_entries(account)
+    flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
+    sealed = repair_unreconciled_in_last_closed_period(account)
+    suppressed = suppress_duplicate_plaid_imports_for_reconciled_transactions(
+        account_id=account.pk
+    )
+    if flags_from_entries or flags_from_fk or sealed or suppressed:
+        from common.services.cache import invalidate_financial_cache_for_household
+
+        invalidate_financial_cache_for_household(account.household_id)
+    return {
+        "flags_from_entries": flags_from_entries,
+        "flags_from_fk": flags_from_fk,
+        "sealed": sealed,
+        "suppressed_duplicates": suppressed,
+    }
+
+
 def _mark_transactions_reconciled_for_session(
     *,
     account: Account,
@@ -574,7 +654,7 @@ def get_setup_data(
     end: Optional[date] = None,
 ) -> dict[str, Any]:
     as_of = _as_of_date(as_of)
-    repair_unreconciled_in_last_closed_period(account)
+    sync_reconciled_ledger_integrity(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (
@@ -721,6 +801,8 @@ def complete_reconciliation(
                 for pk in checked_ids
             ]
         )
+
+    sync_reconciled_ledger_integrity(account)
 
     if user is not None and getattr(user, "pk", None):
         invalidate_user_financial_cache(user.pk)
