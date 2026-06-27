@@ -67,7 +67,7 @@ from timeline.models import (
     ScenarioAddedRecurring,
     ScenarioRuleOverride,
 )
-from transactions.models import Transaction, TransferGroup
+from transactions.models import Transaction, TransactionMatch, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
     shadowed_rule_occurrence_ids,

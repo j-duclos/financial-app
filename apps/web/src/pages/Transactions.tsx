@@ -1867,20 +1867,22 @@ export default function Transactions() {
             deletePending={deleteMu.isPending}
           />
 
-          <PendingExpectedSection
-            pending={ledgerSections.pending}
-            accountTimeline={accountTimeline}
-            currency={currency}
-            isCredit={isCredit}
-            hiddenByPast={pastExpanded || forecastExpanded}
-            onEditRow={openEditByLedgerRow}
-            onConfirmRow={confirmExpectedRow}
-            onSkipRow={confirmSkipRow}
-            onMoveDateRow={moveDateExpectedRow}
-            onMatchRow={openMatchExpectedRow}
-            onDeleteRow={confirmDeleteRow}
-            actionsPending={lifecyclePending}
-          />
+          {ledgerSections.pending.length > 0 ? (
+            <PendingExpectedSection
+              pending={ledgerSections.pending}
+              accountTimeline={accountTimeline}
+              currency={currency}
+              isCredit={isCredit}
+              hiddenByPast={pastExpanded || forecastExpanded}
+              onEditRow={openEditByLedgerRow}
+              onConfirmRow={confirmExpectedRow}
+              onSkipRow={confirmSkipRow}
+              onMoveDateRow={moveDateExpectedRow}
+              onMatchRow={openMatchExpectedRow}
+              onDeleteRow={confirmDeleteRow}
+              actionsPending={lifecyclePending}
+            />
+          ) : null}
 
           <div className="flex-none shrink-0 z-10">
           <InlineAddRow

@@ -48,9 +48,8 @@ export default function PendingExpectedSection({
   onDeleteRow,
   actionsPending,
 }: Props) {
-  if (pending.length === 0) return null;
-
-  const showBody = !hiddenByPast;
+  const displayable = pending.filter((row) => row.type === "transaction_from_timeline");
+  if (displayable.length === 0 || hiddenByPast) return null;
 
   return (
     <section className="flex-none shrink-0 border-t-4 border-blue-300 bg-blue-50/30">
@@ -58,21 +57,19 @@ export default function PendingExpectedSection({
         <LedgerSectionHeader
           title="Pending Transactions"
           subtitle="Scheduled items due now but not confirmed by bank import or manual posting"
-          expanded={showBody}
+          expanded
           onToggleExpanded={() => {}}
           tone="entry"
           className="border-b-0 text-blue-900"
         />
-        {showBody && <LedgerColumnHeader className="bg-blue-50/80 border-blue-100" />}
+        <LedgerColumnHeader className="bg-blue-50/80 border-blue-100" />
       </div>
 
-      {showBody && (
-        <div
-          className="ledger-scroll overflow-y-auto overscroll-y-contain bg-white"
-          style={{ maxHeight: compactScrollHeight }}
-        >
-          {pending.map((row, index) => {
-            if (row.type !== "transaction_from_timeline") return null;
+      <div
+        className="ledger-scroll overflow-y-auto overscroll-y-contain bg-white"
+        style={{ maxHeight: compactScrollHeight }}
+      >
+        {displayable.map((row, index) => {
             const data = timelineRowToData(row.row, row.balance, "expected");
             const rowKey =
               row.row.transaction_id != null
@@ -104,8 +101,7 @@ export default function PendingExpectedSection({
               />
             );
           })}
-        </div>
-      )}
+      </div>
     </section>
   );
 }
