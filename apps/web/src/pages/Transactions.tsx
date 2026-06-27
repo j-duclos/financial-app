@@ -54,6 +54,7 @@ import {
   hintDateWithinLedgerRange,
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
+  buildLedgerRowsFromTimeline,
   buildLedgerRowsFromPastAndUpcomingTimeline,
   splitLedgerSections,
   lowestProjectedFromLedgerFuture,
@@ -245,6 +246,33 @@ export default function Transactions() {
         exclude_reconciled_past: hideReconciledPast,
       }),
     enabled: typeof accountId === "number",
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  /** Full past + forecast timeline when user wants reconciled history visible. */
+  const {
+    data: fullLedgerTimelineData,
+    isError: fullLedgerTimelineError,
+  } = useQuery({
+    queryKey: [
+      "timeline",
+      "full-ledger",
+      pastRangeStart,
+      upcomingRange.end,
+      accountId,
+      todayStr(),
+    ],
+    queryFn: () =>
+      getTimeline({
+        start: pastRangeStart,
+        end: upcomingRange.end,
+        as_of: todayStr(),
+        account_id: typeof accountId === "number" ? accountId : undefined,
+        exclude_reconciled_past: false,
+      }),
+    enabled: typeof accountId === "number" && !hideReconciledPast,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
@@ -1011,7 +1039,24 @@ export default function Transactions() {
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
 
-    if (!upcomingTimelineError && upcomingTimelineData?.timeline != null) {
+    if (
+      !hideReconciledPast &&
+      !fullLedgerTimelineError &&
+      fullLedgerTimelineData?.timeline != null
+    ) {
+      const aid = Number(accountId);
+      const timelineForAccount = fullLedgerTimelineData.timeline.filter(
+        (r) => Number(r.account_id) === aid
+      );
+      return buildLedgerRowsFromTimeline(
+        timelineForAccount,
+        today,
+        openingBalance,
+        isCreditAccount
+      );
+    }
+
+    if (hideReconciledPast && !upcomingTimelineError && upcomingTimelineData?.timeline != null) {
       const aid = Number(accountId);
       const upcomingForAccount = upcomingTimelineData.timeline.filter(
         (r) => Number(r.account_id) === aid
@@ -1026,7 +1071,7 @@ export default function Transactions() {
           pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
           lastReconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
           reconcileFloor: reconcileSetupData?.min_start_date ?? null,
-          anchorPastEndBalance: hideReconciledPast ? apiBalance : null,
+          anchorPastEndBalance: apiBalance,
         }
       );
     }
@@ -1049,6 +1094,8 @@ export default function Transactions() {
     upcomingTimelineData?.timeline,
     upcomingTimelineData?.past_opening_balance,
     upcomingTimelineError,
+    fullLedgerTimelineData,
+    fullLedgerTimelineError,
     isCreditAccount,
     hideReconciledPast,
     reconcileSetupData?.last_reconcile_period_end,
@@ -1056,10 +1103,20 @@ export default function Transactions() {
   ]);
 
   const accountTimeline = useMemo(() => {
-    if (typeof accountId !== "number" || !upcomingTimelineData?.timeline) return [];
+    if (typeof accountId !== "number") return [];
     const aid = Number(accountId);
-    return upcomingTimelineData.timeline.filter((r) => Number(r.account_id) === aid);
-  }, [accountId, upcomingTimelineData?.timeline]);
+    const source =
+      !hideReconciledPast && fullLedgerTimelineData?.timeline
+        ? fullLedgerTimelineData.timeline
+        : upcomingTimelineData?.timeline;
+    if (!source) return [];
+    return source.filter((r) => Number(r.account_id) === aid);
+  }, [
+    accountId,
+    hideReconciledPast,
+    fullLedgerTimelineData?.timeline,
+    upcomingTimelineData?.timeline,
+  ]);
 
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);

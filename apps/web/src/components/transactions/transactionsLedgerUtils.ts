@@ -651,17 +651,21 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   options?: {
     pastOpeningOverride?: number | null;
     todayBalanceOverride?: number | null;
+    /** When set, omit unreconciled rows on/before this date (hide-reconciled ledger only). */
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
     /** When set, shift past running balances so the last past row equals this (API ledger total). */
     anchorPastEndBalance?: number | null;
   }
 ): LedgerRow[] {
-  const pastSource = filterPastTransactionsAfterReconcileClose(
-    pastTransactions,
-    options?.lastReconcilePeriodEnd,
-    options?.reconcileFloor
-  );
+  const pastSource =
+    options?.lastReconcilePeriodEnd != null
+      ? filterPastTransactionsAfterReconcileClose(
+          pastTransactions,
+          options.lastReconcilePeriodEnd,
+          options.reconcileFloor
+        )
+      : pastTransactions;
   const pastTxns = pastSource
     .filter((t) => t.date <= today && (t.source || "").toUpperCase() !== "INTEREST")
     .filter((t) => !isPendingExpectedTransaction(t, today))
