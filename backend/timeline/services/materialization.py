@@ -41,7 +41,7 @@ def _occurrence_row_from_txn(txn: Transaction) -> dict[str, object]:
     }
 
 
-def _find_planned_occurrence_transaction(
+def _find_rule_occurrence_transaction(
     *,
     households,
     rule_id: int,
@@ -54,10 +54,25 @@ def _find_planned_occurrence_transaction(
             rule_id=rule_id,
             account_id=account_id,
             date=occurrence_date,
-            source=Transaction.Source.RULE,
         )
+        .exclude(reconciled=True)
         .order_by("-id")
         .first()
+    )
+
+
+def _find_planned_occurrence_transaction(
+    *,
+    households,
+    rule_id: int,
+    account_id: int,
+    occurrence_date: date,
+) -> Transaction | None:
+    return _find_rule_occurrence_transaction(
+        households=households,
+        rule_id=rule_id,
+        account_id=account_id,
+        occurrence_date=occurrence_date,
     )
 
 
@@ -100,7 +115,7 @@ def ensure_planned_occurrence_transaction(
     """Find or create the RULE row for a due expected occurrence (match / edit)."""
 
     def _usable_rule_occurrence(txn: Transaction | None) -> Transaction | None:
-        if txn is None or txn.source != Transaction.Source.RULE or txn.rule_id is None:
+        if txn is None or txn.rule_id is None:
             return None
         if txn.reconciled:
             return None
@@ -114,7 +129,7 @@ def ensure_planned_occurrence_transaction(
         return None
 
     txn = _usable_rule_occurrence(
-        _find_planned_occurrence_transaction(
+        _find_rule_occurrence_transaction(
             households=households,
             rule_id=rule_id,
             account_id=account_id,
@@ -130,10 +145,11 @@ def ensure_planned_occurrence_transaction(
             account_ids=[account_id],
             rule_ids=[rule_id],
             forecast_days=forecast_days,
+            occurrence_date=occurrence_date,
             _skip_occurrence_resolve=True,
         )
         txn = _usable_rule_occurrence(
-            _find_planned_occurrence_transaction(
+            _find_rule_occurrence_transaction(
                 households=households,
                 rule_id=rule_id,
                 account_id=account_id,
@@ -147,7 +163,14 @@ def ensure_planned_occurrence_transaction(
         txn = _materialize_single_planned_occurrence(
             rule, account_id=account_id, occurrence_date=occurrence_date
         )
-    except ValueError:
+    except (ValueError, RuntimeError) as exc:
+        logger.warning(
+            "Single occurrence materialize failed rule=%s account=%s date=%s: %s",
+            rule_id,
+            account_id,
+            occurrence_date.isoformat(),
+            exc,
+        )
         return None
     return _usable_rule_occurrence(txn)
 
@@ -206,6 +229,10 @@ def materialize_recurring_transactions_for_user(
 
     promote_due_schedules(as_of_date=today)
 
+    mat_start = today
+    if occurrence_date is not None and occurrence_date < today:
+        mat_start = occurrence_date
+
     enter_materialization_context(
         rules_processed=rules_processed,
         rule_ids=frozenset(r.id for r in rules) if rule_ids else None,
@@ -214,7 +241,7 @@ def materialize_recurring_transactions_for_user(
     try:
         build_timeline(
             user,
-            start_date=today,
+            start_date=mat_start,
             end_date=through_date,
             as_of_date=today,
             account_id=account_ids[0] if account_ids and len(account_ids) == 1 else None,

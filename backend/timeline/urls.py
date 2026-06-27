@@ -10,6 +10,7 @@ from .views import (
     ScenarioCategoryShockViewSet,
     UpcomingChargeNotificationViewSet,
     MaterializeRecurringView,
+    ResolveRuleOccurrenceView,
     TimelineView,
     TimelineCalendarView,
     TransferSimulationView,
@@ -39,6 +40,7 @@ router.register("notifications", UpcomingChargeNotificationViewSet, basename="no
 urlpatterns = [
     path("", include(router.urls)),
     path("timeline/materialize/", MaterializeRecurringView.as_view(), name="timeline-materialize"),
+    path("timeline/resolve-occurrence/", ResolveRuleOccurrenceView.as_view(), name="timeline-resolve-occurrence"),
     path("timeline/", TimelineView.as_view(), name="timeline"),
     path("timeline/calendar/", TimelineCalendarView.as_view(), name="timeline-calendar"),
     path("timeline/simulate-transfer/", TransferSimulationView.as_view(), name="timeline-simulate-transfer"),

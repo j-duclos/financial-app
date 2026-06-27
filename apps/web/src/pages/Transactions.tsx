@@ -20,6 +20,7 @@ import {
   getAccount,
   getTimeline,
   getTransaction,
+  resolveRuleOccurrence,
   materializeRecurring,
   getAccountPayoff,
   ApiError,
@@ -1293,8 +1294,28 @@ export default function Transactions() {
 
   async function resolveTimelineRowTransactionId(row: TimelineRow): Promise<number | null> {
     if (row.transaction_id != null) return row.transaction_id;
-    if (row.rule_id == null || typeof accountId !== "number") return null;
+    if (row.rule_id == null) return null;
     const rowAccountId = Number(row.account_id);
+    if (!Number.isFinite(rowAccountId)) return null;
+
+    try {
+      const resolved = await resolveRuleOccurrence({
+        rule_id: row.rule_id,
+        account_id: rowAccountId,
+        occurrence_date: row.date,
+      });
+      if (resolved.transaction_id != null) {
+        void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+        void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+        return resolved.transaction_id;
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 404) {
+        throw err;
+      }
+    }
+
+    if (typeof accountId !== "number") return null;
     const materialized = await materializeRecurring({
       account_id: rowAccountId,
       rule_id: row.rule_id,
@@ -1303,6 +1324,7 @@ export default function Transactions() {
     });
     if (materialized.resolved_transaction_id != null) {
       void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       return materialized.resolved_transaction_id;
     }
     const fromMaterialize = materialized.occurrences?.find(
@@ -1311,7 +1333,10 @@ export default function Transactions() {
         o.date === row.date &&
         Number(o.account_id) === rowAccountId
     );
-    if (fromMaterialize?.transaction_id) return fromMaterialize.transaction_id;
+    if (fromMaterialize?.transaction_id) {
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+      return fromMaterialize.transaction_id;
+    }
 
     const txns = await listTransactions({
       account: rowAccountId,

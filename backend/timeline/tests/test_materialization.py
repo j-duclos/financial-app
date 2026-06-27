@@ -183,3 +183,99 @@ def test_materialize_resolves_due_occurrence_date(user, household, checking):
         o["transaction_id"] == resolved_id and o["date"] == today.isoformat()
         for o in summary["occurrences"]
     )
+
+
+@pytest.mark.django_db
+def test_ensure_creates_exact_date_when_nearby_match_exists(user, household, checking):
+    from django.utils import timezone
+
+    from categories.models import Category
+    from timeline.services.materialization import ensure_planned_occurrence_transaction
+
+    today = timezone.localdate()
+    income_category = Category.objects.create(
+        household=household,
+        name="Payroll",
+        category_type=Category.CategoryType.INCOME,
+        sort_order=1,
+    )
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Payroll",
+        account=checking,
+        category=income_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("1835.52"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        start_date=today - timedelta(days=14),
+        active=True,
+    )
+    prior_date = today - timedelta(days=2)
+    prior_txn = Transaction.objects.create(
+        account=checking,
+        date=prior_date,
+        payee="Payroll",
+        memo="",
+        amount=Decimal("1835.52"),
+        category=income_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+        rule=rule,
+        import_match_status=Transaction.ImportMatchStatus.MATCHED,
+    )
+    resolved = ensure_planned_occurrence_transaction(
+        user,
+        rule_id=rule.pk,
+        account_id=checking.pk,
+        occurrence_date=today,
+    )
+    assert resolved is not None
+    assert resolved.date == today
+    assert resolved.pk != prior_txn.pk
+
+
+@pytest.mark.django_db
+def test_resolve_occurrence_api(user, household, checking):
+    from django.utils import timezone
+    from rest_framework.test import APIClient
+
+    from categories.models import Category
+
+    today = timezone.localdate()
+    income_category = Category.objects.create(
+        household=household,
+        name="Payroll",
+        category_type=Category.CategoryType.INCOME,
+        sort_order=1,
+    )
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Payroll",
+        account=checking,
+        category=income_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("1835.52"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        start_date=today,
+        active=True,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    resp = client.post(
+        "/api/timeline/resolve-occurrence/",
+        {
+            "rule_id": rule.pk,
+            "account_id": checking.pk,
+            "occurrence_date": today.isoformat(),
+        },
+        format="json",
+    )
+    assert resp.status_code == 200, resp.content
+    txn_id = resp.json()["transaction_id"]
+    txn = Transaction.objects.get(pk=txn_id)
+    assert txn.rule_id == rule.pk
+    assert txn.date == today

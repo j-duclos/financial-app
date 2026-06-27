@@ -54,6 +54,7 @@ from .services.rule_cleanup import (
 from .services.rule_schedule import promote_due_schedules
 from .services.materialization import (
     DEFAULT_MATERIALIZE_DAYS,
+    ensure_planned_occurrence_transaction,
     materialize_recurring_transactions_for_user,
     refresh_rule_materialization,
 )
@@ -638,6 +639,46 @@ class MaterializeRecurringView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         return Response(summary)
+
+
+class ResolveRuleOccurrenceView(APIView):
+    """Find or create the transaction row backing a projected pending/forecast rule occurrence."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        try:
+            rule_id = int(data["rule_id"])
+            account_id = int(data["account_id"])
+            occurrence_date = date.fromisoformat(str(data["occurrence_date"]).strip()[:10])
+        except (KeyError, TypeError, ValueError):
+            return Response(
+                {"detail": "rule_id, account_id, and occurrence_date (YYYY-MM-DD) are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            txn = ensure_planned_occurrence_transaction(
+                request.user,
+                rule_id=rule_id,
+                account_id=account_id,
+                occurrence_date=occurrence_date,
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"Could not resolve occurrence: {type(exc).__name__}: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        if txn is None:
+            return Response(
+                {"detail": "No transaction could be materialized for this rule occurrence."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        from common.services.cache import invalidate_user_financial_cache
+
+        invalidate_user_financial_cache(request.user.pk)
+        return Response({"transaction_id": txn.pk})
 
 
 class TimelineView(APIView):

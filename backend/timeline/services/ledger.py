@@ -880,7 +880,7 @@ def _materialize_rule_occurrence(
         on_date=d,
         amount=amount,
     )
-    if covered is not None:
+    if covered is not None and covered.date == d:
         if materialization_active():
             record_materialization_skipped()
         return covered

@@ -1672,6 +1672,17 @@ export async function materializeRecurring(params?: {
   });
 }
 
+export async function resolveRuleOccurrence(params: {
+  rule_id: number;
+  account_id: number;
+  occurrence_date: string;
+}): Promise<{ transaction_id: number }> {
+  return requestRequired("/api/timeline/resolve-occurrence/", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 export async function getResolveRiskPlan(params: {
   account_id: number;
   days?: number;
