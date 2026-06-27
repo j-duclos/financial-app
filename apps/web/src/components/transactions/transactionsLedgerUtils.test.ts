@@ -22,6 +22,7 @@ import {
   upcomingTimelineRange,
   UPCOMING_FORECAST_DAYS,
   pastTransactionsRange,
+  effectivePastTransactionsStart,
   buildLedgerRowsFromPastAndUpcomingTimeline,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
@@ -44,6 +45,16 @@ describe("upcomingTimelineRange", () => {
     const { start, end } = upcomingTimelineRange(today);
     expect(start).toBe(today);
     expect(end).toBe(addDaysToIsoDate(today, UPCOMING_FORECAST_DAYS));
+  });
+});
+
+describe("effectivePastTransactionsStart", () => {
+  it("extends query start to reconcile floor when hiding reconciled rows", () => {
+    const today = todayStr();
+    const threeMonthStart = pastTransactionsRange("3m").start;
+    const floor = addDaysToIsoDate(today, -200);
+    expect(effectivePastTransactionsStart("3m", true, floor)).toBe(floor);
+    expect(effectivePastTransactionsStart("3m", false, floor)).toBe(threeMonthStart);
   });
 });
 
@@ -179,6 +190,44 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       expect(sections.pending[0].row.description).toBe("Chewy");
     }
     expect(sections.pending[0].balance).toBeCloseTo(995 - 79.46, 2);
+  });
+
+  it("uses credit-card balance math for past transactions (charges increase debt)", () => {
+    const today = todayStr();
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 1,
+          date: "2026-06-25",
+          payee: "STORE 3068 MARICOPA AZ",
+          amount: "-142.18",
+          status: "CLEARED",
+          source: "PLAID",
+        } as never,
+      ],
+      [
+        {
+          date: addDaysToIsoDate(today, 1),
+          description: "Lowes (Lowe's)",
+          account_id: 40,
+          amount: "110.01",
+          type: "INFLOW",
+          status: "PLANNED",
+          source: "actual",
+          txn_source: "rule",
+          rule_id: 5,
+          transaction_id: 2,
+          running_balance: "142.18",
+        } as TimelineRow,
+      ],
+      today,
+      110.01,
+      true
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.start?.balance).toBeCloseTo(110.01, 2);
+    expect(sections.past[0].balance).toBeCloseTo(252.19, 2);
+    expect(sections.future[0].balance).toBeCloseTo(142.18, 2);
   });
 });
 

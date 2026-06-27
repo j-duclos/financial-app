@@ -23,6 +23,7 @@ import {
   resolveRuleOccurrence,
   materializeRecurring,
   getAccountPayoff,
+  getReconcileSetup,
   ApiError,
   type PayoffProjection,
 } from "@budget-app/api-client";
@@ -60,6 +61,7 @@ import {
   accountLedgerDisplayBalance,
   ledgerOpeningBalance,
   pastTransactionsRange,
+  effectivePastTransactionsStart,
   upcomingTimelineRange,
   ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
@@ -167,6 +169,22 @@ export default function Transactions() {
     () => pastTransactionsRange(timeFilter),
     [timeFilter]
   );
+  const { data: reconcileSetupData } = useQuery({
+    queryKey: ["reconcile-setup", accountId, "transactions-ledger"],
+    queryFn: () => getReconcileSetup(accountId as number),
+    enabled: hideReconciledPast && typeof accountId === "number",
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+  });
+  const pastTransactionsDateAfter = useMemo(
+    () =>
+      effectivePastTransactionsStart(
+        timeFilter,
+        hideReconciledPast,
+        reconcileSetupData?.min_start_date
+      ),
+    [timeFilter, hideReconciledPast, reconcileSetupData?.min_start_date]
+  );
   const upcomingRange = useMemo(() => upcomingTimelineRange(todayStr()), []);
   const ledgerRange = useMemo(
     () => ledgerHintDateRange(timeFilter),
@@ -178,7 +196,7 @@ export default function Transactions() {
       "transactions",
       {
         account: accountId || undefined,
-        date_after: pastRangeStart,
+        date_after: pastTransactionsDateAfter,
         date_before: pastRangeEnd,
         unreconciled_only: hideReconciledPast,
       },
@@ -188,14 +206,14 @@ export default function Transactions() {
         ...(accountId
           ? {
               account: accountId as number,
-              date_after: pastRangeStart,
+              date_after: pastTransactionsDateAfter,
               date_before: pastRangeEnd,
               page_size: 2000,
               ...(hideReconciledPast ? { reconciled: false } : {}),
             }
           : {}),
       }),
-    enabled: !!accountId && !!pastRangeStart && !!pastRangeEnd,
+    enabled: !!accountId && !!pastTransactionsDateAfter && !!pastRangeEnd,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
@@ -1028,12 +1046,6 @@ export default function Transactions() {
     hideReconciledPast,
   ]);
 
-  const pastOpeningBalance = useMemo(() => {
-    if (!hideReconciledPast || upcomingTimelineData?.past_opening_balance == null) return null;
-    const n = parseFloat(upcomingTimelineData.past_opening_balance);
-    return Number.isFinite(n) ? n : null;
-  }, [hideReconciledPast, upcomingTimelineData?.past_opening_balance]);
-
   const accountTimeline = useMemo(() => {
     if (typeof accountId !== "number" || !upcomingTimelineData?.timeline) return [];
     const aid = Number(accountId);
@@ -1089,12 +1101,12 @@ export default function Transactions() {
         "transactions",
         {
           account: accountId || undefined,
-          date_after: pastRangeStart,
+          date_after: pastTransactionsDateAfter,
           date_before: pastRangeEnd,
           unreconciled_only: hideReconciledPast,
         },
       ] as const,
-    [accountId, pastRangeStart, pastRangeEnd, hideReconciledPast]
+    [accountId, pastTransactionsDateAfter, pastRangeEnd, hideReconciledPast]
   );
 
   const createMu = useMutation({
@@ -1762,13 +1774,7 @@ export default function Transactions() {
           {account && ledgerSections.today?.type === "today_balance" && (
             <ForecastSummaryBar
               account={account}
-              currentBalance={
-                upcomingTimelineError || upcomingTimelineData == null
-                  ? accountLedgerDisplayBalance(account, isCredit)
-                  : ledgerSections.today?.balance ??
-                    pastOpeningBalance ??
-                    accountLedgerDisplayBalance(account, isCredit)
-              }
+              currentBalance={accountLedgerDisplayBalance(account, isCredit)}
               isCredit={isCredit}
               currency={currency}
               nextRiskDate={account.risk_date ?? null}

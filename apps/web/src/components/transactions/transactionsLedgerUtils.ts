@@ -15,6 +15,10 @@ export function maxIsoDate(a: string, b: string): string {
   return a >= b ? a : b;
 }
 
+export function minIsoDate(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
 export function addDaysToIsoDate(iso: string, days: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
@@ -71,6 +75,20 @@ export function pastTransactionsRange(filter: TimeFilter): { start: string; end:
   const today = todayStr();
   const { start } = timelineRangeForFilter(filter);
   return { start, end: today };
+}
+
+/**
+ * When hiding reconciled rows, the ledger opening includes all unreconciled history —
+ * date_after must reach back to the reconcile floor, not only the UI time filter.
+ */
+export function effectivePastTransactionsStart(
+  filter: TimeFilter,
+  hideReconciledPast: boolean,
+  reconcileFloor: string | null | undefined
+): string {
+  const { start } = pastTransactionsRange(filter);
+  if (!hideReconciledPast || !reconcileFloor) return start;
+  return minIsoDate(start, reconcileFloor);
 }
 
 /** Upcoming projection window: today through today + 90 days. */
@@ -169,8 +187,8 @@ export function buildLedgerRows(
       todayRowInserted = true;
     }
     const amt = parseFloat(txn.amount);
-    const effective = isCredit && amt > 0 ? -amt : amt;
-    running += effective;
+    if (Number.isNaN(amt)) continue;
+    running = applyTimelineAmountToBalance(running, amt, isCredit);
     rows.push({ type: "transaction", txn, balance: running });
   }
   if (!todayRowInserted) {
@@ -191,13 +209,14 @@ export function resolveFallbackLedgerOpening(
   isCredit: boolean
 ): number {
   let sumThroughToday = 0;
+  let running = 0;
   for (const txn of transactions) {
     if ((txn.source || "").toUpperCase() === "INTEREST") continue;
     if (txn.date > today) continue;
     const amt = parseFloat(txn.amount);
     if (Number.isNaN(amt)) continue;
-    const effective = isCredit && amt > 0 ? -amt : amt;
-    sumThroughToday += effective;
+    running = applyTimelineAmountToBalance(running, amt, isCredit);
+    sumThroughToday = running;
   }
   return balanceAtToday - sumThroughToday;
 }
@@ -618,8 +637,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   for (const txn of pastTxns) {
     const amt = parseFloat(txn.amount);
     if (Number.isNaN(amt)) continue;
-    const effective = isCredit && amt > 0 ? -amt : amt;
-    running += effective;
+    running = applyTimelineAmountToBalance(running, amt, isCredit);
     rows.push({ type: "transaction", txn, balance: running });
   }
 
