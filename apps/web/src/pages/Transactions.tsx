@@ -1698,8 +1698,8 @@ export default function Transactions() {
         </div>
       ) : null}
 
-      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-3 mb-3 flex-shrink-0">
-        <div className="flex flex-col gap-2 min-w-0 flex-1">
+      <div className="flex flex-col gap-3 mb-3 flex-shrink-0">
+        <div className="flex flex-col gap-2 min-w-0 w-full">
           {account && ledgerSections.today?.type === "today_balance" && (
             <ForecastSummaryBar
               account={account}
@@ -1781,62 +1781,60 @@ export default function Transactions() {
           )}
         </div>
 
-        <div className="flex flex-col gap-3 w-full lg:w-auto lg:flex-shrink-0">
-          <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end lg:gap-2">
-            <div className="w-full lg:w-auto">
-              <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
-              <select
-                value={timeFilter}
-                onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
-                className="w-full lg:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
-              >
-                <option value="14d">14 days</option>
-                <option value="1m">1 month</option>
-                <option value="3m">3 months</option>
-                <option value="6m">6 months</option>
-                <option value="12m">12 months</option>
-                <option value="18m">18 months</option>
-                <option value="24m">24 months</option>
-                <option value="36m">36 months</option>
-              </select>
-            </div>
-            <HideReconciledFilter
-              hideReconciledPast={hideReconciledPast}
-              onHideReconciledPastChange={setHideReconciledPast}
-            />
-            <div className="w-full lg:w-auto lg:min-w-[12rem]">
-              <label className="block text-xs font-medium text-gray-500 mb-0.5">Account</label>
-              <select
-                value={accountId === "" ? "" : String(accountId)}
-                onChange={(e) => setAccountId(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              >
-                <option value="">Select an account</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {formatAccountOptionLabel(a)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <TransactionColumnFilters
-              kindFilter={kindFilter}
-              onKindFilterChange={setKindFilter}
-              reconciledFilter={reconciledFilter}
-              onReconciledFilterChange={setReconciledFilter}
-              amountMin={amountMinInput}
-              amountMax={amountMaxInput}
-              onAmountMinChange={setAmountMinInput}
-              onAmountMaxChange={setAmountMaxInput}
-              showClear={pastFiltersActive}
-              onClear={() => {
-                setKindFilter("");
-                setReconciledFilter("");
-                setAmountMinInput("");
-                setAmountMaxInput("");
-              }}
-            />
+        <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="w-full sm:w-auto sm:min-w-[8rem]">
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
+            <select
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
+              className="w-full sm:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
+            >
+              <option value="14d">14 days</option>
+              <option value="1m">1 month</option>
+              <option value="3m">3 months</option>
+              <option value="6m">6 months</option>
+              <option value="12m">12 months</option>
+              <option value="18m">18 months</option>
+              <option value="24m">24 months</option>
+              <option value="36m">36 months</option>
+            </select>
           </div>
+          <HideReconciledFilter
+            hideReconciledPast={hideReconciledPast}
+            onHideReconciledPastChange={setHideReconciledPast}
+          />
+          <div className="w-full sm:w-auto sm:min-w-[12rem]">
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">Account</label>
+            <select
+              value={accountId === "" ? "" : String(accountId)}
+              onChange={(e) => setAccountId(e.target.value === "" ? "" : Number(e.target.value))}
+              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Select an account</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {formatAccountOptionLabel(a)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <TransactionColumnFilters
+            kindFilter={kindFilter}
+            onKindFilterChange={setKindFilter}
+            reconciledFilter={reconciledFilter}
+            onReconciledFilterChange={setReconciledFilter}
+            amountMin={amountMinInput}
+            amountMax={amountMaxInput}
+            onAmountMinChange={setAmountMinInput}
+            onAmountMaxChange={setAmountMaxInput}
+            showClear={pastFiltersActive}
+            onClear={() => {
+              setKindFilter("");
+              setReconciledFilter("");
+              setAmountMinInput("");
+              setAmountMaxInput("");
+            }}
+          />
         </div>
       </div>
 

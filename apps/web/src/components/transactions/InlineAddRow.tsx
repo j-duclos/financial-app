@@ -5,7 +5,6 @@ import { formatDateDisplay } from "./transactionsLedgerUtils";
 import {
   LEDGER_TABLE_GRID,
   LedgerColumnHeader,
-  LedgerSectionHeader,
 } from "./ledgerTableLayout";
 
 export type InlineAddForm = {
@@ -76,14 +75,7 @@ export default function InlineAddRow({
     (!isTransferCategory || Boolean(form.transfer_to_account_id));
 
   return (
-    <section className="relative z-10 flex-none flex flex-col w-full border-b-4 border-blue-400 bg-white">
-      <LedgerSectionHeader
-        title="New transaction"
-        expanded={false}
-        onToggleExpanded={() => {}}
-        tone="entry"
-        showExpand={false}
-      />
+    <section className="relative z-10 flex-none flex flex-col w-full border-t border-blue-200 bg-white">
       <LedgerColumnHeader className="bg-blue-50/40" centered hideBalance hideKind hideType />
 
       <form

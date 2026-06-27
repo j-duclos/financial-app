@@ -11,8 +11,8 @@ export function HideReconciledFilter({
   onHideReconciledPastChange,
 }: HideReconciledProps) {
   return (
-    <div className="flex flex-col justify-end w-full lg:w-auto">
-      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5 lg:pb-1.5">
+    <div className="flex flex-col justify-end w-full sm:w-auto">
+      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5">
         <input
           type="checkbox"
           checked={hideReconciledPast}
@@ -51,7 +51,7 @@ export function TransactionColumnFilters({
   showClear,
 }: ColumnFiltersProps) {
   return (
-    <div className="flex flex-wrap items-end gap-3 w-full lg:w-auto">
+    <div className="flex flex-wrap items-end gap-3 w-full sm:w-auto">
       <div className="min-w-[7rem] flex-1 sm:flex-none">
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Reconciled</label>
         <select
