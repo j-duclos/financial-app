@@ -1041,7 +1041,7 @@ class TestReconciliationSeal:
         )
         from transactions.services.reconciliation import sync_reconciled_ledger_integrity
 
-        sync_reconciled_ledger_integrity(account)
+        sync_reconciled_ledger_integrity(account, seal_closed_period=True)
         for txn in may_rows:
             txn.refresh_from_db()
             assert txn.reconciled is True, txn.payee

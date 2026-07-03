@@ -26,7 +26,7 @@ class Command(BaseCommand):
             return
 
         for account in qs.order_by("pk"):
-            result = sync_reconciled_ledger_integrity(account)
+            result = sync_reconciled_ledger_integrity(account, seal_closed_period=True)
             if any(result.values()):
                 self.stdout.write(f"{account.pk} {account.name}: {result}")
         self.stdout.write(self.style.SUCCESS("Done."))

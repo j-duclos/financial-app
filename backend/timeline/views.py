@@ -705,15 +705,6 @@ class TimelineView(APIView):
                 "yes",
             )
 
-            if account_id is not None:
-                from accounts.models import Account
-                from transactions.services.reconciliation import sync_reconciled_ledger_integrity
-
-                households = get_households_for_user(request.user)
-                acc = Account.objects.filter(pk=account_id, household__in=households).first()
-                if acc is not None:
-                    sync_reconciled_ledger_integrity(acc)
-
             cache_key = timeline_response_cache_key(
                 household_id=household_id,
                 user_id=request.user.pk,

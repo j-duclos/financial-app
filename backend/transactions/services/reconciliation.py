@@ -540,11 +540,16 @@ def restore_reconciled_flags_from_reconciliation_link(account: Account) -> int:
     )
 
 
-def sync_reconciled_ledger_integrity(account: Account) -> dict[str, int]:
+def sync_reconciled_ledger_integrity(
+    account: Account,
+    *,
+    seal_closed_period: bool = False,
+) -> dict[str, int]:
     """
-    Keep reconciled statement rows sealed and hide re-imported Plaid duplicates.
+    Repair reconciled flags and hide re-imported Plaid duplicates.
 
-    Safe to call on reconcile setup, timeline load, Plaid sync, and after complete.
+    Read paths (timeline, reconcile setup) must NOT call this — reconciled rows are immutable.
+    seal_closed_period: only True from explicit reconcile-complete or the management command.
     """
     from .matching import (
         propagate_reconciled_status_to_match_legs,
@@ -556,7 +561,7 @@ def sync_reconciled_ledger_integrity(account: Account) -> dict[str, int]:
     )
     flags_from_entries = restore_reconciled_flags_from_session_entries(account)
     flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
-    sealed = repair_unreconciled_in_last_closed_period(account)
+    sealed = repair_unreconciled_in_last_closed_period(account) if seal_closed_period else 0
     matched = propagate_reconciled_status_to_match_legs(account_id=account.pk)
     if flags_from_entries or flags_from_fk or sealed or suppressed or matched:
         from common.services.cache import invalidate_financial_cache_for_household
@@ -686,7 +691,6 @@ def get_setup_data(
     end: Optional[date] = None,
 ) -> dict[str, Any]:
     as_of = _as_of_date(as_of)
-    sync_reconciled_ledger_integrity(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (
@@ -834,7 +838,7 @@ def complete_reconciliation(
             ]
         )
 
-    sync_reconciled_ledger_integrity(account)
+    sync_reconciled_ledger_integrity(account, seal_closed_period=True)
 
     if user is not None and getattr(user, "pk", None):
         invalidate_user_financial_cache(user.pk)

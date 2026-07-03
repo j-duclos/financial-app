@@ -170,7 +170,7 @@ export default function Transactions() {
     () => pastTransactionsRange(timeFilter),
     [timeFilter]
   );
-  const { data: reconcileSetupData } = useQuery({
+  const { data: reconcileSetupData, isFetching: reconcileSetupFetching } = useQuery({
     queryKey: ["reconcile-setup", accountId, "transactions-ledger"],
     queryFn: () => getReconcileSetup(accountId as number),
     enabled: typeof accountId === "number",
@@ -1048,6 +1048,12 @@ export default function Transactions() {
     }).catch(() => {});
     // #endregion
 
+    if (hideReconciledPast && !hasPastOpeningOverride) {
+      if (reconcileSetupFetching || ledgerTimelineFetching) {
+        return [];
+      }
+    }
+
     if (!ledgerTimelineError && ledgerTimelineData?.timeline != null) {
       const aid = Number(accountId);
       const timelineForAccount = ledgerTimelineData.timeline.filter(
@@ -1135,6 +1141,8 @@ export default function Transactions() {
     isCreditAccount,
     hideReconciledPast,
     reconcileSetupData?.last_reconciled_balance,
+    reconcileSetupFetching,
+    ledgerTimelineFetching,
   ]);
 
   const accountTimeline = useMemo(() => {
