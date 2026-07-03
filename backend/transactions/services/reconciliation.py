@@ -546,15 +546,19 @@ def sync_reconciled_ledger_integrity(account: Account) -> dict[str, int]:
 
     Safe to call on reconcile setup, timeline load, Plaid sync, and after complete.
     """
-    from .matching import suppress_duplicate_plaid_imports_for_reconciled_transactions
+    from .matching import (
+        propagate_reconciled_status_to_match_legs,
+        suppress_duplicate_plaid_imports_for_reconciled_transactions,
+    )
 
-    flags_from_entries = restore_reconciled_flags_from_session_entries(account)
-    flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
-    sealed = repair_unreconciled_in_last_closed_period(account)
     suppressed = suppress_duplicate_plaid_imports_for_reconciled_transactions(
         account_id=account.pk
     )
-    if flags_from_entries or flags_from_fk or sealed or suppressed:
+    flags_from_entries = restore_reconciled_flags_from_session_entries(account)
+    flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
+    sealed = repair_unreconciled_in_last_closed_period(account)
+    matched = propagate_reconciled_status_to_match_legs(account_id=account.pk)
+    if flags_from_entries or flags_from_fk or sealed or suppressed or matched:
         from common.services.cache import invalidate_financial_cache_for_household
 
         invalidate_financial_cache_for_household(account.household_id)
@@ -563,6 +567,7 @@ def sync_reconciled_ledger_integrity(account: Account) -> dict[str, int]:
         "flags_from_fk": flags_from_fk,
         "sealed": sealed,
         "suppressed_duplicates": suppressed,
+        "matched_legs": matched,
     }
 
 
@@ -614,36 +619,63 @@ def _mark_transactions_reconciled_for_session(
 
 def repair_unreconciled_in_last_closed_period(account: Account) -> int:
     """
-    Mark unreconciled rows from the last closed statement that sum to its bank balance.
+    Mark unreconciled rows belonging to the last closed statement as reconciled.
 
-    Closes the gap when complete_reconciliation only flagged checked_transaction_ids while
-    the saved bank_current_balance already includes the full statement activity.
+    Seals every ledger row on or before period_end, then any post-period imports whose
+    amounts complete the saved bank balance (import date skew after statement close).
     """
     prev = last_completed_reconciliation(account)
     if prev is None or prev.period_end_date is None:
         return 0
-    period_start = prev.period_start_date or prev.period_end_date
+    period_end = prev.period_end_date
     opening = Decimal(str(prev.last_reconciled_balance))
     target = Decimal(str(prev.bank_current_balance))
-    ids = unreconciled_ids_through_balance_delta(
-        account,
-        period_start=period_start,
-        balance_delta=target - opening,
-    )
-    if not ids:
-        return 0
     now = timezone.now()
-    _mark_transactions_reconciled_for_session(
-        account=account,
-        session=prev,
-        transaction_ids=ids,
-        opening_balance=opening,
-        reconciled_at=now,
-    )
-    from common.services.cache import invalidate_financial_cache_for_household
+    total = 0
 
-    invalidate_financial_cache_for_household(account.household_id)
-    return len(ids)
+    through_end = list(
+        ledger_visible_transactions(
+            Transaction.objects.filter(
+                account=account,
+                reconciled=False,
+                date__lte=period_end,
+            )
+        ).order_by("date", "id")
+    )
+    if through_end:
+        ids = [t.pk for t in through_end]
+        _mark_transactions_reconciled_for_session(
+            account=account,
+            session=prev,
+            transaction_ids=ids,
+            opening_balance=opening,
+            reconciled_at=now,
+        )
+        total += len(ids)
+
+    sealed_amount = sum((t.amount for t in through_end), Decimal("0"))
+    remaining_delta = target - opening - sealed_amount
+    post_ids = unreconciled_ids_through_balance_delta(
+        account,
+        period_start=period_end + timedelta(days=1),
+        balance_delta=remaining_delta,
+    )
+    if post_ids:
+        _mark_transactions_reconciled_for_session(
+            account=account,
+            session=prev,
+            transaction_ids=post_ids,
+            opening_balance=opening,
+            reconciled_at=now,
+            prefix_transactions=through_end,
+        )
+        total += len(post_ids)
+
+    if total:
+        from common.services.cache import invalidate_financial_cache_for_household
+
+        invalidate_financial_cache_for_household(account.household_id)
+    return total
 
 
 def get_setup_data(

@@ -55,7 +55,6 @@ import {
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
-  buildLedgerRowsFromPastAndUpcomingTimeline,
   splitLedgerSections,
   lowestProjectedFromLedgerFuture,
   isTransferCategoryName,
@@ -224,14 +223,14 @@ export default function Transactions() {
     refetchOnWindowFocus: false,
   });
   const {
-    data: upcomingTimelineData,
-    isFetching: upcomingTimelineFetching,
-    isError: upcomingTimelineError,
+    data: ledgerTimelineData,
+    isFetching: ledgerTimelineFetching,
+    isError: ledgerTimelineError,
   } = useQuery({
     queryKey: [
       "timeline",
-      "upcoming",
-      upcomingRange.start,
+      "ledger",
+      pastRangeStart,
       upcomingRange.end,
       accountId,
       todayStr(),
@@ -239,39 +238,13 @@ export default function Transactions() {
     ],
     queryFn: () =>
       getTimeline({
-        start: upcomingRange.start,
+        start: pastRangeStart,
         end: upcomingRange.end,
         as_of: todayStr(),
         account_id: typeof accountId === "number" ? accountId : undefined,
         exclude_reconciled_past: hideReconciledPast,
       }),
     enabled: typeof accountId === "number",
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    retry: 1,
-  });
-  /** Full past + forecast timeline when user wants reconciled history visible. */
-  const {
-    data: fullLedgerTimelineData,
-    isError: fullLedgerTimelineError,
-  } = useQuery({
-    queryKey: [
-      "timeline",
-      "full-ledger",
-      pastRangeStart,
-      upcomingRange.end,
-      accountId,
-      todayStr(),
-    ],
-    queryFn: () =>
-      getTimeline({
-        start: pastRangeStart,
-        end: upcomingRange.end,
-        as_of: todayStr(),
-        account_id: typeof accountId === "number" ? accountId : undefined,
-        exclude_reconciled_past: false,
-      }),
-    enabled: typeof accountId === "number" && !hideReconciledPast,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
@@ -330,8 +303,8 @@ export default function Transactions() {
   const ledgerReady =
     typeof accountId === "number" &&
     accountData != null &&
-    !upcomingTimelineFetching &&
-    (upcomingTimelineData != null || upcomingTimelineError);
+    !ledgerTimelineFetching &&
+    (ledgerTimelineData != null || ledgerTimelineError);
 
   usePerfPageLoad("transactions", ledgerReady, {
     account_id: accountId || "",
@@ -959,7 +932,7 @@ export default function Transactions() {
   const timelinePatchScope = useMemo((): TimelinePatchScope | null => {
     if (typeof accountId !== "number") return null;
     return {
-      timelineStart: upcomingRange.start,
+      timelineStart: pastRangeStart,
       timelineEnd: upcomingRange.end,
       accountId,
       today: todayStr(),
@@ -967,7 +940,7 @@ export default function Transactions() {
       upcoming: true,
       hideReconciledPast,
     };
-  }, [upcomingRange.start, upcomingRange.end, accountId, householdId, hideReconciledPast]);
+  }, [pastRangeStart, upcomingRange.end, accountId, householdId, hideReconciledPast]);
 
   const accountsForHousehold = useMemo(() => {
     if (householdId == null) return [];
@@ -1039,92 +1012,136 @@ export default function Transactions() {
     const today = todayStr();
     const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
     const pastOpeningOverride =
-      hideReconciledPast && upcomingTimelineData?.past_opening_balance != null
-        ? parseFloat(upcomingTimelineData.past_opening_balance)
-        : null;
+      hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
+        ? parseFloat(ledgerTimelineData.past_opening_balance)
+        : hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
+          ? parseFloat(reconcileSetupData.last_reconciled_balance)
+          : null;
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
 
-    if (
-      !hideReconciledPast &&
-      !fullLedgerTimelineError &&
-      fullLedgerTimelineData?.timeline != null
-    ) {
+    // #region agent log
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
+      body: JSON.stringify({
+        sessionId: "641553",
+        location: "Transactions.tsx:ledgerRows",
+        message: "hide-reconciled opening inputs",
+        data: {
+          hideReconciledPast,
+          accountId,
+          pastOpeningBalanceRaw: ledgerTimelineData?.past_opening_balance ?? null,
+          reconcileLastBalRaw: reconcileSetupData?.last_reconciled_balance ?? null,
+          pastOpeningOverride,
+          hasPastOpeningOverride,
+          configuredOpening: openingBalance,
+          accountStartingBalance: account.starting_balance,
+          ledgerTimelineError,
+          timelineRowCount: ledgerTimelineData?.timeline?.length ?? null,
+          reconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H1-H5",
+      }),
+    }).catch(() => {});
+    // #endregion
+
+    if (!ledgerTimelineError && ledgerTimelineData?.timeline != null) {
       const aid = Number(accountId);
-      const timelineForAccount = fullLedgerTimelineData.timeline.filter(
+      const timelineForAccount = ledgerTimelineData.timeline.filter(
         (r) => Number(r.account_id) === aid
       );
-      return buildLedgerRowsFromTimeline(
+      const built = buildLedgerRowsFromTimeline(
         timelineForAccount,
         today,
         openingBalance,
-        isCreditAccount
-      );
-    }
-
-    if (hideReconciledPast && !upcomingTimelineError && upcomingTimelineData?.timeline != null) {
-      const aid = Number(accountId);
-      const upcomingForAccount = upcomingTimelineData.timeline.filter(
-        (r) => Number(r.account_id) === aid
-      );
-      return buildLedgerRowsFromPastAndUpcomingTimeline(
-        transactions,
-        upcomingForAccount,
-        today,
-        openingBalance,
         isCreditAccount,
-        {
-          pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
-          lastReconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
-          reconcileFloor: reconcileSetupData?.min_start_date ?? null,
-          anchorPastEndBalance: apiBalance,
-        }
+        hasPastOpeningOverride ? pastOpeningOverride : null,
+        { useServerRunningBalances: hideReconciledPast }
       );
+      // #region agent log
+      const startRow = built.find((r) => r.type === "starting_balance");
+      const firstPastTxn = built.find((r) => r.type === "transaction_from_timeline");
+      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
+        body: JSON.stringify({
+          sessionId: "641553",
+          location: "Transactions.tsx:ledgerRows:timeline-path",
+          message: "built ledger from timeline",
+          data: {
+            path: "timeline",
+            startBalance: startRow?.type === "starting_balance" ? startRow.balance : null,
+            firstPastDesc:
+              firstPastTxn?.type === "transaction_from_timeline"
+                ? firstPastTxn.row.description
+                : null,
+            firstPastServerBal:
+              firstPastTxn?.type === "transaction_from_timeline"
+                ? firstPastTxn.row.running_balance
+                : null,
+            firstPastRowBal:
+              firstPastTxn?.type === "transaction_from_timeline" ? firstPastTxn.balance : null,
+            pastRowCount: built.filter((r) => r.type === "transaction_from_timeline").length,
+          },
+          timestamp: Date.now(),
+          hypothesisId: "H3-H4",
+        }),
+      }).catch(() => {});
+      // #endregion
+      return built;
     }
 
     const fallbackTxns = hideReconciledPast
       ? transactions.filter((t) => !t.reconciled)
       : transactions;
-    return buildLedgerRows(
+    const fallbackBuilt = buildLedgerRows(
       fallbackTxns,
       openingBalance,
       account.currency,
       isCreditAccount,
       apiBalance
     );
+    // #region agent log
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
+      body: JSON.stringify({
+        sessionId: "641553",
+        location: "Transactions.tsx:ledgerRows:fallback-path",
+        message: "built ledger from transactions fallback",
+        data: {
+          path: "fallback",
+          startBalance: fallbackBuilt.find((r) => r.type === "starting_balance")?.balance ?? null,
+          txnCount: fallbackTxns.length,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H4",
+      }),
+    }).catch(() => {});
+    // #endregion
+    return fallbackBuilt;
   }, [
     account,
     accountId,
     accountMatchesSelection,
     transactions,
-    upcomingTimelineData,
-    upcomingTimelineData?.timeline,
-    upcomingTimelineData?.past_opening_balance,
-    upcomingTimelineError,
-    fullLedgerTimelineData,
-    fullLedgerTimelineError,
+    ledgerTimelineData,
+    ledgerTimelineData?.timeline,
+    ledgerTimelineData?.past_opening_balance,
+    ledgerTimelineError,
     isCreditAccount,
     hideReconciledPast,
-    reconcileSetupData?.last_reconcile_period_end,
-    reconcileSetupData?.min_start_date,
+    reconcileSetupData?.last_reconciled_balance,
   ]);
 
   const accountTimeline = useMemo(() => {
-    if (typeof accountId !== "number") return [];
+    if (typeof accountId !== "number" || !ledgerTimelineData?.timeline) return [];
     const aid = Number(accountId);
-    const source =
-      !hideReconciledPast && fullLedgerTimelineData?.timeline
-        ? fullLedgerTimelineData.timeline
-        : upcomingTimelineData?.timeline;
-    if (!source) return [];
-    return source.filter((r) => Number(r.account_id) === aid);
-  }, [
-    accountId,
-    hideReconciledPast,
-    fullLedgerTimelineData?.timeline,
-    upcomingTimelineData?.timeline,
-  ]);
+    return ledgerTimelineData.timeline.filter((r) => Number(r.account_id) === aid);
+  }, [accountId, ledgerTimelineData?.timeline]);
 
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
@@ -1997,7 +2014,7 @@ export default function Transactions() {
               Loading account…
             </p>
           ) : null}
-          {upcomingTimelineFetching && transactions.length > 0 && accountMatchesSelection ? (
+          {ledgerTimelineFetching && transactions.length > 0 && accountMatchesSelection ? (
             <p
               className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5"
               role="status"
@@ -2005,7 +2022,7 @@ export default function Transactions() {
               Updating forecast in the background…
             </p>
           ) : null}
-          {upcomingTimelineError && !upcomingTimelineFetching && transactions.length > 0 ? (
+          {ledgerTimelineError && !ledgerTimelineFetching && transactions.length > 0 ? (
             <p
               className="shrink-0 text-sm text-amber-900 bg-amber-50 border-b border-amber-200 px-4 py-2"
               role="status"

@@ -35,7 +35,7 @@ function timelineQueryKeys(scope: TimelinePatchScope): readonly (readonly unknow
   const accountKey = scope.upcoming
     ? ([
         "timeline",
-        "upcoming",
+        "ledger",
         scope.timelineStart,
         scope.timelineEnd,
         scope.accountId,

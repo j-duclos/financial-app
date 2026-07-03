@@ -996,3 +996,54 @@ class TestReconciliationSeal:
         assert t1.reconciled is True
         assert t1.reconciliation_id == rec.pk
 
+    def test_seal_all_rows_on_or_before_period_end(self, account, user):
+        opening = Decimal("1000.00")
+        account.starting_balance = opening
+        account.save(update_fields=["starting_balance"])
+        may_rows = [
+            post_transaction(
+                user=user,
+                account_id=account.pk,
+                date=date(2026, 5, 5),
+                payee="CAPITAL ONE ONLINE PYMT",
+                amount=Decimal("32.00"),
+            ),
+            post_transaction(
+                user=user,
+                account_id=account.pk,
+                date=date(2026, 5, 13),
+                payee="CAPITAL ONE ONLINE PYMT",
+                amount=Decimal("550.00"),
+            ),
+            post_transaction(
+                user=user,
+                account_id=account.pk,
+                date=date(2026, 5, 14),
+                payee="Amazon",
+                amount=Decimal("-23.67"),
+            ),
+        ]
+        bank = opening + sum(t.amount for t in may_rows)
+        rec = Reconciliation.objects.create(
+            user=user,
+            account=account,
+            bank_current_balance=bank,
+            app_current_balance=bank,
+            last_reconciled_balance=opening,
+            final_reconciled_balance=bank,
+            difference=Decimal("0"),
+            period_start_date=date(2026, 5, 1),
+            period_end_date=date(2026, 5, 31),
+            transaction_count=len(may_rows),
+            status=Reconciliation.Status.COMPLETED,
+            is_active=True,
+            completed_at=timezone.now(),
+        )
+        from transactions.services.reconciliation import sync_reconciled_ledger_integrity
+
+        sync_reconciled_ledger_integrity(account)
+        for txn in may_rows:
+            txn.refresh_from_db()
+            assert txn.reconciled is True, txn.payee
+            assert txn.reconciliation_id == rec.pk
+

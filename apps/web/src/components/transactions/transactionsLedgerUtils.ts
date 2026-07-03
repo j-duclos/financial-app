@@ -562,13 +562,23 @@ export function compareTimelineRows(a: TimelineRow, b: TimelineRow): number {
   return String(a.description).localeCompare(String(b.description));
 }
 
+function parseTimelineRunningBalance(row: TimelineRow): number | null {
+  if (row.running_balance == null || String(row.running_balance).trim() === "") {
+    return null;
+  }
+  const n = parseFloat(String(row.running_balance));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function buildLedgerRowsFromTimeline(
   timeline: TimelineRow[],
   today: string,
   openingBalance: number,
   isCredit: boolean,
   pastOpeningOverride?: number | null,
+  options?: { useServerRunningBalances?: boolean }
 ): LedgerRow[] {
+  const useServerBalances = options?.useServerRunningBalances === true;
   const visibleTimeline = timeline.filter(
     (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
   );
@@ -590,12 +600,43 @@ export function buildLedgerRowsFromTimeline(
       : isCredit
         ? resolveLedgerOpening(openingBalance, past[0], isCredit)
         : configuredOpening;
+  // #region agent log
+  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
+    body: JSON.stringify({
+      sessionId: "641553",
+      location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline",
+      message: "start balance branch",
+      data: {
+        pastOpeningOverride,
+        configuredOpening,
+        isCredit,
+        useServerBalances,
+        start,
+        firstPastDate: past[0]?.date ?? null,
+        firstPastRunningBal: past[0]?.running_balance ?? null,
+        firstPastAmount: past[0]?.amount ?? null,
+        resolvedFromFirstRow:
+          past[0] != null
+            ? parseFloat(String(past[0].running_balance)) - parseFloat(String(past[0].amount))
+            : null,
+      },
+      timestamp: Date.now(),
+      hypothesisId: "H3",
+    }),
+  }).catch(() => {});
+  // #endregion
   rows.push({ type: "starting_balance", balance: start });
 
-  // Recompute from visible rows only — API running_balance can include filtered duplicates.
   let running = start;
   for (const r of past) {
-    running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+    const serverBal = useServerBalances ? parseTimelineRunningBalance(r) : null;
+    if (serverBal != null) {
+      running = serverBal;
+    } else {
+      running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+    }
     rows.push({
       type: "transaction_from_timeline",
       row: r,
@@ -654,8 +695,6 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     /** When set, omit unreconciled rows on/before this date (hide-reconciled ledger only). */
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
-    /** When set, shift past running balances so the last past row equals this (API ledger total). */
-    anchorPastEndBalance?: number | null;
   }
 ): LedgerRow[] {
   const pastSource =
@@ -687,29 +726,10 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     rows.push({ type: "transaction", txn, balance: running });
   }
 
-  if (
-    options?.anchorPastEndBalance != null &&
-    Number.isFinite(options.anchorPastEndBalance) &&
-    pastTxns.length > 0
-  ) {
-    const target = options.anchorPastEndBalance;
-    const delta = target - running;
-    if (Math.abs(delta) > 0.005) {
-      for (const row of rows) {
-        if (row.type === "starting_balance" || row.type === "transaction") {
-          row.balance += delta;
-        }
-      }
-      running = target;
-    }
-  }
-
   const todayBalance =
-    options?.anchorPastEndBalance != null && Number.isFinite(options.anchorPastEndBalance)
-      ? options.anchorPastEndBalance
-      : options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
-        ? options.todayBalanceOverride
-        : running;
+    options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
+      ? options.todayBalanceOverride
+      : running;
   rows.push({ type: "today_balance", balance: todayBalance });
 
   const visibleTimeline = upcomingTimeline.filter(

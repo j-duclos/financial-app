@@ -2233,6 +2233,45 @@ def release_excess_duplicate_plaid_imports(*, account_id: int | None = None) -> 
     return delete_redundant_plaid_imports_for_accounts([account_id])
 
 
+def propagate_reconciled_status_to_match_legs(*, account_id: int | None = None) -> int:
+    """When one leg of a bank match is reconciled, mark the paired leg reconciled too."""
+    match_qs = TransactionMatch.objects.filter(
+        Q(planned_transaction__reconciled=True) | Q(imported_transaction__reconciled=True)
+    )
+    if account_id is not None:
+        match_qs = match_qs.filter(planned_transaction__account_id=account_id)
+
+    fixed = 0
+    now = timezone.now()
+    for match in match_qs.select_related("planned_transaction", "imported_transaction"):
+        legs = [match.planned_transaction, match.imported_transaction]
+        reconciled_leg = next((t for t in legs if t is not None and t.reconciled), None)
+        if reconciled_leg is None:
+            continue
+        for txn in legs:
+            if txn is None or txn.reconciled:
+                continue
+            txn.reconciled = True
+            txn.cleared = True
+            txn.status = Transaction.Status.RECONCILED
+            if reconciled_leg.reconciliation_id and not txn.reconciliation_id:
+                txn.reconciliation_id = reconciled_leg.reconciliation_id
+            if not txn.reconciled_at:
+                txn.reconciled_at = now
+            txn.save(
+                update_fields=[
+                    "reconciled",
+                    "cleared",
+                    "status",
+                    "reconciliation",
+                    "reconciled_at",
+                    "updated_at",
+                ]
+            )
+            fixed += 1
+    return fixed
+
+
 def suppress_duplicate_plaid_imports_for_reconciled_transactions(
     *, account_id: int | None = None
 ) -> int:
