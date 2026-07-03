@@ -935,7 +935,7 @@ def _materialize_rule_occurrence(
     amount: Decimal,
     payee: str,
     category_id: Optional[int],
-) -> Transaction:
+) -> Transaction | None:
     """Get or create a Transaction for this rule occurrence. If one already exists, return it as-is so user edits (e.g. "this occurrence only" amount change) are preserved."""
     if projection_only_build_active():
         raise RuntimeError("Materialization called during projection_only timeline build")
@@ -959,7 +959,8 @@ def _materialize_rule_occurrence(
             amount=amount,
         )
         if covered is not None and covered.pk != txn.pk:
-            return covered
+            txn.delete()
+            return None
         return txn
     covered = _matched_rule_occurrence_covers(
         rule_id=rule.pk,
@@ -970,7 +971,9 @@ def _materialize_rule_occurrence(
     if covered is not None:
         if materialization_active():
             record_materialization_skipped()
-        return covered
+        if covered.date == d:
+            return covered
+        return None
     if not _rule_allows_materialization(rule, d):
         raise ValueError(
             f"Cannot materialize rule {rule.pk} on {d}: rule is inactive or paused as of {rule.paused_at}"
@@ -2820,6 +2823,14 @@ def _build_timeline_impl(
                     ):
                         continue
                     seen_scenario_rule_keys.add(proj_key)
+                    covered = _matched_rule_occurrence_covers(
+                        rule_id=rule.pk,
+                        account_id=acc_id,
+                        on_date=d,
+                        amount=amount_decimal,
+                    )
+                    if covered is not None:
+                        continue
                     materialized = _materialized_rule_timeline_row_if_exists(
                         rule_id=rule.id,
                         d=d,
@@ -2856,6 +2867,8 @@ def _build_timeline_impl(
                 txn = _materialize_rule_occurrence(
                     rule, d, acc_id, amount_decimal, rule.name, cat_id
                 )
+                if txn is None:
+                    continue
                 from transactions.services.matching import planned_leg_suppressed_by_import_match
 
                 if planned_leg_suppressed_by_import_match(txn):

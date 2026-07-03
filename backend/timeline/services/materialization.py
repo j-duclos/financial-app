@@ -128,6 +128,18 @@ def ensure_planned_occurrence_transaction(
     if not Account.objects.filter(pk=account_id, household__in=households).exists():
         return None
 
+    from transactions.services.matching import _matched_rule_occurrence_covers
+    from timeline.services.rule_schedule import resolve_rule_params
+
+    params = resolve_rule_params(rule, occurrence_date)
+    if _matched_rule_occurrence_covers(
+        rule_id=rule.pk,
+        account_id=account_id,
+        on_date=occurrence_date,
+        amount=params.amount,
+    ) is not None:
+        return None
+
     txn = _usable_rule_occurrence(
         _find_rule_occurrence_transaction(
             households=households,

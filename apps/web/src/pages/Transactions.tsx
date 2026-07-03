@@ -1657,7 +1657,9 @@ export default function Transactions() {
       const transactionId =
         row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
       if (transactionId == null) {
-        setDeleteError("Could not load this expected transaction to match.");
+        setDeleteError(
+          "This scheduled item was already fulfilled by a nearby bank import (for example payroll posted one day early). Refresh the page — it should no longer appear in Pending."
+        );
         return;
       }
       setMatchDialog({ transactionId, label: row.description });

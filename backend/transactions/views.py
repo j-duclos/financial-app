@@ -292,6 +292,18 @@ class TransactionViewSet(ModelViewSet):
                 qs = qs.filter(reconciled=False)
         return qs
 
+    def _get_lifecycle_transaction(self, pk: int) -> Transaction:
+        """Lifecycle actions must resolve planned rows hidden from ledger_visible_transactions."""
+        from django.shortcuts import get_object_or_404
+
+        households = get_households_for_user(self.request.user)
+        return get_object_or_404(
+            Transaction.objects.filter(account__household__in=households).select_related(
+                "account", "account__household"
+            ),
+            pk=pk,
+        )
+
     def create(self, request: Request, *args, **kwargs):
         data = request.data
         account_id = data.get("account_id") or data.get("account")
@@ -452,7 +464,7 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="confirm")
     def confirm(self, request: Request, pk=None):
         """Mark a due scheduled transaction as manually posted (non-Plaid workflow)."""
-        txn = self.get_object()
+        txn = self._get_lifecycle_transaction(pk)
         try:
             txn = confirm_expected_transaction(txn, user=request.user)
         except ValueError as e:
@@ -463,7 +475,7 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="skip")
     def skip_occurrence(self, request: Request, pk=None):
         """Skip a scheduled occurrence without deleting past actuals."""
-        txn = self.get_object()
+        txn = self._get_lifecycle_transaction(pk)
         try:
             skip_scheduled_transaction(txn, user=request.user)
         except ValueError as e:
@@ -473,7 +485,7 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="move-date")
     def move_date(self, request: Request, pk=None):
         """Move a planned occurrence to a new date."""
-        txn = self.get_object()
+        txn = self._get_lifecycle_transaction(pk)
         raw = request.data.get("date")
         if not raw:
             return Response({"detail": "date is required (YYYY-MM-DD)."}, status=status.HTTP_400_BAD_REQUEST)
@@ -487,7 +499,7 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["get"], url_path="import-candidates")
     def import_candidates(self, request: Request, pk=None):
         """Unmatched Plaid imports that could match this planned row."""
-        planned = self.get_object()
+        planned = self._get_lifecycle_transaction(pk)
         ranked = find_import_candidates_for_planned(planned)
         # #region agent log
         import json
@@ -537,7 +549,7 @@ class TransactionViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="match")
     def match_import(self, request: Request, pk=None):
         """Link this planned row to an unmatched Plaid import."""
-        planned = self.get_object()
+        planned = self._get_lifecycle_transaction(pk)
         raw = request.data.get("imported_transaction_id")
         if raw is None:
             return Response(
