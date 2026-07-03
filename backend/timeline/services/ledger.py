@@ -952,6 +952,14 @@ def _materialize_rule_occurrence(
         if materialization_active():
             record_materialization_skipped()
         _safe_try_match_rule_to_pending_imports(txn)
+        covered = _matched_rule_occurrence_covers(
+            rule_id=rule.pk,
+            account_id=account_id,
+            on_date=d,
+            amount=amount,
+        )
+        if covered is not None and covered.pk != txn.pk:
+            return covered
         return txn
     covered = _matched_rule_occurrence_covers(
         rule_id=rule.pk,
@@ -959,7 +967,7 @@ def _materialize_rule_occurrence(
         on_date=d,
         amount=amount,
     )
-    if covered is not None and covered.date == d:
+    if covered is not None:
         if materialization_active():
             record_materialization_skipped()
         return covered

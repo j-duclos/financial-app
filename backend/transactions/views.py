@@ -489,6 +489,35 @@ class TransactionViewSet(ModelViewSet):
         """Unmatched Plaid imports that could match this planned row."""
         planned = self.get_object()
         ranked = find_import_candidates_for_planned(planned)
+        # #region agent log
+        import json
+        import time
+
+        try:
+            with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
+                _f.write(
+                    json.dumps(
+                        {
+                            "sessionId": "641553",
+                            "location": "views.py:import_candidates",
+                            "message": "import candidate search",
+                            "data": {
+                                "planned_id": planned.pk,
+                                "planned_date": planned.date.isoformat(),
+                                "rule_id": planned.rule_id,
+                                "candidate_count": len(ranked),
+                                "candidate_ids": [imp.pk for imp, _sc, _parts in ranked[:5]],
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "runId": "match-fix",
+                            "hypothesisId": "H8",
+                        }
+                    )
+                    + "\n"
+                )
+        except OSError:
+            pass
+        # #endregion
         return Response(
             {
                 "candidates": [

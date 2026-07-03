@@ -181,15 +181,6 @@ def shadowed_rule_occurrence_ids(txns: Iterable[Transaction]) -> set[int]:
     """Unmatched rule rows superseded by a matched sibling for the same pay period."""
     rows = list(txns)
     hidden: set[int] = set()
-    matched_rule_rows = [
-        t
-        for t in rows
-        if t.rule_id
-        and t.source == Transaction.Source.RULE
-        and t.import_match_status == Transaction.ImportMatchStatus.MATCHED
-    ]
-    if not matched_rule_rows:
-        return hidden
     for t in rows:
         if t.pk in hidden:
             continue
@@ -199,14 +190,15 @@ def shadowed_rule_occurrence_ids(txns: Iterable[Transaction]) -> set[int]:
             continue
         if TransactionMatch.objects.filter(planned_transaction_id=t.pk).exists():
             continue
-        for m in matched_rule_rows:
-            if m.pk == t.pk or m.rule_id != t.rule_id or m.account_id != t.account_id:
-                continue
-            if not _amounts_equal(m.amount, t.amount):
-                continue
-            if abs((m.date - t.date).days) <= SAME_ACCOUNT_DATE_WINDOW_DAYS:
-                hidden.add(t.pk)
-                break
+        # Matched canonical row may be hidden from ledger_visible_transactions — query DB.
+        covered = _matched_rule_occurrence_covers(
+            rule_id=t.rule_id,
+            account_id=t.account_id,
+            on_date=t.date,
+            amount=t.amount,
+        )
+        if covered is not None and covered.pk != t.pk:
+            hidden.add(t.pk)
     return hidden
 # Auto-restore missing checking leg when a lone card inflow matches a Plaid outflow (see _try_orphan_card_inflow_repair).
 ORPHAN_REPAIR_MIN_SCORE = 70
@@ -1505,6 +1497,44 @@ def _unmatched_plaid_imports_for_planned(planned: Transaction) -> QuerySet[Trans
     )
 
 
+def _sibling_matched_plaid_imports_for_planned(planned: Transaction) -> QuerySet[Transaction]:
+    """
+    Plaid imports already matched to a nearby rule occurrence (same rule, amount, date window).
+
+    Lets the user link this expected row to the visible import when the bank posted one day early.
+    """
+    if not planned.rule_id:
+        return Transaction.objects.none()
+    low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    sibling_planned = Transaction.objects.filter(
+        rule_id=planned.rule_id,
+        account_id=planned.account_id,
+        date__gte=low,
+        date__lte=high,
+        scenario__isnull=True,
+    ).exclude(pk=planned.pk)
+    return (
+        Transaction.objects.filter(
+            account_id=planned.account_id,
+            date__gte=low,
+            date__lte=high,
+            source=Transaction.Source.PLAID,
+            scenario__isnull=True,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .filter(
+            Exists(
+                TransactionMatch.objects.filter(
+                    imported_transaction_id=OuterRef("pk"),
+                    planned_transaction_id__in=Subquery(sibling_planned.values("pk")),
+                )
+            )
+        )
+    )
+
+
 def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction], int]:
     best_imp: Optional[Transaction] = None
     best_score = -1
@@ -1525,11 +1555,19 @@ def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction]
 def find_import_candidates_for_planned(
     planned: Transaction,
 ) -> list[tuple[Transaction, int, dict[str, Any]]]:
-    """Return sorted unmatched Plaid imports that could fulfill this planned row."""
+    """Return sorted Plaid imports that could fulfill this planned row."""
     if not _planned_row_eligible_as_import_match_candidate(planned):
         return []
     out: list[tuple[Transaction, int, dict[str, Any]]] = []
-    for imp in _unmatched_plaid_imports_for_planned(planned).select_related("account"):
+    seen: set[int] = set()
+    import_qs = (
+        _unmatched_plaid_imports_for_planned(planned)
+        | _sibling_matched_plaid_imports_for_planned(planned)
+    ).distinct()
+    for imp in import_qs.select_related("account"):
+        if imp.pk in seen:
+            continue
+        seen.add(imp.pk)
         if imp.amount is None or planned.amount is None:
             continue
         if abs(imp.amount - planned.amount) > AMOUNT_TOLERANCE:

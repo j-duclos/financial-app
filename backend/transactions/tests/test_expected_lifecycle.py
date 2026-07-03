@@ -194,6 +194,70 @@ class TestPlaidMatch(ExpectedLifecycleFixture):
         candidates = find_import_candidates_for_planned(planned)
         self.assertEqual(len(candidates), 1)
 
+    def test_import_candidates_include_sibling_matched_plaid_import(self):
+        """Payroll imported 07-02 matched to scheduled 07-02 — 07-03 expected still offers that import."""
+        early = self._expected_planned()
+        early.date = date(2026, 7, 2)
+        early.save(update_fields=["date"])
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 2),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-payroll-sibling",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        manual_match_transactions(planned_id=early.pk, imported_id=imported.pk, user=self.user)
+
+        late = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 3),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=self.rule,
+        )
+        candidates = find_import_candidates_for_planned(late)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0][0].pk, imported.pk)
+
+    def test_shadow_hides_duplicate_when_matched_sibling_not_in_visible_set(self):
+        """Matched planned twin hidden from ledger must still shadow the next-day duplicate."""
+        from transactions.services.matching import ledger_visible_transactions, shadowed_rule_occurrence_ids
+
+        early = self._expected_planned()
+        early.date = date(2026, 7, 2)
+        early.save(update_fields=["date"])
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 2),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-payroll-shadow",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        manual_match_transactions(planned_id=early.pk, imported_id=imported.pk, user=self.user)
+        late = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 3),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=self.rule,
+        )
+        visible = list(
+            ledger_visible_transactions(
+                Transaction.objects.filter(account=self.acc, date__gte=date(2026, 7, 1))
+            )
+        )
+        self.assertNotIn(early.pk, {t.pk for t in visible})
+        self.assertIn(late.pk, {t.pk for t in visible})
+        self.assertIn(late.pk, shadowed_rule_occurrence_ids(visible))
+
     def test_match_api(self):
         planned = self._expected_planned()
         imported = Transaction.objects.create(
