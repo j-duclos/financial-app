@@ -562,23 +562,14 @@ export function compareTimelineRows(a: TimelineRow, b: TimelineRow): number {
   return String(a.description).localeCompare(String(b.description));
 }
 
-function parseTimelineRunningBalance(row: TimelineRow): number | null {
-  if (row.running_balance == null || String(row.running_balance).trim() === "") {
-    return null;
-  }
-  const n = parseFloat(String(row.running_balance));
-  return Number.isFinite(n) ? n : null;
-}
 
 export function buildLedgerRowsFromTimeline(
   timeline: TimelineRow[],
   today: string,
   openingBalance: number,
   isCredit: boolean,
-  pastOpeningOverride?: number | null,
-  options?: { useServerRunningBalances?: boolean }
+  pastOpeningOverride?: number | null
 ): LedgerRow[] {
-  const useServerBalances = options?.useServerRunningBalances === true;
   const visibleTimeline = timeline.filter(
     (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
   );
@@ -612,18 +603,18 @@ export function buildLedgerRowsFromTimeline(
         pastOpeningOverride,
         configuredOpening,
         isCredit,
-        useServerBalances,
         start,
         firstPastDate: past[0]?.date ?? null,
-        firstPastRunningBal: past[0]?.running_balance ?? null,
         firstPastAmount: past[0]?.amount ?? null,
-        resolvedFromFirstRow:
-          past[0] != null
-            ? parseFloat(String(past[0].running_balance)) - parseFloat(String(past[0].amount))
-            : null,
+        pastPreview: past.slice(0, 5).map((r) => ({
+          date: r.date,
+          desc: String(r.description).slice(0, 30),
+          amount: r.amount,
+        })),
       },
       timestamp: Date.now(),
-      hypothesisId: "H3",
+      runId: "post-fix-v2",
+      hypothesisId: "H7",
     }),
   }).catch(() => {});
   // #endregion
@@ -631,18 +622,34 @@ export function buildLedgerRowsFromTimeline(
 
   let running = start;
   for (const r of past) {
-    const serverBal = useServerBalances ? parseTimelineRunningBalance(r) : null;
-    if (serverBal != null) {
-      running = serverBal;
-    } else {
-      running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
-    }
+    running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
     rows.push({
       type: "transaction_from_timeline",
       row: r,
       balance: running,
     });
   }
+  // #region agent log
+  if (pastOpeningOverride != null && past.length >= 1) {
+    const pastBalances = rows
+      .filter((row): row is Extract<LedgerRow, { type: "transaction_from_timeline" }> => row.type === "transaction_from_timeline")
+      .slice(0, 5)
+      .map((row) => ({ desc: String(row.row.description).slice(0, 30), amount: row.row.amount, balance: row.balance }));
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
+      body: JSON.stringify({
+        sessionId: "641553",
+        location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline:walk",
+        message: "sequential past balances",
+        data: { start, pastBalances },
+        timestamp: Date.now(),
+        runId: "post-fix-v2",
+        hypothesisId: "H7",
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
 
   const todayBalance = running;
   rows.push({ type: "today_balance", balance: todayBalance });

@@ -1064,8 +1064,7 @@ export default function Transactions() {
         today,
         openingBalance,
         isCreditAccount,
-        hasPastOpeningOverride ? pastOpeningOverride : null,
-        { useServerRunningBalances: hideReconciledPast }
+        hasPastOpeningOverride ? pastOpeningOverride : null
       );
       // #region agent log
       const startRow = built.find((r) => r.type === "starting_balance");

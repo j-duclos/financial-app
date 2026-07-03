@@ -277,7 +277,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.past[0].balance).toBeCloseTo(824.83, 2);
   });
 
-  it("uses server running balances when hide-reconciled timeline is authoritative", () => {
+  it("hide-reconciled walks sequentially from opening override, not absolute server balances", () => {
     const rows = buildLedgerRowsFromTimeline(
       [
         {
@@ -289,24 +289,32 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           status: "CLEARED",
         } as never,
         {
-          date: "2026-06-26",
+          date: "2026-06-28",
           description: "Slim Chickens",
           amount: "-33.84",
-          running_balance: "2066.99",
+          running_balance: "2174.01",
+          account_id: 1,
+          status: "CLEARED",
+        } as never,
+        {
+          date: "2026-06-29",
+          description: "Fry's Food and Drug",
+          amount: "-17.91",
+          running_balance: "1327.31",
           account_id: 1,
           status: "CLEARED",
         } as never,
       ],
-      "2026-06-27",
+      "2026-06-30",
       0,
       false,
-      2234.85,
-      { useServerRunningBalances: true }
+      2234.85
     );
     const sections = splitLedgerSections(rows);
     expect(sections.start?.balance).toBeCloseTo(2234.85, 2);
     expect(sections.past[0].balance).toBeCloseTo(2205.84, 2);
-    expect(sections.past[1].balance).toBeCloseTo(2066.99, 2);
+    expect(sections.past[1].balance).toBeCloseTo(2172, 1);
+    expect(sections.past[2].balance).toBeCloseTo(2154.09, 1);
   });
 });
 
