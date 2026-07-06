@@ -390,6 +390,7 @@ export function shouldHighlightUnmatchedScheduledRow(
   timeline: TimelineRow[]
 ): boolean {
   if (!isPlannedScheduledTimelineRow(row)) return false;
+  if (isTransferLegImportConfirmed(row)) return false;
   if (isShadowedByMatchedRuleSibling(row, timeline)) return false;
   if (isSupersededPlannedTimelineRow(row, timeline)) return false;
   const accountId = Number(row.account_id);
@@ -425,6 +426,14 @@ function isShadowedByMatchedRuleSibling(
 /** Paired transfer leg — never hide from ledger when matching imports or debt skip logic. */
 function isPairedTransferTimelineRow(row: TimelineRow): boolean {
   return row.transfer_group_id != null;
+}
+
+/** Transfer/payment leg already confirmed by a bank import on the same account. */
+function isTransferLegImportConfirmed(row: TimelineRow): boolean {
+  if (!isPairedTransferTimelineRow(row)) return false;
+  const matchStatus = (row.import_match_status ?? "").toLowerCase();
+  if (matchStatus === "matched") return true;
+  return Boolean((row.plaid_transaction_id ?? "").trim());
 }
 
 /** Drop a today/past PLANNED row when the same account+day already has a matching cleared posting. */
@@ -563,6 +572,15 @@ export function compareTimelineRows(a: TimelineRow, b: TimelineRow): number {
 }
 
 
+/** Opening balance for hide-reconciled ledger: last reconciled balance in UI convention. */
+export function hideReconciledOpeningBalance(
+  raw: number | null | undefined,
+  isCredit: boolean
+): number | null {
+  if (raw == null || !Number.isFinite(raw)) return null;
+  return isCredit ? Math.abs(raw) : raw;
+}
+
 export function buildLedgerRowsFromTimeline(
   timeline: TimelineRow[],
   today: string,
@@ -585,9 +603,13 @@ export function buildLedgerRowsFromTimeline(
 
   const rows: LedgerRow[] = [];
   const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
-  const start =
+  const normalizedOverride =
     pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
-      ? pastOpeningOverride
+      ? hideReconciledOpeningBalance(pastOpeningOverride, isCredit)
+      : null;
+  const start =
+    normalizedOverride != null
+      ? normalizedOverride
       : isCredit
         ? resolveLedgerOpening(openingBalance, past[0], isCredit)
         : configuredOpening;

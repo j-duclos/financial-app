@@ -136,6 +136,74 @@ class TestSkip(ExpectedLifecycleFixture):
         self.assertTrue(RecurringRuleSkip.objects.filter(rule=self.rule, date=txn.date).exists())
 
 
+class TestSkipTransferPair(ExpectedLifecycleFixture):
+    def setUp(self):
+        super().setUp()
+        self.savor = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.SAVINGS,
+            name="Savor",
+            currency="USD",
+        )
+        self.transfer_rule = RecurringRule.objects.create(
+            household=self.h,
+            account=self.acc,
+            transfer_to_account=self.savor,
+            name="Med Ins - Move to Savor",
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("620.00"),
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            day_of_month=29,
+            start_date=date(2026, 1, 1),
+            active=True,
+        )
+        self.occ_date = date(2026, 6, 29)
+
+    def test_skip_outflow_removes_orphan_inflow_leg(self):
+        outflow = Transaction.objects.create(
+            account=self.acc,
+            date=self.occ_date,
+            payee=self.transfer_rule.name,
+            amount=Decimal("-620.00"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=self.transfer_rule,
+        )
+        inflow = Transaction.objects.create(
+            account=self.savor,
+            date=self.occ_date,
+            payee=self.transfer_rule.name,
+            amount=Decimal("620.00"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=self.transfer_rule,
+        )
+        skip_scheduled_transaction(outflow, user=self.user)
+        self.assertFalse(Transaction.objects.filter(pk=outflow.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=inflow.pk).exists())
+        self.assertTrue(
+            RecurringRuleSkip.objects.filter(
+                rule=self.transfer_rule, date=self.occ_date
+            ).exists()
+        )
+
+    def test_heal_removes_orphan_inflow_when_skip_already_recorded(self):
+        inflow = Transaction.objects.create(
+            account=self.savor,
+            date=self.occ_date,
+            payee=self.transfer_rule.name,
+            amount=Decimal("620.00"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=self.transfer_rule,
+        )
+        RecurringRuleSkip.objects.create(rule=self.transfer_rule, date=self.occ_date)
+        from transactions.services.expected_lifecycle import purge_planned_rule_occurrence
+
+        purge_planned_rule_occurrence(self.transfer_rule.id, self.occ_date)
+        self.assertFalse(Transaction.objects.filter(pk=inflow.pk).exists())
+
+
 class TestMoveDate(ExpectedLifecycleFixture):
     def test_move_to_future_keeps_planned(self):
         txn = self._expected_planned()

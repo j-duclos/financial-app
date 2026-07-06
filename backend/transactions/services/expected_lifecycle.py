@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from timeline.models import InterestCycleSkip, RecurringRuleSkip
 
-from ..models import Transaction, TransferGroup
+from ..models import Transaction, TransactionMatch, TransferGroup
 from ..rule_transfer_pairs import find_rule_transfer_counterpart_txn
 from .immutability import reject_if_reconciled
 from .matching import manual_match_transactions
@@ -82,6 +82,90 @@ def _find_rule_counterpart(txn: Transaction) -> Transaction | None:
 def _record_rule_skip(txn: Transaction) -> None:
     if txn.rule_id is not None:
         RecurringRuleSkip.objects.get_or_create(rule_id=txn.rule_id, date=txn.date)
+
+
+def purge_planned_rule_occurrence(rule_id: int, occurrence_date: date) -> int:
+    """
+    Remove planned RULE rows for a skipped occurrence on every account (both transfer legs).
+
+    Unlike ``_purge_skipped_rule_occurrence`` in ledger.py, this runs for past-due dates too so
+    deleting/skipping the outflow leg does not leave an orphan inflow in Pending.
+    """
+    if TransactionMatch.objects.filter(
+        planned_transaction__rule_id=rule_id,
+        planned_transaction__date=occurrence_date,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).exists():
+        return 0
+    qs = Transaction.objects.filter(
+        rule_id=rule_id,
+        date=occurrence_date,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+    )
+    if not qs.exists():
+        return 0
+    tg_ids = set(
+        qs.filter(transfer_group_id__isnull=False).values_list("transfer_group_id", flat=True)
+    )
+    account_ids = list(qs.values_list("account_id", flat=True).distinct())
+    deleted, _ = qs.delete()
+    for gid in tg_ids:
+        if not Transaction.objects.filter(transfer_group_id=gid).exists():
+            TransferGroup.objects.filter(pk=gid).delete()
+    from timeline.services.balance_cache import get_active_balance_cache
+
+    cache = get_active_balance_cache()
+    if cache is not None:
+        for aid in account_ids:
+            if aid is not None:
+                cache.note_transactions_deleted(aid, rule_id=rule_id, on_date=occurrence_date)
+    # #region agent log
+    import json
+
+    try:
+        with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "641553",
+                        "location": "expected_lifecycle.py:purge_planned_rule_occurrence",
+                        "message": "purged planned rule occurrence",
+                        "data": {
+                            "rule_id": rule_id,
+                            "date": str(occurrence_date),
+                            "deleted": deleted,
+                            "transfer_groups": list(tg_ids),
+                        },
+                        "timestamp": int(timezone.now().timestamp() * 1000),
+                        "hypothesisId": "H1-H2",
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
+    return deleted
+
+
+def heal_skipped_occurrence_planned_rows(
+    *,
+    household_ids: Iterable[int],
+    start_date: date,
+    end_date: date,
+) -> int:
+    """Self-heal orphan planned legs left after a skip/delete on the other transfer account."""
+    from timeline.models import RecurringRuleSkip
+
+    total = 0
+    for rule_id, occ_date in RecurringRuleSkip.objects.filter(
+        rule__household_id__in=household_ids,
+        date__gte=start_date,
+        date__lte=end_date,
+    ).values_list("rule_id", "date"):
+        total += purge_planned_rule_occurrence(rule_id, occ_date)
+    return total
 
 
 def _record_skip_for_occurrence(txn: Transaction) -> None:
@@ -165,11 +249,19 @@ def skip_scheduled_transaction(txn: Transaction, *, user=None) -> None:
     if not is_planned_scheduled_eligible(txn):
         raise ValueError("Only unconfirmed scheduled transactions can be skipped.")
 
+    rule_id = txn.rule_id
+    occ_date = txn.date
+    household_id = txn.account.household_id
+
     with db_transaction.atomic():
         _record_skip_for_occurrence(txn)
         delete_transaction_respecting_partner_ledger(txn)
+        if rule_id is not None:
+            purge_planned_rule_occurrence(rule_id, occ_date)
 
-    _invalidate_household_cache(txn)
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    invalidate_financial_cache_for_household(household_id)
 
 
 def move_scheduled_date(txn: Transaction, new_date: date, *, user=None) -> Transaction:

@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # Tunables (business constants — adjust here only).
 SAME_ACCOUNT_DATE_WINDOW_DAYS = 5
 TRANSFER_GROUP_DATE_WINDOW_DAYS = 7
+TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS = 3
 TRANSFER_PAIR_IMPORTED_DATE_WINDOW_DAYS = 5
 AUTO_MATCH_THRESHOLD = 85
 SUGGEST_MATCH_THRESHOLD = 65
@@ -785,6 +786,7 @@ def _planned_candidate_base_qs(imported: Transaction) -> QuerySet[Transaction]:
         )
         .exclude(pk=imported.pk)
         .exclude(source__in=[Transaction.Source.PLAID, Transaction.Source.INTEREST, Transaction.Source.SYSTEM])
+        .exclude(transfer_group_id__isnull=False)
         .filter(
             Q(source=Transaction.Source.RULE)
             | Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])
@@ -1196,14 +1198,182 @@ def reconcile_orphan_matched_plaid_imports(*, account_id: int | None = None) -> 
     return fixed
 
 
+def _transfer_leg_already_import_matched(leg: Transaction) -> bool:
+    """True when this transfer/payment leg already absorbed a bank import."""
+    if leg.reconciled:
+        return True
+    if leg.source == Transaction.Source.PLAID:
+        return True
+    if (leg.plaid_transaction_id or "").strip():
+        return True
+    if leg.import_match_status == Transaction.ImportMatchStatus.MATCHED:
+        return True
+    if TransactionMatch.objects.filter(planned_transaction_id=leg.pk).exists():
+        return True
+    return False
+
+
+def _is_transfer_source_leg(leg: Transaction, tg: TransferGroup) -> bool:
+    return (
+        leg.account_id == tg.from_account_id
+        and leg.amount is not None
+        and leg.amount < 0
+    )
+
+
+def _is_transfer_dest_leg(leg: Transaction, tg: TransferGroup) -> bool:
+    return (
+        leg.account_id == tg.to_account_id
+        and leg.amount is not None
+        and leg.amount > 0
+    )
+
+
+def _transfer_leg_direction_matches_import(leg: Transaction, tg: TransferGroup, imported: Transaction) -> bool:
+    if imported.amount is None or leg.amount is None:
+        return False
+    if imported.amount > 0:
+        return _is_transfer_dest_leg(leg, tg)
+    if imported.amount < 0:
+        return _is_transfer_source_leg(leg, tg)
+    return False
+
+
+def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction | None:
+    """
+    Locate an existing transfer/payment leg that should absorb this import.
+
+    Leg-specific rules: same account, same signed amount, ±3 days, correct source/dest direction,
+    not already matched/imported/reconciled. Never matches the opposite account's leg.
+    """
+    if imported.source != Transaction.Source.PLAID:
+        return None
+    if not (imported.plaid_transaction_id or "").strip():
+        return None
+    if imported.amount is None or imported.amount == 0:
+        return None
+    if imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+        return None
+
+    low = imported.date - timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    high = imported.date + timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    candidates = (
+        Transaction.objects.filter(
+            account_id=imported.account_id,
+            date__gte=low,
+            date__lte=high,
+            amount=imported.amount,
+            transfer_group_id__isnull=False,
+            scenario__isnull=True,
+        )
+        .exclude(pk=imported.pk)
+        .exclude(source=Transaction.Source.PLAID)
+        .select_related("transfer_group")
+        .order_by("date", "id")
+    )
+    best: Transaction | None = None
+    best_dd = 9999
+    for leg in candidates:
+        if _transfer_leg_already_import_matched(leg):
+            continue
+        tg = leg.transfer_group
+        if tg is None and leg.transfer_group_id:
+            tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
+        if tg is None:
+            continue
+        if not _transfer_leg_direction_matches_import(leg, tg, imported):
+            continue
+        if not _amounts_equal(leg.amount, imported.amount):
+            continue
+        dd = abs((leg.date - imported.date).days)
+        if dd < best_dd:
+            best_dd = dd
+            best = leg
+    return best
+
+
+def apply_import_fields_to_transfer_leg(leg: Transaction, imported: Transaction) -> list[str]:
+    """Copy bank/Plaid metadata onto the surviving transfer/payment leg."""
+    update_fields = apply_bank_fields_to_planned_from_import(leg, imported)
+    pid = (imported.plaid_transaction_id or "").strip()
+    if pid and not (leg.plaid_transaction_id or "").strip():
+        leg.plaid_transaction_id = pid[:128]
+        update_fields.append("plaid_transaction_id")
+    if not leg.cleared:
+        leg.cleared = True
+        update_fields.append("cleared")
+    if leg.status == Transaction.Status.PLANNED:
+        leg.status = Transaction.Status.CLEARED
+        update_fields.append("status")
+    leg.import_match_status = Transaction.ImportMatchStatus.MATCHED
+    update_fields.append("import_match_status")
+    return list(dict.fromkeys(update_fields))
+
+
+def merge_import_into_transfer_payment_leg(imported: Transaction, leg: Transaction) -> None:
+    """
+    Keep the scheduled/manual transfer leg as the canonical ledger row; hide the Plaid duplicate.
+
+    Opposite of generic ACTUAL absorb — transfer legs must stay visible with group linkage intact.
+    """
+    if imported.source != Transaction.Source.PLAID:
+        raise ValueError("Only Plaid imports can merge into transfer legs.")
+    if not leg.transfer_group_id:
+        raise ValueError("Target row is not a transfer/payment leg.")
+    with db_transaction.atomic():
+        TransactionMatch.objects.filter(
+            Q(planned_transaction=leg) | Q(imported_transaction=imported)
+        ).delete()
+        MatchSuggestion.objects.filter(imported_transaction=imported).delete()
+        pid = (imported.plaid_transaction_id or "").strip()
+        imported.plaid_transaction_id = None
+        imported.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+        imported.save(update_fields=["plaid_transaction_id", "import_match_status", "updated_at"])
+        update_fields = apply_import_fields_to_transfer_leg(leg, imported)
+        if pid:
+            leg.plaid_transaction_id = pid[:128]
+            if "plaid_transaction_id" not in update_fields:
+                update_fields.append("plaid_transaction_id")
+        leg.save(update_fields=[*update_fields, "updated_at"])
+        tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
+        if tg:
+            _refresh_transfer_group_status(tg)
+
+
+def try_match_import_to_transfer_payment_leg(imported: Transaction) -> bool:
+    """Merge import into an existing transfer/payment leg when leg-specific rules match."""
+    leg = find_transfer_payment_leg_for_import(imported)
+    if leg is None:
+        return False
+    merge_import_into_transfer_payment_leg(imported, leg)
+    return True
+
+
+def _leg_counts_as_import_matched_for_group(t: Transaction) -> bool:
+    if t.import_match_status == Transaction.ImportMatchStatus.MATCHED:
+        return True
+    if (t.plaid_transaction_id or "").strip() and t.transfer_group_id:
+        return True
+    if TransactionMatch.objects.filter(
+        planned_transaction_id=t.pk,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).exists():
+        return True
+    return False
+
+
 def _refresh_transfer_group_status(tg: TransferGroup) -> None:
     txs = list(tg.transactions.all())
-    matched_legs = sum(1 for t in txs if t.import_match_status == Transaction.ImportMatchStatus.MATCHED)
+    matched_legs = sum(1 for t in txs if _leg_counts_as_import_matched_for_group(t))
     if matched_legs == 0:
+        today = timezone.localdate()
+        if tg.scheduled_date > today:
+            tg.status = TransferGroup.Status.PLANNED
+            tg.save(update_fields=["status", "updated_at"])
         return
     if matched_legs >= 2:
         tg.status = TransferGroup.Status.MATCHED
-    elif matched_legs == 1:
+    else:
         tg.status = TransferGroup.Status.PARTIALLY_MATCHED
     tg.save(update_fields=["status", "updated_at"])
 
@@ -1296,11 +1466,14 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
 
 def _should_absorb_planned_into_import(planned: Transaction, imported: Transaction) -> bool:
     """
-    True when ``planned`` is a shadow of the same bank post as ``imported`` (including transfer outflows).
+    True when ``planned`` is a shadow of the same bank post as ``imported`` (excluding transfer legs).
 
-    Rule forecast rows stay matched (hidden); ACTUAL/materialized duplicates are deleted.
+    Transfer/payment legs merge the import onto the leg instead — see
+    :func:`merge_import_into_transfer_payment_leg`.
     """
     if imported.source != Transaction.Source.PLAID:
+        return False
+    if planned.transfer_group_id:
         return False
     if planned.source not in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
         return False
@@ -1413,6 +1586,9 @@ def _create_match_record(
             raise ValueError("Cannot auto-match: import payee does not describe this row.")
         if not _plaid_ids_compatible_for_match(imported, planned):
             raise ValueError("Cannot auto-match: import belongs to a different Plaid transaction id.")
+    if planned.transfer_group_id and planned.account_id == imported.account_id:
+        merge_import_into_transfer_payment_leg(imported, planned)
+        return None
     with db_transaction.atomic():
         tm = TransactionMatch.objects.create(
             planned_transaction=planned,
@@ -1888,7 +2064,13 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
 
     MatchSuggestion.objects.filter(imported_transaction=imported).delete()
 
-    ranked = find_candidate_matches(imported, allow_orphan_repair=not dry_run)
+    if not dry_run:
+        _try_orphan_card_inflow_repair(imported)
+
+    if try_match_import_to_transfer_payment_leg(imported):
+        return None
+
+    ranked = find_candidate_matches(imported, allow_orphan_repair=False)
     if not ranked:
         if not dry_run:
             imported.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
@@ -1978,6 +2160,14 @@ def manual_match_transactions(
         if out is None:
             raise ValueError("Could not create the missing checking payment leg for this transfer.")
         planned = out
+
+    if planned.transfer_group_id and planned.account_id == imported.account_id:
+        MatchSuggestion.objects.filter(imported_transaction=imported).delete()
+        TransactionMatch.objects.filter(
+            Q(planned_transaction=planned) | Q(imported_transaction=imported)
+        ).delete()
+        merge_import_into_transfer_payment_leg(imported, planned)
+        return None
 
     sc, _ = score_candidate(imported, planned)
     if sc <= 0:
@@ -2409,6 +2599,85 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         )
         materialized += 1
     return materialized
+
+
+def repair_transfer_leg_duplicates(
+    *,
+    user_id: int | None = None,
+    account_ids: Iterable[int] | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """
+    Merge visible Plaid imports that duplicate an existing transfer/payment leg.
+
+    Handles legacy TransactionMatch rows that hid the leg instead of absorbing the import.
+    """
+    from accounts.models import Account
+    from core.models import HouseholdMembership
+
+    if account_ids is not None:
+        ids = list({int(a) for a in account_ids if a is not None})
+    elif user_id is not None:
+        hids = HouseholdMembership.objects.filter(user_id=user_id).values_list("household_id", flat=True)
+        ids = list(Account.objects.filter(household_id__in=hids).values_list("pk", flat=True))
+    else:
+        ids = list(Account.objects.values_list("pk", flat=True))
+
+    duplicates_found = merged = skipped = 0
+    touched_households: set[int] = set()
+
+    qs = (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+            scenario__isnull=True,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(import_match_status=Transaction.ImportMatchStatus.DUPLICATE)
+        .order_by("date", "id")
+    )
+    for imp in qs.select_related("account").iterator(chunk_size=200):
+        if imp.reconciled:
+            skipped += 1
+            continue
+        leg = find_transfer_payment_leg_for_import(imp)
+        if leg is None:
+            match = TransactionMatch.objects.filter(imported_transaction=imp).select_related("planned_transaction").first()
+            if match and match.planned_transaction.transfer_group_id:
+                leg = match.planned_transaction
+            else:
+                skipped += 1
+                continue
+        if not leg.transfer_group_id:
+            skipped += 1
+            continue
+        if (
+            imp.import_match_status == Transaction.ImportMatchStatus.DUPLICATE
+            and (leg.plaid_transaction_id or "").strip() == (imp.plaid_transaction_id or "").strip()
+        ):
+            skipped += 1
+            continue
+        if not ledger_visible_transactions(Transaction.objects.filter(pk=imp.pk)).exists():
+            skipped += 1
+            continue
+        duplicates_found += 1
+        if dry_run:
+            continue
+        merge_import_into_transfer_payment_leg(imp, leg)
+        merged += 1
+        if imp.account.household_id:
+            touched_households.add(imp.account.household_id)
+
+    if merged and not dry_run:
+        from common.services.cache import invalidate_financial_cache_for_household
+        from core.timeline_cache import bump_timeline_cache_for_household
+
+        for hid in touched_households:
+            bump_timeline_cache_for_household(hid)
+            invalidate_financial_cache_for_household(hid)
+
+    return {"duplicates_found": duplicates_found, "merged": merged, "skipped": skipped}
 
 
 def repair_invalid_transaction_matches(*, account_id: int | None = None) -> int:

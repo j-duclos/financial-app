@@ -1478,6 +1478,72 @@ class TestBuildTimeline:
         on_savings = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == savings.id]
         assert len(on_savings) == 0
 
+    def test_card_transfer_inflow_leg_is_inflow_when_viewing_destination_only(
+        self, user, household, db
+    ):
+        """Chase→card payments on the card ledger must show as INFLOW (+), not EXPENSE (-)."""
+        fixed_today = date(2026, 7, 3)
+        start = fixed_today
+        end = date(2026, 9, 30)
+        checking = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            currency="USD",
+            starting_balance=Decimal("-1500.00"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Cursor - Move to Venture",
+            account=checking,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("66.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=2,
+            start_date=date(2026, 1, 1),
+            active=True,
+        )
+        pay_date = date(2026, 8, 2)
+        Transaction.objects.create(
+            account=card,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("66.00"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        rows = build_timeline(
+            user,
+            start,
+            end,
+            account_id=card.id,
+            as_of_date=fixed_today,
+            projection_only=True,
+        )
+        on_card = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == card.id]
+        assert len(on_card) >= 1
+        aug = next(r for r in on_card if r.get("date") == pay_date)
+        assert aug.get("type") == "INFLOW"
+        assert Decimal(str(aug.get("amount"))) > 0
+
     def test_duplicate_named_accounts_rule_projects_only_on_bound_account(
         self, user, household, db
     ):

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
+  hideReconciledOpeningBalance,
   creditBalanceColorClass,
   ledgerOpeningBalance,
   accountLedgerDisplayBalance,
@@ -275,6 +276,38 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const sections = splitLedgerSections(rows);
     expect(sections.past).toHaveLength(1);
     expect(sections.past[0].balance).toBeCloseTo(824.83, 2);
+  });
+
+  it("hide-reconciled credit opening normalizes signed reconcile balance", () => {
+    expect(hideReconciledOpeningBalance(-1301.96, true)).toBeCloseTo(1301.96, 2);
+    const rows = buildLedgerRowsFromTimeline(
+      [
+        {
+          date: "2026-06-11",
+          description: "CAPITAL ONE ONLINE PYMT",
+          amount: "200.00",
+          running_balance: "-1101.96",
+          account_id: 6,
+          status: "CLEARED",
+        } as never,
+        {
+          date: "2026-06-12",
+          description: "Cox",
+          amount: "-70.00",
+          running_balance: "-1171.96",
+          account_id: 6,
+          status: "CLEARED",
+        } as never,
+      ],
+      "2026-06-30",
+      0,
+      true,
+      -1301.96
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.start?.balance).toBeCloseTo(1301.96, 2);
+    expect(sections.past[0].balance).toBeCloseTo(1101.96, 2);
+    expect(sections.past[1].balance).toBeCloseTo(1171.96, 2);
   });
 
   it("hide-reconciled walks sequentially from opening override, not absolute server balances", () => {
@@ -1213,5 +1246,26 @@ describe("shouldHighlightUnmatchedScheduledRow", () => {
     };
     const timeline = [matched, importedPypl];
     expect(shouldHighlightUnmatchedScheduledRow(matched, timeline)).toBe(false);
+  });
+
+  it("does not highlight transfer leg already confirmed by bank import", () => {
+    const matchedTransferLeg: TimelineRow = {
+      date: "2026-03-20",
+      description: "Credit Card Payment",
+      account_id: 2,
+      account_name: "Savor",
+      category_id: null,
+      category_name: null,
+      amount: "1100.00",
+      type: "INFLOW",
+      status: "PLANNED",
+      source: "actual",
+      transfer_group_id: 99,
+      plaid_transaction_id: "pl-savor-in",
+      import_match_status: "matched",
+      transaction_id: 7001,
+      running_balance: "0",
+    };
+    expect(shouldHighlightUnmatchedScheduledRow(matchedTransferLeg, [matchedTransferLeg])).toBe(false);
   });
 });

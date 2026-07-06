@@ -577,6 +577,13 @@ def repair_orphan_transfer_group_legs(
                     continue
                 if pay_dt <= today and sole.source == Transaction.Source.ACTUAL:
                     continue
+                if in_leg.rule_id is not None and RecurringRuleSkip.objects.filter(
+                    rule_id=in_leg.rule_id,
+                    date=pay_dt,
+                ).exists():
+                    in_leg.delete()
+                    tg.delete()
+                    continue
                 out_leg = _create_missing_transfer_leg_for_group(
                     tg=tg,
                     existing=sole,

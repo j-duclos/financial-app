@@ -292,8 +292,15 @@ class TestPlaidMatching(TestCase):
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = match_imported_transaction(imp)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.planned_transaction_id, out_leg.pk)
+        self.assertIsNone(m)
+        out_leg.refresh_from_db()
+        imp.refresh_from_db()
+        self.assertEqual(out_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(out_leg.plaid_transaction_id, "plaid-tg")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        visible = set(ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list("pk", flat=True))
+        self.assertIn(out_leg.pk, visible)
+        self.assertNotIn(imp.pk, visible)
 
     def test_matched_planned_hidden_from_ledger_sum(self):
         planned = Transaction.objects.create(
@@ -356,8 +363,11 @@ class TestPlaidMatching(TestCase):
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = match_imported_transaction(imp)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.planned_transaction_id, out_leg.pk)
+        self.assertIsNone(m)
+        out_leg.refresh_from_db()
+        imp.refresh_from_db()
+        self.assertEqual(out_leg.plaid_transaction_id, "plaid-amz-pay")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
     def test_orphan_inflow_leg_restores_checking_out_then_matches(self):
         card = Account.objects.create(
@@ -385,12 +395,20 @@ class TestPlaidMatching(TestCase):
             imported_description="CAPITAL ONE ONLINE PMT CA0F652823B8B44 WEB ID",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
-        m = match_imported_transaction(imp)
-        self.assertIsNotNone(m)
-        out = Transaction.objects.get(account=self.acc, amount=Decimal("-250.00"), pk=m.planned_transaction_id)
+        match_imported_transaction(imp)
+        out = Transaction.objects.get(
+            account=self.acc, amount=Decimal("-250.00"), transfer_group__isnull=False
+        )
         self.assertIsNotNone(out.transfer_group_id)
         in_leg.refresh_from_db()
         self.assertEqual(in_leg.transfer_group_id, out.transfer_group_id)
+        self.assertEqual(out.plaid_transaction_id, "plaid-cap1")
+        self.assertEqual(
+            ledger_visible_transactions(
+                Transaction.objects.filter(account=self.acc, amount=Decimal("-250.00"))
+            ).count(),
+            1,
+        )
 
     def test_no_orphan_repair_when_multiple_same_amount_cards_ambiguous(self):
         for name in ("Savor", "Venture", "Platinum"):
@@ -805,8 +823,11 @@ class TestPlaidMatching(TestCase):
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = match_imported_transaction(first)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.planned_transaction_id, out_leg.pk)
+        self.assertIsNone(m)
+        out_leg.refresh_from_db()
+        first.refresh_from_db()
+        self.assertEqual(out_leg.plaid_transaction_id, "plaid-savor-1")
+        self.assertEqual(first.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
         second = Transaction.objects.create(
             account=self.acc,
@@ -828,9 +849,9 @@ class TestPlaidMatching(TestCase):
                 "pk", flat=True
             )
         )
-        self.assertIn(first.pk, visible)
-        self.assertNotIn(out_leg.pk, visible)
+        self.assertIn(out_leg.pk, visible)
         self.assertIn(second.pk, visible)
+        self.assertNotIn(first.pk, visible)
 
     def test_reconcile_orphan_matched_plaid_import(self):
         d = date(2026, 5, 13)
@@ -908,7 +929,9 @@ class TestPlaidMatching(TestCase):
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = match_imported_transaction(imp)
-        self.assertEqual(m.planned_transaction_id, savor_out.pk)
+        self.assertIsNone(m)
+        savor_out.refresh_from_db()
+        self.assertEqual(savor_out.plaid_transaction_id, "plaid-550")
 
     def test_manual_cross_account_match_creates_checking_leg(self):
         card = Account.objects.create(
@@ -1062,7 +1085,9 @@ class TestPlaidMatching(TestCase):
         )
         match_imported_transaction(card_pmt)
         out_leg.refresh_from_db()
+        card_pmt.refresh_from_db()
         self.assertEqual(out_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(card_pmt.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
         zelle_a = Transaction.objects.create(
             account=self.acc,
@@ -1393,8 +1418,6 @@ class TestPlaidMatching(TestCase):
             payee=payee,
         )
         transfer_out = Transaction.objects.get(account=self.acc, amount=amt, date=d)
-        transfer_out.reconciled = True
-        transfer_out.save(update_fields=["reconciled", "updated_at"])
 
         first = Transaction.objects.create(
             account=self.acc,
@@ -1436,9 +1459,9 @@ class TestPlaidMatching(TestCase):
         )
         self.assertGreaterEqual(visible.count(), 2)
         visible_pks = set(visible.values_list("pk", flat=True))
-        self.assertIn(first.pk, visible_pks)
+        self.assertIn(transfer_out.pk, visible_pks)
         self.assertIn(resync.pk, visible_pks)
-        self.assertNotIn(transfer_out.pk, visible_pks)
+        self.assertNotIn(first.pk, visible_pks)
         ghost.delete()
 
 

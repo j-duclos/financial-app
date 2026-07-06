@@ -55,6 +55,7 @@ import {
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
   buildLedgerRowsFromTimeline,
+  hideReconciledOpeningBalance,
   splitLedgerSections,
   lowestProjectedFromLedgerFuture,
   isTransferCategoryName,
@@ -1011,12 +1012,16 @@ export default function Transactions() {
     if (!account || typeof accountId !== "number" || !accountMatchesSelection) return [];
     const today = todayStr();
     const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
-    const pastOpeningOverride =
+    const pastOpeningOverrideRaw =
       hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
         ? parseFloat(ledgerTimelineData.past_opening_balance)
         : hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
           ? parseFloat(reconcileSetupData.last_reconciled_balance)
           : null;
+    const pastOpeningOverride = hideReconciledOpeningBalance(
+      pastOpeningOverrideRaw,
+      isCreditAccount
+    );
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
@@ -1104,7 +1109,7 @@ export default function Transactions() {
       : transactions;
     const fallbackBuilt = buildLedgerRows(
       fallbackTxns,
-      openingBalance,
+      hasPastOpeningOverride ? pastOpeningOverride! : openingBalance,
       account.currency,
       isCreditAccount,
       apiBalance

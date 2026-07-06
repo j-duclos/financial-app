@@ -383,6 +383,13 @@ def _timeline_row_meta(txn: Optional[Transaction]) -> dict[str, Any]:
     }
 
 
+def _timeline_row_type_for_amount(amount: Decimal | None) -> str:
+    """Ledger display type from signed amount — not rule.direction (transfers stay EXPENSE on the rule)."""
+    if amount is not None and amount < 0:
+        return "OUTFLOW"
+    return "INFLOW"
+
+
 def _projected_rule_timeline_row(
     *,
     d: date,
@@ -524,7 +531,7 @@ def _append_rescheduled_rule_materializations(
         rule = t.rule
         acc = t.account
         acc_name = acc.effective_display_name if acc else ""
-        row_type = rule.direction if rule else RecurringRule.Direction.EXPENSE
+        row_type = _timeline_row_type_for_amount(amt)
         cat_name = t.category.name if getattr(t, "category", None) else None
         desc = (t.payee or (rule.name if rule else "")).strip() or "Scheduled"
         ids_in_rows.add(t.pk)
@@ -2193,6 +2200,55 @@ def _build_timeline_impl(
         shadow_ids = shadowed_rule_occurrence_ids(actual)
         if shadow_ids:
             actual = [t for t in actual if t.pk not in shadow_ids]
+
+        household_ids = list(households.values_list("pk", flat=True))
+        skipped_occurrences = set(
+            RecurringRuleSkip.objects.filter(
+                rule__household_id__in=household_ids,
+                date__lte=end_date,
+            ).values_list("rule_id", "date")
+        )
+        if skipped_occurrences and not projection_only:
+            from transactions.services.expected_lifecycle import heal_skipped_occurrence_planned_rows
+
+            healed = heal_skipped_occurrence_planned_rows(
+                household_ids=household_ids,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if healed:
+                actual = [
+                    t
+                    for t in actual
+                    if not (
+                        t.rule_id is not None
+                        and (t.rule_id, t.date) in skipped_occurrences
+                        and t.source == Transaction.Source.RULE
+                        and t.status == Transaction.Status.PLANNED
+                    )
+                ]
+                # #region agent log
+                import json
+
+                try:
+                    with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
+                        _f.write(
+                            json.dumps(
+                                {
+                                    "sessionId": "641553",
+                                    "location": "ledger.py:heal_skipped_occurrence",
+                                    "message": "healed skipped orphan planned rows",
+                                    "data": {"healed": healed, "skip_count": len(skipped_occurrences)},
+                                    "timestamp": int(timezone.now().timestamp() * 1000),
+                                    "hypothesisId": "H1-H3",
+                                }
+                            )
+                            + "\n"
+                        )
+                except Exception:
+                    pass
+                # #endregion
+
         # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
         # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
         # one row per rule occurrence when duplicates exist (e.g. after account change + materialization).
@@ -2270,6 +2326,14 @@ def _build_timeline_impl(
             amt = t.amount
             sign = 1 if (amt is not None and amt >= 0) else -1
             if t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
+                ids_in_rows.add(t.id)
+                continue
+            if (
+                t.rule_id is not None
+                and (t.rule_id, t.date) in skipped_occurrences
+                and t.source == Transaction.Source.RULE
+                and t.status == Transaction.Status.PLANNED
+            ):
                 ids_in_rows.add(t.id)
                 continue
             if t.rule_id is not None:
@@ -2451,15 +2515,16 @@ def _build_timeline_impl(
         occurrence_events: list[tuple[date, Decimal, int, str, tuple]] = []
 
         def _rule_account_forecastable(rule_obj: RecurringRule, eff: dict) -> bool:
-            """Include rules whose source account is in scope.
-
-            Transfer destinations may be on other accounts (e.g. Chase→Savings). The output
-            filter keeps only rows for the requested account(s), but we must still project
-            those rules when projection_only=True — otherwise future materialized rows are
-            hidden and the forecast loses every cross-account transfer.
-            """
+            """Include rules whose source or transfer destination account is in scope."""
             acc_id = eff.get("account_id") or rule_obj.account_id
-            return acc_id in forecastable_account_ids
+            if acc_id in forecastable_account_ids:
+                return True
+            to_id = rule_obj.transfer_to_account_id
+            if to_id and to_id in forecastable_account_ids:
+                cat_nm = rule_obj.category.name if getattr(rule_obj, "category", None) else None
+                if _category_name_allows_rule_transfer_destination(cat_nm):
+                    return True
+            return False
 
         for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
             if not _rule_account_forecastable(rule, eff):
@@ -2839,7 +2904,7 @@ def _build_timeline_impl(
                         category_id=cat_id,
                         category_name=cat_name,
                         amount_decimal=amount_decimal,
-                        row_type=rule.direction,
+                        row_type=_timeline_row_type_for_amount(amount_decimal),
                         description=rule.name,
                         sort_key=(d, 1, rule.id),
                         ids_in_rows=ids_in_rows,
@@ -2856,7 +2921,7 @@ def _build_timeline_impl(
                                 category_id=cat_id,
                                 category_name=cat_name,
                                 amount=amount_decimal,
-                                row_type=rule.direction,
+                                row_type=_timeline_row_type_for_amount(amount_decimal),
                                 rule_id=rule.id,
                                 sort_key=(d, 1, rule.id),
                             )
@@ -2886,7 +2951,7 @@ def _build_timeline_impl(
                     "category_id": cat_id,
                     "category_name": cat_name,
                     "amount": amt,
-                    "type": rule.direction,
+                    "type": _timeline_row_type_for_amount(amt),
                     "status": txn.status,
                     "source": "actual",
                     "rule_id": rule.id,

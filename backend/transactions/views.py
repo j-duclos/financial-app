@@ -667,15 +667,22 @@ class TransactionViewSet(ModelViewSet):
                 cycle_end_date=anchor,
             )
         # Record skip for any planned rule occurrence so materialization does not recreate it.
-        if (
-            instance.rule_id is not None
+        rule_id = instance.rule_id
+        occ_date = instance.date
+        record_skip = (
+            rule_id is not None
             and instance.status == Transaction.Status.PLANNED
-        ):
+        )
+        if record_skip:
             from timeline.models import RecurringRuleSkip
-            RecurringRuleSkip.objects.get_or_create(rule_id=instance.rule_id, date=instance.date)
+            RecurringRuleSkip.objects.get_or_create(rule_id=rule_id, date=occ_date)
         # Transfer pairs: delete both legs unless counterparty account is manual-only
         # (preserve_partner_transfer_legs); see delete_transaction_respecting_partner_ledger.
         delete_transaction_respecting_partner_ledger(instance)
+        if record_skip:
+            from transactions.services.expected_lifecycle import purge_planned_rule_occurrence
+
+            purge_planned_rule_occurrence(rule_id, occ_date)
 
 
 class TransferCreateView(APIView):
