@@ -1069,7 +1069,8 @@ export default function Transactions() {
         today,
         openingBalance,
         isCreditAccount,
-        hasPastOpeningOverride ? pastOpeningOverride : null
+        hasPastOpeningOverride ? pastOpeningOverride : null,
+        apiBalance
       );
       // #region agent log
       const startRow = built.find((r) => r.type === "starting_balance");

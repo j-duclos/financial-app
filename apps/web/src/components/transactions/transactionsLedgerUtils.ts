@@ -486,6 +486,41 @@ export function applyTimelineAmountToBalance(
   return isCredit ? Math.abs(next) : next;
 }
 
+/** Undo one timeline posting when reverse-walking from today's account balance. */
+export function undoTimelineAmountFromBalance(
+  running: number,
+  amount: number,
+  isCredit: boolean
+): number {
+  if (Number.isNaN(amount)) return running;
+  if (!isCredit) {
+    return running - amount;
+  }
+  if (amount < 0) {
+    return Math.abs(running - Math.abs(amount));
+  }
+  return Math.abs(running + amount);
+}
+
+function assignPastBalancesFromTodayAnchor(
+  pastRows: Extract<LedgerRow, { type: "transaction_from_timeline" } | { type: "transaction" }>[],
+  todayBalance: number,
+  isCredit: boolean
+): { rows: typeof pastRows; startingBalance: number } {
+  let running = todayBalance;
+  const rows = [...pastRows];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const amt =
+      row.type === "transaction_from_timeline"
+        ? parseFloat(row.row.amount)
+        : parseFloat(row.txn.amount);
+    rows[i] = { ...row, balance: running };
+    running = undoTimelineAmountFromBalance(running, amt, isCredit);
+  }
+  return { rows, startingBalance: running };
+}
+
 /**
  * Opening balance for the ledger UI from account settings (not inferred from timeline rows).
  * Credit cards: user enters amount owed as a positive number (0 = no opening debt).
@@ -586,7 +621,8 @@ export function buildLedgerRowsFromTimeline(
   today: string,
   openingBalance: number,
   isCredit: boolean,
-  pastOpeningOverride?: number | null
+  pastOpeningOverride?: number | null,
+  todayBalanceOverride?: number | null
 ): LedgerRow[] {
   const visibleTimeline = timeline.filter(
     (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
@@ -607,73 +643,48 @@ export function buildLedgerRowsFromTimeline(
     pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
       ? hideReconciledOpeningBalance(pastOpeningOverride, isCredit)
       : null;
-  const start =
-    normalizedOverride != null
-      ? normalizedOverride
-      : isCredit
-        ? resolveLedgerOpening(openingBalance, past[0], isCredit)
-        : configuredOpening;
-  // #region agent log
-  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
-    body: JSON.stringify({
-      sessionId: "641553",
-      location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline",
-      message: "start balance branch",
-      data: {
-        pastOpeningOverride,
-        configuredOpening,
-        isCredit,
-        start,
-        firstPastDate: past[0]?.date ?? null,
-        firstPastAmount: past[0]?.amount ?? null,
-        pastPreview: past.slice(0, 5).map((r) => ({
-          date: r.date,
-          desc: String(r.description).slice(0, 30),
-          amount: r.amount,
-        })),
-      },
-      timestamp: Date.now(),
-      runId: "post-fix-v2",
-      hypothesisId: "H7",
-    }),
-  }).catch(() => {});
-  // #endregion
+  const anchoredToday =
+    todayBalanceOverride != null && Number.isFinite(todayBalanceOverride)
+      ? todayBalanceOverride
+      : null;
+
+  let start: number;
+  let pastLedgerRows: LedgerRow[] = [];
+
+  if (anchoredToday != null && past.length > 0) {
+    const pastOnly = past.map(
+      (r): Extract<LedgerRow, { type: "transaction_from_timeline" }> => ({
+        type: "transaction_from_timeline",
+        row: r,
+        balance: 0,
+      })
+    );
+    const anchored = assignPastBalancesFromTodayAnchor(pastOnly, anchoredToday, isCredit);
+    start = anchored.startingBalance;
+    pastLedgerRows = anchored.rows;
+  } else {
+    start =
+      normalizedOverride != null
+        ? normalizedOverride
+        : isCredit
+          ? resolveLedgerOpening(openingBalance, past[0], isCredit)
+          : configuredOpening;
+    let running = start;
+    for (const r of past) {
+      running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+      pastLedgerRows.push({
+        type: "transaction_from_timeline",
+        row: r,
+        balance: running,
+      });
+    }
+  }
   rows.push({ type: "starting_balance", balance: start });
+  rows.push(...pastLedgerRows);
 
-  let running = start;
-  for (const r of past) {
-    running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
-    rows.push({
-      type: "transaction_from_timeline",
-      row: r,
-      balance: running,
-    });
-  }
-  // #region agent log
-  if (pastOpeningOverride != null && past.length >= 1) {
-    const pastBalances = rows
-      .filter((row): row is Extract<LedgerRow, { type: "transaction_from_timeline" }> => row.type === "transaction_from_timeline")
-      .slice(0, 5)
-      .map((row) => ({ desc: String(row.row.description).slice(0, 30), amount: row.row.amount, balance: row.balance }));
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
-      body: JSON.stringify({
-        sessionId: "641553",
-        location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline:walk",
-        message: "sequential past balances",
-        data: { start, pastBalances },
-        timestamp: Date.now(),
-        runId: "post-fix-v2",
-        hypothesisId: "H7",
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-
-  const todayBalance = running;
+  const todayBalance =
+    anchoredToday ??
+    (pastLedgerRows.length > 0 ? pastLedgerRows[pastLedgerRows.length - 1].balance : start);
   rows.push({ type: "today_balance", balance: todayBalance });
 
   // Pending expected rows are scheduled/rule items whose date has arrived but no

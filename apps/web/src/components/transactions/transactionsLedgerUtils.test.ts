@@ -302,12 +302,60 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       "2026-06-30",
       0,
       true,
-      -1301.96
+      -1301.96,
+      1171.96
     );
     const sections = splitLedgerSections(rows);
     expect(sections.start?.balance).toBeCloseTo(1301.96, 2);
     expect(sections.past[0].balance).toBeCloseTo(1101.96, 2);
     expect(sections.past[1].balance).toBeCloseTo(1171.96, 2);
+  });
+
+  it("show-all reconciled rows anchor to the same today balance as hide-reconciled", () => {
+    const rows = buildLedgerRowsFromTimeline(
+      [
+        {
+          date: "2026-06-03",
+          description: "ED-3",
+          amount: "-550.00",
+          running_balance: "-1994.71",
+          account_id: 6,
+          status: "RECONCILED",
+        } as never,
+        {
+          date: "2026-06-03",
+          description: "INTEREST CHARGE:PURCHASES",
+          amount: "-38.18",
+          running_balance: "-2032.89",
+          account_id: 6,
+          status: "RECONCILED",
+        } as never,
+        {
+          date: "2026-06-11",
+          description: "CAPITAL ONE ONLINE PYMT",
+          amount: "200.00",
+          running_balance: "-1832.89",
+          account_id: 6,
+          status: "CLEARED",
+        } as never,
+        {
+          date: "2026-06-12",
+          description: "Cox",
+          amount: "-70.00",
+          running_balance: "-1171.96",
+          account_id: 6,
+          status: "CLEARED",
+        } as never,
+      ],
+      "2026-06-30",
+      0,
+      true,
+      null,
+      1171.96
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past[sections.past.length - 1].balance).toBeCloseTo(1171.96, 2);
+    expect(sections.today?.balance).toBeCloseTo(1171.96, 2);
   });
 
   it("hide-reconciled walks sequentially from opening override, not absolute server balances", () => {
