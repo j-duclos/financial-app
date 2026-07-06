@@ -170,6 +170,9 @@ def create_transfer(
             date=sched,
             memo=memo,
         )
+    from transactions.services.matching import rematch_pending_transfer_imports_for_group
+
+    rematch_pending_transfer_imports_for_group(tg)
     return xfer
 
 

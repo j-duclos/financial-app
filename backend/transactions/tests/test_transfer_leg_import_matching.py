@@ -202,3 +202,31 @@ class TransferLegImportMatchingTestCase(TestCase):
         self.assertEqual(in_leg.plaid_transaction_id, "pl-repair")
         visible = ledger_visible_transactions(Transaction.objects.filter(account=self.savor))
         self.assertEqual(visible.filter(amount=self.amount).count(), 1)
+
+    def test_import_before_payment_schedule_rematches_on_create(self):
+        """Card import that materialized before legs existed should merge when payment is scheduled."""
+        imp = Transaction.objects.create(
+            account=self.savor,
+            date=self.pay_date - timedelta(days=2),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=self.amount,
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-savor-early",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        out_leg, in_leg = self._create_payment()
+        imp_id = imp.pk
+        self.assertFalse(Transaction.objects.filter(pk=imp_id).exists())
+        in_leg.refresh_from_db()
+        out_leg.refresh_from_db()
+        self.assertEqual(in_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(in_leg.plaid_transaction_id, "pl-savor-early")
+        self.assertEqual(out_leg.transfer_group_id, in_leg.transfer_group_id)
+        visible_savor = ledger_visible_transactions(Transaction.objects.filter(account=self.savor))
+        self.assertEqual(visible_savor.filter(amount=self.amount).count(), 1)
+        visible_checking = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.checking, amount=-self.amount)
+        )
+        self.assertEqual(visible_checking.count(), 1)

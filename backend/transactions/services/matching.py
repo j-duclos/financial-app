@@ -1239,6 +1239,17 @@ def _transfer_leg_direction_matches_import(leg: Transaction, tg: TransferGroup, 
     return False
 
 
+def _is_bank_import_for_transfer_match(txn: Transaction) -> bool:
+    """Plaid row or materialized ACTUAL row that still carries a bank transaction id."""
+    if txn.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+        return False
+    if txn.source == Transaction.Source.PLAID:
+        return bool((txn.plaid_transaction_id or "").strip())
+    if txn.source == Transaction.Source.ACTUAL:
+        return bool((txn.plaid_transaction_id or "").strip())
+    return False
+
+
 def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction | None:
     """
     Locate an existing transfer/payment leg that should absorb this import.
@@ -1246,9 +1257,7 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
     Leg-specific rules: same account, same signed amount, ±3 days, correct source/dest direction,
     not already matched/imported/reconciled. Never matches the opposite account's leg.
     """
-    if imported.source != Transaction.Source.PLAID:
-        return None
-    if not (imported.plaid_transaction_id or "").strip():
+    if not _is_bank_import_for_transfer_match(imported):
         return None
     if imported.amount is None or imported.amount == 0:
         return None
@@ -1316,25 +1325,40 @@ def merge_import_into_transfer_payment_leg(imported: Transaction, leg: Transacti
 
     Opposite of generic ACTUAL absorb — transfer legs must stay visible with group linkage intact.
     """
-    if imported.source != Transaction.Source.PLAID:
-        raise ValueError("Only Plaid imports can merge into transfer legs.")
+    if not _is_bank_import_for_transfer_match(imported):
+        raise ValueError("Only bank imports can merge into transfer legs.")
     if not leg.transfer_group_id:
         raise ValueError("Target row is not a transfer/payment leg.")
     with db_transaction.atomic():
+        if imported.pk == leg.pk:
+            update_fields = apply_import_fields_to_transfer_leg(leg, imported)
+            leg.save(update_fields=[*update_fields, "updated_at"])
+            tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
+            if tg:
+                _refresh_transfer_group_status(tg)
+            return
         TransactionMatch.objects.filter(
             Q(planned_transaction=leg) | Q(imported_transaction=imported)
         ).delete()
         MatchSuggestion.objects.filter(imported_transaction=imported).delete()
         pid = (imported.plaid_transaction_id or "").strip()
-        imported.plaid_transaction_id = None
-        imported.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
-        imported.save(update_fields=["plaid_transaction_id", "import_match_status", "updated_at"])
+        if imported.source == Transaction.Source.PLAID:
+            imported.plaid_transaction_id = None
+            imported.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+            imported.save(update_fields=["plaid_transaction_id", "import_match_status", "updated_at"])
+        elif imported.source == Transaction.Source.ACTUAL and imported.pk != leg.pk and pid:
+            imported.plaid_transaction_id = None
+            imported.save(update_fields=["plaid_transaction_id", "updated_at"])
         update_fields = apply_import_fields_to_transfer_leg(leg, imported)
         if pid:
             leg.plaid_transaction_id = pid[:128]
             if "plaid_transaction_id" not in update_fields:
                 update_fields.append("plaid_transaction_id")
         leg.save(update_fields=[*update_fields, "updated_at"])
+        if imported.source == Transaction.Source.ACTUAL and imported.pk != leg.pk:
+            from transactions.services.posting import _delete_transaction_cascade
+
+            _delete_transaction_cascade(imported)
         tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
         if tg:
             _refresh_transfer_group_status(tg)
@@ -1347,6 +1371,315 @@ def try_match_import_to_transfer_payment_leg(imported: Transaction) -> bool:
         return False
     merge_import_into_transfer_payment_leg(imported, leg)
     return True
+
+
+def rematch_pending_transfer_imports_for_group(tg: TransferGroup) -> int:
+    """
+    After creating transfer/payment legs, match bank imports that arrived before the schedule existed.
+    """
+    low = tg.scheduled_date - timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    high = tg.scheduled_date + timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    matched = 0
+    for account_id, signed_amount in (
+        (tg.to_account_id, tg.amount),
+        (tg.from_account_id, -tg.amount),
+    ):
+        qs = (
+            Transaction.objects.filter(
+                account_id=account_id,
+                date__gte=low,
+                date__lte=high,
+                amount=signed_amount,
+                scenario__isnull=True,
+            )
+            .exclude(import_match_status=Transaction.ImportMatchStatus.DUPLICATE)
+            .filter(
+                Q(source=Transaction.Source.PLAID)
+                | (
+                    Q(source=Transaction.Source.ACTUAL)
+                    & ~Q(plaid_transaction_id__isnull=True)
+                    & ~Q(plaid_transaction_id="")
+                )
+            )
+        )
+        for imp in qs:
+            if try_match_import_to_transfer_payment_leg(imp):
+                matched += 1
+    return matched
+
+
+def _find_transfer_group_for_orphan_import(imported: Transaction) -> TransferGroup | None:
+    """Transfer group whose schedule matches a bank import with no surviving leg row."""
+    if imported.amount is None or imported.amount == 0:
+        return None
+    low = imported.date - timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    high = imported.date + timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
+    qs = TransferGroup.objects.filter(
+        household_id=imported.account.household_id,
+        amount=abs(imported.amount),
+        scheduled_date__gte=low,
+        scheduled_date__lte=high,
+    )
+    if imported.amount > 0:
+        qs = qs.filter(to_account_id=imported.account_id)
+    else:
+        qs = qs.filter(from_account_id=imported.account_id)
+    return qs.order_by("-scheduled_date", "-id").first()
+
+
+def repair_broken_transfer_payment_wiring(
+    *,
+    user_id: int | None = None,
+    account_ids: Iterable[int] | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """
+    Rewire materialized card-payment imports and recreate missing checking source legs.
+
+    Handles: import arrived before legs existed, empty transfer groups, orphaned inflows on the wrong group.
+    """
+    from accounts.models import Account
+    from core.models import HouseholdMembership
+    from transactions.services.posting import (
+        _create_missing_transfer_leg_for_group,
+        _txn_has_transfer_bridge,
+        _wire_transfer_legs,
+    )
+
+    if account_ids is not None:
+        ids = list({int(a) for a in account_ids if a is not None})
+    elif user_id is not None:
+        hids = HouseholdMembership.objects.filter(user_id=user_id).values_list("household_id", flat=True)
+        ids = list(Account.objects.filter(household_id__in=hids).values_list("pk", flat=True))
+    else:
+        ids = list(Account.objects.values_list("pk", flat=True))
+
+    rewired = source_legs_created = merged = 0
+    touched_households: set[int] = set()
+
+    orphan_qs = (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            account__account_type=Account.AccountType.CREDIT,
+            amount__gt=0,
+            source=Transaction.Source.ACTUAL,
+            scenario__isnull=True,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(import_match_status=Transaction.ImportMatchStatus.DUPLICATE)
+        .select_related("account")
+    )
+    for imp in orphan_qs.iterator(chunk_size=200):
+        if _txn_has_transfer_bridge(imp):
+            tg = TransferGroup.objects.filter(pk=imp.transfer_group_id).first() if imp.transfer_group_id else None
+            if tg is not None:
+                src = Transaction.objects.filter(
+                    transfer_group_id=tg.pk,
+                    account_id=tg.from_account_id,
+                    amount=-abs(tg.amount),
+                ).first()
+                if src is None and not dry_run:
+                    pay_dt = tg.scheduled_date
+                    out_leg = _create_missing_transfer_leg_for_group(
+                        tg=tg,
+                        existing=imp,
+                        missing_account_id=tg.from_account_id,
+                        signed_amount=-tg.amount,
+                    )
+                    out_leg.date = pay_dt
+                    out_leg.planned_date = pay_dt
+                    out_leg.status = Transaction.Status.PLANNED
+                    out_leg.cleared = False
+                    out_leg.import_match_status = Transaction.ImportMatchStatus.NONE
+                    out_leg.plaid_transaction_id = None
+                    out_leg.save(
+                        update_fields=[
+                            "date",
+                            "planned_date",
+                            "status",
+                            "cleared",
+                            "import_match_status",
+                            "plaid_transaction_id",
+                            "updated_at",
+                        ]
+                    )
+                    _wire_transfer_legs(
+                        out_leg=out_leg,
+                        in_leg=imp,
+                        tg=tg,
+                        amount=tg.amount,
+                        pay_dt=out_leg.date or imp.date or tg.scheduled_date,
+                    )
+                    _refresh_transfer_group_status(tg)
+                    source_legs_created += 1
+                    touched_households.add(imp.account.household_id)
+            continue
+
+        tg = _find_transfer_group_for_orphan_import(imp)
+        if tg is None:
+            continue
+        src_exists = Transaction.objects.filter(
+            transfer_group_id=tg.pk,
+            account_id=tg.from_account_id,
+            amount=-tg.amount,
+        ).exists()
+        if imp.transfer_group_id == tg.pk and src_exists and _txn_has_transfer_bridge(imp):
+            continue
+
+        dest_leg = (
+            Transaction.objects.filter(
+                transfer_group_id=tg.pk,
+                account_id=tg.to_account_id,
+                amount=tg.amount,
+            )
+            .exclude(pk=imp.pk)
+            .first()
+        )
+        if dry_run:
+            if dest_leg is not None:
+                merged += 1
+            else:
+                rewired += 1
+            continue
+
+        in_leg = imp
+        wrong_tg_id = imp.transfer_group_id
+        with db_transaction.atomic():
+            if dest_leg is not None:
+                merge_import_into_transfer_payment_leg(imp, dest_leg)
+                in_leg = dest_leg
+                merged += 1
+            elif imp.transfer_group_id != tg.pk or imp.import_match_status != Transaction.ImportMatchStatus.MATCHED:
+                imp.transfer_group_id = tg.pk
+                imp.import_match_status = Transaction.ImportMatchStatus.MATCHED
+                imp.transaction_type = Transaction.TransactionType.CREDIT_CARD_PAYMENT
+                imp.cleared = True
+                imp.status = Transaction.Status.CLEARED
+                imp.save(
+                    update_fields=[
+                        "transfer_group_id",
+                        "import_match_status",
+                        "transaction_type",
+                        "cleared",
+                        "status",
+                        "updated_at",
+                    ]
+                )
+                rewired += 1
+                in_leg = imp
+
+            src_leg = Transaction.objects.filter(
+                transfer_group_id=tg.pk,
+                account_id=tg.from_account_id,
+                amount=-tg.amount,
+            ).first()
+            if src_leg is None:
+                pay_dt = tg.scheduled_date
+                out_leg = _create_missing_transfer_leg_for_group(
+                    tg=tg,
+                    existing=in_leg,
+                    missing_account_id=tg.from_account_id,
+                    signed_amount=-tg.amount,
+                )
+                out_leg.date = pay_dt
+                out_leg.planned_date = pay_dt
+                out_leg.status = Transaction.Status.PLANNED
+                out_leg.cleared = False
+                out_leg.import_match_status = Transaction.ImportMatchStatus.NONE
+                out_leg.plaid_transaction_id = None
+                out_leg.save(
+                    update_fields=[
+                        "date",
+                        "planned_date",
+                        "status",
+                        "cleared",
+                        "import_match_status",
+                        "plaid_transaction_id",
+                        "updated_at",
+                    ]
+                )
+                _wire_transfer_legs(
+                    out_leg=out_leg,
+                    in_leg=in_leg,
+                    tg=tg,
+                    amount=tg.amount,
+                    pay_dt=out_leg.date or in_leg.date or tg.scheduled_date,
+                )
+                source_legs_created += 1
+            elif not _txn_has_transfer_bridge(in_leg):
+                _wire_transfer_legs(
+                    out_leg=src_leg,
+                    in_leg=in_leg,
+                    tg=tg,
+                    amount=tg.amount,
+                    pay_dt=src_leg.date or in_leg.date or tg.scheduled_date,
+                )
+            _refresh_transfer_group_status(tg)
+            if wrong_tg_id and wrong_tg_id != tg.pk:
+                if not Transaction.objects.filter(transfer_group_id=wrong_tg_id).exists():
+                    TransferGroup.objects.filter(pk=wrong_tg_id).delete()
+        touched_households.add(in_leg.account.household_id)
+
+    if not dry_run:
+        for tg in TransferGroup.objects.filter(
+            Q(from_account_id__in=ids) | Q(to_account_id__in=ids)
+        ).iterator(chunk_size=200):
+            legs = list(Transaction.objects.filter(transfer_group_id=tg.pk))
+            if len(legs) == 1:
+                sole = legs[0]
+                if sole.account_id == tg.to_account_id and sole.amount and sole.amount > 0:
+                    if not dry_run and not Transaction.objects.filter(
+                        transfer_group_id=tg.pk, account_id=tg.from_account_id
+                    ).exists():
+                        pay_dt = tg.scheduled_date
+                        out_leg = _create_missing_transfer_leg_for_group(
+                            tg=tg,
+                            existing=sole,
+                            missing_account_id=tg.from_account_id,
+                            signed_amount=-tg.amount,
+                        )
+                        out_leg.date = pay_dt
+                        out_leg.planned_date = pay_dt
+                        out_leg.status = Transaction.Status.PLANNED
+                        out_leg.cleared = False
+                        out_leg.import_match_status = Transaction.ImportMatchStatus.NONE
+                        out_leg.plaid_transaction_id = None
+                        out_leg.save(
+                            update_fields=[
+                                "date",
+                                "planned_date",
+                                "status",
+                                "cleared",
+                                "import_match_status",
+                                "plaid_transaction_id",
+                                "updated_at",
+                            ]
+                        )
+                        _wire_transfer_legs(
+                            out_leg=out_leg,
+                            in_leg=sole,
+                            tg=tg,
+                            amount=tg.amount,
+                            pay_dt=out_leg.date or sole.date or tg.scheduled_date,
+                        )
+                        _refresh_transfer_group_status(tg)
+                        source_legs_created += 1
+                        touched_households.add(tg.household_id)
+
+    if (rewired or source_legs_created or merged) and not dry_run:
+        from common.services.cache import invalidate_financial_cache_for_household
+        from core.timeline_cache import bump_timeline_cache_for_household
+
+        for hid in touched_households:
+            bump_timeline_cache_for_household(hid)
+            invalidate_financial_cache_for_household(hid)
+
+    return {
+        "rewired": rewired,
+        "merged": merged,
+        "source_legs_created": source_legs_created,
+    }
 
 
 def _leg_counts_as_import_matched_for_group(t: Transaction) -> bool:
@@ -2629,8 +2962,15 @@ def repair_transfer_leg_duplicates(
     qs = (
         Transaction.objects.filter(
             account_id__in=ids,
-            source=Transaction.Source.PLAID,
             scenario__isnull=True,
+        )
+        .filter(
+            Q(source=Transaction.Source.PLAID)
+            | (
+                Q(source=Transaction.Source.ACTUAL)
+                & ~Q(plaid_transaction_id__isnull=True)
+                & ~Q(plaid_transaction_id="")
+            )
         )
         .exclude(plaid_transaction_id__isnull=True)
         .exclude(plaid_transaction_id="")
