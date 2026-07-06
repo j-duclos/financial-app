@@ -894,6 +894,35 @@ def test_filter_superseded_planned_transactions(account):
     assert [t.pk for t in filtered] == [bank.pk]
 
 
+def test_reconcile_setup_hides_rent_when_materialized_zelle_exists(account, user):
+    """Scheduled Rent must not appear when a cleared -3100 Zelle import posted same day."""
+    d = date(2026, 7, 2)
+    amt = Decimal("-3100.00")
+    planned = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Rent",
+        amount=amt,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+    )
+    bank = Transaction.objects.create(
+        account=account,
+        date=d,
+        payee="Zelle payment to RYAN MANCEBO JPM99co1l9gu",
+        amount=amt,
+        source=Transaction.Source.ACTUAL,
+        plaid_transaction_id="pl-rent-zelle-jul2",
+        import_match_status=Transaction.ImportMatchStatus.NONE,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    data = get_setup_data(account, start=d, end=d)
+    ids = [t.pk for t in data["unreconciled_transactions"]]
+    assert planned.pk not in ids
+    assert bank.pk in ids
+
+
 class TestReconciliationSeal:
     def test_repair_marks_orphan_statement_rows_on_setup(self, account, user):
         opening = Decimal("1000.00")

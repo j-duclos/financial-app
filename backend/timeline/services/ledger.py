@@ -1421,6 +1421,49 @@ def apply_scenario_overrides(rule: RecurringRule, scenario: Optional[Scenario]) 
     return effective
 
 
+def _is_unmatched_plaid_import_row(row: dict) -> bool:
+    ims = (row.get("import_match_status") or "").lower()
+    if ims in ("matched", "ignored", "duplicate"):
+        return False
+    src = (row.get("txn_source") or "").lower()
+    if src == "plaid":
+        return True
+    return bool((row.get("plaid_transaction_id") or "").strip())
+
+
+def _descriptions_likely_same(a: str, b: str) -> bool:
+    from transactions.services.matching import normalize_description
+
+    na = normalize_description(a or "")
+    nb = normalize_description(b or "")
+    if not na or not nb:
+        return False
+    if na == nb or na in nb or nb in na:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    tokens = [w for w in short.split() if len(w) >= 4]
+    return bool(tokens) and any(t in long for t in tokens)
+
+
+def _planned_and_posting_likely_same(planned: dict, posting: dict) -> bool:
+    try:
+        amt = Decimal(str(planned.get("amount")))
+        other_amt = Decimal(str(posting.get("amount")))
+    except Exception:
+        return False
+    if abs(abs(amt) - abs(other_amt)) >= Decimal("0.01"):
+        return False
+    if (
+        planned.get("rule_id") is not None
+        and posting.get("rule_id") is not None
+        and planned.get("rule_id") == posting.get("rule_id")
+    ):
+        return True
+    desc_p = planned.get("description") or planned.get("payee") or ""
+    desc_o = posting.get("description") or posting.get("payee") or ""
+    return _descriptions_likely_same(desc_p, desc_o)
+
+
 def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
     """Skip PLANNED rows when a matching CLEARED/RECONCILED posting exists same day (matches web ledger)."""
     status = (row.get("status") or "").upper()
@@ -1444,13 +1487,8 @@ def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
             continue
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return True
-        other_txn_src = (other.get("txn_source") or "").lower()
-        other_plaid_id = (other.get("plaid_transaction_id") or "").strip()
-        other_ims = (other.get("import_match_status") or "").lower()
-        is_pending_plaid = (
-            other_txn_src == "plaid" or bool(other_plaid_id)
-        ) and other_ims not in ("matched", "ignored", "duplicate")
-        if is_pending_plaid:
+        # Keep both visible when an unmatched import likely belongs to this forecast (user still matching).
+        if _is_unmatched_plaid_import_row(other) and _planned_and_posting_likely_same(row, other):
             continue
         other_amt = Decimal(str(other.get("amount")))
         if abs(abs(other_amt) - abs_amt) < Decimal("0.01"):

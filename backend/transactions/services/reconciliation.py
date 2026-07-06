@@ -331,6 +331,7 @@ def filter_superseded_planned_transactions(txns: list[Transaction]) -> list[Tran
             "payee": t.payee or "",
             "txn_source": t.source.lower() if t.source else None,
             "plaid_transaction_id": (t.plaid_transaction_id or "").strip() or None,
+            "import_match_status": t.import_match_status,
         }
         for t in txns
     ]
