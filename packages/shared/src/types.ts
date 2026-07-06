@@ -1571,6 +1571,8 @@ export interface TimelineRow {
   running_balance: string;
   /** Whether this transaction has been reconciled. */
   reconciled?: boolean;
+  /** Running balance stored when this row was reconciled (signed; credit = negative debt). */
+  reconciled_balance?: string | number | null;
   /** Raw Transaction.source (plaid, actual, rule, …). */
   txn_source?: string | null;
   import_match_status?: string | null;

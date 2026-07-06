@@ -67,7 +67,7 @@ from timeline.models import (
     ScenarioAddedRecurring,
     ScenarioRuleOverride,
 )
-from transactions.models import Transaction, TransactionMatch, TransferGroup
+from transactions.models import Reconciliation, ReconciliationEntry, Transaction, TransactionMatch, TransferGroup
 from transactions.services.matching import (
     ledger_visible_transactions,
     shadowed_rule_occurrence_ids,
@@ -2201,6 +2201,16 @@ def _build_timeline_impl(
         if shadow_ids:
             actual = [t for t in actual if t.pk not in shadow_ids]
 
+        reconciled_balance_by_txn: dict[int, Decimal] = {
+            txn_id: bal
+            for txn_id, bal in ReconciliationEntry.objects.filter(
+                transaction_id__in=[t.pk for t in actual if t.reconciled],
+                session__status=Reconciliation.Status.COMPLETED,
+                session__is_active=True,
+            ).values_list("transaction_id", "reconciled_balance")
+            if bal is not None
+        }
+
         household_ids = list(households.values_list("pk", flat=True))
         skipped_occurrences = set(
             RecurringRuleSkip.objects.filter(
@@ -2441,7 +2451,7 @@ def _build_timeline_impl(
             row_source = (
                 "interest" if t.source == Transaction.Source.INTEREST else "actual"
             )
-            rows.append({
+            row_payload = {
                 "date": t.date,
                 "description": desc,
                 "account_id": t.account_id,
@@ -2456,7 +2466,11 @@ def _build_timeline_impl(
                 "transaction_id": t.id,
                 "sort_key": (t.date, 0, t.id),
                 **_timeline_row_meta(t),
-            })
+            }
+            rec_bal = reconciled_balance_by_txn.get(t.id)
+            if rec_bal is not None:
+                row_payload["reconciled_balance"] = rec_bal
+            rows.append(row_payload)
             ids_in_rows.add(t.id)
         perf_transactions = len(actual)
         phase_end(timer, _phase_load)

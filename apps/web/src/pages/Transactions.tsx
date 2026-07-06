@@ -1024,34 +1024,11 @@ export default function Transactions() {
     );
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
+    const postReconcileAnchor =
+      !hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
+        ? parseFloat(reconcileSetupData.last_reconciled_balance)
+        : null;
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
-
-    // #region agent log
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
-      body: JSON.stringify({
-        sessionId: "641553",
-        location: "Transactions.tsx:ledgerRows",
-        message: "hide-reconciled opening inputs",
-        data: {
-          hideReconciledPast,
-          accountId,
-          pastOpeningBalanceRaw: ledgerTimelineData?.past_opening_balance ?? null,
-          reconcileLastBalRaw: reconcileSetupData?.last_reconciled_balance ?? null,
-          pastOpeningOverride,
-          hasPastOpeningOverride,
-          configuredOpening: openingBalance,
-          accountStartingBalance: account.starting_balance,
-          ledgerTimelineError,
-          timelineRowCount: ledgerTimelineData?.timeline?.length ?? null,
-          reconcilePeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "H1-H5",
-      }),
-    }).catch(() => {});
-    // #endregion
 
     if (hideReconciledPast && !hasPastOpeningOverride) {
       if (reconcileSetupFetching || ledgerTimelineFetching) {
@@ -1070,38 +1047,8 @@ export default function Transactions() {
         openingBalance,
         isCreditAccount,
         hasPastOpeningOverride ? pastOpeningOverride : null,
-        apiBalance
+        postReconcileAnchor
       );
-      // #region agent log
-      const startRow = built.find((r) => r.type === "starting_balance");
-      const firstPastTxn = built.find((r) => r.type === "transaction_from_timeline");
-      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
-        body: JSON.stringify({
-          sessionId: "641553",
-          location: "Transactions.tsx:ledgerRows:timeline-path",
-          message: "built ledger from timeline",
-          data: {
-            path: "timeline",
-            startBalance: startRow?.type === "starting_balance" ? startRow.balance : null,
-            firstPastDesc:
-              firstPastTxn?.type === "transaction_from_timeline"
-                ? firstPastTxn.row.description
-                : null,
-            firstPastServerBal:
-              firstPastTxn?.type === "transaction_from_timeline"
-                ? firstPastTxn.row.running_balance
-                : null,
-            firstPastRowBal:
-              firstPastTxn?.type === "transaction_from_timeline" ? firstPastTxn.balance : null,
-            pastRowCount: built.filter((r) => r.type === "transaction_from_timeline").length,
-          },
-          timestamp: Date.now(),
-          hypothesisId: "H3-H4",
-        }),
-      }).catch(() => {});
-      // #endregion
       return built;
     }
 
@@ -1115,24 +1062,6 @@ export default function Transactions() {
       isCreditAccount,
       apiBalance
     );
-    // #region agent log
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "641553" },
-      body: JSON.stringify({
-        sessionId: "641553",
-        location: "Transactions.tsx:ledgerRows:fallback-path",
-        message: "built ledger from transactions fallback",
-        data: {
-          path: "fallback",
-          startBalance: fallbackBuilt.find((r) => r.type === "starting_balance")?.balance ?? null,
-          txnCount: fallbackTxns.length,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "H4",
-      }),
-    }).catch(() => {});
-    // #endregion
     return fallbackBuilt;
   }, [
     account,

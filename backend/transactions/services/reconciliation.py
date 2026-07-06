@@ -658,29 +658,44 @@ def repair_unreconciled_in_last_closed_period(account: Account) -> int:
         )
         total += len(ids)
 
-    sealed_amount = sum((t.amount for t in through_end), Decimal("0"))
-    remaining_delta = target - opening - sealed_amount
-    post_ids = unreconciled_ids_through_balance_delta(
-        account,
-        period_start=period_end + timedelta(days=1),
-        balance_delta=remaining_delta,
-    )
-    if post_ids:
-        _mark_transactions_reconciled_for_session(
-            account=account,
-            session=prev,
-            transaction_ids=post_ids,
-            opening_balance=opening,
-            reconciled_at=now,
-            prefix_transactions=through_end,
-        )
-        total += len(post_ids)
-
     if total:
         from common.services.cache import invalidate_financial_cache_for_household
 
         invalidate_financial_cache_for_household(account.household_id)
     return total
+
+
+def unreconcile_transactions_after_period_end(account: Account) -> int:
+    """
+    Clear reconciled flags on rows dated after the last active session's period_end.
+
+    Catches rows linked to the active session, orphan reconciled=True rows (no FK), and
+    stale ReconciliationEntry rows left on inactive sessions after a bad auto-seal.
+    """
+    prev = last_completed_reconciliation(account)
+    if prev is None or prev.period_end_date is None:
+        return 0
+    period_end = prev.period_end_date
+    qs = Transaction.objects.filter(
+        account=account,
+        reconciled=True,
+        date__gt=period_end,
+    )
+    ids = list(qs.values_list("pk", flat=True))
+    if not ids:
+        return 0
+    ReconciliationEntry.objects.filter(transaction_id__in=ids).delete()
+    qs.update(
+        reconciled=False,
+        reconciliation=None,
+        reconciled_at=None,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    invalidate_financial_cache_for_household(account.household_id)
+    return len(ids)
 
 
 def get_setup_data(

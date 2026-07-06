@@ -1047,3 +1047,61 @@ class TestReconciliationSeal:
             assert txn.reconciled is True, txn.payee
             assert txn.reconciliation_id == rec.pk
 
+    def test_unreconcile_transactions_after_period_end(self, account, user):
+        opening = Decimal("1000.00")
+        account.starting_balance = opening
+        account.save(update_fields=["starting_balance"])
+        in_period = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="In period",
+            amount=Decimal("-50.00"),
+        )
+        after_period = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 5),
+            payee="After period",
+            amount=Decimal("-25.00"),
+        )
+        bank = opening + in_period.amount + after_period.amount
+        rec = Reconciliation.objects.create(
+            user=user,
+            account=account,
+            bank_current_balance=bank,
+            app_current_balance=bank,
+            last_reconciled_balance=opening,
+            final_reconciled_balance=bank,
+            difference=Decimal("0"),
+            period_start_date=date(2026, 5, 1),
+            period_end_date=date(2026, 6, 2),
+            transaction_count=2,
+            status=Reconciliation.Status.COMPLETED,
+            is_active=True,
+            completed_at=timezone.now(),
+        )
+        from transactions.services.reconciliation import (
+            repair_unreconciled_in_last_closed_period,
+            unreconcile_transactions_after_period_end,
+        )
+
+        repair_unreconciled_in_last_closed_period(account)
+        after_period.refresh_from_db()
+        assert after_period.reconciled is False
+
+        after_period.reconciled = True
+        after_period.reconciliation = rec
+        after_period.save(update_fields=["reconciled", "reconciliation"])
+        ReconciliationEntry.objects.create(
+            session=rec,
+            transaction=after_period,
+            reconciled_balance=bank,
+        )
+        assert unreconcile_transactions_after_period_end(account) == 1
+        after_period.refresh_from_db()
+        in_period.refresh_from_db()
+        assert after_period.reconciled is False
+        assert after_period.reconciliation_id is None
+        assert in_period.reconciled is True
+

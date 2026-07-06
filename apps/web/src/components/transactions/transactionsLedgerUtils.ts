@@ -616,13 +616,24 @@ export function hideReconciledOpeningBalance(
   return isCredit ? Math.abs(raw) : raw;
 }
 
+/** Display convention for stored reconciled_balance (signed in DB). */
+export function storedReconciledBalanceDisplay(
+  raw: string | number | null | undefined,
+  isCredit: boolean
+): number | null {
+  if (raw == null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+  if (Number.isNaN(n)) return null;
+  return isCredit ? Math.abs(n) : n;
+}
+
 export function buildLedgerRowsFromTimeline(
   timeline: TimelineRow[],
   today: string,
   openingBalance: number,
   isCredit: boolean,
   pastOpeningOverride?: number | null,
-  todayBalanceOverride?: number | null
+  postReconcileAnchor?: number | null
 ): LedgerRow[] {
   const visibleTimeline = timeline.filter(
     (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
@@ -639,52 +650,61 @@ export function buildLedgerRowsFromTimeline(
 
   const rows: LedgerRow[] = [];
   const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
-  const normalizedOverride =
+  const hideReconciledStart =
     pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
-      ? hideReconciledOpeningBalance(pastOpeningOverride, isCredit)
+      ? hideReconciledOpeningBalance(pastOpeningOverride, isCredit)!
       : null;
-  const anchoredToday =
-    todayBalanceOverride != null && Number.isFinite(todayBalanceOverride)
-      ? todayBalanceOverride
+  const unreconciledAnchor =
+    postReconcileAnchor != null && Number.isFinite(postReconcileAnchor)
+      ? hideReconciledOpeningBalance(postReconcileAnchor, isCredit)!
       : null;
 
-  let start: number;
-  let pastLedgerRows: LedgerRow[] = [];
+  const pastLedgerRows: LedgerRow[] = [];
 
-  if (anchoredToday != null && past.length > 0) {
-    const pastOnly = past.map(
-      (r): Extract<LedgerRow, { type: "transaction_from_timeline" }> => ({
-        type: "transaction_from_timeline",
-        row: r,
-        balance: 0,
-      })
-    );
-    const anchored = assignPastBalancesFromTodayAnchor(pastOnly, anchoredToday, isCredit);
-    start = anchored.startingBalance;
-    pastLedgerRows = anchored.rows;
-  } else {
-    start =
-      normalizedOverride != null
-        ? normalizedOverride
-        : isCredit
-          ? resolveLedgerOpening(openingBalance, past[0], isCredit)
-          : configuredOpening;
-    let running = start;
+  if (hideReconciledStart != null) {
+    let running = hideReconciledStart;
     for (const r of past) {
       running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
-      pastLedgerRows.push({
-        type: "transaction_from_timeline",
-        row: r,
-        balance: running,
-      });
+      pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance: running });
+    }
+  } else {
+    let running: number | null = null;
+    let unreconciledChainStarted = false;
+    for (const r of past) {
+      const stored = storedReconciledBalanceDisplay(r.reconciled_balance, isCredit);
+      let balance: number;
+      if (r.reconciled && stored != null) {
+        balance = stored;
+        running = stored;
+      } else {
+        if (!unreconciledChainStarted && unreconciledAnchor != null) {
+          running = unreconciledAnchor;
+          unreconciledChainStarted = true;
+        } else if (running == null) {
+          running = configuredOpening;
+        }
+        running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+        balance = running;
+        if (!r.reconciled) {
+          unreconciledChainStarted = true;
+        }
+      }
+      pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance });
     }
   }
-  rows.push({ type: "starting_balance", balance: start });
+
   rows.push(...pastLedgerRows);
 
+  if (hideReconciledStart != null) {
+    rows.unshift({ type: "starting_balance", balance: hideReconciledStart });
+  } else if (!isCredit) {
+    rows.unshift({ type: "starting_balance", balance: configuredOpening });
+  }
+
   const todayBalance =
-    anchoredToday ??
-    (pastLedgerRows.length > 0 ? pastLedgerRows[pastLedgerRows.length - 1].balance : start);
+    pastLedgerRows.length > 0
+      ? pastLedgerRows[pastLedgerRows.length - 1].balance
+      : hideReconciledStart ?? configuredOpening;
   rows.push({ type: "today_balance", balance: todayBalance });
 
   // Pending expected rows are scheduled/rule items whose date has arrived but no
