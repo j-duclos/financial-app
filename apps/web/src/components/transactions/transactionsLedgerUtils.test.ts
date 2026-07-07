@@ -16,6 +16,7 @@ import {
   creditCardSignedBalanceAtDate,
   creditSignedOpeningBalance,
   splitLedgerSections,
+  currentBalanceFromLedgerSections,
   lowestProjectedFromLedgerFuture,
   formatDateDisplay,
   todayStr,
@@ -490,6 +491,27 @@ describe("accountLedgerDisplayBalance", () => {
     expect(
       accountLedgerDisplayBalance({ balance_owed: "0", balance: "-500.00" }, true)
     ).toBe(500);
+  });
+});
+
+describe("currentBalanceFromLedgerSections", () => {
+  it("uses last pending balance when pending rows exist", () => {
+    const sections = splitLedgerSections([
+      { type: "starting_balance", balance: 1644 },
+      { type: "today_balance", balance: 1048.88 },
+      { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 732.88 },
+      { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 282.25 },
+    ]);
+    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(282.25, 2);
+  });
+
+  it("uses last past balance when no pending rows", () => {
+    const sections = splitLedgerSections([
+      { type: "starting_balance", balance: 1644 },
+      { type: "transaction_from_timeline", row: { date: "2026-07-06" } as never, balance: 1048.88 },
+      { type: "today_balance", balance: 1048.88 },
+    ]);
+    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(1048.88, 2);
   });
 });
 

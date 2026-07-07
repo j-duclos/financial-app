@@ -910,6 +910,25 @@ export function splitLedgerSections(rows: LedgerRow[]) {
   return { start, past, pending, today: todayRow, future };
 }
 
+/** Current balance from visible ledger rows: last pending, else last recent (past). */
+export function currentBalanceFromLedgerSections(
+  sections: ReturnType<typeof splitLedgerSections>
+): number | null {
+  if (sections.pending.length > 0) {
+    return sections.pending[sections.pending.length - 1].balance;
+  }
+  if (sections.past.length > 0) {
+    return sections.past[sections.past.length - 1].balance;
+  }
+  if (sections.today?.type === "today_balance") {
+    return sections.today.balance;
+  }
+  if (sections.start?.type === "starting_balance") {
+    return sections.start.balance;
+  }
+  return null;
+}
+
 /**
  * Signed ledger balance for a credit card at end of `asOfDate` (matches backend timeline math).
  * Negative = debt owed. Recomputes from visible rows so excluded / superseded rows are not counted.

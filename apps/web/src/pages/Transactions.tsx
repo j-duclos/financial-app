@@ -57,6 +57,7 @@ import {
   buildLedgerRowsFromTimeline,
   hideReconciledOpeningBalance,
   splitLedgerSections,
+  currentBalanceFromLedgerSections,
   lowestProjectedFromLedgerFuture,
   isTransferCategoryName,
   accountLedgerDisplayBalance,
@@ -1088,6 +1089,11 @@ export default function Transactions() {
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
+  const ledgerCurrentBalance = useMemo(
+    () => currentBalanceFromLedgerSections(ledgerSections),
+    [ledgerSections]
+  );
+
   // #region agent log
   useEffect(() => {
     if (!account || typeof accountId !== "number") return;
@@ -1100,7 +1106,6 @@ export default function Transactions() {
       ledgerSections.past.length > 0
         ? ledgerSections.past[ledgerSections.past.length - 1].balance
         : null;
-    const ledgerDerivedBalance = pendingLast ?? pastLast ?? ledgerSections.today?.balance ?? null;
     const pastOpeningRaw =
       hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
         ? ledgerTimelineData.past_opening_balance
@@ -1112,7 +1117,7 @@ export default function Transactions() {
       headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
       body: JSON.stringify({
         sessionId: "ef7993",
-        runId: "pre-fix",
+        runId: "post-fix",
         hypothesisId: "A-B",
         location: "Transactions.tsx:currentBalanceDebug",
         message: "API vs ledger current balance",
@@ -1121,7 +1126,7 @@ export default function Transactions() {
           hideReconciledPast,
           isCreditAccount,
           apiBalance,
-          ledgerDerivedBalance,
+          ledgerCurrentBalance,
           pendingLast,
           pastLast,
           todayBalance: ledgerSections.today?.balance ?? null,
@@ -1131,8 +1136,9 @@ export default function Transactions() {
           pastOpeningRaw,
           available_balance: account.available_balance ?? null,
           balance: account.balance ?? null,
-          forecast_current_balance: account.forecast_summary?.current_balance ?? null,
-          displayedInHeader: apiBalance,
+          forecast_current_balance: (account as { forecast_summary?: { current_balance?: string } })
+            .forecast_summary?.current_balance ?? null,
+          displayedInHeader: ledgerCurrentBalance,
         },
         timestamp: Date.now(),
       }),
@@ -1142,6 +1148,7 @@ export default function Transactions() {
     accountId,
     isCreditAccount,
     ledgerSections,
+    ledgerCurrentBalance,
     hideReconciledPast,
     ledgerTimelineData?.past_opening_balance,
     reconcileSetupData?.last_reconciled_balance,
@@ -1866,10 +1873,10 @@ export default function Transactions() {
 
       <div className="flex flex-col gap-3 mb-3 flex-shrink-0">
         <div className="flex flex-col gap-2 min-w-0 w-full">
-          {account && ledgerSections.today?.type === "today_balance" && (
+          {account && ledgerSections.today?.type === "today_balance" && ledgerCurrentBalance != null && (
             <ForecastSummaryBar
               account={account}
-              currentBalance={accountLedgerDisplayBalance(account, isCredit)}
+              currentBalance={ledgerCurrentBalance}
               isCredit={isCredit}
               currency={currency}
               nextRiskDate={account.risk_date ?? null}
