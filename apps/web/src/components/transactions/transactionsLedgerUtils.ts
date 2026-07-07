@@ -593,7 +593,33 @@ export function accountLedgerDisplayBalance(
     account.balance ??
     account.forecast_summary?.current_balance;
   const n = parse(raw);
-  return n ?? 0;
+  const result = n ?? 0;
+  // #region agent log
+  if (typeof fetch !== "undefined") {
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
+      body: JSON.stringify({
+        sessionId: "ef7993",
+        runId: "pre-fix",
+        hypothesisId: "A-C-D",
+        location: "transactionsLedgerUtils.ts:accountLedgerDisplayBalance",
+        message: "accountLedgerDisplayBalance resolved",
+        data: {
+          isCredit,
+          available_balance: account.available_balance ?? null,
+          balance: account.balance ?? null,
+          balance_owed: account.balance_owed ?? null,
+          forecast_current_balance: account.forecast_summary?.current_balance ?? null,
+          rawField: raw ?? null,
+          result,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
+  return result;
 }
 
 /** Match backend timeline row ordering (date, then transaction id, then description). */

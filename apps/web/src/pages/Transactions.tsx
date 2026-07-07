@@ -1088,6 +1088,66 @@ export default function Transactions() {
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
+  // #region agent log
+  useEffect(() => {
+    if (!account || typeof accountId !== "number") return;
+    const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
+    const pendingLast =
+      ledgerSections.pending.length > 0
+        ? ledgerSections.pending[ledgerSections.pending.length - 1].balance
+        : null;
+    const pastLast =
+      ledgerSections.past.length > 0
+        ? ledgerSections.past[ledgerSections.past.length - 1].balance
+        : null;
+    const ledgerDerivedBalance = pendingLast ?? pastLast ?? ledgerSections.today?.balance ?? null;
+    const pastOpeningRaw =
+      hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
+        ? ledgerTimelineData.past_opening_balance
+        : hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
+          ? reconcileSetupData.last_reconciled_balance
+          : null;
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
+      body: JSON.stringify({
+        sessionId: "ef7993",
+        runId: "pre-fix",
+        hypothesisId: "A-B",
+        location: "Transactions.tsx:currentBalanceDebug",
+        message: "API vs ledger current balance",
+        data: {
+          accountId,
+          hideReconciledPast,
+          isCreditAccount,
+          apiBalance,
+          ledgerDerivedBalance,
+          pendingLast,
+          pastLast,
+          todayBalance: ledgerSections.today?.balance ?? null,
+          startBalance: ledgerSections.start?.balance ?? null,
+          pendingCount: ledgerSections.pending.length,
+          pastCount: ledgerSections.past.length,
+          pastOpeningRaw,
+          available_balance: account.available_balance ?? null,
+          balance: account.balance ?? null,
+          forecast_current_balance: account.forecast_summary?.current_balance ?? null,
+          displayedInHeader: apiBalance,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }, [
+    account,
+    accountId,
+    isCreditAccount,
+    ledgerSections,
+    hideReconciledPast,
+    ledgerTimelineData?.past_opening_balance,
+    reconcileSetupData?.last_reconciled_balance,
+  ]);
+  // #endregion
+
   const ledgerLowestProjected = useMemo(
     () => lowestProjectedFromLedgerFuture(ledgerSections.future),
     [ledgerSections.future]
