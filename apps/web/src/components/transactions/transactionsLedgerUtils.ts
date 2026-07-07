@@ -548,7 +548,25 @@ export function applyTimelineAmountToBalance(
   } else {
     next = running - amount;
   }
-  return isCredit ? Math.abs(next) : next;
+  const result = isCredit ? Math.abs(next) : next;
+  // #region agent log
+  if (isCredit && next < 0 && Math.abs(next) > 0.005) {
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "299140" },
+      body: JSON.stringify({
+        sessionId: "299140",
+        runId: "pre-fix",
+        hypothesisId: "A-math-abs-flip",
+        location: "transactionsLedgerUtils.ts:applyTimelineAmountToBalance",
+        message: "credit overpayment flipped by Math.abs",
+        data: { running, amount, next, result, flipped: true },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
+  return result;
 }
 
 /** Undo one timeline posting when reverse-walking from today's account balance. */

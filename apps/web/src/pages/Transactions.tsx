@@ -1061,41 +1061,53 @@ export default function Transactions() {
         postReconcileAnchor
       );
       // #region agent log
-      const platinumRows = timelineForAccount
-        .filter((r) => /platinum|platinium/i.test(r.description || ""))
-        .map((r) => ({
-          date: r.date,
-          amount: r.amount,
-          type: r.type,
-          signedAmount: signedTimelineLedgerAmount(r),
-          txnId: r.transaction_id,
-          ruleId: r.rule_id,
-        }));
-      const platinumFuture = splitLedgerSections(built).future.filter(
-        (row) =>
-          (row.type === "recurring" || row.type === "transaction_from_timeline") &&
-          /platinum|platinium/i.test(row.row.description || "")
-      );
-      if (platinumRows.length > 0) {
-        fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
-          body: JSON.stringify({
-            sessionId: "88e096",
-            runId: "post-fix",
-            location: "Transactions.tsx:ledgerRows",
-            message: "platinum balance check",
-            data: {
-              platinumRows,
-              ledgerBalances: platinumFuture.map((row) => ({
-                date: row.type === "recurring" ? row.row.date : row.row.date,
-                balance: row.balance,
-              })),
-            },
-            timestamp: Date.now(),
-            hypothesisId: "H-balance-sign",
-          }),
-        }).catch(() => {});
+      if (isCreditAccount) {
+        const augRows = timelineForAccount
+          .filter((r) => r.date >= "2026-08-15" && r.date <= "2026-09-05")
+          .map((r) => ({
+            date: r.date,
+            description: r.description,
+            amount: r.amount,
+            type: r.type,
+            signedAmount: signedTimelineLedgerAmount(r),
+            runningBalance: r.running_balance,
+          }));
+        const augFuture = splitLedgerSections(built).future
+          .filter(
+            (row) =>
+              (row.type === "recurring" || row.type === "transaction_from_timeline") &&
+              row.row.date >= "2026-08-15" &&
+              row.row.date <= "2026-09-05"
+          )
+          .map((row) => ({
+            date: row.row.date,
+            description: row.row.description,
+            balance: row.balance,
+            amount: row.row.amount,
+            type: row.row.type,
+          }));
+        if (augRows.length > 0 || augFuture.length > 0) {
+          fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "299140" },
+            body: JSON.stringify({
+              sessionId: "299140",
+              runId: "pre-fix",
+              location: "Transactions.tsx:ledgerRows",
+              message: "credit card aug forecast chain",
+              data: {
+                isCreditAccount,
+                openingBalance,
+                pastOpeningOverride,
+                augRows,
+                augFuture,
+                todayBalance: splitLedgerSections(built).today?.balance,
+              },
+              timestamp: Date.now(),
+              hypothesisId: "B-forecast-chain",
+            }),
+          }).catch(() => {});
+        }
       }
       // #endregion
       return built;
