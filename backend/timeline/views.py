@@ -753,38 +753,56 @@ class TimelineView(APIView):
             # #region agent log
             import json
             import time
+            from collections import defaultdict
 
             try:
-                _pending_transfer = [
+                _utility = [
                     {
-                        "txn_id": r.get("transaction_id"),
-                        "account_id": r.get("account_id"),
                         "date": str(r.get("date")),
                         "amount": str(r.get("amount")),
-                        "tg": r.get("transfer_group_id"),
+                        "rule_id": r.get("rule_id"),
+                        "txn_id": r.get("transaction_id"),
                         "status": r.get("status"),
+                        "source": r.get("source"),
+                        "desc": (r.get("description") or "")[:60],
                     }
                     for r in rows
-                    if r.get("transfer_group_id")
-                    and (r.get("status") or "").upper() == "PLANNED"
-                    and r.get("date") <= (as_of_date or timezone.localdate())
+                    if "electric" in (r.get("description") or "").lower()
+                    or "cox" in (r.get("description") or "").lower()
                 ]
-                with open("/Users/capone/Dev_work/.cursor/debug-3863b1.log", "a") as _f:
+                _dup_rules: dict[tuple, list] = defaultdict(list)
+                for r in rows:
+                    rid = r.get("rule_id")
+                    rd = r.get("date")
+                    aid = r.get("account_id")
+                    if rid is not None and rd is not None and rd > (as_of_date or timezone.localdate()):
+                        _dup_rules[(rid, rd, aid)].append(
+                            {
+                                "txn_id": r.get("transaction_id"),
+                                "amount": str(r.get("amount")),
+                                "status": r.get("status"),
+                                "source": r.get("source"),
+                            }
+                        )
+                _dup_future = {str(k): v for k, v in _dup_rules.items() if len(v) > 1}
+                with open("/Users/capone/Dev_work/.cursor/debug-88e096.log", "a") as _f:
                     _f.write(
                         json.dumps(
                             {
-                                "sessionId": "3863b1",
+                                "sessionId": "88e096",
                                 "location": "views.py:TimelineView.get",
-                                "message": "projection_only pending transfer legs",
+                                "message": "timeline built",
                                 "data": {
                                     "account_id": account_id,
+                                    "start": str(start),
+                                    "end": str(end),
                                     "as_of": str(as_of_date),
-                                    "pending_transfer_legs": _pending_transfer,
                                     "row_count": len(rows),
+                                    "utility_rows": _utility,
+                                    "duplicate_future_rule_keys": _dup_future,
                                 },
                                 "timestamp": int(time.time() * 1000),
-                                "hypothesisId": "H1",
-                                "runId": "post-fix",
+                                "hypothesisId": "H1-H3",
                             }
                         )
                         + "\n"

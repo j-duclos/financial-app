@@ -102,6 +102,25 @@ export function patchTimelineCachesForTransaction(
   for (const key of timelineQueryKeys(scope)) {
     queryClient.setQueryData(key, (old) => patchTimelinePayload(old, patch));
   }
+  // #region agent log
+  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+    body: JSON.stringify({
+      sessionId: "88e096",
+      location: "financialQueryRefresh.ts:patchTimelineCachesForTransaction",
+      message: "timeline cache patched",
+      data: {
+        transactionId: patch.transactionId,
+        patch,
+        pendingEditCount: pendingTimelineEdits.size,
+        timelineEnd: scope.timelineEnd,
+      },
+      timestamp: Date.now(),
+      hypothesisId: "H4",
+    }),
+  }).catch(() => {});
+  // #endregion
 }
 
 function serverTimelineMatchesPending(timeline: TimelineRow[]): boolean {
@@ -180,15 +199,35 @@ export function scheduleAccountsRefresh(
 }
 
 function finalizeTimelineRefetch(queryClient: QueryClient, scope: TimelinePatchScope): void {
+  let matched = true;
   for (const key of timelineQueryKeys(scope)) {
     const data = queryClient.getQueryData<{ timeline?: TimelineRow[] }>(key);
     if (!data?.timeline) continue;
     if (serverTimelineMatchesPending(data.timeline)) {
       clearMatchingPendingEdits(data.timeline);
     } else {
+      matched = false;
       reapplyPendingTimelinePatches(queryClient, scope);
     }
   }
+  // #region agent log
+  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+    body: JSON.stringify({
+      sessionId: "88e096",
+      location: "financialQueryRefresh.ts:finalizeTimelineRefetch",
+      message: "timeline refetch finalized",
+      data: {
+        serverMatchedPending: matched,
+        pendingEditCount: pendingTimelineEdits.size,
+        timelineEnd: scope.timelineEnd,
+      },
+      timestamp: Date.now(),
+      hypothesisId: "H4-H5",
+    }),
+  }).catch(() => {});
+  // #endregion
 }
 
 /** Light refresh after a single transaction edit — timeline stays patched until server catches up. */

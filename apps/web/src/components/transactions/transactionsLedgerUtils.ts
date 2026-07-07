@@ -593,33 +593,7 @@ export function accountLedgerDisplayBalance(
     account.balance ??
     account.forecast_summary?.current_balance;
   const n = parse(raw);
-  const result = n ?? 0;
-  // #region agent log
-  if (typeof fetch !== "undefined") {
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
-      body: JSON.stringify({
-        sessionId: "ef7993",
-        runId: "pre-fix",
-        hypothesisId: "A-C-D",
-        location: "transactionsLedgerUtils.ts:accountLedgerDisplayBalance",
-        message: "accountLedgerDisplayBalance resolved",
-        data: {
-          isCredit,
-          available_balance: account.available_balance ?? null,
-          balance: account.balance ?? null,
-          balance_owed: account.balance_owed ?? null,
-          forecast_current_balance: account.forecast_summary?.current_balance ?? null,
-          rawField: raw ?? null,
-          result,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-  return result;
+  return n ?? 0;
 }
 
 /** Match backend timeline row ordering (date, then transaction id, then description). */
@@ -661,9 +635,20 @@ export function buildLedgerRowsFromTimeline(
   pastOpeningOverride?: number | null,
   postReconcileAnchor?: number | null
 ): LedgerRow[] {
-  const visibleTimeline = timeline.filter(
-    (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
-  );
+  const supersededIds = new Set<string>();
+  const shadowedIds = new Set<string>();
+  const visibleTimeline = timeline.filter((r) => {
+    const key = `${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`;
+    if (isSupersededPlannedTimelineRow(r, timeline)) {
+      supersededIds.add(key);
+      return false;
+    }
+    if (isShadowedByMatchedRuleSibling(r, timeline)) {
+      shadowedIds.add(key);
+      return false;
+    }
+    return true;
+  });
   const past = visibleTimeline
     .filter((r) => isPastTimelineRow(r, today))
     .sort(compareTimelineRows);
@@ -762,6 +747,55 @@ export function buildLedgerRowsFromTimeline(
       balance: forecastRunning,
     });
   }
+  // #region agent log
+  const utilityRow = (r: TimelineRow) =>
+    /electric|cox/i.test(r.description || "");
+  const rawFuture = timeline.filter((r) => isForecastTimelineRow(r, today));
+  const hiddenUtility = timeline.filter(
+    (r) =>
+      utilityRow(r) &&
+      isForecastTimelineRow(r, today) &&
+      (supersededIds.has(`${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`) ||
+        shadowedIds.has(`${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`))
+  );
+  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+    body: JSON.stringify({
+      sessionId: "88e096",
+      location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline",
+      message: "ledger future build",
+      data: {
+        today,
+        timelineCount: timeline.length,
+        rawFutureCount: rawFuture.length,
+        visibleFutureCount: future.length,
+        supersededCount: supersededIds.size,
+        shadowedCount: shadowedIds.size,
+        futureFirstDate: future[0]?.date ?? null,
+        futureLastDate: future[future.length - 1]?.date ?? null,
+        visibleUtility: future
+          .filter(utilityRow)
+          .map((r) => ({
+            date: r.date,
+            amount: r.amount,
+            rule_id: r.rule_id,
+            txn_id: r.transaction_id,
+            status: r.status,
+          })),
+        hiddenUtility: hiddenUtility.map((r) => ({
+          date: r.date,
+          amount: r.amount,
+          rule_id: r.rule_id,
+          txn_id: r.transaction_id,
+          status: r.status,
+        })),
+      },
+      timestamp: Date.now(),
+      hypothesisId: "H2-H3",
+    }),
+  }).catch(() => {});
+  // #endregion
   return rows;
 }
 

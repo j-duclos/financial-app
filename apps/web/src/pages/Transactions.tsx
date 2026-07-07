@@ -1051,6 +1051,36 @@ export default function Transactions() {
         hasPastOpeningOverride ? pastOpeningOverride : null,
         postReconcileAnchor
       );
+      // #region agent log
+      const sections = splitLedgerSections(built);
+      const futureDate = (row: (typeof sections.future)[number] | undefined) => {
+        if (!row) return null;
+        if (row.type === "recurring" || row.type === "transaction_from_timeline") return row.row.date;
+        if (row.type === "transaction") return row.txn.date;
+        return null;
+      };
+      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+        body: JSON.stringify({
+          sessionId: "88e096",
+          location: "Transactions.tsx:ledgerRows",
+          message: "ledger sections built",
+          data: {
+            timeFilter,
+            pastRangeStart,
+            upcomingEnd: upcomingRange.end,
+            timelineRowCount: timelineForAccount.length,
+            futureCount: sections.future.length,
+            firstNegative: firstNegativeFromLedgerFuture(sections.future),
+            futureFirstDate: futureDate(sections.future[0]),
+            futureLastDate: futureDate(sections.future[sections.future.length - 1]),
+          },
+          timestamp: Date.now(),
+          hypothesisId: "H1",
+        }),
+      }).catch(() => {});
+      // #endregion
       return built;
     }
 
@@ -1095,67 +1125,6 @@ export default function Transactions() {
     [ledgerSections]
   );
 
-  // #region agent log
-  useEffect(() => {
-    if (!account || typeof accountId !== "number") return;
-    const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
-    const pendingLast =
-      ledgerSections.pending.length > 0
-        ? ledgerSections.pending[ledgerSections.pending.length - 1].balance
-        : null;
-    const pastLast =
-      ledgerSections.past.length > 0
-        ? ledgerSections.past[ledgerSections.past.length - 1].balance
-        : null;
-    const pastOpeningRaw =
-      hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
-        ? ledgerTimelineData.past_opening_balance
-        : hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
-          ? reconcileSetupData.last_reconciled_balance
-          : null;
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
-      body: JSON.stringify({
-        sessionId: "ef7993",
-        runId: "post-fix",
-        hypothesisId: "A-B",
-        location: "Transactions.tsx:currentBalanceDebug",
-        message: "API vs ledger current balance",
-        data: {
-          accountId,
-          hideReconciledPast,
-          isCreditAccount,
-          apiBalance,
-          ledgerCurrentBalance,
-          pendingLast,
-          pastLast,
-          todayBalance: ledgerSections.today?.balance ?? null,
-          startBalance: ledgerSections.start?.balance ?? null,
-          pendingCount: ledgerSections.pending.length,
-          pastCount: ledgerSections.past.length,
-          pastOpeningRaw,
-          available_balance: account.available_balance ?? null,
-          balance: account.balance ?? null,
-          forecast_current_balance: (account as { forecast_summary?: { current_balance?: string } })
-            .forecast_summary?.current_balance ?? null,
-          displayedInHeader: ledgerCurrentBalance,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [
-    account,
-    accountId,
-    isCreditAccount,
-    ledgerSections,
-    ledgerCurrentBalance,
-    hideReconciledPast,
-    ledgerTimelineData?.past_opening_balance,
-    reconcileSetupData?.last_reconciled_balance,
-  ]);
-  // #endregion
-
   const ledgerLowestProjected = useMemo(
     () => lowestProjectedFromLedgerFuture(ledgerSections.future),
     [ledgerSections.future]
@@ -1182,38 +1151,6 @@ export default function Transactions() {
   );
 
   const pastFiltersActive = hasActiveLedgerRowFilters(pastRowFilters);
-
-  // #region agent log
-  useEffect(() => {
-    if (!account || typeof accountId !== "number") return;
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
-      body: JSON.stringify({
-        sessionId: "ef7993",
-        runId: "post-fix-risk",
-        hypothesisId: "risk-mismatch",
-        location: "Transactions.tsx:riskDateDebug",
-        message: "API vs ledger next risk date",
-        data: {
-          accountId,
-          apiRiskDate: account.risk_date ?? null,
-          ledgerFirstNegative,
-          futureRowCount: ledgerSections.future.length,
-          futureDates: ledgerSections.future
-            .map((r) => {
-              if (r.type === "recurring" || r.type === "transaction_from_timeline") return r.row.date;
-              if (r.type === "transaction") return r.txn.date;
-              return null;
-            })
-            .filter(Boolean)
-            .slice(0, 10),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [account, accountId, ledgerFirstNegative, ledgerSections.future]);
-  // #endregion
 
   const resetInlineRow = () => {
     setInlineRow({
