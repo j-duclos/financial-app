@@ -338,8 +338,13 @@ def _find_existing_from_account_payment(
     """
     exclude = set(exclude_pks or set())
     if synthetic_min_pk is not None:
+        # Exclude other synthetic transfer legs, not real bank posts that happen to have high pks.
         exclude.update(
-            Transaction.objects.filter(pk__gte=synthetic_min_pk).values_list("pk", flat=True)
+            Transaction.objects.filter(
+                pk__gte=synthetic_min_pk,
+                transfer_group_id__isnull=False,
+                plaid_transaction_id__isnull=True,
+            ).values_list("pk", flat=True)
         )
     from_id = tg.from_account_id
     out_amt = -abs(amount)
@@ -416,6 +421,18 @@ def _wire_transfer_legs(
             date=pay_dt,
             memo=(out_leg.memo or "")[:2000],
         )
+
+
+def repair_duplicate_transfer_out_legs(
+    *,
+    account_ids: Iterable[int] | None = None,
+    synthetic_min_pk: int = 6510,
+) -> dict[str, int]:
+    """Rewire transfer groups onto real bank outflows; drop duplicate synthetic out-legs."""
+    return rollback_bogus_repair_transfer_legs(
+        synthetic_min_pk=synthetic_min_pk,
+        account_ids=account_ids,
+    )
 
 
 def rollback_bogus_repair_transfer_legs(

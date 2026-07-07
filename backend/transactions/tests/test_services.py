@@ -320,3 +320,66 @@ class TestDeleteRuleTransferPair(TestCase):
         delete_transaction_respecting_partner_ledger(from_leg)
         self.assertFalse(Transaction.objects.filter(pk=from_leg.pk).exists())
         self.assertFalse(Transaction.objects.filter(pk=to_leg.pk).exists())
+
+
+class TestDuplicateTransferOutLegRepair(TestCase):
+    """Synthetic transfer out-legs must not duplicate an existing bank post on the same account."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="u_dup_xfer", password="p1")
+        self.h = Household.objects.create(name="HDupXfer")
+        HouseholdMembership.objects.create(household=self.h, user=self.user, role=HouseholdMembership.Role.OWNER)
+        self.checking = Account.objects.create(
+            household=self.h, account_type=Account.AccountType.CHECKING, name="Chase", currency="USD"
+        )
+        self.savings = Account.objects.create(
+            household=self.h, account_type=Account.AccountType.SAVINGS, name="Chase Savings", currency="USD"
+        )
+
+    def test_find_existing_from_account_payment_does_not_exclude_real_bank_post(self):
+        from transactions.models import TransferGroup
+        from transactions.services.posting import _find_existing_from_account_payment
+
+        pay_dt = date(2026, 6, 22)
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.checking,
+            to_account=self.savings,
+            amount=Decimal("680.00"),
+            scheduled_date=pay_dt,
+            status=TransferGroup.Status.CLEARED,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.savings,
+            date=pay_dt,
+            payee="Online Transfer from CHK",
+            amount=Decimal("680.00"),
+            transfer_group=tg,
+        )
+        synthetic = Transaction.objects.create(
+            account=self.checking,
+            date=pay_dt,
+            payee="Online Transfer from CHK ...9009 transaction#: 29688916122",
+            amount=Decimal("-680.00"),
+            transfer_group=tg,
+            source=Transaction.Source.ACTUAL,
+        )
+        real = Transaction.objects.create(
+            account=self.checking,
+            date=pay_dt,
+            payee="Online Transfer to SAV ...2908 transaction#: 29688916122",
+            amount=Decimal("-680.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-dup-xfer-test",
+            reconciled=True,
+            status=Transaction.Status.RECONCILED,
+        )
+        found = _find_existing_from_account_payment(
+            tg=tg,
+            in_leg=in_leg,
+            pay_dt=pay_dt,
+            amount=Decimal("680.00"),
+            exclude_pks={synthetic.pk},
+            synthetic_min_pk=1,
+        )
+        self.assertEqual(found.pk, real.pk)
