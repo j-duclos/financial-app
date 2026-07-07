@@ -60,7 +60,7 @@ export default function PastSection({
   deletePending,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
+  const fmtBal = (bal: number) => formatCurrency(bal, currency);
   const creditClass = (bal: number) => creditBalanceColorClass(isCredit, bal);
 
   const showBody = !minimized;

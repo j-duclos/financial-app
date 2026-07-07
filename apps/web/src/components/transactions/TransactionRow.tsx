@@ -122,7 +122,7 @@ export default function TransactionRow({
   rowSurface,
   scheduleHighlightTitle,
 }: Props) {
-  const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
+  const fmtBal = (bal: number) => formatCurrency(bal, currency);
   const creditClass = creditBalanceColorClass(isCredit, row.balance);
   const abs = Math.abs(row.amount);
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);

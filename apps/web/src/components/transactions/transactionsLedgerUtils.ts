@@ -540,33 +540,26 @@ export function applyTimelineAmountToBalance(
   amount: number,
   isCredit: boolean
 ): number {
-  let next: number;
-  if (!isCredit) {
-    next = running + amount;
-  } else if (amount < 0) {
-    next = running + Math.abs(amount);
-  } else {
-    next = running - amount;
-  }
-  const result = isCredit ? Math.abs(next) : next;
+  if (Number.isNaN(amount)) return running;
+  const next = running + amount;
   // #region agent log
-  if (isCredit && next < 0 && Math.abs(next) > 0.005) {
+  if (isCredit && running < 0 && amount > 0 && next > 0) {
     fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "299140" },
       body: JSON.stringify({
         sessionId: "299140",
-        runId: "pre-fix",
+        runId: "post-fix",
         hypothesisId: "A-math-abs-flip",
         location: "transactionsLedgerUtils.ts:applyTimelineAmountToBalance",
-        message: "credit overpayment flipped by Math.abs",
-        data: { running, amount, next, result, flipped: true },
+        message: "credit overpayment stays signed",
+        data: { running, amount, next },
         timestamp: Date.now(),
       }),
     }).catch(() => {});
   }
   // #endregion
-  return result;
+  return next;
 }
 
 /** Undo one timeline posting when reverse-walking from today's account balance. */
@@ -576,13 +569,7 @@ export function undoTimelineAmountFromBalance(
   isCredit: boolean
 ): number {
   if (Number.isNaN(amount)) return running;
-  if (!isCredit) {
-    return running - amount;
-  }
-  if (amount < 0) {
-    return Math.abs(running - Math.abs(amount));
-  }
-  return Math.abs(running + amount);
+  return running - amount;
 }
 
 function assignPastBalancesFromTodayAnchor(
@@ -613,9 +600,10 @@ export function ledgerOpeningBalance(
   isCredit: boolean
 ): number {
   if (startingBalance == null || String(startingBalance).trim() === "") return 0;
+  if (isCredit) return creditSignedOpeningBalance(startingBalance);
   const sb = parseFloat(String(startingBalance));
   if (Number.isNaN(sb)) return 0;
-  return isCredit ? Math.abs(sb) : sb;
+  return sb;
 }
 
 /** Signed opening for credit cards (- = debt). Matches backend `_opening_balance`. */
@@ -662,13 +650,11 @@ export function accountLedgerDisplayBalance(
   };
 
   if (isCredit) {
+    const signed = parse(account.balance ?? account.forecast_summary?.current_balance);
+    if (signed != null) return signed;
     const owed = parse(account.balance_owed ?? account.current_balance);
-    if (owed != null && owed > 0) return owed;
-    const signed = parse(account.balance);
-    if (signed != null && signed < 0) return Math.abs(signed);
-    const forecastSigned = parse(account.forecast_summary?.current_balance);
-    if (forecastSigned != null && forecastSigned < 0) return Math.abs(forecastSigned);
-    return owed ?? 0;
+    if (owed != null && owed > 0) return -owed;
+    return 0;
   }
 
   const raw =
@@ -696,7 +682,8 @@ export function hideReconciledOpeningBalance(
   isCredit: boolean
 ): number | null {
   if (raw == null || !Number.isFinite(raw)) return null;
-  return isCredit ? Math.abs(raw) : raw;
+  if (isCredit && raw > 0) return -raw;
+  return raw;
 }
 
 /** Display convention for stored reconciled_balance (signed in DB). */
@@ -707,7 +694,7 @@ export function storedReconciledBalanceDisplay(
   if (raw == null || raw === "") return null;
   const n = typeof raw === "number" ? raw : parseFloat(String(raw));
   if (Number.isNaN(n)) return null;
-  return isCredit ? Math.abs(n) : n;
+  return n;
 }
 
 export function buildLedgerRowsFromTimeline(
@@ -856,7 +843,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   const configuredOpening = ledgerOpeningBalance(openingBalance, isCredit);
   const start =
     options?.pastOpeningOverride != null && Number.isFinite(options.pastOpeningOverride)
-      ? options.pastOpeningOverride
+      ? hideReconciledOpeningBalance(options.pastOpeningOverride, isCredit)!
       : configuredOpening;
 
   const rows: LedgerRow[] = [{ type: "starting_balance", balance: start }];
@@ -1095,10 +1082,11 @@ export function assetBalanceAsOfDateFromTimeline(
   return signed;
 }
 
-/** Credit ledger balances represent debt owed — always red when non-zero. */
+/** Credit ledger: negative = debt owed, positive = credit, zero = paid off. */
 export function creditBalanceColorClass(isCredit: boolean, balance = 0): string {
   if (!isCredit) return "text-gray-900";
   if (Math.abs(balance) < 0.005) return "text-gray-500";
+  if (balance > 0) return "text-green-600";
   return "text-red-600";
 }
 

@@ -15,6 +15,7 @@ import {
   creditOwedAsOfDateFromTimeline,
   creditCardSignedBalanceAtDate,
   creditSignedOpeningBalance,
+  applyTimelineAmountToBalance,
   splitLedgerSections,
   currentBalanceFromLedgerSections,
   lowestProjectedFromLedgerFuture,
@@ -275,9 +276,9 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       true
     );
     const sections = splitLedgerSections(rows);
-    expect(sections.start?.balance).toBeCloseTo(110.01, 2);
-    expect(sections.past[0].balance).toBeCloseTo(252.19, 2);
-    expect(sections.future[0].balance).toBeCloseTo(142.18, 2);
+    expect(sections.start?.balance).toBeCloseTo(-110.01, 2);
+    expect(sections.past[0].balance).toBeCloseTo(-252.19, 2);
+    expect(sections.future[0].balance).toBeCloseTo(-142.18, 2);
   });
 
   it("does not double-count unreconciled rows inside a closed reconcile period", () => {
@@ -300,11 +301,12 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     );
     const sections = splitLedgerSections(rows);
     expect(sections.past).toHaveLength(1);
-    expect(sections.past[0].balance).toBeCloseTo(824.83, 2);
+    expect(sections.past[0].balance).toBeCloseTo(-824.83, 2);
   });
 
-  it("hide-reconciled credit opening normalizes signed reconcile balance", () => {
-    expect(hideReconciledOpeningBalance(-1301.96, true)).toBeCloseTo(1301.96, 2);
+  it("hide-reconciled credit opening preserves signed reconcile balance", () => {
+    expect(hideReconciledOpeningBalance(-1301.96, true)).toBeCloseTo(-1301.96, 2);
+    expect(hideReconciledOpeningBalance(759.31, true)).toBeCloseTo(-759.31, 2);
     const rows = buildLedgerRowsFromTimeline(
       [
         {
@@ -330,9 +332,9 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       -1301.96
     );
     const sections = splitLedgerSections(rows);
-    expect(sections.start?.balance).toBeCloseTo(1301.96, 2);
-    expect(sections.past[0].balance).toBeCloseTo(1101.96, 2);
-    expect(sections.past[1].balance).toBeCloseTo(1171.96, 2);
+    expect(sections.start?.balance).toBeCloseTo(-1301.96, 2);
+    expect(sections.past[0].balance).toBeCloseTo(-1101.96, 2);
+    expect(sections.past[1].balance).toBeCloseTo(-1171.96, 2);
   });
 
   it("show-all uses stored reconciled_balance then anchors unreconciled chain at last reconcile", () => {
@@ -379,11 +381,11 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       -1301.96
     );
     const sections = splitLedgerSections(rows);
-    expect(sections.past[0].balance).toBeCloseTo(1301.96, 2);
-    expect(sections.past[1].balance).toBeCloseTo(1851.96, 2);
-    expect(sections.past[2].balance).toBeCloseTo(1651.96, 2);
-    expect(sections.past[3].balance).toBeCloseTo(1721.96, 2);
-    expect(sections.today?.balance).toBeCloseTo(1721.96, 2);
+    expect(sections.past[0].balance).toBeCloseTo(-1301.96, 2);
+    expect(sections.past[1].balance).toBeCloseTo(-1851.96, 2);
+    expect(sections.past[2].balance).toBeCloseTo(-1651.96, 2);
+    expect(sections.past[3].balance).toBeCloseTo(-1721.96, 2);
+    expect(sections.today?.balance).toBeCloseTo(-1721.96, 2);
   });
 
   it("hide-reconciled walks sequentially from opening override, not absolute server balances", () => {
@@ -438,8 +440,9 @@ describe("projectionTimelineRangeForAsOf", () => {
 });
 
 describe("creditBalanceColorClass", () => {
-  it("uses red for credit debt and gray for zero", () => {
-    expect(creditBalanceColorClass(true, 351.79)).toBe("text-red-600");
+  it("uses red for credit debt, green for credit, and gray for zero", () => {
+    expect(creditBalanceColorClass(true, -351.79)).toBe("text-red-600");
+    expect(creditBalanceColorClass(true, 351.79)).toBe("text-green-600");
     expect(creditBalanceColorClass(true, 0)).toBe("text-gray-500");
     expect(creditBalanceColorClass(false, 100)).toBe("text-gray-900");
   });
@@ -514,7 +517,7 @@ describe("accountLedgerDisplayBalance", () => {
   it("uses signed balance when credit balance_owed is stale zero", () => {
     expect(
       accountLedgerDisplayBalance({ balance_owed: "0", balance: "-500.00" }, true)
-    ).toBe(500);
+    ).toBe(-500);
   });
 });
 
@@ -943,7 +946,7 @@ describe("buildLedgerRowsFromTimeline", () => {
     expect(sections.start).toBeNull();
     expect(sections.past[0].type).toBe("transaction_from_timeline");
     if (sections.past[0].type === "transaction_from_timeline") {
-      expect(sections.past[0].balance).toBeCloseTo(32.74, 2);
+      expect(sections.past[0].balance).toBeCloseTo(-32.74, 2);
     }
   });
 
@@ -1004,6 +1007,16 @@ describe("buildLedgerRowsFromTimeline", () => {
     }
     expect(sections.today?.balance).toBeCloseTo(89.09, 2);
     expect(sections.future).toHaveLength(0);
+  });
+});
+
+describe("applyTimelineAmountToBalance credit overpayment", () => {
+  it("keeps positive credit after payment exceeds debt", () => {
+    let running = -27.8;
+    running = applyTimelineAmountToBalance(running, 620, true);
+    expect(running).toBeCloseTo(592.2, 2);
+    running = applyTimelineAmountToBalance(running, -619.2, true);
+    expect(running).toBeCloseTo(-27, 2);
   });
 });
 

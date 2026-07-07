@@ -40,7 +40,7 @@ export default function ForecastSummaryBar({
       : null);
   const lowestProjectedDate =
     ledgerLowestProjectedDate ?? account.lowest_projected_balance_date_30_days ?? null;
-  const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
+  const fmtBal = (bal: number) => formatCurrency(bal, currency);
 
   const earliestWarning = householdWarnings.length
     ? householdWarnings.reduce((a, b) => (a.date <= b.date ? a : b))

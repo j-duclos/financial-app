@@ -24,7 +24,7 @@ export default function TodayCard({
 }: Props) {
   const showSts = showSafeToSpendForRole(account.role, account.account_type ?? "");
   const sts = account.available_to_spend != null ? parseFloat(account.available_to_spend) : null;
-  const fmtBal = (bal: number) => formatCurrency(isCredit ? Math.abs(bal) : bal, currency);
+  const fmtBal = (bal: number) => formatCurrency(bal, currency);
   const creditClass = creditBalanceColorClass(isCredit, currentBalance);
 
   return (
