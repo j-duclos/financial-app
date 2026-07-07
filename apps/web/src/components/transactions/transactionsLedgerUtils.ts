@@ -510,6 +510,27 @@ export function isSupersededPlannedTimelineRow(
   return false;
 }
 
+/** Ledger flow direction from timeline row type (matches TransactionRow isOutflow). */
+export function timelineRowFlowDirection(row: TimelineRow): "INFLOW" | "OUTFLOW" | null {
+  const t = (row.type || "").toUpperCase();
+  if (t === "OUTFLOW" || t === "EXPENSE") return "OUTFLOW";
+  if (t === "INFLOW" || t === "INCOME") return "INFLOW";
+  return null;
+}
+
+/**
+ * Signed amount for running-balance math on a timeline row.
+ * Transfer legs may store positive DB amounts on outflow rows — honor row.type over raw sign.
+ */
+export function signedTimelineLedgerAmount(row: TimelineRow): number {
+  const raw = parseFloat(row.amount);
+  if (Number.isNaN(raw)) return 0;
+  const flow = timelineRowFlowDirection(row);
+  if (flow === "OUTFLOW") return -Math.abs(raw);
+  if (flow === "INFLOW") return Math.abs(raw);
+  return raw;
+}
+
 /**
  * Apply a timeline amount to a running ledger balance.
  * Credit cards use positive running values as amount owed (charges up, payments down).
@@ -708,7 +729,7 @@ export function buildLedgerRowsFromTimeline(
   if (hideReconciledStart != null) {
     let running = hideReconciledStart;
     for (const r of past) {
-      running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+      running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
       pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance: running });
     }
   } else {
@@ -727,7 +748,7 @@ export function buildLedgerRowsFromTimeline(
         } else if (running == null) {
           running = configuredOpening;
         }
-        running = applyTimelineAmountToBalance(running, parseFloat(r.amount), isCredit);
+        running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
         balance = running;
         if (!r.reconciled) {
           unreconciledChainStarted = true;
@@ -758,7 +779,7 @@ export function buildLedgerRowsFromTimeline(
   for (const r of pending) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,
-      parseFloat(r.amount),
+      signedTimelineLedgerAmount(r),
       isCredit
     );
     rows.push({
@@ -771,7 +792,7 @@ export function buildLedgerRowsFromTimeline(
   for (const r of future) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,
-      parseFloat(r.amount),
+      signedTimelineLedgerAmount(r),
       isCredit
     );
     rows.push({
@@ -852,7 +873,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   for (const r of pending) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,
-      parseFloat(r.amount),
+      signedTimelineLedgerAmount(r),
       isCredit
     );
     rows.push({
@@ -864,7 +885,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   for (const r of future) {
     forecastRunning = applyTimelineAmountToBalance(
       forecastRunning,
-      parseFloat(r.amount),
+      signedTimelineLedgerAmount(r),
       isCredit
     );
     rows.push({

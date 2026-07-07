@@ -66,6 +66,8 @@ import {
   pastTransactionsRange,
   ledgerPastTransactionStart,
   upcomingTimelineRange,
+  timelineRowFlowDirection,
+  signedTimelineLedgerAmount,
   ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
   forecastRangeLabel,
@@ -1064,22 +1066,34 @@ export default function Transactions() {
         .map((r) => ({
           date: r.date,
           amount: r.amount,
+          type: r.type,
+          signedAmount: signedTimelineLedgerAmount(r),
           txnId: r.transaction_id,
           ruleId: r.rule_id,
-          status: r.status,
-          source: r.source,
         }));
+      const platinumFuture = splitLedgerSections(built).future.filter(
+        (row) =>
+          (row.type === "recurring" || row.type === "transaction_from_timeline") &&
+          /platinum|platinium/i.test(row.row.description || "")
+      );
       if (platinumRows.length > 0) {
         fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
           body: JSON.stringify({
             sessionId: "88e096",
+            runId: "post-fix",
             location: "Transactions.tsx:ledgerRows",
-            message: "timeline platinum rows",
-            data: { platinumRows, awaitingTimelineRecalc },
+            message: "platinum balance check",
+            data: {
+              platinumRows,
+              ledgerBalances: platinumFuture.map((row) => ({
+                date: row.type === "recurring" ? row.row.date : row.row.date,
+                balance: row.balance,
+              })),
+            },
             timestamp: Date.now(),
-            hypothesisId: "H1-H2",
+            hypothesisId: "H-balance-sign",
           }),
         }).catch(() => {});
       }
@@ -1423,7 +1437,7 @@ export default function Transactions() {
     !balancesRecalculating &&
     (forecastRange === "6m" || forecastRange === "12m");
 
-  function openEdit(txn: Transaction) {
+  function openEdit(txn: Transaction, opts?: { ledgerFlow?: "INFLOW" | "OUTFLOW" }) {
     if (txn.reconciled) {
       setDeleteError("Reconciled transactions cannot be edited.");
       return;
@@ -1447,12 +1461,16 @@ export default function Transactions() {
       category_id: (txn.category?.id ?? txn.category_id) ?? "",
       account_id: txnAccountId ?? "",
       amount: String(Math.abs(amt)),
-      direction: amt >= 0 ? "INFLOW" : "OUTFLOW",
+      direction:
+        opts?.ledgerFlow ?? (amt >= 0 ? "INFLOW" : "OUTFLOW"),
       transfer_to_account_id: transferToId,
     });
   }
 
-  async function openEditByTimelineId(transactionId: number) {
+  async function openEditByTimelineId(
+    transactionId: number,
+    opts?: { ledgerFlow?: "INFLOW" | "OUTFLOW" }
+  ) {
     try {
       setDeleteError(null);
       const txn = await getTransaction(transactionId);
@@ -1460,7 +1478,7 @@ export default function Transactions() {
         setDeleteError("Reconciled transactions cannot be edited.");
         return;
       }
-      openEdit(txn);
+      openEdit(txn, opts);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not load transaction for edit");
@@ -1567,7 +1585,9 @@ export default function Transactions() {
         setDeleteError("Could not load this scheduled transaction for editing.");
         return;
       }
-      await openEditByTimelineId(transactionId);
+      await openEditByTimelineId(transactionId, {
+        ledgerFlow: timelineRowFlowDirection(row) ?? undefined,
+      });
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not load transaction for edit");

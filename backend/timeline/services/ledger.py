@@ -453,6 +453,11 @@ def _materialized_rule_timeline_row_if_exists(
         return None
     ids_in_rows.add(existing.pk)
     amt = existing.amount if existing.amount is not None else amount_decimal
+    rt = (row_type or "").upper()
+    if rt == "OUTFLOW" and amt > 0:
+        amt = -abs(amt)
+    elif rt == "INFLOW" and amt < 0:
+        amt = abs(amt)
     cat_id = category_id if category_id is not None else existing.category_id
     cat_name = category_name
     if cat_name is None and getattr(existing, "category", None):

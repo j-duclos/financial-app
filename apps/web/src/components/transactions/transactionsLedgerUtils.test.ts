@@ -34,6 +34,7 @@ import {
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
   timelineHasAccountRows,
+  signedTimelineLedgerAmount,
 } from "./transactionsLedgerUtils";
 import type { TimelineRow } from "@budget-app/shared";
 
@@ -580,6 +581,68 @@ describe("firstNegativeFromLedgerFuture", () => {
 describe("formatDateDisplay", () => {
   it("formats ISO date as MM-DD-YY", () => {
     expect(formatDateDisplay("2026-05-23")).toBe("05-23-26");
+  });
+});
+
+describe("signedTimelineLedgerAmount", () => {
+  it("treats OUTFLOW type as negative even when DB amount is positive", () => {
+    const row: TimelineRow = {
+      date: "2026-08-26",
+      description: "Platinum (Platinium)",
+      account_id: 1,
+      account_name: "Chase",
+      category_id: 1,
+      category_name: "Credit Card Payment",
+      amount: "100.00",
+      type: "OUTFLOW",
+      status: "PLANNED",
+      source: "actual",
+      rule_id: 48,
+      transaction_id: 6877,
+      running_balance: "0",
+    };
+    expect(signedTimelineLedgerAmount(row)).toBe(-100);
+  });
+
+  it("subtracts positive outflow-type amounts from running balance", () => {
+    const timeline: TimelineRow[] = [
+      {
+        date: "2026-08-25",
+        description: "Prior",
+        account_id: 1,
+        account_name: "Chase",
+        category_id: null,
+        category_name: null,
+        amount: "-57.56",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "actual",
+        rule_id: null,
+        transaction_id: 1,
+        running_balance: "0",
+      },
+      {
+        date: "2026-08-26",
+        description: "Platinum",
+        account_id: 1,
+        account_name: "Chase",
+        category_id: 1,
+        category_name: "Credit Card Payment",
+        amount: "100.00",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "actual",
+        rule_id: 48,
+        transaction_id: 2,
+        running_balance: "0",
+      },
+    ];
+    const rows = buildLedgerRowsFromTimeline(timeline, "2026-07-07", 200, false);
+    const future = splitLedgerSections(rows).future;
+    const platinum = future.find(
+      (r) => r.type === "recurring" && r.row.description.includes("Platinum")
+    );
+    expect(platinum?.balance).toBe(42.44);
   });
 });
 
