@@ -24,6 +24,9 @@ import {
   timelineRangeForFilter,
   upcomingTimelineRange,
   UPCOMING_FORECAST_DAYS,
+  forecastRangeToDays,
+  DEFAULT_FORECAST_RANGE,
+  addMonthsToIsoDate,
   pastTransactionsRange,
   ledgerPastTransactionStart,
   filterPastTransactionsAfterReconcileClose,
@@ -44,11 +47,30 @@ describe("timelineRangeForFilter", () => {
 });
 
 describe("upcomingTimelineRange", () => {
-  it("spans today through 90 days forward", () => {
+  it("spans today through default 3-month forecast", () => {
     const today = todayStr();
     const { start, end } = upcomingTimelineRange(today);
     expect(start).toBe(today);
-    expect(end).toBe(addDaysToIsoDate(today, UPCOMING_FORECAST_DAYS));
+    expect(end).toBe(addMonthsToIsoDate(today, 3));
+  });
+
+  it("uses 30 days for 30d forecast range", () => {
+    const today = todayStr();
+    const { start, end } = upcomingTimelineRange(today, "30d");
+    expect(start).toBe(today);
+    expect(end).toBe(addDaysToIsoDate(today, 30));
+  });
+
+  it("uses 12 calendar months for 12m forecast range", () => {
+    const today = todayStr();
+    const { end } = upcomingTimelineRange(today, "12m");
+    expect(end).toBe(addMonthsToIsoDate(today, 12));
+  });
+
+  it("maps forecast ranges to day counts for loading hints", () => {
+    expect(forecastRangeToDays(DEFAULT_FORECAST_RANGE)).toBe(UPCOMING_FORECAST_DAYS);
+    expect(forecastRangeToDays("6m")).toBe(180);
+    expect(forecastRangeToDays("12m")).toBe(365);
   });
 });
 

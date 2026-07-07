@@ -36,6 +36,14 @@ export function addMonths(months: number): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Add calendar months to an ISO date (local timezone). */
+export function addMonthsToIsoDate(iso: string, months: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setMonth(dt.getMonth() + months);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
 export type TimeFilter = "14d" | "1m" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
 
 export const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d">, number> = {
@@ -67,8 +75,39 @@ export function timelineRangeForFilter(filter: TimeFilter): { start: string; end
 /** Past history loaded for transfer/CC payoff hints (keep small — full rematch timeline builds are expensive). */
 export const PROJECTION_HINT_HISTORY_DAYS = 120;
 
-/** Upcoming forecast on Transactions page — always 90 days (3 months), independent of past filter. */
+/** Forecast window for Upcoming Transactions — independent of history range. */
+export type ForecastRange = "30d" | "3m" | "6m" | "12m";
+
+export const DEFAULT_FORECAST_RANGE: ForecastRange = "3m";
+
+export const FORECAST_RANGE_MONTHS: Record<Exclude<ForecastRange, "30d">, number> = {
+  "3m": 3,
+  "6m": 6,
+  "12m": 12,
+};
+
+/** Default upcoming window in days (3 months). */
 export const UPCOMING_FORECAST_DAYS = 90;
+
+export function forecastRangeLabel(range: ForecastRange): string {
+  switch (range) {
+    case "30d":
+      return "30 days";
+    case "3m":
+      return "3 months";
+    case "6m":
+      return "6 months";
+    case "12m":
+      return "12 months";
+  }
+}
+
+export function forecastRangeToDays(range: ForecastRange): number {
+  if (range === "30d") return 30;
+  if (range === "3m") return 90;
+  if (range === "6m") return 180;
+  return 365;
+}
 
 /** Past window for listTransactions (history through today). */
 export function pastTransactionsRange(filter: TimeFilter): { start: string; end: string } {
@@ -124,21 +163,26 @@ export function filterPastTransactionsAfterReconcileClose(
   return txns.filter((t) => t.date > lastReconcilePeriodEnd);
 }
 
-/** Upcoming projection window: today through today + 90 days. */
-export function upcomingTimelineRange(asOf: string = todayStr()): { start: string; end: string } {
-  return {
-    start: asOf,
-    end: addDaysToIsoDate(asOf, UPCOMING_FORECAST_DAYS),
-  };
+/** Upcoming projection window: today through today + selected forecast range. */
+export function upcomingTimelineRange(
+  asOf: string = todayStr(),
+  forecastRange: ForecastRange = DEFAULT_FORECAST_RANGE
+): { start: string; end: string } {
+  const end =
+    forecastRange === "30d"
+      ? addDaysToIsoDate(asOf, 30)
+      : addMonthsToIsoDate(asOf, FORECAST_RANGE_MONTHS[forecastRange]);
+  return { start: asOf, end };
 }
 
-/** Combined range for transfer-hint date checks (past filter + upcoming forecast). */
+/** Combined range for transfer-hint date checks (history filter + upcoming forecast). */
 export function ledgerHintDateRange(
   filter: TimeFilter,
+  forecastRange: ForecastRange = DEFAULT_FORECAST_RANGE,
   asOf: string = todayStr()
 ): { start: string; end: string } {
   const past = pastTransactionsRange(filter);
-  const upcoming = upcomingTimelineRange(asOf);
+  const upcoming = upcomingTimelineRange(asOf, forecastRange);
   return { start: past.start, end: upcoming.end };
 }
 
@@ -635,20 +679,9 @@ export function buildLedgerRowsFromTimeline(
   pastOpeningOverride?: number | null,
   postReconcileAnchor?: number | null
 ): LedgerRow[] {
-  const supersededIds = new Set<string>();
-  const shadowedIds = new Set<string>();
-  const visibleTimeline = timeline.filter((r) => {
-    const key = `${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`;
-    if (isSupersededPlannedTimelineRow(r, timeline)) {
-      supersededIds.add(key);
-      return false;
-    }
-    if (isShadowedByMatchedRuleSibling(r, timeline)) {
-      shadowedIds.add(key);
-      return false;
-    }
-    return true;
-  });
+  const visibleTimeline = timeline.filter(
+    (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
+  );
   const past = visibleTimeline
     .filter((r) => isPastTimelineRow(r, today))
     .sort(compareTimelineRows);

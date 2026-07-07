@@ -120,32 +120,6 @@ def purge_planned_rule_occurrence(rule_id: int, occurrence_date: date) -> int:
         for aid in account_ids:
             if aid is not None:
                 cache.note_transactions_deleted(aid, rule_id=rule_id, on_date=occurrence_date)
-    # #region agent log
-    import json
-
-    try:
-        with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
-            _f.write(
-                json.dumps(
-                    {
-                        "sessionId": "641553",
-                        "location": "expected_lifecycle.py:purge_planned_rule_occurrence",
-                        "message": "purged planned rule occurrence",
-                        "data": {
-                            "rule_id": rule_id,
-                            "date": str(occurrence_date),
-                            "deleted": deleted,
-                            "transfer_groups": list(tg_ids),
-                        },
-                        "timestamp": int(timezone.now().timestamp() * 1000),
-                        "hypothesisId": "H1-H2",
-                    }
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-    # #endregion
     return deleted
 
 

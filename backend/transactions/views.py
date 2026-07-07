@@ -459,6 +459,39 @@ class TransactionViewSet(ModelViewSet):
         data = dict(serializer.data)
         if other is not None:
             data["synced_to_account_id"] = other.account_id
+        # #region agent log
+        import json
+        import time
+
+        try:
+            with open("/Users/capone/Dev_work/.cursor/debug-88e096.log", "a") as _f:
+                _f.write(
+                    json.dumps(
+                        {
+                            "sessionId": "88e096",
+                            "location": "transactions/views.py:update",
+                            "message": "transaction updated",
+                            "data": {
+                                "txn_id": instance.pk,
+                                "rule_id": instance.rule_id,
+                                "old_amount": str(old_amount),
+                                "new_amount": str(instance.amount),
+                                "response_amount": str(data.get("amount")),
+                                "old_date": str(old_date),
+                                "new_date": str(instance.date),
+                                "other_id": other.pk if other is not None else None,
+                                "other_amount": str(other.amount) if other is not None else None,
+                                "request_amount": str(request.data.get("amount")),
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "hypothesisId": "H4-H5",
+                        }
+                    )
+                    + "\n"
+                )
+        except OSError:
+            pass
+        # #endregion
         return Response(data)
 
     @action(detail=True, methods=["post"], url_path="confirm")
@@ -501,35 +534,6 @@ class TransactionViewSet(ModelViewSet):
         """Unmatched Plaid imports that could match this planned row."""
         planned = self._get_lifecycle_transaction(pk)
         ranked = find_import_candidates_for_planned(planned)
-        # #region agent log
-        import json
-        import time
-
-        try:
-            with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
-                _f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "641553",
-                            "location": "views.py:import_candidates",
-                            "message": "import candidate search",
-                            "data": {
-                                "planned_id": planned.pk,
-                                "planned_date": planned.date.isoformat(),
-                                "rule_id": planned.rule_id,
-                                "candidate_count": len(ranked),
-                                "candidate_ids": [imp.pk for imp, _sc, _parts in ranked[:5]],
-                            },
-                            "timestamp": int(time.time() * 1000),
-                            "runId": "match-fix",
-                            "hypothesisId": "H8",
-                        }
-                    )
-                    + "\n"
-                )
-        except OSError:
-            pass
-        # #endregion
         return Response(
             {
                 "candidates": [

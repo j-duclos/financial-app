@@ -68,7 +68,9 @@ import {
   upcomingTimelineRange,
   ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
+  forecastRangeLabel,
   type TimeFilter,
+  type ForecastRange,
 } from "../components/transactions/transactionsLedgerUtils";
 import { logTransactionsPageLoadPlan } from "../lib/transactionsPageLoadPerf";
 
@@ -84,9 +86,11 @@ import { accountLifecycleStatus } from "../lib/accountOrganization";
 import { refreshAfterTransactionEdit } from "../lib/financialQueryRefresh";
 import {
   loadStoredTransactionsAccountId,
-  loadStoredTransactionsTimeFilter,
   saveStoredTransactionsAccountId,
+  loadStoredTransactionsTimeFilter,
   saveStoredTransactionsTimeFilter,
+  loadStoredTransactionsForecastRange,
+  saveStoredTransactionsForecastRange,
   loadStoredTransactionsKindFilter,
   saveStoredTransactionsKindFilter,
   loadStoredTransactionsAmountMin,
@@ -98,7 +102,7 @@ import {
 import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
-export type { TimeFilter };
+export type { TimeFilter, ForecastRange };
 
 type TransactionsLocationState = {
   accountId?: number;
@@ -117,6 +121,7 @@ export default function Transactions() {
   const isPlaidOAuthReturn = searchParams.has("oauth_state_id") || navState?.focusPlaid === true;
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
+  const [forecastRange, setForecastRange] = useState<ForecastRange>(() => loadStoredTransactionsForecastRange());
   const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
   const [reconciledFilter, setReconciledFilter] = useState(() => loadStoredTransactionsReconciledFilter());
   /** Always default true on load — unreconciled-only queries; user may uncheck for this session. */
@@ -193,16 +198,20 @@ export default function Transactions() {
       reconcileSetupData?.last_reconcile_period_end,
     ]
   );
-  const upcomingRange = useMemo(() => upcomingTimelineRange(todayStr()), []);
+  const upcomingRange = useMemo(
+    () => upcomingTimelineRange(todayStr(), forecastRange),
+    [forecastRange]
+  );
   const ledgerRange = useMemo(
-    () => ledgerHintDateRange(timeFilter),
-    [timeFilter]
+    () => ledgerHintDateRange(timeFilter, forecastRange),
+    [timeFilter, forecastRange]
   );
 
   const { data: txnsData } = useQuery({
     queryKey: [
       "transactions",
       {
+        historyRange: timeFilter,
         account: accountId || undefined,
         date_after: pastTransactionsDateAfter,
         date_before: pastRangeEnd,
@@ -235,6 +244,7 @@ export default function Transactions() {
       "ledger",
       pastRangeStart,
       upcomingRange.end,
+      forecastRange,
       accountId,
       todayStr(),
       hideReconciledPast,
@@ -340,6 +350,7 @@ export default function Transactions() {
       accountId,
       pastRange: { start: pastRangeStart, end: pastRangeEnd },
       upcomingRange,
+      forecastRange,
       hideReconciledPast,
       householdTimelineEnabled: needsTransferHints && householdId != null,
       duplicateAccountCallsRemoved: true,
@@ -349,6 +360,7 @@ export default function Transactions() {
     pastRangeStart,
     pastRangeEnd,
     upcomingRange,
+    forecastRange,
     hideReconciledPast,
     needsTransferHints,
     householdId,
@@ -361,6 +373,10 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsTimeFilter(timeFilter);
   }, [timeFilter]);
+
+  useEffect(() => {
+    saveStoredTransactionsForecastRange(forecastRange);
+  }, [forecastRange]);
 
   useEffect(() => {
     saveStoredTransactionsKindFilter(kindFilter);
@@ -466,6 +482,7 @@ export default function Transactions() {
       "household",
       upcomingRange.start,
       upcomingRange.end,
+      forecastRange,
       householdId,
       todayStr(),
     ],
@@ -1041,6 +1058,32 @@ export default function Transactions() {
         hasPastOpeningOverride ? pastOpeningOverride : null,
         postReconcileAnchor
       );
+      // #region agent log
+      const platinumRows = timelineForAccount
+        .filter((r) => /platinum|platinium/i.test(r.description || ""))
+        .map((r) => ({
+          date: r.date,
+          amount: r.amount,
+          txnId: r.transaction_id,
+          ruleId: r.rule_id,
+          status: r.status,
+          source: r.source,
+        }));
+      if (platinumRows.length > 0) {
+        fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+          body: JSON.stringify({
+            sessionId: "88e096",
+            location: "Transactions.tsx:ledgerRows",
+            message: "timeline platinum rows",
+            data: { platinumRows, awaitingTimelineRecalc },
+            timestamp: Date.now(),
+            hypothesisId: "H1-H2",
+          }),
+        }).catch(() => {});
+      }
+      // #endregion
       return built;
     }
 
@@ -1232,6 +1275,26 @@ export default function Transactions() {
     },
     onSuccess: async (updatedTxn, variables) => {
       setDeleteError(null);
+      // #region agent log
+      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+        body: JSON.stringify({
+          sessionId: "88e096",
+          location: "Transactions.tsx:updateMu.onSuccess",
+          message: "update response",
+          data: {
+            txnId: variables.id,
+            sentAmount: variables.data.amount,
+            responseAmount: updatedTxn.amount,
+            responseDate: updatedTxn.date,
+            ruleId: (updatedTxn as { rule_id?: number | null }).rule_id ?? null,
+          },
+          timestamp: Date.now(),
+          hypothesisId: "H4",
+        }),
+      }).catch(() => {});
+      // #endregion
       const newAccountId = variables.data.account_id;
       const syncedToAccountId = (updatedTxn as { synced_to_account_id?: number }).synced_to_account_id;
       const affectsBalances =
@@ -1355,6 +1418,11 @@ export default function Transactions() {
     awaitingTimelineRecalc &&
     (balanceAffectingMutationPending || ledgerTimelineFetching);
 
+  const forecastRangeLoading =
+    ledgerTimelineFetching &&
+    !balancesRecalculating &&
+    (forecastRange === "6m" || forecastRange === "12m");
+
   function openEdit(txn: Transaction) {
     if (txn.reconciled) {
       setDeleteError("Reconciled transactions cannot be edited.");
@@ -1462,9 +1530,10 @@ export default function Transactions() {
     const refreshed = await queryClient.fetchQuery({
       queryKey: [
         "timeline",
-        "upcoming",
-        upcomingRange.start,
+        "ledger",
+        pastRangeStart,
         upcomingRange.end,
+        forecastRange,
         accountId,
         todayStr(),
         hideReconciledPast,
@@ -1687,6 +1756,29 @@ export default function Transactions() {
         return;
       }
     }
+    // #region agent log
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
+      body: JSON.stringify({
+        sessionId: "88e096",
+        location: "Transactions.tsx:handleEditSubmit",
+        message: "edit submit",
+        data: {
+          txnId: editing.id,
+          ruleId: editingRuleId,
+          applyToRule,
+          requestedAmount: payload.amount,
+          editFormAmount: editForm.amount,
+          signedAmount,
+          date: payload.date,
+          payee: payload.payee,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H3-H4",
+      }),
+    }).catch(() => {});
+    // #endregion
     updateMu.mutate({ id: editing.id, data: payload });
   }
 
@@ -1894,7 +1986,7 @@ export default function Transactions() {
 
         <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-wrap sm:items-end">
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
-            <label className="block text-xs font-medium text-gray-500 mb-0.5">Date Range</label>
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">History Range</label>
             <select
               value={timeFilter}
               onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
@@ -1910,10 +2002,19 @@ export default function Transactions() {
               <option value="36m">36 months</option>
             </select>
           </div>
-          <HideReconciledFilter
-            hideReconciledPast={hideReconciledPast}
-            onHideReconciledPastChange={setHideReconciledPast}
-          />
+          <div className="w-full sm:w-auto sm:min-w-[8rem]">
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">Forecast Range</label>
+            <select
+              value={forecastRange}
+              onChange={(e) => setForecastRange(e.target.value as ForecastRange)}
+              className="w-full sm:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
+            >
+              <option value="30d">30 days</option>
+              <option value="3m">3 months</option>
+              <option value="6m">6 months</option>
+              <option value="12m">12 months</option>
+            </select>
+          </div>
           <div className="w-full sm:w-auto sm:min-w-[12rem]">
             <label className="block text-xs font-medium text-gray-500 mb-0.5">Account</label>
             <select
@@ -1929,6 +2030,10 @@ export default function Transactions() {
               ))}
             </select>
           </div>
+          <HideReconciledFilter
+            hideReconciledPast={hideReconciledPast}
+            onHideReconciledPastChange={setHideReconciledPast}
+          />
           <TransactionColumnFilters
             kindFilter={kindFilter}
             onKindFilterChange={setKindFilter}
@@ -1967,6 +2072,18 @@ export default function Transactions() {
           {!accountMatchesSelection && accountFetching ? (
             <p className="shrink-0 text-sm text-gray-600 bg-gray-50 border-b border-gray-200 px-4 py-2" role="status">
               Loading account…
+            </p>
+          ) : null}
+          {forecastRangeLoading ? (
+            <p
+              className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5 flex items-center gap-2"
+              role="status"
+            >
+              <span
+                className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-600 border-t-transparent"
+                aria-hidden
+              />
+              Loading {forecastRangeLabel(forecastRange)} forecast…
             </p>
           ) : null}
           {balancesRecalculating && accountMatchesSelection ? (

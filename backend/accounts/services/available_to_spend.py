@@ -31,7 +31,7 @@ from common.services.profiler import (
 from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 
 DEFAULT_FORECAST_DAYS = 30
-ALLOWED_FORECAST_DAYS = frozenset({7, 14, 30, 60, 90})
+ALLOWED_FORECAST_DAYS = frozenset({7, 14, 30, 60, 90, 180, 365})
 
 WATCH_ABSOLUTE_THRESHOLD = Decimal("100")
 WATCH_PERCENT_OF_BALANCE = Decimal("0.10")

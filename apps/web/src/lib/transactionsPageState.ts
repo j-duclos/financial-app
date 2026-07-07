@@ -1,8 +1,9 @@
-import type { TimeFilter } from "../components/transactions/transactionsLedgerUtils";
+import type { TimeFilter, ForecastRange } from "../components/transactions/transactionsLedgerUtils";
 import type { TransactionKind } from "../components/transactions/transactionKindUtils";
 
 const ACCOUNT_ID_KEY = "budget-app:transactions:accountId";
 const TIME_FILTER_KEY = "budget-app:transactions:timeFilter";
+const FORECAST_RANGE_KEY = "budget-app:transactions:forecastRange";
 const KIND_FILTER_KEY = "budget-app:transactions:kindFilter";
 const AMOUNT_MIN_KEY = "budget-app:transactions:amountMin";
 const AMOUNT_MAX_KEY = "budget-app:transactions:amountMax";
@@ -13,6 +14,7 @@ const RECONCILED_FILTERS = ["", "reconciled", "unreconciled"] as const;
 export type StoredReconciledFilter = (typeof RECONCILED_FILTERS)[number];
 
 const TIME_FILTERS: TimeFilter[] = ["14d", "1m", "3m", "6m", "12m", "18m", "24m", "36m"];
+const FORECAST_RANGES: ForecastRange[] = ["30d", "3m", "6m", "12m"];
 
 export function loadStoredTransactionsAccountId(): number | "" {
   if (typeof window === "undefined") return "";
@@ -56,6 +58,28 @@ export function saveStoredTransactionsTimeFilter(timeFilter: TimeFilter): void {
   if (typeof window === "undefined") return;
   try {
     sessionStorage.setItem(TIME_FILTER_KEY, timeFilter);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadStoredTransactionsForecastRange(): ForecastRange {
+  if (typeof window === "undefined") return "3m";
+  try {
+    const raw = sessionStorage.getItem(FORECAST_RANGE_KEY);
+    if (raw && FORECAST_RANGES.includes(raw as ForecastRange)) {
+      return raw as ForecastRange;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "3m";
+}
+
+export function saveStoredTransactionsForecastRange(forecastRange: ForecastRange): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(FORECAST_RANGE_KEY, forecastRange);
   } catch {
     /* ignore */
   }

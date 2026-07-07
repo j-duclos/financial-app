@@ -10,7 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
-from common.services.forecast_horizon import normalize_forecast_days
+from common.services.forecast_horizon import MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS, normalize_forecast_days
 from transactions.models import Transaction, Transfer
 
 from .models import (
@@ -687,6 +687,19 @@ class TimelineView(APIView):
     def get(self, request):
         try:
             start, end, as_of_date = _timeline_date_range(request)
+            today = timezone.localdate()
+            if end > today:
+                forward_days = (end - today).days
+                if forward_days > MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS:
+                    return Response(
+                        {
+                            "detail": (
+                                f"Forecast end may not exceed {MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS} "
+                                "days from today."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
             scenario_id = request.query_params.get("scenario_id")
             account_id = request.query_params.get("account_id")
             household_id = request.query_params.get("household_id")
@@ -753,56 +766,38 @@ class TimelineView(APIView):
             # #region agent log
             import json
             import time
-            from collections import defaultdict
 
             try:
-                _utility = [
+                _plat = [
                     {
                         "date": str(r.get("date")),
                         "amount": str(r.get("amount")),
-                        "rule_id": r.get("rule_id"),
                         "txn_id": r.get("transaction_id"),
+                        "rule_id": r.get("rule_id"),
                         "status": r.get("status"),
                         "source": r.get("source"),
-                        "desc": (r.get("description") or "")[:60],
+                        "desc": (r.get("description") or "")[:50],
                     }
                     for r in rows
-                    if "electric" in (r.get("description") or "").lower()
-                    or "cox" in (r.get("description") or "").lower()
+                    if "platinum" in (r.get("description") or "").lower()
+                    or "platinium" in (r.get("description") or "").lower()
                 ]
-                _dup_rules: dict[tuple, list] = defaultdict(list)
-                for r in rows:
-                    rid = r.get("rule_id")
-                    rd = r.get("date")
-                    aid = r.get("account_id")
-                    if rid is not None and rd is not None and rd > (as_of_date or timezone.localdate()):
-                        _dup_rules[(rid, rd, aid)].append(
-                            {
-                                "txn_id": r.get("transaction_id"),
-                                "amount": str(r.get("amount")),
-                                "status": r.get("status"),
-                                "source": r.get("source"),
-                            }
-                        )
-                _dup_future = {str(k): v for k, v in _dup_rules.items() if len(v) > 1}
                 with open("/Users/capone/Dev_work/.cursor/debug-88e096.log", "a") as _f:
                     _f.write(
                         json.dumps(
                             {
                                 "sessionId": "88e096",
-                                "location": "views.py:TimelineView.get",
+                                "location": "timeline/views.py:TimelineView.get",
                                 "message": "timeline built",
                                 "data": {
                                     "account_id": account_id,
                                     "start": str(start),
                                     "end": str(end),
-                                    "as_of": str(as_of_date),
-                                    "row_count": len(rows),
-                                    "utility_rows": _utility,
-                                    "duplicate_future_rule_keys": _dup_future,
+                                    "platinum_rows": _plat,
+                                    "cache_hit": False,
                                 },
                                 "timestamp": int(time.time() * 1000),
-                                "hypothesisId": "H1-H3",
+                                "hypothesisId": "H1-H2",
                             }
                         )
                         + "\n"

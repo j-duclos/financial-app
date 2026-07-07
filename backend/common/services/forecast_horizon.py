@@ -14,9 +14,10 @@ from accounts.services.available_to_spend import (
 )
 
 PASSIVE_FORECAST_DAYS = frozenset({7, 14, 30})
-ADVANCED_FORECAST_DAYS = frozenset({60, 90})
+ADVANCED_FORECAST_DAYS = frozenset({60, 90, 180, 365})
 PASSIVE_DEFAULT_FORECAST_DAYS = DEFAULT_FORECAST_DAYS  # 30
 ADVANCED_DEFAULT_FORECAST_DAYS = 90
+MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS = 365
 
 
 def parse_forecast_days_param(

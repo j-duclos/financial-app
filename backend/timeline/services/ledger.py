@@ -2280,27 +2280,6 @@ def _build_timeline_impl(
                         and t.status == Transaction.Status.PLANNED
                     )
                 ]
-                # #region agent log
-                import json
-
-                try:
-                    with open("/Users/capone/Dev_work/.cursor/debug-641553.log", "a") as _f:
-                        _f.write(
-                            json.dumps(
-                                {
-                                    "sessionId": "641553",
-                                    "location": "ledger.py:heal_skipped_occurrence",
-                                    "message": "healed skipped orphan planned rows",
-                                    "data": {"healed": healed, "skip_count": len(skipped_occurrences)},
-                                    "timestamp": int(timezone.now().timestamp() * 1000),
-                                    "hypothesisId": "H1-H3",
-                                }
-                            )
-                            + "\n"
-                        )
-                except Exception:
-                    pass
-                # #endregion
 
         # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
         # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
