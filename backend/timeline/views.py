@@ -750,6 +750,48 @@ class TimelineView(APIView):
                 exclude_reconciled_past=exclude_reconciled_past,
                 caller="timeline_page",
             )
+            # #region agent log
+            import json
+            import time
+
+            try:
+                _pending_transfer = [
+                    {
+                        "txn_id": r.get("transaction_id"),
+                        "account_id": r.get("account_id"),
+                        "date": str(r.get("date")),
+                        "amount": str(r.get("amount")),
+                        "tg": r.get("transfer_group_id"),
+                        "status": r.get("status"),
+                    }
+                    for r in rows
+                    if r.get("transfer_group_id")
+                    and (r.get("status") or "").upper() == "PLANNED"
+                    and r.get("date") <= (as_of_date or timezone.localdate())
+                ]
+                with open("/Users/capone/Dev_work/.cursor/debug-3863b1.log", "a") as _f:
+                    _f.write(
+                        json.dumps(
+                            {
+                                "sessionId": "3863b1",
+                                "location": "views.py:TimelineView.get",
+                                "message": "projection_only pending transfer legs",
+                                "data": {
+                                    "account_id": account_id,
+                                    "as_of": str(as_of_date),
+                                    "pending_transfer_legs": _pending_transfer,
+                                    "row_count": len(rows),
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "hypothesisId": "H1",
+                                "runId": "post-fix",
+                            }
+                        )
+                        + "\n"
+                    )
+            except OSError:
+                pass
+            # #endregion
             # Serialize dates and decimals for JSON
             for r in rows:
                 r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])

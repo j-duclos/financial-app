@@ -502,13 +502,18 @@ def _append_rescheduled_rule_materializations(
 
     from transactions.services.matching import planned_leg_suppressed_by_import_match
 
+    from django.db.models import Q
+
     extra = (
         Transaction.objects.filter(
             rule_id__in=rule_ids,
             date__gte=window_start,
             date__lte=end_date,
             account_id__in=forecastable_account_ids,
-            source=Transaction.Source.RULE,
+        )
+        .filter(
+            Q(source=Transaction.Source.RULE)
+            | Q(source=Transaction.Source.ACTUAL, transfer_group_id__isnull=False)
         )
         .exclude(pk__in=ids_in_rows)
         .select_related("account", "category", "rule")
@@ -2369,7 +2374,12 @@ def _build_timeline_impl(
             # Projection-only reads also skip materialized rule rows — the occurrence loop re-adds
             # them via _materialized_rule_timeline_row_if_exists (preserves edited amounts without
             # double-counting every DB materialized row in the ledger balance).
-            if scenario_projection_only and t.rule_id is not None and t.date >= today:
+            if (
+                scenario_projection_only
+                and t.rule_id is not None
+                and t.date >= today
+                and not t.transfer_group_id
+            ):
                 continue
             amt = t.amount
             sign = 1 if (amt is not None and amt >= 0) else -1
