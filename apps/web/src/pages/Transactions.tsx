@@ -81,7 +81,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
-import { patchTimelineCachesForTransaction, refreshAfterTransactionEdit, scheduleTimelineRefresh, type TimelinePatchScope } from "../lib/financialQueryRefresh";
+import { refreshAfterTransactionEdit } from "../lib/financialQueryRefresh";
 import {
   loadStoredTransactionsAccountId,
   loadStoredTransactionsTimeFilter,
@@ -251,6 +251,7 @@ export default function Transactions() {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
+    placeholderData: keepPreviousData,
   });
   const { data: accountData, isFetching: accountFetching } = useQuery({
     queryKey: ["account", accountId, "transactions-page"],
@@ -932,18 +933,7 @@ export default function Transactions() {
 
   const plaidHouseholdId = householdId ?? profile?.default_household ?? null;
 
-  const timelinePatchScope = useMemo((): TimelinePatchScope | null => {
-    if (typeof accountId !== "number") return null;
-    return {
-      timelineStart: pastRangeStart,
-      timelineEnd: upcomingRange.end,
-      accountId,
-      today: todayStr(),
-      householdId,
-      upcoming: true,
-      hideReconciledPast,
-    };
-  }, [pastRangeStart, upcomingRange.end, accountId, householdId, hideReconciledPast]);
+  const [awaitingTimelineRecalc, setAwaitingTimelineRecalc] = useState(false);
 
   const accountsForHousehold = useMemo(() => {
     if (householdId == null) return [];
@@ -1051,36 +1041,6 @@ export default function Transactions() {
         hasPastOpeningOverride ? pastOpeningOverride : null,
         postReconcileAnchor
       );
-      // #region agent log
-      const sections = splitLedgerSections(built);
-      const futureDate = (row: (typeof sections.future)[number] | undefined) => {
-        if (!row) return null;
-        if (row.type === "recurring" || row.type === "transaction_from_timeline") return row.row.date;
-        if (row.type === "transaction") return row.txn.date;
-        return null;
-      };
-      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
-        body: JSON.stringify({
-          sessionId: "88e096",
-          location: "Transactions.tsx:ledgerRows",
-          message: "ledger sections built",
-          data: {
-            timeFilter,
-            pastRangeStart,
-            upcomingEnd: upcomingRange.end,
-            timelineRowCount: timelineForAccount.length,
-            futureCount: sections.future.length,
-            firstNegative: firstNegativeFromLedgerFuture(sections.future),
-            futureFirstDate: futureDate(sections.future[0]),
-            futureLastDate: futureDate(sections.future[sections.future.length - 1]),
-          },
-          timestamp: Date.now(),
-          hypothesisId: "H1",
-        }),
-      }).catch(() => {});
-      // #endregion
       return built;
     }
 
@@ -1125,14 +1085,19 @@ export default function Transactions() {
     [ledgerSections]
   );
 
+  const ledgerForecastRows = useMemo(
+    () => [...ledgerSections.pending, ...ledgerSections.future],
+    [ledgerSections.pending, ledgerSections.future]
+  );
+
   const ledgerLowestProjected = useMemo(
-    () => lowestProjectedFromLedgerFuture(ledgerSections.future),
-    [ledgerSections.future]
+    () => lowestProjectedFromLedgerFuture(ledgerForecastRows),
+    [ledgerForecastRows]
   );
 
   const ledgerFirstNegative = useMemo(
-    () => firstNegativeFromLedgerFuture(ledgerSections.future),
-    [ledgerSections.future]
+    () => firstNegativeFromLedgerFuture(ledgerForecastRows),
+    [ledgerForecastRows]
   );
 
   const pastRowFilters = useMemo(
@@ -1177,17 +1142,24 @@ export default function Transactions() {
     [accountId, pastTransactionsDateAfter, pastRangeEnd, hideReconciledPast]
   );
 
+  function afterFinancialEdit(
+    opts?: Parameters<typeof refreshAfterTransactionEdit>[1]
+  ) {
+    setAwaitingTimelineRecalc(true);
+    refreshAfterTransactionEdit(queryClient, opts);
+  }
+
   const createMu = useMutation({
     mutationFn: createTransaction,
     onSuccess: () => {
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
     },
   });
 
   const createTransferMu = useMutation({
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
     onSuccess: (_data, variables) => {
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
       void queryClient.refetchQueries({ queryKey: ["account", variables.from_account], type: "active" });
       void queryClient.refetchQueries({ queryKey: ["account", variables.to_account], type: "active" });
     },
@@ -1216,15 +1188,7 @@ export default function Transactions() {
       setEditing(null);
       setEditingRuleId(null);
       setApplyToRule(false);
-
-      if (timelinePatchScope) {
-        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
-          transactionId: id,
-          date: data.date,
-          payee: data.payee,
-          amount: data.amount,
-        });
-      }
+      setAwaitingTimelineRecalc(true);
 
       await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
@@ -1253,6 +1217,7 @@ export default function Transactions() {
       return { ...snapshot, previousTxns, transactionsQueryKey };
     },
     onError: (err: Error, _vars, context) => {
+      setAwaitingTimelineRecalc(false);
       if (context?.previousTxns != null && context?.transactionsQueryKey) {
         queryClient.setQueryData(context.transactionsQueryKey, context.previousTxns);
       }
@@ -1267,25 +1232,15 @@ export default function Transactions() {
     },
     onSuccess: async (updatedTxn, variables) => {
       setDeleteError(null);
-      const txnId = variables.id;
       const newAccountId = variables.data.account_id;
       const syncedToAccountId = (updatedTxn as { synced_to_account_id?: number }).synced_to_account_id;
-      if (timelinePatchScope) {
-        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
-          transactionId: txnId,
-          date: updatedTxn.date,
-          payee: updatedTxn.payee,
-          amount: updatedTxn.amount != null ? String(updatedTxn.amount) : undefined,
-        });
-      }
       const affectsBalances =
         variables.data.amount != null ||
         variables.data.date != null ||
         variables.data.account_id != null;
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, {
+      afterFinancialEdit({
         refreshAccounts: affectsBalances,
         skipTransactionsInvalidate: affectsBalances,
-        immediateTimelineRefetch: true,
       });
       if (newAccountId != null) setAccountId(newAccountId);
       if (syncedToAccountId != null) {
@@ -1298,9 +1253,10 @@ export default function Transactions() {
     mutationFn: deleteTransaction,
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
     },
     onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to delete transaction");
     },
@@ -1310,9 +1266,10 @@ export default function Transactions() {
     mutationFn: skipTransactionOccurrence,
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
     },
     onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to skip transaction");
     },
@@ -1322,9 +1279,10 @@ export default function Transactions() {
     mutationFn: confirmTransaction,
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
     },
     onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to confirm transaction");
     },
@@ -1332,22 +1290,15 @@ export default function Transactions() {
 
   const moveDateMu = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) => moveTransactionDate(id, date),
-    onMutate: ({ id, date }) => {
-      if (timelinePatchScope) {
-        patchTimelineCachesForTransaction(queryClient, timelinePatchScope, {
-          transactionId: id,
-          date,
-        });
-      }
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
     },
     onSuccess: () => {
       setDeleteError(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, {
-        refreshAccounts: true,
-        immediateTimelineRefetch: true,
-      });
+      afterFinancialEdit({ refreshAccounts: true });
     },
     onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to move transaction date");
     },
@@ -1364,9 +1315,10 @@ export default function Transactions() {
     onSuccess: () => {
       setDeleteError(null);
       setMatchDialog(null);
-      refreshAfterTransactionEdit(queryClient, timelinePatchScope, { refreshAccounts: true });
+      afterFinancialEdit({ refreshAccounts: true });
     },
     onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to match transaction");
     },
@@ -1378,6 +1330,30 @@ export default function Transactions() {
     moveDateMu.isPending ||
     matchMu.isPending ||
     deleteMu.isPending;
+
+  const balanceAffectingMutationPending =
+    updateMu.isPending ||
+    createMu.isPending ||
+    createTransferMu.isPending ||
+    deleteMu.isPending ||
+    skipOccurrenceMu.isPending ||
+    confirmMu.isPending ||
+    moveDateMu.isPending ||
+    matchMu.isPending;
+
+  useEffect(() => {
+    if (
+      awaitingTimelineRecalc &&
+      !ledgerTimelineFetching &&
+      !balanceAffectingMutationPending
+    ) {
+      setAwaitingTimelineRecalc(false);
+    }
+  }, [awaitingTimelineRecalc, ledgerTimelineFetching, balanceAffectingMutationPending]);
+
+  const balancesRecalculating =
+    awaitingTimelineRecalc &&
+    (balanceAffectingMutationPending || ledgerTimelineFetching);
 
   function openEdit(txn: Transaction) {
     if (txn.reconciled) {
@@ -1705,7 +1681,7 @@ export default function Transactions() {
             : {}),
         });
         queryClient.invalidateQueries({ queryKey: ["rules"] });
-        queryClient.invalidateQueries({ queryKey: ["timeline"] });
+        afterFinancialEdit({ refreshAccounts: true });
       } catch (err) {
         setDeleteError(err instanceof Error ? err.message : "Failed to update automation");
         return;
@@ -1993,12 +1969,16 @@ export default function Transactions() {
               Loading account…
             </p>
           ) : null}
-          {ledgerTimelineFetching && transactions.length > 0 && accountMatchesSelection ? (
+          {balancesRecalculating && accountMatchesSelection ? (
             <p
-              className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5"
+              className="shrink-0 text-sm text-amber-900/80 bg-amber-50/80 border-b border-amber-100 px-4 py-1.5 flex items-center gap-2"
               role="status"
             >
-              Updating forecast in the background…
+              <span
+                className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-600 border-t-transparent"
+                aria-hidden
+              />
+              Recalculating balances…
             </p>
           ) : null}
           {ledgerTimelineError && !ledgerTimelineFetching && transactions.length > 0 ? (
@@ -2084,6 +2064,7 @@ export default function Transactions() {
             isCreditAccount={isCreditAccount}
             expanded={forecastExpanded}
             hiddenByPast={pastExpanded}
+            balancesRecalculating={balancesRecalculating}
             onToggleExpanded={() => {
               setForecastExpanded((v) => {
                 const next = !v;

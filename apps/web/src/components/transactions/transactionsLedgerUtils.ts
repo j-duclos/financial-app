@@ -747,55 +747,6 @@ export function buildLedgerRowsFromTimeline(
       balance: forecastRunning,
     });
   }
-  // #region agent log
-  const utilityRow = (r: TimelineRow) =>
-    /electric|cox/i.test(r.description || "");
-  const rawFuture = timeline.filter((r) => isForecastTimelineRow(r, today));
-  const hiddenUtility = timeline.filter(
-    (r) =>
-      utilityRow(r) &&
-      isForecastTimelineRow(r, today) &&
-      (supersededIds.has(`${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`) ||
-        shadowedIds.has(`${r.rule_id ?? "x"}-${r.transaction_id ?? "x"}-${r.date}-${r.account_id}`))
-  );
-  fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
-    body: JSON.stringify({
-      sessionId: "88e096",
-      location: "transactionsLedgerUtils.ts:buildLedgerRowsFromTimeline",
-      message: "ledger future build",
-      data: {
-        today,
-        timelineCount: timeline.length,
-        rawFutureCount: rawFuture.length,
-        visibleFutureCount: future.length,
-        supersededCount: supersededIds.size,
-        shadowedCount: shadowedIds.size,
-        futureFirstDate: future[0]?.date ?? null,
-        futureLastDate: future[future.length - 1]?.date ?? null,
-        visibleUtility: future
-          .filter(utilityRow)
-          .map((r) => ({
-            date: r.date,
-            amount: r.amount,
-            rule_id: r.rule_id,
-            txn_id: r.transaction_id,
-            status: r.status,
-          })),
-        hiddenUtility: hiddenUtility.map((r) => ({
-          date: r.date,
-          amount: r.amount,
-          rule_id: r.rule_id,
-          txn_id: r.transaction_id,
-          status: r.status,
-        })),
-      },
-      timestamp: Date.now(),
-      hypothesisId: "H2-H3",
-    }),
-  }).catch(() => {});
-  // #endregion
   return rows;
 }
 
@@ -967,23 +918,33 @@ export function splitLedgerSections(rows: LedgerRow[]) {
   return { start, past, pending, today: todayRow, future };
 }
 
-/** Current balance from visible ledger rows: last pending, else last recent (past). */
+/** Actual current balance — today anchor or last posted past row; excludes pending/expected. */
 export function currentBalanceFromLedgerSections(
   sections: ReturnType<typeof splitLedgerSections>
 ): number | null {
-  if (sections.pending.length > 0) {
-    return sections.pending[sections.pending.length - 1].balance;
+  if (sections.today?.type === "today_balance") {
+    return sections.today.balance;
   }
   if (sections.past.length > 0) {
     return sections.past[sections.past.length - 1].balance;
-  }
-  if (sections.today?.type === "today_balance") {
-    return sections.today.balance;
   }
   if (sections.start?.type === "starting_balance") {
     return sections.start.balance;
   }
   return null;
+}
+
+/** Projected balance after pending expected and upcoming forecast rows clear. */
+export function projectedBalanceFromLedgerSections(
+  sections: ReturnType<typeof splitLedgerSections>
+): number | null {
+  if (sections.future.length > 0) {
+    return sections.future[sections.future.length - 1].balance;
+  }
+  if (sections.pending.length > 0) {
+    return sections.pending[sections.pending.length - 1].balance;
+  }
+  return currentBalanceFromLedgerSections(sections);
 }
 
 /**

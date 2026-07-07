@@ -31,6 +31,8 @@ type Props = {
   expanded: boolean;
   /** Past is expanded — hide forecast rows (header only) */
   hiddenByPast: boolean;
+  /** Timeline refetch in progress after an edit — show recalculating indicator */
+  balancesRecalculating?: boolean;
   onToggleExpanded: () => void;
   onEditRow: (row: TimelineRow) => void;
   onEditTransaction: (txn: Transaction) => void;
@@ -49,6 +51,7 @@ export default function ForecastCardsSection({
   isCreditAccount,
   expanded,
   hiddenByPast,
+  balancesRecalculating = false,
   onToggleExpanded,
   onEditRow,
   onEditTransaction,
@@ -76,7 +79,11 @@ export default function ForecastCardsSection({
         <LedgerSectionHeader
           title="Upcoming Transactions"
           subtitle={
-            expanded && isCreditAccount ? "Includes projected interest each billing cycle" : undefined
+            balancesRecalculating
+              ? "Recalculating balances…"
+              : expanded && isCreditAccount
+                ? "Includes projected interest each billing cycle"
+                : undefined
           }
           expanded={showBody && expanded}
           onToggleExpanded={onToggleExpanded}

@@ -496,14 +496,14 @@ describe("accountLedgerDisplayBalance", () => {
 });
 
 describe("currentBalanceFromLedgerSections", () => {
-  it("uses last pending balance when pending rows exist", () => {
+  it("uses today balance when pending rows exist (expected rows are projected, not actual)", () => {
     const sections = splitLedgerSections([
       { type: "starting_balance", balance: 1644 },
       { type: "today_balance", balance: 1048.88 },
       { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 732.88 },
       { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 282.25 },
     ]);
-    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(282.25, 2);
+    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(1048.88, 2);
   });
 
   it("uses last past balance when no pending rows", () => {
