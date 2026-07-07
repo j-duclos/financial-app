@@ -512,15 +512,8 @@ def rollback_bogus_repair_transfer_legs(
                 fake.delete()
                 rewired += 1
                 continue
-            if pay_dt > today or fake.status == Transaction.Status.PLANNED:
-                kept += 1
-                continue
-            if tr is not None:
-                tr.delete()
-            fake.delete()
-            if in_leg is not None:
-                Transaction.objects.filter(pk=in_leg.pk).update(transfer_group_id=None)
-            removed += 1
+            # No bank import to absorb this leg — keep manual/scheduled transfer outflows.
+            kept += 1
     return {"rewired": rewired, "removed": removed, "kept": kept}
 
 

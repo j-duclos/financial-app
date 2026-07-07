@@ -350,9 +350,6 @@ def _load_reconcile_period_transactions(
     period_end: date,
 ) -> list[Transaction]:
     """Unreconciled rows for a reconcile period, with import healing and superseded PLANNED removed."""
-    from transactions.services.posting import repair_duplicate_transfer_out_legs
-
-    repair_duplicate_transfer_out_legs(account_ids=[account.pk])
     release_excess_duplicate_plaid_imports(account_id=account.pk)
     repair_cross_merchant_wrong_matches(account_id=account.pk)
     repair_mismatched_import_links(account_id=account.pk)

@@ -383,3 +383,43 @@ class TestDuplicateTransferOutLegRepair(TestCase):
             synthetic_min_pk=1,
         )
         self.assertEqual(found.pk, real.pk)
+
+    def test_repair_does_not_delete_manual_out_leg_without_bank_import(self):
+        from transactions.models import Transfer, TransferGroup
+        from transactions.services.posting import repair_duplicate_transfer_out_legs
+
+        pay_dt = date(2026, 7, 6)
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.checking,
+            to_account=self.savings,
+            amount=Decimal("100.00"),
+            scheduled_date=pay_dt,
+            status=TransferGroup.Status.CLEARED,
+        )
+        out_leg = Transaction.objects.create(
+            account=self.checking,
+            date=pay_dt,
+            payee="Care Credit Pmt (Care Credit)",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.ACTUAL,
+            status=Transaction.Status.CLEARED,
+            transfer_group=tg,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.savings,
+            date=pay_dt,
+            payee="Care Credit Pmt (Care Credit)",
+            amount=Decimal("100.00"),
+            transfer_group=tg,
+        )
+        Transfer.objects.create(
+            from_transaction=out_leg,
+            to_transaction=in_leg,
+            amount=Decimal("100.00"),
+            date=pay_dt,
+        )
+        stats = repair_duplicate_transfer_out_legs(account_ids=[self.checking.id], synthetic_min_pk=1)
+        self.assertEqual(stats["removed"], 0)
+        self.assertEqual(stats["rewired"], 0)
+        self.assertTrue(Transaction.objects.filter(pk=out_leg.pk).exists())
