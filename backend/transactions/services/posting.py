@@ -324,6 +324,65 @@ def _create_missing_transfer_leg_for_group(
     )
 
 
+def _descriptions_likely_same(a: str, b: str) -> bool:
+    """Shared payee/description tokens — not amount, not hardcoded merchant lists."""
+    from transactions.services.matching import normalize_description
+
+    na = normalize_description(a or "")
+    nb = normalize_description(b or "")
+    if not na or not nb:
+        return False
+    if na == nb or na in nb or nb in na:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    tokens = [w for w in short.split() if len(w) >= 4]
+    return bool(tokens) and any(t in long for t in tokens)
+
+
+def _bank_post_matches_transfer_group(
+    candidate: Transaction,
+    *,
+    in_leg: Transaction,
+    tg: TransferGroup,
+    exclude_pks: set[int],
+) -> bool:
+    """
+    True when ``candidate`` is plausibly the same bank movement as this transfer/payment group.
+
+    Uses shared bank reference ids (transaction#, Zelle ref, etc.) and payee text overlap
+  with the group's leg payees / destination account labels — never amount alone.
+    """
+    from transactions.services.matching import _extract_bank_reference_tokens
+
+    cand_text = (candidate.imported_description or candidate.payee or candidate.memo or "").strip()
+    if not cand_text:
+        return False
+    cand_refs = _extract_bank_reference_tokens(cand_text)
+
+    label_texts: list[str] = [
+        in_leg.payee or "",
+        *(leg.payee or "" for leg in Transaction.objects.filter(transfer_group_id=tg.pk).exclude(pk__in=exclude_pks)),
+    ]
+    to_acct = tg.to_account
+    for raw in (
+        getattr(to_acct, "name", None),
+        getattr(to_acct, "display_name", None),
+        getattr(to_acct, "nickname", None),
+    ):
+        if (raw or "").strip():
+            label_texts.append(raw.strip())
+
+    for label in label_texts:
+        if not label:
+            continue
+        label_refs = _extract_bank_reference_tokens(label)
+        if cand_refs and label_refs and not cand_refs.isdisjoint(label_refs):
+            return True
+        if _descriptions_likely_same(cand_text, label):
+            return True
+    return False
+
+
 def _find_existing_from_account_payment(
     *,
     tg: TransferGroup,
@@ -335,10 +394,11 @@ def _find_existing_from_account_payment(
 ) -> Transaction | None:
     """
     Locate a real bank outflow that already paid this card inflow so we do not insert a duplicate leg.
+
+    Never match on amount/date alone — unrelated same-day charges (e.g. Cash App) must not match.
     """
     exclude = set(exclude_pks or set())
     if synthetic_min_pk is not None:
-        # Exclude other synthetic transfer legs, not real bank posts that happen to have high pks.
         exclude.update(
             Transaction.objects.filter(
                 pk__gte=synthetic_min_pk,
@@ -357,10 +417,10 @@ def _find_existing_from_account_payment(
         .exclude(pk__in=exclude)
         .exclude(transfer_group_id=tg.pk)
         .order_by("id")
-        .first()
     )
-    if exact is not None:
-        return exact
+    for cand in exact:
+        if _bank_post_matches_transfer_group(cand, in_leg=in_leg, tg=tg, exclude_pks=exclude):
+            return cand
     tol = Decimal("1.00")
     window_start = pay_dt - timedelta(days=5)
     window_end = pay_dt + timedelta(days=5)
@@ -375,26 +435,10 @@ def _find_existing_from_account_payment(
         .exclude(transfer_group_id=tg.pk)
         .order_by("date", "id")
     )
-    card_name = (getattr(tg.to_account, "name", None) or "").lower()
     for cand in candidates:
         if abs(abs(cand.amount) - abs(out_amt)) > tol:
             continue
-        payee = (cand.payee or "").upper()
-        if any(
-            token in payee
-            for token in (
-                "CAPITAL ONE",
-                "SYNCHRONY",
-                "AMAZON",
-                "ONLINE PMT",
-                "ONLINE PYMT",
-                "SYF PAYMNT",
-                "TRANSFER TO SAV",
-                "TRANSFER FROM CHK",
-            )
-        ):
-            return cand
-        if card_name and card_name[:8] in payee.lower():
+        if _bank_post_matches_transfer_group(cand, in_leg=in_leg, tg=tg, exclude_pks=exclude):
             return cand
     return None
 

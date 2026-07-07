@@ -384,6 +384,45 @@ class TestDuplicateTransferOutLegRepair(TestCase):
         )
         self.assertEqual(found.pk, real.pk)
 
+    def test_find_existing_does_not_match_unrelated_same_amount(self):
+        from transactions.models import TransferGroup
+        from transactions.services.posting import _find_existing_from_account_payment
+
+        pay_dt = date(2026, 7, 6)
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.checking,
+            to_account=self.savings,
+            amount=Decimal("100.00"),
+            scheduled_date=pay_dt,
+            status=TransferGroup.Status.CLEARED,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.savings,
+            date=pay_dt,
+            payee="Care Credit Pmt (Care Credit)",
+            amount=Decimal("100.00"),
+            transfer_group=tg,
+        )
+        cash_app = Transaction.objects.create(
+            account=self.checking,
+            date=pay_dt,
+            payee="PYMT SENT CASH APP*JOSEPH DUCLOS OAKLAND CA 1123",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-cash-app-100",
+        )
+        found = _find_existing_from_account_payment(
+            tg=tg,
+            in_leg=in_leg,
+            pay_dt=pay_dt,
+            amount=Decimal("100.00"),
+            exclude_pks=set(),
+            synthetic_min_pk=1,
+        )
+        self.assertIsNone(found)
+        self.assertTrue(Transaction.objects.filter(pk=cash_app.pk).exists())
+
     def test_repair_does_not_delete_manual_out_leg_without_bank_import(self):
         from transactions.models import Transfer, TransferGroup
         from transactions.services.posting import repair_duplicate_transfer_out_legs
