@@ -59,6 +59,7 @@ import {
   splitLedgerSections,
   currentBalanceFromLedgerSections,
   lowestProjectedFromLedgerFuture,
+  firstNegativeFromLedgerFuture,
   isTransferCategoryName,
   accountLedgerDisplayBalance,
   ledgerOpeningBalance,
@@ -1160,6 +1161,11 @@ export default function Transactions() {
     [ledgerSections.future]
   );
 
+  const ledgerFirstNegative = useMemo(
+    () => firstNegativeFromLedgerFuture(ledgerSections.future),
+    [ledgerSections.future]
+  );
+
   const pastRowFilters = useMemo(
     () => ({
       kind: kindFilter,
@@ -1176,13 +1182,38 @@ export default function Transactions() {
   );
 
   const pastFiltersActive = hasActiveLedgerRowFilters(pastRowFilters);
-  const firstNegativeForecastBalance = useMemo(() => {
-    const firstNegative = ledgerSections.future.find(
-      (row): row is Extract<(typeof ledgerSections.future)[number], { type: "recurring" }> =>
-        row.type === "recurring" && row.balance < 0
-    );
-    return firstNegative ? firstNegative.balance : null;
-  }, [ledgerSections.future]);
+
+  // #region agent log
+  useEffect(() => {
+    if (!account || typeof accountId !== "number") return;
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ef7993" },
+      body: JSON.stringify({
+        sessionId: "ef7993",
+        runId: "post-fix-risk",
+        hypothesisId: "risk-mismatch",
+        location: "Transactions.tsx:riskDateDebug",
+        message: "API vs ledger next risk date",
+        data: {
+          accountId,
+          apiRiskDate: account.risk_date ?? null,
+          ledgerFirstNegative,
+          futureRowCount: ledgerSections.future.length,
+          futureDates: ledgerSections.future
+            .map((r) => {
+              if (r.type === "recurring" || r.type === "transaction_from_timeline") return r.row.date;
+              if (r.type === "transaction") return r.txn.date;
+              return null;
+            })
+            .filter(Boolean)
+            .slice(0, 10),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }, [account, accountId, ledgerFirstNegative, ledgerSections.future]);
+  // #endregion
 
   const resetInlineRow = () => {
     setInlineRow({
@@ -1879,8 +1910,8 @@ export default function Transactions() {
               currentBalance={ledgerCurrentBalance}
               isCredit={isCredit}
               currency={currency}
-              nextRiskDate={account.risk_date ?? null}
-              firstNegativeAmount={firstNegativeForecastBalance}
+              nextRiskDate={ledgerFirstNegative?.date ?? null}
+              firstNegativeAmount={ledgerFirstNegative?.balance ?? null}
               householdWarnings={householdWarnings}
               expanded={forecastSummaryExpanded}
               onToggle={() => setForecastSummaryExpanded((v) => !v)}

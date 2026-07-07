@@ -18,6 +18,7 @@ import {
   splitLedgerSections,
   currentBalanceFromLedgerSections,
   lowestProjectedFromLedgerFuture,
+  firstNegativeFromLedgerFuture,
   formatDateDisplay,
   todayStr,
   timelineRangeForFilter,
@@ -512,6 +513,45 @@ describe("currentBalanceFromLedgerSections", () => {
       { type: "today_balance", balance: 1048.88 },
     ]);
     expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(1048.88, 2);
+  });
+});
+
+describe("firstNegativeFromLedgerFuture", () => {
+  it("returns first chronologically negative upcoming row date and balance", () => {
+    const today = todayStr();
+    const d1 = addDaysToIsoDate(today, 3);
+    const d2 = addDaysToIsoDate(today, 10);
+    const sections = splitLedgerSections([
+      { type: "starting_balance", balance: 1000 },
+      { type: "today_balance", balance: 282.25 },
+      {
+        type: "recurring",
+        row: { date: d1, amount: "-100" } as never,
+        balance: 182.25,
+      },
+      {
+        type: "recurring",
+        row: { date: d2, amount: "-500" } as never,
+        balance: -317.75,
+      },
+    ]);
+    expect(firstNegativeFromLedgerFuture(sections.future)).toEqual({
+      date: d2,
+      balance: -317.75,
+    });
+  });
+
+  it("returns null when upcoming stays non-negative", () => {
+    const today = todayStr();
+    const sections = splitLedgerSections([
+      { type: "today_balance", balance: 282.25 },
+      {
+        type: "recurring",
+        row: { date: addDaysToIsoDate(today, 4), amount: "100" } as never,
+        balance: 382.25,
+      },
+    ]);
+    expect(firstNegativeFromLedgerFuture(sections.future)).toBeNull();
   });
 });
 

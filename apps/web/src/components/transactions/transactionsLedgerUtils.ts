@@ -888,6 +888,29 @@ export function lowestProjectedFromLedgerFuture(
   return result;
 }
 
+function ledgerFutureRowDate(row: LedgerRow): string | null {
+  if (row.type === "recurring" || row.type === "transaction_from_timeline") {
+    return row.row.date;
+  }
+  if (row.type === "transaction") {
+    return row.txn.date;
+  }
+  return null;
+}
+
+/** First upcoming ledger row where balance goes negative (matches Upcoming Transactions table). */
+export function firstNegativeFromLedgerFuture(
+  future: LedgerRow[]
+): { balance: number; date: string } | null {
+  for (const row of future) {
+    if (row.balance >= 0) continue;
+    const rowDate = ledgerFutureRowDate(row);
+    if (!rowDate) continue;
+    return { balance: row.balance, date: rowDate };
+  }
+  return null;
+}
+
 export function splitLedgerSections(rows: LedgerRow[]) {
   const today = todayStr();
   const start = rows.find((r) => r.type === "starting_balance") ?? null;
