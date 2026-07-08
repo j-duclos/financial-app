@@ -288,6 +288,31 @@ def past_ledger_opening_balance(account: Account, as_of: Optional[date] = None) 
     return bal
 
 
+def ledger_today_balance_before_pending(
+    account: Account, as_of: Optional[date] = None
+) -> Decimal:
+    """
+    Balance after unreconciled cleared activity through ``as_of``, before pending planned rows.
+
+    Matches the Transactions ledger ``today_balance`` when reconciled past is hidden.
+    Falls back to ledger end-of-day balance when the account has no reconciliation anchor.
+    """
+    as_of = _as_of_date(as_of)
+    if last_reconcile_period_end(account) is None:
+        from timeline.services.ledger import _balance_at_end_of_date
+
+        return _balance_at_end_of_date(account.pk, as_of)
+
+    balance = past_ledger_opening_balance(account, as_of)
+    txns = filter_superseded_planned_transactions(
+        list(unreconciled_transactions_qs(account, as_of))
+    )
+    for txn in txns:
+        if (txn.status or "").upper() in ("CLEARED", "RECONCILED"):
+            balance += txn.amount
+    return balance
+
+
 def unreconciled_transactions_qs(
     account: Account,
     as_of: Optional[date] = None,

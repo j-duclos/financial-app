@@ -349,11 +349,18 @@ def forecast_account_balance_metrics(
     minimum_buffer: Decimal,
 ) -> dict[str, Any]:
     """
-  Ledger-aligned balance projection for one account (matches calendar / Transactions).
+    Ledger-aligned balance projection for one account (matches calendar / Transactions).
 
-  Opening at end of yesterday, then apply today+ rows in ledger display order.
-  """
-    opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
+    When the account has a reconciliation anchor, opens from the same cleared balance
+  as the Transactions ledger (hide reconciled past), then applies today+ timeline rows.
+    """
+    acc = Account.objects.filter(pk=account_id).first()
+    if acc is not None:
+        from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+        opening = ledger_today_balance_before_pending(acc, today)
+    else:
+        opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
     account_rows = [r for r in rows if r.get("account_id") == account_id]
 
     by_date: dict[date, list[dict]] = defaultdict(list)

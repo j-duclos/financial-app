@@ -252,7 +252,9 @@ def _calculate_account_forecast_summary(
             "risk_reason": None,
         }
 
-    current_balance = _balance_at_end_of_date(account.pk, today)
+    from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+    current_balance = ledger_today_balance_before_pending(account, today)
 
     if timeline_rows is None:
         timeline_rows = build_timeline(
