@@ -20,6 +20,7 @@ from insights.services.dashboard_summary import (
     _active_credit_accounts_for_available_credit,
     _attention_amount,
     _build_dashboard_summary,
+    _dashboard_recommended_action,
     _extract_dashboard_details,
     _extract_dashboard_fast,
     _short_attention_reason,
@@ -29,6 +30,7 @@ from insights.services.dashboard_summary import (
     build_dashboard_summary_fast,
     _next_safe_to_spend_issue,
 )
+from accounts.services.account_health import _cash_health
 from accounts.services.available_to_spend import dashboard_safe_to_spend_aggregate, calculate_forecast_summaries_for_accounts
 from transactions.models import Transaction
 
@@ -516,7 +518,11 @@ def test_attention_amount_uses_balance_shortfall_not_spending_cushion(checking):
         "status": HEALTH_STATUS_CRITICAL,
         "reason": "Projected balance drops below zero on 2025-05-05",
         "risk_date": "2025-05-05",
-        "details": {},
+        "details": {
+            "actual_balance_negative": True,
+            "spending_cushion_negative": False,
+            "shortfall_type": "actual_balance",
+        },
     }
     forecast = {
         "supports_available_to_spend": True,
@@ -532,43 +538,135 @@ def test_attention_amount_uses_balance_shortfall_not_spending_cushion(checking):
     assert amt == Decimal("37.06")
 
 
-def test_attention_skips_spending_cushion_only_critical(user, checking):
-    """STS-only critical must not appear as a false negative-balance attention card."""
+def _cash_health_from_forecast(checking, forecast: dict, *, today: date = AS_OF):
+    checking.role = Account.AccountRole.SPENDING
+    return _cash_health(checking, forecast, today, None)
+
+
+def test_cash_health_case_a_actual_balance_negative(checking):
+    """Case A: actual negative balance — projected negative wording."""
+    forecast = {
+        "supports_available_to_spend": True,
+        "lowest_projected_balance": "-500",
+        "lowest_projected_balance_date": "2025-07-08",
+        "first_negative_date": "2025-07-08",
+        "first_negative_balance": "-500",
+        "available_to_spend": "-800",
+        "minimum_buffer": "0",
+        "bucket_allocation": "0",
+        "balance_on_risk_date": "-500",
+    }
+    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    assert status == HEALTH_STATUS_CRITICAL
+    assert details["actual_balance_negative"] is True
+    assert details["spending_cushion_negative"] is False
+    assert details["shortfall_type"] == "actual_balance"
+    assert "below zero" in (reason or "").lower()
+    assert risk_date == date(2025, 7, 8)
+    assert (
+        _short_attention_reason(reason, risk_date.isoformat(), status, details=details)
+        == "Projected negative Jul 8"
+    )
+
+
+def test_cash_health_case_b_spending_cushion_only(checking):
+    """Case B: positive balance, negative cushion — must not say projected negative."""
+    forecast = {
+        "supports_available_to_spend": True,
+        "lowest_projected_balance": "500",
+        "lowest_projected_balance_date": "2025-07-08",
+        "available_to_spend": "-500",
+        "minimum_buffer": "0",
+        "bucket_allocation": "1000",
+        "balance_on_risk_date": "500",
+    }
+    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    assert status == HEALTH_STATUS_CRITICAL
+    assert details["actual_balance_negative"] is False
+    assert details["spending_cushion_negative"] is True
+    assert details["shortfall_type"] == "reserved_savings"
+    assert "below zero" not in (reason or "").lower()
+    assert "cushion" in (reason or "").lower() or "reserved" in (reason or "").lower()
+    short = _short_attention_reason(reason, risk_date.isoformat() if risk_date else None, status, details=details)
+    assert short == "Spending cushion short"
+    assert "Projected negative" not in short
+    amt = _attention_amount(
+        {"status": status, "reason": reason, "details": details},
+        forecast,
+        checking,
+        today=AS_OF,
+    )
+    assert amt == Decimal("500.00")
+
+
+def test_cash_health_case_c_below_buffer_not_negative(checking):
+    """Case C: below buffer but balance positive — below buffer, not projected negative."""
+    forecast = {
+        "supports_available_to_spend": True,
+        "lowest_projected_balance": "300",
+        "lowest_projected_balance_date": "2025-07-08",
+        "first_below_buffer_date": "2025-07-08",
+        "first_below_buffer_balance": "300",
+        "available_to_spend": "-200",
+        "minimum_buffer": "500",
+        "bucket_allocation": "0",
+        "balance_on_risk_date": "300",
+    }
+    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    assert details["actual_balance_negative"] is False
+    assert details["spending_cushion_negative"] is False
+    assert details["shortfall_type"] == "buffer"
+    assert "below zero" not in (reason or "").lower()
+    short = _short_attention_reason(reason, risk_date.isoformat() if risk_date else None, status, details=details)
+    assert short == "Below buffer Jul 8"
+    assert "Projected negative" not in short
+
+
+def test_attention_spending_cushion_wording_not_projected_negative(user, checking):
+    """Spending-cushion-only critical shows cushion wording, not projected negative."""
+    checking.role = Account.AccountRole.SPENDING
+    checking.save(update_fields=["role"])
+    forecast = {
+        "supports_available_to_spend": True,
+        "available_to_spend": "-500",
+        "lowest_projected_balance": "1200.00",
+        "lowest_projected_balance_date": "2025-07-08",
+        "minimum_buffer": "0",
+        "bucket_allocation": "1700",
+        "balance_on_risk_date": "1200.00",
+    }
+    status, reason, risk_date, details = _cash_health(checking, forecast, AS_OF, None)
     health_by_id = {
         checking.id: {
-            "status": HEALTH_STATUS_CRITICAL,
-            "reason": "Safe-to-spend is negative",
-            "risk_date": None,
-            "details": {},
+            "status": status,
+            "reason": reason,
+            "risk_date": risk_date.isoformat() if risk_date else None,
+            "details": details,
             "recommended_action": None,
-        }
-    }
-    forecasts = {
-        checking.id: {
-            "supports_available_to_spend": True,
-            "available_to_spend": "-3538.44",
-            "lowest_projected_balance": "1200.00",
-            "minimum_buffer": "200",
-            "risk_date": None,
-            "balance_on_risk_date": "1200.00",
         }
     }
     items = build_attention_items(
         health_by_id,
         {checking.id: checking},
-        forecasts,
+        {checking.id: forecast},
         limit=10,
         today=AS_OF,
     )
-    assert not any(i["account_id"] == checking.id for i in items)
+    assert len(items) == 1
+    item = items[0]
+    assert item["reason"] == "Spending cushion short"
+    assert "Projected negative" not in item["reason"]
+    assert "Short by $" in (item["recommended_action"] or "")
+    assert "Move $" not in (item["recommended_action"] or "")
 
 
 def test_short_attention_reason_distinguishes_cushion_from_negative_balance():
     assert (
         _short_attention_reason(
-            "Safe-to-spend is negative",
+            "Spending cushion is short",
             "2025-07-08",
             HEALTH_STATUS_CRITICAL,
+            details={"spending_cushion_negative": True},
         )
         == "Spending cushion short"
     )
@@ -577,6 +675,7 @@ def test_short_attention_reason_distinguishes_cushion_from_negative_balance():
             "Projected balance drops below zero on 2025-07-08",
             "2025-07-08",
             HEALTH_STATUS_CRITICAL,
+            details={"actual_balance_negative": True},
         )
         == "Projected negative Jul 8"
     )

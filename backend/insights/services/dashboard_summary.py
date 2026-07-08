@@ -115,18 +115,39 @@ def _short_attention_reason(
     if util is not None:
         return f"Utilization is {_decimal(util):.0f}%"
 
+    date_label = _format_short_date(risk_date)
+
+    if details.get("actual_balance_negative"):
+        return (
+            f"Projected negative {date_label}"
+            if date_label
+            else "Projected negative balance"
+        )
+    if details.get("shortfall_type") == "buffer":
+        return f"Below buffer {date_label}" if date_label else "Below safety buffer"
+    if details.get("spending_cushion_negative"):
+        return "Spending cushion short"
+
     if not reason:
         if status == HEALTH_STATUS_CRITICAL:
-            date_label = _format_short_date(risk_date)
-            return f"Projected negative {date_label}" if date_label else "Projected negative balance"
+            return (
+                f"Projected negative {date_label}"
+                if date_label
+                else "Projected negative balance"
+            )
         return "Needs attention"
     text = reason.strip().rstrip(".")
-    date_label = _format_short_date(risk_date)
     lower = text.lower()
+    if "cushion is short" in lower or "reserved savings" in lower:
+        return "Spending cushion short"
     if "safe-to-spend" in lower or "safe to spend" in lower:
         return "Spending cushion short"
     if "below zero" in lower or "drops below zero" in lower:
-        return f"Projected negative {date_label}" if date_label else "Projected negative balance"
+        return (
+            f"Projected negative {date_label}"
+            if date_label
+            else "Projected negative balance"
+        )
     if "below buffer" in lower or "projected below buffer" in lower:
         return f"Below buffer {date_label}" if date_label else "Below safety buffer"
     if "utilization" in lower:
@@ -186,9 +207,20 @@ def _attention_amount(
             return payoff
         return None
     if forecast and forecast.get("supports_available_to_spend"):
-        shortfall = cash_account_risk_shortfall(forecast)
-        if shortfall is not None and shortfall > 0:
-            return shortfall
+        shortfall_type = details.get("shortfall_type")
+        if shortfall_type == "actual_balance":
+            shortfall = cash_account_risk_shortfall(forecast)
+            if shortfall is not None and shortfall > 0:
+                return shortfall
+        elif shortfall_type == "buffer":
+            lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+            buffer = _decimal(forecast.get("minimum_buffer") or 0)
+            if lowest < buffer:
+                return (buffer - lowest).quantize(Decimal("0.01"))
+        elif details.get("spending_cushion_negative"):
+            available = _decimal(forecast.get("available_to_spend") or 0)
+            if available < 0:
+                return abs(available).quantize(Decimal("0.01"))
     past_due = details.get("past_due_amount")
     if past_due is not None:
         amt = _decimal(past_due)
@@ -248,23 +280,33 @@ def _dashboard_recommended_action(
             return existing
         return "Review upcoming activity."
 
-    if "safe-to-spend" in reason or "safe to spend" in reason:
-        if amt_str and date_label:
-            return f"Add ${amt_str} cushion before {date_label}."
+    shortfall_type = details.get("shortfall_type")
+    if shortfall_type == "actual_balance" and amt_str:
+        if date_label:
+            return f"Add ${amt_str} before {date_label}."
+        return f"Add ${amt_str} to avoid negative balance."
+    if shortfall_type == "buffer" and amt_str:
+        if date_label:
+            return f"Add ${amt_str} to restore buffer before {date_label}."
+        return f"Add ${amt_str} to restore buffer."
+    if details.get("spending_cushion_negative") and amt_str:
+        if date_label:
+            return f"Short by ${amt_str} after buffers/reserved savings before {date_label}."
+        return f"Short by ${amt_str} after buffers/reserved savings."
+
+    if "safe-to-spend" in reason or "safe to spend" in reason or "cushion" in reason:
+        if amt_str:
+            return f"Short by ${amt_str} after buffers/reserved savings."
         return "Review reserved goals and upcoming bills on this account."
 
     if amt_str:
-        if "buffer" in reason or (
-            forecast
-            and _decimal(forecast.get("lowest_projected_balance") or 0)
-            < _decimal(forecast.get("minimum_buffer") or 0)
-        ):
+        if "buffer" in reason or shortfall_type == "buffer":
             if date_label:
-                return f"Add ${amt_str} before {date_label}."
+                return f"Add ${amt_str} to restore buffer before {date_label}."
             return f"Add ${amt_str} to restore buffer."
         if date_label:
-            return f"Move ${amt_str} before {date_label} to avoid negative balance."
-        return f"Move ${amt_str} to avoid negative balance."
+            return f"Add ${amt_str} before {date_label}."
+        return f"Add ${amt_str} to avoid negative balance."
 
     if status == HEALTH_STATUS_RISK and "buffer" in reason:
         return "Increase minimum buffer or adjust upcoming bills."
@@ -380,15 +422,10 @@ def build_attention_items(
             continue
         forecast = forecasts.get(aid)
         details = health.get("details") or {}
-        if forecast and forecast.get("supports_available_to_spend"):
-            lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-            reason_lower = (health.get("reason") or "").lower()
-            if lowest >= Decimal("0") and (
-                "safe-to-spend" in reason_lower or "safe to spend" in reason_lower
-            ):
-                continue
         amount = _attention_amount(health, forecast, account, today=today)
         risk_date = health.get("risk_date")
+        if isinstance(risk_date, date):
+            risk_date = risk_date.isoformat()
         reason = _short_attention_reason(
             health.get("reason"),
             risk_date,

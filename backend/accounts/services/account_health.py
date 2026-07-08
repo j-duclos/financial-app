@@ -140,6 +140,15 @@ def _has_large_outflow_soon(
     return any(outflow >= threshold for outflow in by_date.values())
 
 
+def _forecast_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def _cash_health(
     account: Account,
     forecast: dict[str, Any] | None,
@@ -154,6 +163,8 @@ def _cash_health(
         "days_until_due": None,
         "past_due_amount": None,
         "unmatched_import_count": _count_unmatched_imports(account),
+        "actual_balance_negative": False,
+        "spending_cushion_negative": False,
     }
     if not forecast or not forecast.get("supports_available_to_spend"):
         return HEALTH_STATUS_HEALTHY, None, None, details
@@ -162,39 +173,73 @@ def _cash_health(
     available = _decimal(forecast["available_to_spend"])
     minimum_buffer = _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0)
     current_balance = _decimal(forecast.get("current_balance") or 0)
-    risk_date_str = forecast.get("risk_date")
-    risk_date = date.fromisoformat(risk_date_str) if risk_date_str else None
+    bucket_allocation = _decimal(forecast.get("bucket_allocation") or 0)
+    first_negative_date = _forecast_date(forecast.get("first_negative_date"))
+    first_below_buffer_date = _forecast_date(forecast.get("first_below_buffer_date"))
+    lowest_date = _forecast_date(forecast.get("lowest_projected_balance_date"))
+
+    actual_balance_negative = lowest < Decimal("0")
+    spending_cushion_negative = (
+        available < Decimal("0")
+        and lowest >= Decimal("0")
+        and lowest >= minimum_buffer
+    )
 
     details["lowest_projected_balance"] = forecast.get("lowest_projected_balance")
     details["available_to_spend"] = forecast.get("available_to_spend")
     details["first_negative_balance"] = forecast.get("first_negative_balance")
     details["first_below_buffer_balance"] = forecast.get("first_below_buffer_balance")
     details["balance_on_risk_date"] = forecast.get("balance_on_risk_date")
+    details["bucket_allocation"] = forecast.get("bucket_allocation")
+    details["actual_balance_negative"] = actual_balance_negative
+    details["spending_cushion_negative"] = spending_cushion_negative
+
+    if actual_balance_negative:
+        shortfall_type = "actual_balance"
+    elif lowest < minimum_buffer:
+        shortfall_type = "buffer"
+    elif spending_cushion_negative:
+        shortfall_type = (
+            "reserved_savings" if bucket_allocation > 0 else "spending_cushion"
+        )
+    else:
+        shortfall_type = None
+    if shortfall_type:
+        details["shortfall_type"] = shortfall_type
 
     statuses: list[str] = []
     reasons: list[str] = []
+    risk_date: date | None = None
 
-    if lowest < Decimal("0"):
+    if actual_balance_negative:
         statuses.append(HEALTH_STATUS_CRITICAL)
+        risk_date = first_negative_date or lowest_date
         date_label = risk_date.isoformat() if risk_date else "the forecast window"
         reasons.append(f"Projected balance drops below zero on {date_label}")
     elif lowest < minimum_buffer:
         statuses.append(HEALTH_STATUS_RISK)
+        risk_date = first_below_buffer_date or lowest_date
         date_label = risk_date.isoformat() if risk_date else "the forecast window"
         reasons.append(f"Projected below buffer on {date_label}")
-
-    if (
-        available < Decimal("0")
+    elif (
+        spending_cushion_negative
         and account.role in (Account.AccountRole.SPENDING, Account.AccountRole.BILLS)
-        and HEALTH_STATUS_CRITICAL not in statuses
     ):
         statuses.append(HEALTH_STATUS_CRITICAL)
-        reasons.append("Safe-to-spend is negative")
+        risk_date = first_below_buffer_date or lowest_date
+        if shortfall_type == "reserved_savings":
+            reasons.append("Reserved savings/buffer exceeds projected cushion")
+        else:
+            reasons.append("Spending cushion is short")
 
-    if available <= SAFE_TO_SPEND_LOW_AMOUNT:
+    if available <= SAFE_TO_SPEND_LOW_AMOUNT and not spending_cushion_negative:
         statuses.append(HEALTH_STATUS_WATCH)
         reasons.append("Safe-to-spend is near zero")
-    elif current_balance > 0 and available <= current_balance * SAFE_TO_SPEND_LOW_PERCENT:
+    elif (
+        current_balance > 0
+        and available <= current_balance * SAFE_TO_SPEND_LOW_PERCENT
+        and not spending_cushion_negative
+    ):
         statuses.append(HEALTH_STATUS_WATCH)
         reasons.append("Safe-to-spend is low relative to balance")
 
@@ -206,20 +251,19 @@ def _cash_health(
         return HEALTH_STATUS_HEALTHY, None, None, details
 
     status = _worst_status(*statuses)
-    reason = reasons[0] if len(reasons) == 1 else reasons[0]
-    if status == HEALTH_STATUS_CRITICAL and len(reasons) > 1:
-        reason = next((r for r in reasons if "zero" in r or "negative" in r), reason)
-
-    balance_critical = lowest < Decimal("0")
-    sts_only_critical = (
-        status == HEALTH_STATUS_CRITICAL
-        and not balance_critical
-        and any("safe-to-spend" in r.lower() or "safe to spend" in r.lower() for r in reasons)
-    )
-    if sts_only_critical:
-        risk_date = None
+    reason = reasons[0]
+    if status == HEALTH_STATUS_CRITICAL:
+        for preferred in reasons:
+            lower = preferred.lower()
+            if "below zero" in lower or "drops below zero" in lower:
+                reason = preferred
+                break
+            if "cushion" in lower or "reserved savings" in lower:
+                reason = preferred
+                break
+    elif status == HEALTH_STATUS_RISK:
         reason = next(
-            (r for r in reasons if "safe-to-spend" in r.lower() or "safe to spend" in r.lower()),
+            (r for r in reasons if "buffer" in r.lower()),
             reason,
         )
 
@@ -489,14 +533,30 @@ def _recommended_action(
             return "Schedule a payment before the due date."
         return "Confirm an upcoming payment is planned."
 
-    shortfall = None
-    if forecast and forecast.get("supports_available_to_spend"):
-        shortfall = cash_account_risk_shortfall(forecast)
-
+    shortfall_type = details.get("shortfall_type")
     risk_date = forecast.get("risk_date") if forecast else None
-    if shortfall and shortfall > 0:
-        date_part = f" before {risk_date}" if risk_date else ""
-        return f"Move ${shortfall.quantize(Decimal('0.01'))} into this account{date_part}."
+    if shortfall_type == "actual_balance" and forecast:
+        shortfall = cash_account_risk_shortfall(forecast)
+        if shortfall and shortfall > 0:
+            date_part = f" before {risk_date}" if risk_date else ""
+            return (
+                f"Add ${shortfall.quantize(Decimal('0.01'))} before negative balance{date_part}."
+            )
+    elif shortfall_type == "buffer" and forecast:
+        lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+        buffer = _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0)
+        if lowest < buffer:
+            gap = (buffer - lowest).quantize(Decimal("0.01"))
+            date_part = f" before {risk_date}" if risk_date else ""
+            return f"Add ${gap} to restore buffer{date_part}."
+    elif details.get("spending_cushion_negative") and forecast:
+        available = _decimal(forecast.get("available_to_spend") or 0)
+        if available < 0:
+            gap = abs(available).quantize(Decimal("0.01"))
+            date_part = f" before {risk_date}" if risk_date else ""
+            return (
+                f"Short by ${gap} after buffers/reserved savings{date_part}."
+            )
 
     if reason and "buffer" in reason.lower():
         return "Increase minimum buffer or adjust upcoming bills."
