@@ -21,7 +21,6 @@ import {
   getTimeline,
   getTransaction,
   resolveRuleOccurrence,
-  materializeRecurring,
   getAccountPayoff,
   getReconcileSetup,
   ApiError,
@@ -58,6 +57,7 @@ import {
   hideReconciledOpeningBalance,
   splitLedgerSections,
   currentBalanceFromLedgerSections,
+  pendingSectionEndingBalance,
   lowestProjectedFromLedgerFuture,
   firstNegativeFromLedgerFuture,
   isTransferCategoryName,
@@ -953,6 +953,7 @@ export default function Transactions() {
   const plaidHouseholdId = householdId ?? profile?.default_household ?? null;
 
   const [awaitingTimelineRecalc, setAwaitingTimelineRecalc] = useState(false);
+  const [occurrenceResolving, setOccurrenceResolving] = useState(false);
 
   const accountsForHousehold = useMemo(() => {
     if (householdId == null) return [];
@@ -1149,10 +1150,12 @@ export default function Transactions() {
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
 
-  const ledgerCurrentBalance = useMemo(
-    () => currentBalanceFromLedgerSections(ledgerSections),
-    [ledgerSections]
-  );
+  /** Must match Pending Transactions section ending balance — see pendingSectionEndingBalance. */
+  const ledgerCurrentBalance = useMemo(() => {
+    const pendingEnding = pendingSectionEndingBalance(ledgerRows);
+    if (pendingEnding != null) return pendingEnding;
+    return currentBalanceFromLedgerSections(ledgerSections);
+  }, [ledgerRows, ledgerSections]);
 
   const ledgerForecastRows = useMemo(
     () => [...ledgerSections.pending, ...ledgerSections.future],
@@ -1340,6 +1343,9 @@ export default function Transactions() {
 
   const deleteMu = useMutation({
     mutationFn: deleteTransaction,
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+    },
     onSuccess: () => {
       setDeleteError(null);
       afterFinancialEdit({ refreshAccounts: true });
@@ -1353,6 +1359,9 @@ export default function Transactions() {
 
   const skipOccurrenceMu = useMutation({
     mutationFn: skipTransactionOccurrence,
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+    },
     onSuccess: () => {
       setDeleteError(null);
       afterFinancialEdit({ refreshAccounts: true });
@@ -1366,6 +1375,9 @@ export default function Transactions() {
 
   const confirmMu = useMutation({
     mutationFn: confirmTransaction,
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+    },
     onSuccess: () => {
       setDeleteError(null);
       afterFinancialEdit({ refreshAccounts: true });
@@ -1401,6 +1413,9 @@ export default function Transactions() {
       plannedId: number;
       importedTransactionId: number;
     }) => matchTransactionToImport(plannedId, importedTransactionId),
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+    },
     onSuccess: () => {
       setDeleteError(null);
       setMatchDialog(null);
@@ -1434,15 +1449,24 @@ export default function Transactions() {
     if (
       awaitingTimelineRecalc &&
       !ledgerTimelineFetching &&
-      !balanceAffectingMutationPending
+      !balanceAffectingMutationPending &&
+      !occurrenceResolving
     ) {
       setAwaitingTimelineRecalc(false);
     }
-  }, [awaitingTimelineRecalc, ledgerTimelineFetching, balanceAffectingMutationPending]);
+  }, [
+    awaitingTimelineRecalc,
+    ledgerTimelineFetching,
+    balanceAffectingMutationPending,
+    occurrenceResolving,
+  ]);
 
   const balancesRecalculating =
     awaitingTimelineRecalc &&
-    (balanceAffectingMutationPending || ledgerTimelineFetching);
+    (balanceAffectingMutationPending || ledgerTimelineFetching || occurrenceResolving);
+
+  const forecastActionsLocked =
+    balancesRecalculating || occurrenceResolving || lifecyclePending;
 
   const forecastRangeLoading =
     ledgerTimelineFetching &&
@@ -1503,88 +1527,33 @@ export default function Transactions() {
     const rowAccountId = Number(row.account_id);
     if (!Number.isFinite(rowAccountId)) return null;
 
-    try {
-      const resolved = await resolveRuleOccurrence({
-        rule_id: row.rule_id,
-        account_id: rowAccountId,
-        occurrence_date: row.date,
-      });
-      if (resolved.transaction_id != null) {
-        void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-        void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-        return resolved.transaction_id;
-      }
-    } catch (err) {
-      if (err instanceof ApiError && err.status !== 404) {
-        throw err;
-      }
-    }
-
-    if (typeof accountId !== "number") return null;
-    const materialized = await materializeRecurring({
-      account_id: rowAccountId,
+    const resolved = await resolveRuleOccurrence({
       rule_id: row.rule_id,
-      forecast_days: 90,
+      account_id: rowAccountId,
       occurrence_date: row.date,
     });
-    if (materialized.resolved_transaction_id != null) {
-      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      return materialized.resolved_transaction_id;
-    }
-    const fromMaterialize = materialized.occurrences?.find(
-      (o) =>
-        o.rule_id === row.rule_id &&
-        o.date === row.date &&
-        Number(o.account_id) === rowAccountId
-    );
-    if (fromMaterialize?.transaction_id) {
-      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-      return fromMaterialize.transaction_id;
-    }
+    return resolved.transaction_id ?? null;
+  }
 
-    const txns = await listTransactions({
-      account: rowAccountId,
-      date_after: row.date,
-      date_before: row.date,
-      page_size: 100,
-    });
-    const direct = txns.results.find((t) => {
-      const tid = (t as { rule_id?: number | null }).rule_id;
-      const aid = t.account_id ?? (t.account as { id?: number } | undefined)?.id;
-      return tid === row.rule_id && t.date === row.date && Number(aid) === rowAccountId;
-    });
-    if (direct?.id) return direct.id;
+  async function ensureRowTransactionId(row: TimelineRow): Promise<number | null> {
+    if (row.transaction_id != null) return row.transaction_id;
+    if (forecastActionsLocked) return null;
 
-    void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-    const refreshed = await queryClient.fetchQuery({
-      queryKey: [
-        "timeline",
-        "ledger",
-        pastRangeStart,
-        upcomingRange.end,
-        forecastRange,
-        accountId,
-        todayStr(),
-        hideReconciledPast,
-      ],
-      queryFn: () =>
-        getTimeline({
-          start: upcomingRange.start,
-          end: upcomingRange.end,
-          as_of: todayStr(),
-          account_id: accountId,
-          exclude_reconciled_past: hideReconciledPast,
-        }),
-    });
-    const match = refreshed.timeline.find(
-      (r) =>
-        r.rule_id === row.rule_id &&
-        r.date === row.date &&
-        r.account_id === row.account_id &&
-        r.transaction_id != null
-    );
-    return match?.transaction_id ?? null;
+    setOccurrenceResolving(true);
+    setAwaitingTimelineRecalc(true);
+    try {
+      const transactionId = await resolveTimelineRowTransactionId(row);
+      if (transactionId != null) {
+        await queryClient.cancelQueries({ queryKey: ["timeline"] });
+        await queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
+      }
+      return transactionId;
+    } catch (err) {
+      setAwaitingTimelineRecalc(false);
+      throw err;
+    } finally {
+      setOccurrenceResolving(false);
+    }
   }
 
   async function openEditByLedgerRow(row: TimelineRow) {
@@ -1592,7 +1561,7 @@ export default function Transactions() {
     try {
       setDeleteError(null);
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError("Could not load this scheduled transaction for editing.");
         return;
@@ -1614,7 +1583,7 @@ export default function Transactions() {
     setDeleteError(null);
     try {
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError("Could not load this scheduled transaction for deletion.");
         return;
@@ -1634,7 +1603,7 @@ export default function Transactions() {
     setDeleteError(null);
     try {
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError("Could not load this scheduled transaction to skip.");
         return;
@@ -1654,7 +1623,7 @@ export default function Transactions() {
     setDeleteError(null);
     try {
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError("Could not load this expected transaction to confirm.");
         return;
@@ -1680,7 +1649,7 @@ export default function Transactions() {
     setDeleteError(null);
     try {
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError("Could not load this expected transaction to move.");
         return;
@@ -1702,7 +1671,7 @@ export default function Transactions() {
     setDeleteError(null);
     try {
       const transactionId =
-        row.transaction_id ?? (await resolveTimelineRowTransactionId(row));
+        row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
         setDeleteError(
           "This scheduled item was already fulfilled by a nearby bank import (for example payroll posted one day early). Refresh the page — it should no longer appear in Pending."
@@ -2127,7 +2096,7 @@ export default function Transactions() {
                 className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-600 border-t-transparent"
                 aria-hidden
               />
-              Recalculating balances…
+              Recalculating forecast…
             </p>
           ) : null}
           {ledgerTimelineError && !ledgerTimelineFetching && transactions.length > 0 ? (
@@ -2177,7 +2146,7 @@ export default function Transactions() {
               onMoveDateRow={moveDateExpectedRow}
               onMatchRow={openMatchExpectedRow}
               onDeleteRow={confirmDeleteRow}
-              actionsPending={lifecyclePending}
+              actionsPending={forecastActionsLocked}
             />
           ) : null}
 
@@ -2226,7 +2195,7 @@ export default function Transactions() {
             onSkipRow={confirmSkipRow}
             onDeleteRow={confirmDeleteRow}
             onDeleteTransaction={confirmDelete}
-            deletePending={deleteMu.isPending}
+            deletePending={forecastActionsLocked}
             minimumBuffer={
               account?.minimum_buffer != null && String(account.minimum_buffer).trim() !== ""
                 ? parseFloat(String(account.minimum_buffer))

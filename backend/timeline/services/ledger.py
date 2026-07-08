@@ -952,6 +952,8 @@ def _materialize_rule_occurrence(
     amount: Decimal,
     payee: str,
     category_id: Optional[int],
+    *,
+    force_exact_date: bool = False,
 ) -> Transaction | None:
     """Get or create a Transaction for this rule occurrence. If one already exists, return it as-is so user edits (e.g. "this occurrence only" amount change) are preserved."""
     if projection_only_build_active():
@@ -986,11 +988,14 @@ def _materialize_rule_occurrence(
         amount=amount,
     )
     if covered is not None:
-        if materialization_active():
-            record_materialization_skipped()
         if covered.date == d:
+            if materialization_active():
+                record_materialization_skipped()
             return covered
-        return None
+        if not force_exact_date:
+            if materialization_active():
+                record_materialization_skipped()
+            return None
     if not _rule_allows_materialization(rule, d):
         raise ValueError(
             f"Cannot materialize rule {rule.pk} on {d}: rule is inactive or paused as of {rule.paused_at}"

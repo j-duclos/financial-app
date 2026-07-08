@@ -977,10 +977,36 @@ export function splitLedgerSections(rows: LedgerRow[]) {
   return { start, past, pending, today: todayRow, future };
 }
 
-/** Actual current balance — today anchor or last posted past row; excludes pending/expected. */
+/**
+ * Ending balance of the Pending Transactions section (last pending row in ledger order).
+ * Used for top-of-page Current Balance — must stay in sync with PendingExpectedSection.
+ */
+export function pendingSectionEndingBalance(rows: LedgerRow[]): number | null {
+  const today = todayStr();
+  let ending: number | null = null;
+  for (const r of rows) {
+    if (r.type === "transaction_from_timeline" && isPendingExpectedTimelineRow(r.row, today)) {
+      ending = r.balance;
+    } else if (r.type === "transaction" && isPendingExpectedTransaction(r.txn, today)) {
+      ending = r.balance;
+    }
+  }
+  return ending;
+}
+
+/**
+ * Current Balance for ForecastSummaryBar / Today card.
+ *
+ * INVARIANT (do not change): when Pending Transactions has rows, this MUST be the
+ * ending balance of the last pending row — the same number shown in that section.
+ * Only fall back to today anchor / last posted past row when pending is empty.
+ */
 export function currentBalanceFromLedgerSections(
   sections: ReturnType<typeof splitLedgerSections>
 ): number | null {
+  if (sections.pending.length > 0) {
+    return sections.pending[sections.pending.length - 1].balance;
+  }
   if (sections.today?.type === "today_balance") {
     return sections.today.balance;
   }

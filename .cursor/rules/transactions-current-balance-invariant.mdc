@@ -1,0 +1,26 @@
+---
+description: Transactions page Current Balance must equal Pending Transactions ending balance
+globs: apps/web/src/pages/Transactions.tsx,apps/web/src/components/transactions/transactionsLedgerUtils.ts,apps/web/src/components/transactions/ForecastSummaryBar.tsx,apps/web/src/components/transactions/TodayCard.tsx,apps/web/src/components/transactions/PendingExpectedSection.tsx
+alwaysApply: true
+---
+
+# Transactions — Current Balance invariant (DO NOT CHANGE)
+
+On the Transactions page, **Current Balance** in the top summary bar (`ForecastSummaryBar`) **must equal the ending balance of the last row in the Pending Transactions section** when that section has rows.
+
+## Required behavior
+
+- Pending rows exist → Current Balance = `pendingSectionEndingBalance(ledgerRows)` = last pending row balance in ledger order
+- No pending rows → fall back to today anchor, then last posted past row, then starting balance
+- **Never** use `today_balance` or Recent Transactions ending balance while pending rows exist
+
+## Implementation
+
+- Source of truth: `pendingSectionEndingBalance()` then `currentBalanceFromLedgerSections()` in `transactionsLedgerUtils.ts`
+- Wired in `Transactions.tsx` as `ledgerCurrentBalance` → `ForecastSummaryBar`
+
+## Before changing balance logic
+
+1. Read this rule and the docstring on `currentBalanceFromLedgerSections`
+2. Run `transactionsLedgerUtils.test.ts` — `currentBalanceFromLedgerSections` tests
+3. Manually verify: top Current Balance matches the last balance in Pending Transactions

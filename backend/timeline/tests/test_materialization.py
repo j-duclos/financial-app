@@ -237,6 +237,32 @@ def test_ensure_creates_exact_date_when_nearby_match_exists(user, household, che
 
 
 @pytest.mark.django_db
+def test_resolve_occurrence_api_does_not_bulk_materialize(user, monthly_rule, checking):
+    """Resolve-occurrence must materialize only the requested date, not 90 days."""
+    from django.utils import timezone
+    from rest_framework.test import APIClient
+
+    today = timezone.localdate()
+    client = APIClient()
+    client.force_authenticate(user=user)
+    assert Transaction.objects.filter(rule=monthly_rule).count() == 0
+
+    resp = client.post(
+        "/api/timeline/resolve-occurrence/",
+        {
+            "rule_id": monthly_rule.pk,
+            "account_id": checking.pk,
+            "occurrence_date": today.isoformat(),
+        },
+        format="json",
+    )
+    assert resp.status_code == 200, resp.content
+    assert Transaction.objects.filter(rule=monthly_rule).count() == 1
+    txn = Transaction.objects.get(pk=resp.json()["transaction_id"])
+    assert txn.date == today
+
+
+@pytest.mark.django_db
 def test_resolve_occurrence_api(user, household, checking):
     from django.utils import timezone
     from rest_framework.test import APIClient

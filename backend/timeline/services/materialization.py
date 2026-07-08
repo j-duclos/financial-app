@@ -98,6 +98,7 @@ def _materialize_single_planned_occurrence(
             params.amount,
             rule.name,
             rule.category_id,
+            force_exact_date=True,
         )
     finally:
         exit_materialization_context()
@@ -109,10 +110,8 @@ def ensure_planned_occurrence_transaction(
     rule_id: int,
     account_id: int,
     occurrence_date: date,
-    forecast_days: int = DEFAULT_MATERIALIZE_DAYS,
-    skip_bulk_materialize: bool = False,
 ) -> Transaction | None:
-    """Find or create the RULE row for a due expected occurrence (match / edit)."""
+    """Find or create the RULE row for one rule occurrence (match / edit / resolve)."""
 
     def _usable_rule_occurrence(txn: Transaction | None) -> Transaction | None:
         if txn is None or txn.rule_id is None:
@@ -132,13 +131,14 @@ def ensure_planned_occurrence_transaction(
     from timeline.services.rule_schedule import resolve_rule_params
 
     params = resolve_rule_params(rule, occurrence_date)
-    if _matched_rule_occurrence_covers(
+    covered = _matched_rule_occurrence_covers(
         rule_id=rule.pk,
         account_id=account_id,
         on_date=occurrence_date,
         amount=params.amount,
-    ) is not None:
-        return None
+    )
+    if covered is not None and covered.date == occurrence_date:
+        return _usable_rule_occurrence(covered)
 
     txn = _usable_rule_occurrence(
         _find_rule_occurrence_transaction(
@@ -150,26 +150,6 @@ def ensure_planned_occurrence_transaction(
     )
     if txn is not None:
         return txn
-
-    if not skip_bulk_materialize:
-        materialize_recurring_transactions_for_user(
-            user,
-            account_ids=[account_id],
-            rule_ids=[rule_id],
-            forecast_days=forecast_days,
-            occurrence_date=occurrence_date,
-            _skip_occurrence_resolve=True,
-        )
-        txn = _usable_rule_occurrence(
-            _find_rule_occurrence_transaction(
-                households=households,
-                rule_id=rule_id,
-                account_id=account_id,
-                occurrence_date=occurrence_date,
-            )
-        )
-        if txn is not None:
-            return txn
 
     try:
         txn = _materialize_single_planned_occurrence(
@@ -329,8 +309,6 @@ def materialize_recurring_transactions_for_user(
             rule_id=rule_ids[0],
             account_id=account_ids[0],
             occurrence_date=occurrence_date,
-            forecast_days=days,
-            skip_bulk_materialize=True,
         )
         if resolved is not None:
             row = _occurrence_row_from_txn(resolved)

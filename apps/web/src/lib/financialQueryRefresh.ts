@@ -44,6 +44,7 @@ export function refreshAfterTransactionEdit(
     void queryClient.refetchQueries({ queryKey: ["transactions"], type: "active" });
   }
   if (opts?.refreshTimeline !== false) {
+    void queryClient.cancelQueries({ queryKey: ["timeline"] });
     void queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
   }
   if (opts?.refreshAccounts) {

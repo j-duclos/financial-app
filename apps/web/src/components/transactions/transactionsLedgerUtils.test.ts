@@ -18,6 +18,7 @@ import {
   applyTimelineAmountToBalance,
   splitLedgerSections,
   currentBalanceFromLedgerSections,
+  pendingSectionEndingBalance,
   lowestProjectedFromLedgerFuture,
   firstNegativeFromLedgerFuture,
   formatDateDisplay,
@@ -522,14 +523,23 @@ describe("accountLedgerDisplayBalance", () => {
 });
 
 describe("currentBalanceFromLedgerSections", () => {
-  it("uses today balance when pending rows exist (expected rows are projected, not actual)", () => {
+  it("uses last pending row balance when pending rows exist (matches Pending Transactions ending balance)", () => {
+    const today = todayStr();
     const sections = splitLedgerSections([
       { type: "starting_balance", balance: 1644 },
       { type: "today_balance", balance: 1048.88 },
-      { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 732.88 },
-      { type: "transaction_from_timeline", row: { date: todayStr() } as never, balance: 282.25 },
+      {
+        type: "transaction_from_timeline",
+        row: { date: today, status: "PLANNED", source: "rule", rule_id: 1 } as never,
+        balance: 732.88,
+      },
+      {
+        type: "transaction_from_timeline",
+        row: { date: today, status: "PLANNED", source: "rule", rule_id: 2 } as never,
+        balance: 282.25,
+      },
     ]);
-    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(1048.88, 2);
+    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(282.25, 2);
   });
 
   it("uses last past balance when no pending rows", () => {
@@ -539,6 +549,55 @@ describe("currentBalanceFromLedgerSections", () => {
       { type: "today_balance", balance: 1048.88 },
     ]);
     expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(1048.88, 2);
+  });
+
+  it("matches screenshot: current balance is pending ending balance not recent-transactions ending", () => {
+    const today = todayStr();
+    const yesterday = addDaysToIsoDate(today, -1);
+    const timeline: TimelineRow[] = [
+      {
+        date: today,
+        description: "POS DEBIT FRYS",
+        account_id: 1,
+        amount: "-119.99",
+        type: "OUTFLOW",
+        status: "CLEARED",
+        source: "actual",
+        transaction_id: 1,
+        running_balance: "822.05",
+      },
+      {
+        date: yesterday,
+        description: "Exeterfina Loan",
+        account_id: 1,
+        amount: "-393.79",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "rule",
+        rule_id: 10,
+        transaction_id: 2,
+        running_balance: "428.26",
+      },
+      {
+        date: today,
+        description: "ATT - Move to Venture",
+        account_id: 1,
+        amount: "-316.00",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "rule",
+        rule_id: 11,
+        transaction_id: 3,
+        running_balance: "112.26",
+      },
+    ];
+    const rows = buildLedgerRowsFromTimeline(timeline, today, 942.04, false);
+    const sections = splitLedgerSections(rows);
+
+    expect(sections.today?.balance).toBeCloseTo(822.05, 2);
+    expect(sections.pending).toHaveLength(2);
+    expect(pendingSectionEndingBalance(rows)).toBeCloseTo(112.26, 2);
+    expect(currentBalanceFromLedgerSections(sections)).toBeCloseTo(112.26, 2);
   });
 });
 

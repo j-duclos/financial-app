@@ -80,7 +80,7 @@ export default function ForecastCardsSection({
           title="Upcoming Transactions"
           subtitle={
             balancesRecalculating
-              ? "Recalculating balances…"
+              ? "Recalculating forecast…"
               : expanded && isCreditAccount
                 ? "Includes projected interest each billing cycle"
                 : undefined

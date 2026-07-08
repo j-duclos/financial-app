@@ -19,6 +19,14 @@ import RuleActionsMenu from "../components/rules/RuleActionsMenu";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { formatNextRunDate, getNextRuleRunDate } from "../lib/ruleOccurrences";
 import { formatDateDisplay } from "../lib/dateDisplay";
+import {
+  RULE_SECTIONS,
+  estimatedMonthlyCashFlow,
+  getRuleSection,
+  ruleMonthlyAmount,
+  sectionMonthlySubtotal,
+  type RuleSectionKey,
+} from "../lib/ruleCashFlow";
 
 const FREQUENCY_LABELS: Record<RecurringRuleFrequency, string> = {
   WEEKLY: "Weekly",
@@ -45,26 +53,6 @@ const NTH = [
   { value: 4, label: "4th" },
   { value: 5, label: "5th" },
 ];
-
-const RULE_SECTIONS = [
-  { key: "income", label: "Income" },
-  { key: "bills", label: "Bills" },
-  { key: "card_loan_payments", label: "Credit Card / Loan Payment" },
-  { key: "transfers", label: "Transfers" },
-  { key: "subscriptions", label: "Subscriptions" },
-] as const;
-
-type RuleSectionKey = (typeof RULE_SECTIONS)[number]["key"];
-
-const SUBSCRIPTION_CATEGORY_NAMES = new Set(["Streaming", "Software / Apps", "Memberships"]);
-
-const CARD_LOAN_PAYMENT_CATEGORY_NAMES = new Set([
-  "Credit Card Payment",
-  "Student Loan",
-  "Personal Loan",
-]);
-
-const TRANSFER_CATEGORY_NAMES = new Set(["Bank Transfer", "Transfer"]);
 
 type RuleLifecycleStatus = "running" | "paused" | "ended";
 
@@ -103,65 +91,6 @@ function lifecycleToActiveAndEndDate(
   }
   const endedOn = endDate && endDate <= today ? endDate : today;
   return { active: false, end_date: endedOn };
-}
-
-function getRuleSection(rule: RecurringRule): RuleSectionKey {
-  if (rule.direction === "INCOME") return "income";
-  const catName = rule.category?.name ?? "";
-  const hasTransferDest = !!(rule.transfer_to_account?.id ?? rule.transfer_to_account_id);
-  const nameLower = (rule.name ?? "").toLowerCase();
-  if (CARD_LOAN_PAYMENT_CATEGORY_NAMES.has(catName)) return "card_loan_payments";
-  if (
-    rule.direction === "TRANSFER" ||
-    hasTransferDest ||
-    TRANSFER_CATEGORY_NAMES.has(catName) ||
-    nameLower.includes("move to")
-  ) {
-    return "transfers";
-  }
-  if (SUBSCRIPTION_CATEGORY_NAMES.has(catName)) return "subscriptions";
-  return "bills";
-}
-
-/** Signed monthly equivalent (expenses negative) for running budget subtotals. */
-function ruleMonthlyAmount(rule: RecurringRule): number {
-  const amount = Math.abs(Number(rule.amount) || 0);
-  const interval = Math.max(1, Number(rule.interval) || 1);
-  let perMonth: number;
-  switch (rule.frequency) {
-    case "WEEKLY":
-      perMonth = (52 / 12 / interval) * amount;
-      break;
-    case "BIWEEKLY":
-      perMonth = (26 / 12 / interval) * amount;
-      break;
-    case "MONTHLY_DAY":
-    case "MONTHLY_NTH_WEEKDAY":
-      perMonth = amount / interval;
-      break;
-    case "YEARLY":
-      perMonth = amount / (12 * interval);
-      break;
-    default:
-      perMonth = amount / interval;
-  }
-  return rule.direction === "EXPENSE" ? -perMonth : perMonth;
-}
-
-function sectionMonthlySubtotal(rules: RecurringRule[]): number {
-  return rules.reduce((sum, rule) => {
-    if (getRuleLifecycleStatus(rule) !== "running") return sum;
-    return sum + ruleMonthlyAmount(rule);
-  }, 0);
-}
-
-/** Income minus expenses from running rules; excludes internal bank transfers only. */
-function estimatedMonthlyCashFlow(rules: RecurringRule[]): number {
-  return rules.reduce((sum, rule) => {
-    if (getRuleLifecycleStatus(rule) !== "running") return sum;
-    if (getRuleSection(rule) === "transfers") return sum;
-    return sum + ruleMonthlyAmount(rule);
-  }, 0);
 }
 
 function formatMonthlySubtotal(total: number, currency = "USD"): string {
@@ -234,7 +163,8 @@ export default function Rules() {
     return rules.filter((r: RecurringRule) => (r.name ?? "").toLowerCase().includes(q));
   }, [rules, ruleSearch]);
   const monthlyCashFlow = useMemo(
-    () => estimatedMonthlyCashFlow(filteredRules),
+    () =>
+      estimatedMonthlyCashFlow(filteredRules, (rule) => getRuleLifecycleStatus(rule) === "running"),
     [filteredRules]
   );
   const cashFlowCurrency =
@@ -244,6 +174,7 @@ export default function Rules() {
     const groups: Record<RuleSectionKey, RecurringRule[]> = {
       income: [],
       bills: [],
+      credit_card_charges: [],
       card_loan_payments: [],
       transfers: [],
       subscriptions: [],
@@ -483,7 +414,8 @@ export default function Rules() {
                 <p className="text-sm font-medium text-gray-800">Estimated monthly cash flow</p>
                 <p className="text-xs text-gray-500 mt-0.5">
                   Running automation only. Includes income, bills, subscriptions, and card or loan payments.
-                  Excludes internal transfers between checking and savings.
+                  Excludes internal transfers between checking and savings and charges on credit cards (counted
+                  when you pay the card from a bank account).
                 </p>
               </div>
               <p
@@ -535,7 +467,10 @@ export default function Rules() {
             {RULE_SECTIONS.map(({ key, label }) => {
               const sectionRules = groupedRules[key];
               if (sectionRules.length === 0) return null;
-              const monthlySubtotal = sectionMonthlySubtotal(sectionRules);
+              const monthlySubtotal = sectionMonthlySubtotal(
+                sectionRules,
+                (rule) => getRuleLifecycleStatus(rule) === "running"
+              );
               const subtotalCurrency =
                 sectionRules.find((r) => getRuleLifecycleStatus(r) === "running")?.currency ?? "USD";
               return (
@@ -546,7 +481,14 @@ export default function Rules() {
                       className="px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <span>{label}</span>
+                        <span>
+                          {label}
+                          {key === "credit_card_charges" && (
+                            <span className="ml-2 normal-case font-normal text-gray-500 tracking-normal">
+                              Not included in cash flow — pay the card from a bank account
+                            </span>
+                          )}
+                        </span>
                         <span
                           className={`normal-case tracking-normal text-sm font-semibold tabular-nums ${
                             monthlySubtotal < 0
