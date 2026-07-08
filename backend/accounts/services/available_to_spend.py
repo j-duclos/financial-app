@@ -28,7 +28,11 @@ from common.services.profiler import (
     phase_end,
     phase_start,
 )
-from timeline.services.ledger import _balance_at_end_of_date, build_timeline
+from timeline.services.ledger import (
+    _balance_at_end_of_date,
+    build_timeline,
+    forecast_account_balance_metrics,
+)
 
 DEFAULT_FORECAST_DAYS = 30
 ALLOWED_FORECAST_DAYS = frozenset({7, 14, 30, 60, 90, 180, 365})
@@ -264,22 +268,21 @@ def _calculate_account_forecast_summary(
     by_date, inflows, outflows, committed_outflows = _summarize_future_rows(
         timeline_rows, account.pk, today, window_end
     )
-    (
-        lowest,
-        ending,
-        lowest_date,
-        _,
-        first_negative_date,
-        first_negative_balance,
-        first_below_buffer_date,
-        first_below_buffer_balance,
-    ) = _project_balances(
-        current_balance,
-        by_date,
-        window_start,
-        window_end,
-        minimum_buffer,
+    metrics = forecast_account_balance_metrics(
+        timeline_rows,
+        account_id=account.pk,
+        today=today,
+        end_date=window_end,
+        minimum_buffer=minimum_buffer,
     )
+    lowest = metrics["lowest"]
+    lowest_date = metrics["lowest_date"]
+    ending = metrics["ending"]
+    first_negative_date = metrics["first_negative_date"]
+    first_negative_balance = metrics["first_negative_balance"]
+    first_below_buffer_date = metrics["first_below_buffer_date"]
+    first_below_buffer_balance = metrics["first_below_buffer_balance"]
+    end_of_day = metrics["end_of_day"]
     bucket_allocation = Decimal("0")
     try:
         from goals.bucket_services import bucket_reserve_for_account
@@ -296,6 +299,9 @@ def _calculate_account_forecast_summary(
         risk_date = first_below_buffer_date or lowest_date
     else:
         risk_date = lowest_date
+    balance_on_risk_date = (
+        end_of_day.get(risk_date) if risk_date is not None else None
+    )
     reason = _risk_reason(status, lowest, minimum_buffer, risk_date)
 
     return {
@@ -313,11 +319,24 @@ def _calculate_account_forecast_summary(
         "projected_balance_at_window_end": str(ending),
         "lowest_projected_balance": str(lowest),
         "lowest_projected_balance_date": lowest_date.isoformat(),
+        "first_negative_date": (
+            first_negative_date.isoformat() if first_negative_date is not None else None
+        ),
         "first_negative_balance": (
             str(first_negative_balance) if first_negative_balance is not None else None
         ),
+        "first_below_buffer_date": (
+            first_below_buffer_date.isoformat()
+            if first_below_buffer_date is not None
+            else None
+        ),
         "first_below_buffer_balance": (
-            str(first_below_buffer_balance) if first_below_buffer_balance is not None else None
+            str(first_below_buffer_balance)
+            if first_below_buffer_balance is not None
+            else None
+        ),
+        "balance_on_risk_date": (
+            str(balance_on_risk_date) if balance_on_risk_date is not None else None
         ),
         "available_to_spend": str(available),
         "risk_status": status,
@@ -328,24 +347,46 @@ def _calculate_account_forecast_summary(
 
 def cash_account_risk_shortfall(forecast: dict[str, Any] | None) -> Decimal | None:
     """
-    Dollars needed to cover a projected balance dropping below zero or below buffer.
+    Dollars needed to cover projected balance on the risk date (not spending cushion).
 
-    Unlike ``available_to_spend``, this ignores goal-reservation cushion and does not
-    treat a large negative safe-to-spend as if the account balance itself is that negative.
+    Uses the ledger-aligned balance on ``risk_date``. Never treats a negative
+    safe-to-spend / goal-reservation cushion as if the account balance itself
+    dropped that far.
     """
     if not forecast or not forecast.get("supports_available_to_spend"):
         return None
-    lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
     buffer = _decimal(forecast.get("minimum_buffer") or 0)
+    risk_iso = (forecast.get("risk_date") or "")[:10]
+    bal_on_risk = forecast.get("balance_on_risk_date")
+    if risk_iso and bal_on_risk is not None:
+        bal = _decimal(bal_on_risk)
+        if bal < 0:
+            return abs(bal).quantize(Decimal("0.01"))
+        if bal < buffer:
+            return (buffer - bal).quantize(Decimal("0.01"))
+        return None
+
+    first_neg_date = (forecast.get("first_negative_date") or "")[:10]
     first_negative = forecast.get("first_negative_balance")
-    if first_negative is not None:
+    if risk_iso and first_neg_date and risk_iso == first_neg_date and first_negative is not None:
         fn = _decimal(first_negative)
         if fn < 0:
             return abs(fn).quantize(Decimal("0.01"))
-    if lowest < 0:
-        return abs(lowest).quantize(Decimal("0.01"))
-    if lowest < buffer:
-        return (buffer - lowest).quantize(Decimal("0.01"))
+
+    below_buf_date = (forecast.get("first_below_buffer_date") or "")[:10]
+    below_buf_bal = forecast.get("first_below_buffer_balance")
+    if risk_iso and below_buf_date and risk_iso == below_buf_date and below_buf_bal is not None:
+        bb = _decimal(below_buf_bal)
+        if bb < buffer:
+            return (buffer - bb).quantize(Decimal("0.01"))
+
+    lowest_date = (forecast.get("lowest_projected_balance_date") or "")[:10]
+    lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+    if risk_iso and lowest_date and risk_iso == lowest_date:
+        if lowest < 0:
+            return abs(lowest).quantize(Decimal("0.01"))
+        if lowest < buffer:
+            return (buffer - lowest).quantize(Decimal("0.01"))
     return None
 
 
@@ -666,7 +707,10 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "lowest_projected_balance_30_days": summary.get("lowest_projected_balance"),
         "lowest_projected_balance_date_30_days": summary.get("lowest_projected_balance_date"),
         "first_negative_balance": summary.get("first_negative_balance"),
+        "first_negative_date": summary.get("first_negative_date"),
         "first_below_buffer_balance": summary.get("first_below_buffer_balance"),
+        "first_below_buffer_date": summary.get("first_below_buffer_date"),
+        "balance_on_risk_date": summary.get("balance_on_risk_date"),
         "upcoming_inflows_30_days": summary.get("upcoming_inflows"),
         "upcoming_outflows_30_days": summary.get("upcoming_outflows"),
         "risk_status": summary.get("risk_status"),

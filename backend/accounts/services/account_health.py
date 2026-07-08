@@ -169,6 +169,7 @@ def _cash_health(
     details["available_to_spend"] = forecast.get("available_to_spend")
     details["first_negative_balance"] = forecast.get("first_negative_balance")
     details["first_below_buffer_balance"] = forecast.get("first_below_buffer_balance")
+    details["balance_on_risk_date"] = forecast.get("balance_on_risk_date")
 
     statuses: list[str] = []
     reasons: list[str] = []
@@ -208,6 +209,20 @@ def _cash_health(
     reason = reasons[0] if len(reasons) == 1 else reasons[0]
     if status == HEALTH_STATUS_CRITICAL and len(reasons) > 1:
         reason = next((r for r in reasons if "zero" in r or "negative" in r), reason)
+
+    balance_critical = lowest < Decimal("0")
+    sts_only_critical = (
+        status == HEALTH_STATUS_CRITICAL
+        and not balance_critical
+        and any("safe-to-spend" in r.lower() or "safe to spend" in r.lower() for r in reasons)
+    )
+    if sts_only_critical:
+        risk_date = None
+        reason = next(
+            (r for r in reasons if "safe-to-spend" in r.lower() or "safe to spend" in r.lower()),
+            reason,
+        )
+
     return status, reason, risk_date, details
 
 

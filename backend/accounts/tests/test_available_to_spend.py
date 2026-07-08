@@ -204,6 +204,40 @@ def test_uses_lowest_not_ending_balance(user, checking, expense_category):
     assert Decimal(s["available_to_spend"]) == avail_from_lowest
 
 
+def test_forecast_lowest_matches_ledger_walk(user, checking, expense_category):
+    """Forecast lowest must match ledger-aligned walk (no phantom negatives)."""
+    from timeline.services.ledger import build_timeline, forecast_lowest_balance_from_rows
+
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=5),
+        payee="Rent",
+        amount=Decimal("-1500"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    end = AS_OF + timedelta(days=30)
+    rows = build_timeline(
+        user,
+        start_date=AS_OF,
+        end_date=end,
+        account_id=checking.pk,
+        as_of_date=AS_OF,
+        projection_only=True,
+        caller="test",
+    )
+    helper_low, _, _ = forecast_lowest_balance_from_rows(
+        rows,
+        account_ids={checking.pk},
+        today=AS_OF,
+        end_date=end,
+    )
+    s = _summary(user, checking, days=30, timeline_rows=rows)
+    assert helper_low is not None
+    assert Decimal(s["lowest_projected_balance"]) == helper_low.quantize(Decimal("0.01"))
+
+
 def test_outgoing_transfer_reduces_source(user, checking, savings, expense_category):
     transfer_cat = Category.objects.create(
         household=checking.household,

@@ -340,6 +340,87 @@ def forecast_lowest_balance_from_rows(
     return global_low, global_date, global_aid
 
 
+def forecast_account_balance_metrics(
+    rows: list[dict],
+    *,
+    account_id: int,
+    today: date,
+    end_date: date,
+    minimum_buffer: Decimal,
+) -> dict[str, Any]:
+    """
+  Ledger-aligned balance projection for one account (matches calendar / Transactions).
+
+  Opening at end of yesterday, then apply today+ rows in ledger display order.
+  """
+    opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
+    account_rows = [r for r in rows if r.get("account_id") == account_id]
+
+    by_date: dict[date, list[dict]] = defaultdict(list)
+    for r in account_rows:
+        rd = _timeline_row_date(r.get("date"))
+        if rd is None or rd < today or rd > end_date:
+            continue
+        if is_superseded_planned_row(r, account_rows):
+            continue
+        by_date[rd].append(r)
+
+    running = opening
+    lowest = running
+    lowest_date = today
+    first_negative_date: date | None = None
+    first_negative_balance: Decimal | None = None
+    first_below_buffer_date: date | None = None
+    first_below_buffer_balance: Decimal | None = None
+    end_of_day: dict[date, Decimal] = {}
+
+    d = today
+    while d <= end_date:
+        day_rows = sorted(by_date.get(d, ()), key=timeline_row_process_order)
+        if day_rows:
+            for row in day_rows:
+                amt = (
+                    row["amount"]
+                    if isinstance(row["amount"], Decimal)
+                    else Decimal(str(row["amount"]))
+                )
+                running += amt
+                if running < lowest:
+                    lowest = running
+                    lowest_date = d
+                if first_negative_date is None and running < Decimal("0"):
+                    first_negative_date = d
+                    first_negative_balance = running
+                if first_below_buffer_date is None and running < minimum_buffer:
+                    first_below_buffer_date = d
+                    first_below_buffer_balance = running
+        else:
+            if running < lowest:
+                lowest = running
+                lowest_date = d
+            if first_negative_date is None and running < Decimal("0"):
+                first_negative_date = d
+                first_negative_balance = running
+            if first_below_buffer_date is None and running < minimum_buffer:
+                first_below_buffer_date = d
+                first_below_buffer_balance = running
+
+        end_of_day[d] = running
+        d += timedelta(days=1)
+
+    return {
+        "opening_balance": opening,
+        "lowest": lowest,
+        "lowest_date": lowest_date,
+        "ending": running,
+        "first_negative_date": first_negative_date,
+        "first_negative_balance": first_negative_balance,
+        "first_below_buffer_date": first_below_buffer_date,
+        "first_below_buffer_balance": first_below_buffer_balance,
+        "end_of_day": end_of_day,
+    }
+
+
 def timeline_rows_chronological_key(row: dict) -> tuple:
     """Full sort key for timeline rows (date, then ledger display order)."""
     d = row.get("date")

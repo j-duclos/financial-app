@@ -523,11 +523,44 @@ def test_attention_amount_uses_balance_shortfall_not_spending_cushion(checking):
         "available_to_spend": "-3678.44",
         "lowest_projected_balance": "-37.06",
         "first_negative_balance": "-37.06",
+        "first_negative_date": "2025-05-05",
+        "balance_on_risk_date": "-37.06",
         "minimum_buffer": "200",
         "risk_date": "2025-05-05",
     }
     amt = _attention_amount(health, forecast, checking, today=AS_OF)
     assert amt == Decimal("37.06")
+
+
+def test_attention_skips_spending_cushion_only_critical(user, checking):
+    """STS-only critical must not appear as a false negative-balance attention card."""
+    health_by_id = {
+        checking.id: {
+            "status": HEALTH_STATUS_CRITICAL,
+            "reason": "Safe-to-spend is negative",
+            "risk_date": None,
+            "details": {},
+            "recommended_action": None,
+        }
+    }
+    forecasts = {
+        checking.id: {
+            "supports_available_to_spend": True,
+            "available_to_spend": "-3538.44",
+            "lowest_projected_balance": "1200.00",
+            "minimum_buffer": "200",
+            "risk_date": None,
+            "balance_on_risk_date": "1200.00",
+        }
+    }
+    items = build_attention_items(
+        health_by_id,
+        {checking.id: checking},
+        forecasts,
+        limit=10,
+        today=AS_OF,
+    )
+    assert not any(i["account_id"] == checking.id for i in items)
 
 
 def test_short_attention_reason_distinguishes_cushion_from_negative_balance():

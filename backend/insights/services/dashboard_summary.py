@@ -380,6 +380,13 @@ def build_attention_items(
             continue
         forecast = forecasts.get(aid)
         details = health.get("details") or {}
+        if forecast and forecast.get("supports_available_to_spend"):
+            lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+            reason_lower = (health.get("reason") or "").lower()
+            if lowest >= Decimal("0") and (
+                "safe-to-spend" in reason_lower or "safe to spend" in reason_lower
+            ):
+                continue
         amount = _attention_amount(health, forecast, account, today=today)
         risk_date = health.get("risk_date")
         reason = _short_attention_reason(
