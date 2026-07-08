@@ -7,14 +7,14 @@ export const DASHBOARD_SECTION = {
 
 export const FINANCIAL_HEALTH = {
   safeToSpend: {
-    label: "Safe to Spend",
-    help: "How much you can safely spend before projected cashflow problems occur.",
-    healthySubtitle: "Spendable before projected risk",
+    label: "Spending Cushion",
+    help: "This is not your account balance. It is your lowest projected spending/bills balance after subtracting required buffers and reserved goal money.",
+    healthySubtitle: "Headroom after bills, buffers, and reserved savings",
   },
   availableCash: {
     label: "Available Cash",
     subtitle: "Checking & savings available now",
-    help: "Cash in checking and savings accounts you can access today.",
+    help: "Sum of current ledger balances in checking, savings, and cash accounts. Excludes bills pools, credit cards, loans, and investments.",
   },
   availableCredit: {
     label: "Available Credit",

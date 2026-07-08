@@ -9,7 +9,7 @@ type Props = {
   badge?: ReactNode;
   help?: string;
   valueClassName?: string;
-  /** Hero tile for Safe to Spend — larger type, stronger border. */
+  /** Hero tile for Spending Cushion — larger type, stronger border. */
   hero?: boolean;
   /** Secondary row tiles — slightly muted. */
   muted?: boolean;

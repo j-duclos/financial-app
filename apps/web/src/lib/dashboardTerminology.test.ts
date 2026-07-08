@@ -14,11 +14,14 @@ describe("dashboardTerminology", () => {
   });
 
   it("uses human-first financial health labels", () => {
-    expect(FINANCIAL_HEALTH.safeToSpend.label).toBe("Safe to Spend");
+    expect(FINANCIAL_HEALTH.safeToSpend.label).toBe("Spending Cushion");
     expect(FINANCIAL_HEALTH.availableCash.label).toBe("Available Cash");
     expect(FINANCIAL_HEALTH.availableCredit.label).toBe("Available Credit");
     expect(FINANCIAL_HEALTH.cashAfterDebt.label).toBe("Cash After Debt");
-    expect(FINANCIAL_HEALTH.safeToSpend.help).toMatch(/safely spend/i);
+    expect(FINANCIAL_HEALTH.safeToSpend.help).toMatch(/not your account balance/i);
+    expect(FINANCIAL_HEALTH.safeToSpend.help).toMatch(/buffers and reserved goal money/i);
+    expect(FINANCIAL_HEALTH.availableCash.help).toMatch(/checking, savings, and cash accounts/i);
+    expect(FINANCIAL_HEALTH.availableCash.help).toMatch(/excludes bills pools/i);
     expect(FINANCIAL_HEALTH.cashAfterDebt.help).toMatch(/not full net worth/i);
   });
 

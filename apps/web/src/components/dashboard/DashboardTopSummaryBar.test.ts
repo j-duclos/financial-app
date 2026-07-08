@@ -17,6 +17,7 @@ describe("DashboardTopSummaryBar", () => {
     expect(source).toContain("FINANCIAL_HEALTH.cashAfterDebt.label");
     expect(source).toContain("FINANCIAL_HEALTH.availableCash.label");
     expect(source).toContain("FINANCIAL_HEALTH.safeToSpend.help");
+    expect(source).toContain("safeToSpendDisplayValue");
     expect(source).toMatch(/hero/);
     expect(source).toContain("Forecast window");
     expect(source).toContain("forecast-window-select");

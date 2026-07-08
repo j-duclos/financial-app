@@ -18,9 +18,11 @@ from core.models import Household, HouseholdMembership
 from insights.services.dashboard_summary import (
     ATTENTION_TOP_LIMIT,
     _active_credit_accounts_for_available_credit,
+    _attention_amount,
     _build_dashboard_summary,
     _extract_dashboard_details,
     _extract_dashboard_fast,
+    _short_attention_reason,
     build_attention_items,
     build_dashboard_summary,
     build_dashboard_summary_details,
@@ -324,6 +326,37 @@ def test_snapshot_totals_match_accounts(auth_client, checking, savings, credit_c
     assert "recommendations" in r.json()
 
 
+def test_liquid_cash_matches_checking_and_savings_only(
+    user, household, checking, savings, expense_category
+):
+    """Available Cash excludes bills pools and investments even when snapshot cash includes them."""
+    bills = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.BILLS,
+        name="Bills",
+        starting_balance=Decimal("-2000"),
+        currency="USD",
+    )
+    investment = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.INVESTMENT,
+        role=Account.AccountRole.INVESTMENT,
+        name="Brokerage",
+        starting_balance=Decimal("15000"),
+        currency="USD",
+    )
+    summary = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
+    expected = (
+        signed_ledger_balance(checking, AS_OF) + signed_ledger_balance(savings, AS_OF)
+    ).quantize(Decimal("0.01"))
+    assert Decimal(summary["top_summary"]["liquid_cash"]) == expected
+    snap_cash = Decimal(summary["snapshot"]["cash"])
+    snap_savings = Decimal(summary["snapshot"]["savings"])
+    assert snap_cash + snap_savings != expected
+    assert snap_savings >= Decimal("15000")
+
+
 def test_top_summary_includes_total_credit_limit(user, credit_card):
     credit_card.credit_limit = Decimal("5000")
     credit_card.current_balance = Decimal("1000")
@@ -475,6 +508,45 @@ def test_attention_excludes_generic_watch_without_amount(user, checking):
         health_by_id, accounts_by_id, forecasts, limit=10, today=AS_OF
     )
     assert not any(i["account_id"] == checking.id for i in items)
+
+
+def test_attention_amount_uses_balance_shortfall_not_spending_cushion(checking):
+    """Attention dollar amount must reflect projected balance risk, not STS cushion."""
+    health = {
+        "status": HEALTH_STATUS_CRITICAL,
+        "reason": "Projected balance drops below zero on 2025-05-05",
+        "risk_date": "2025-05-05",
+        "details": {},
+    }
+    forecast = {
+        "supports_available_to_spend": True,
+        "available_to_spend": "-3678.44",
+        "lowest_projected_balance": "-37.06",
+        "first_negative_balance": "-37.06",
+        "minimum_buffer": "200",
+        "risk_date": "2025-05-05",
+    }
+    amt = _attention_amount(health, forecast, checking, today=AS_OF)
+    assert amt == Decimal("37.06")
+
+
+def test_short_attention_reason_distinguishes_cushion_from_negative_balance():
+    assert (
+        _short_attention_reason(
+            "Safe-to-spend is negative",
+            "2025-07-08",
+            HEALTH_STATUS_CRITICAL,
+        )
+        == "Spending cushion short"
+    )
+    assert (
+        _short_attention_reason(
+            "Projected balance drops below zero on 2025-07-08",
+            "2025-07-08",
+            HEALTH_STATUS_CRITICAL,
+        )
+        == "Projected negative Jul 8"
+    )
 
 
 def test_attention_cash_shortfall_action(user, checking, expense_category):

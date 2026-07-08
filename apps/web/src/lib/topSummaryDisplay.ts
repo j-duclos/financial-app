@@ -29,6 +29,15 @@ export function topSummaryFromDashboard(
   };
 }
 
+/** Dashboard hero value — shortfall wording instead of a negative balance. */
+export function safeToSpendDisplayValue(amount: string): string {
+  const value = parseFloat(amount);
+  if (Number.isFinite(value) && value < 0) {
+    return `You are short by ${formatCurrency(String(Math.abs(value)))}`;
+  }
+  return formatCurrency(amount);
+}
+
 export function safeToSpendRiskSubtitle(
   safeToSpend: DashboardSummary["safe_to_spend"]
 ): string | null {
@@ -37,19 +46,21 @@ export function safeToSpendRiskSubtitle(
   const dateLabel = next?.risk_date ? formatHealthRiskDate(next.risk_date) : null;
 
   if (amount < 0) {
-    return dateLabel ? `Negative by ${dateLabel}` : "Negative in forecast window";
+    return dateLabel
+      ? `Short by ${dateLabel} after bills, buffers, and reserved savings`
+      : "Shortfall after bills, buffers, and reserved savings";
   }
   if (safeToSpend.status === "critical") {
-    return dateLabel ? `Forecast risk by ${dateLabel}` : "Forecast risk in window";
+    return dateLabel ? `Earliest issue: ${dateLabel}` : "Issue projected in forecast window";
   }
   if (safeToSpend.status === "risk" || safeToSpend.status === "watch") {
-    return dateLabel ? `Low point on ${dateLabel}` : "Elevated forecast risk";
+    return dateLabel ? `Earliest issue: ${dateLabel}` : "Tight headroom in forecast window";
   }
   return null;
 }
 
 export function safeToSpendHealthySubtitle(windowDays: number): string {
-  return `Spendable before projected risk (${windowDays}-day view)`;
+  return `Headroom after bills, buffers, and reserved savings (${windowDays}-day view)`;
 }
 
 export function safeToSpendAmountClass(

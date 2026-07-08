@@ -54,6 +54,7 @@ from accounts.services.available_to_spend import (
     RISK_STATUS_CRITICAL,
     _decimal,
     calculate_forecast_summaries_for_accounts,
+    cash_account_risk_shortfall,
     dashboard_safe_to_spend_aggregate,
     normalize_forecast_days,
 )
@@ -122,8 +123,12 @@ def _short_attention_reason(
     text = reason.strip().rstrip(".")
     date_label = _format_short_date(risk_date)
     lower = text.lower()
-    if "below zero" in lower or "negative" in lower or "drops below zero" in lower:
+    if "safe-to-spend" in lower or "safe to spend" in lower:
+        return "Spending cushion short"
+    if "below zero" in lower or "drops below zero" in lower:
         return f"Projected negative {date_label}" if date_label else "Projected negative balance"
+    if "below buffer" in lower or "projected below buffer" in lower:
+        return f"Below buffer {date_label}" if date_label else "Below safety buffer"
     if "utilization" in lower:
         if "(target" in lower:
             pct = lower.split("utilization is", 1)[-1].split("%", 1)[0].strip()
@@ -181,15 +186,9 @@ def _attention_amount(
             return payoff
         return None
     if forecast and forecast.get("supports_available_to_spend"):
-        available = _decimal(forecast.get("available_to_spend") or 0)
-        if available < 0:
-            return abs(available)
-        lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-        buffer = _decimal(forecast.get("minimum_buffer") or 0)
-        if lowest < Decimal("0"):
-            return abs(lowest)
-        if lowest < buffer:
-            return buffer - lowest
+        shortfall = cash_account_risk_shortfall(forecast)
+        if shortfall is not None and shortfall > 0:
+            return shortfall
     past_due = details.get("past_due_amount")
     if past_due is not None:
         amt = _decimal(past_due)
@@ -249,6 +248,11 @@ def _dashboard_recommended_action(
             return existing
         return "Review upcoming activity."
 
+    if "safe-to-spend" in reason or "safe to spend" in reason:
+        if amt_str and date_label:
+            return f"Add ${amt_str} cushion before {date_label}."
+        return "Review reserved goals and upcoming bills on this account."
+
     if amt_str:
         if "buffer" in reason or (
             forecast
@@ -259,8 +263,8 @@ def _dashboard_recommended_action(
                 return f"Add ${amt_str} before {date_label}."
             return f"Add ${amt_str} to restore buffer."
         if date_label:
-            return f"Move ${amt_str} before {date_label}."
-        return f"Move ${amt_str}."
+            return f"Move ${amt_str} before {date_label} to avoid negative balance."
+        return f"Move ${amt_str} to avoid negative balance."
 
     if status == HEALTH_STATUS_RISK and "buffer" in reason:
         return "Increase minimum buffer or adjust upcoming bills."
@@ -493,6 +497,41 @@ def _is_snapshot_savings_bucket(acc: Account) -> bool:
     )
 
 
+def _counts_toward_liquid_cash(acc: Account) -> bool:
+    """Checking, savings, and cash accounts — excludes bills pools and investments."""
+    if _is_snapshot_debt_account(acc):
+        return False
+    if acc.role in (
+        Account.AccountRole.BILLS,
+        Account.AccountRole.INVESTMENT,
+        Account.AccountRole.CREDIT_CARD,
+        Account.AccountRole.LOAN,
+    ):
+        return False
+    if acc.account_type in (
+        Account.AccountType.CHECKING,
+        Account.AccountType.SAVINGS,
+        Account.AccountType.CASH,
+    ):
+        return True
+    return acc.role in (
+        Account.AccountRole.SPENDING,
+        Account.AccountRole.SAVINGS,
+        Account.AccountRole.EMERGENCY_FUND,
+    )
+
+
+def _compute_liquid_cash(accounts: list[Account], *, today: date) -> Decimal:
+    total = Decimal("0")
+    for acc in accounts:
+        if acc.status == Account.Status.DELETED:
+            continue
+        if not _counts_toward_liquid_cash(acc):
+            continue
+        total += _non_debt_balance_at(acc, today, today=today)
+    return total
+
+
 def _non_debt_balance_at(acc: Account, as_of: date, *, today: date) -> Decimal:
     return signed_ledger_balance(acc, as_of)
 
@@ -622,9 +661,7 @@ def _compute_top_summary(
 ) -> dict[str, Any]:
     """Available cash, available credit, and cash-after-debt for the Financial Health row."""
     today = today or date.today()
-    cash = _decimal(snapshot.get("cash") or 0)
-    savings = _decimal(snapshot.get("savings") or 0)
-    liquid_cash = cash + savings
+    liquid_cash = _compute_liquid_cash(accounts, today=today)
 
     available_credit = Decimal("0")
     total_credit_limit = Decimal("0")

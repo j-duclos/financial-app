@@ -10,6 +10,7 @@ import {
   riskStatusClass,
   riskStatusLabel,
   safeToSpendAmountClass,
+  safeToSpendDisplayValue,
   safeToSpendHealthySubtitle,
   safeToSpendRiskSubtitle,
   topSummaryFromDashboard,
@@ -97,7 +98,7 @@ export default function DashboardTopSummaryBar({
           <>
             <DashboardMetricTile
               label={FINANCIAL_HEALTH.safeToSpend.label}
-              value={formatCurrency(sts.amount)}
+              value={safeToSpendDisplayValue(sts.amount)}
               valueClassName={safeToSpendAmountClass(sts)}
               help={FINANCIAL_HEALTH.safeToSpend.help}
               hero

@@ -33,6 +33,7 @@ from accounts.services.available_to_spend import (
     _decimal,
     account_supports_available_to_spend,
     calculate_forecast_summaries_for_accounts_with_timeline,
+    cash_account_risk_shortfall,
     normalize_forecast_days,
 )
 from accounts.services.credit_card import ledger_owed_balance, sync_current_balance_from_ledger
@@ -475,17 +476,7 @@ def _recommended_action(
 
     shortfall = None
     if forecast and forecast.get("supports_available_to_spend"):
-        available = _decimal(forecast.get("available_to_spend") or 0)
-        first_negative = forecast.get("first_negative_balance")
-        if first_negative is not None and _decimal(first_negative) < 0:
-            shortfall = abs(_decimal(first_negative))
-        elif available < 0:
-            shortfall = abs(available)
-        else:
-            lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-            buffer = _decimal(forecast.get("minimum_buffer") or 0)
-            if lowest < buffer:
-                shortfall = buffer - lowest
+        shortfall = cash_account_risk_shortfall(forecast)
 
     risk_date = forecast.get("risk_date") if forecast else None
     if shortfall and shortfall > 0:

@@ -326,6 +326,29 @@ def _calculate_account_forecast_summary(
     }
 
 
+def cash_account_risk_shortfall(forecast: dict[str, Any] | None) -> Decimal | None:
+    """
+    Dollars needed to cover a projected balance dropping below zero or below buffer.
+
+    Unlike ``available_to_spend``, this ignores goal-reservation cushion and does not
+    treat a large negative safe-to-spend as if the account balance itself is that negative.
+    """
+    if not forecast or not forecast.get("supports_available_to_spend"):
+        return None
+    lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+    buffer = _decimal(forecast.get("minimum_buffer") or 0)
+    first_negative = forecast.get("first_negative_balance")
+    if first_negative is not None:
+        fn = _decimal(first_negative)
+        if fn < 0:
+            return abs(fn).quantize(Decimal("0.01"))
+    if lowest < 0:
+        return abs(lowest).quantize(Decimal("0.01"))
+    if lowest < buffer:
+        return (buffer - lowest).quantize(Decimal("0.01"))
+    return None
+
+
 def calculate_account_forecast_summary(
     user,
     account: Account,
