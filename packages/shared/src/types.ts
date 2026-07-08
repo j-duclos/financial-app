@@ -885,6 +885,7 @@ export interface DashboardSummaryDetails {
   goals_summary?: GoalsAggregateSummary;
   bills?: DashboardBillsSummary;
   recommendation_hints?: RecommendationTimelineHint[];
+  recommendations?: DashboardRecommendation[];
   net_worth: string;
   month_to_date: DashboardSummary["month_to_date"];
 }

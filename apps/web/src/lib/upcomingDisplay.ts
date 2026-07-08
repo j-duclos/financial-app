@@ -72,7 +72,7 @@ export function upcomingPreviewTruncatedMessage(
 }
 
 export function upcomingTimelineLinkLabel(): string {
-  return "Open calendar";
+  return "Open Calendar";
 }
 
 export type UpcomingHeatLevel = DayHeatLevel;

@@ -6,13 +6,14 @@ import {
   ACTION_CENTER_PATH,
   DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT,
   RECOMMENDATIONS_SECTION_TITLE,
-  actionCenterLinkLabel,
-  dismissRecommendation,
-  loadDismissedRecommendationIds,
-  loadSnoozedRecommendationIds,
+  dashboardTopActionsFooterLabel,
+  dashboardViewAllActionsLinkLabel,
   recommendationsForDashboardPreview,
   recommendationsPreviewEmptyMessage,
   recommendationsForActionCenter,
+  dismissRecommendation,
+  loadDismissedRecommendationIds,
+  loadSnoozedRecommendationIds,
   snoozeRecommendation,
 } from "../../lib/recommendationDisplay";
 
@@ -60,12 +61,6 @@ export default function RecommendationsPreviewSection({
         <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           {RECOMMENDATIONS_SECTION_TITLE}
         </h2>
-        <Link
-          to={ACTION_CENTER_PATH}
-          className="text-xs font-medium text-blue-600 hover:underline shrink-0"
-        >
-          {actionCenterLinkLabel()}
-        </Link>
       </div>
       <RecommendationsList
         entries={entries}
@@ -82,12 +77,12 @@ export default function RecommendationsPreviewSection({
         }}
       />
       {hasMore && entries.length > 0 && (
-        <p className="mt-2 text-xs text-gray-500 text-right">
-          Showing top {DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT} actions.{" "}
-          <Link to={ACTION_CENTER_PATH} className="text-blue-600 hover:underline">
-            {actionCenterLinkLabel()}
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-xs text-gray-500">
+          <span>{dashboardTopActionsFooterLabel()}</span>
+          <Link to={ACTION_CENTER_PATH} className="font-medium text-blue-600 hover:underline">
+            {dashboardViewAllActionsLinkLabel()}
           </Link>
-        </p>
+        </div>
       )}
     </section>
   );

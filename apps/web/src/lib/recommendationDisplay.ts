@@ -13,7 +13,11 @@ export const DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT = 3;
 
 export const ACTION_CENTER_PATH = "/action-center";
 
-export const RECOMMENDATIONS_SECTION_TITLE = "Recommendations";
+/** Dashboard section heading — action-focused overview. */
+export const RECOMMENDATIONS_SECTION_TITLE = "Top Actions";
+
+/** @deprecated Use RECOMMENDATIONS_SECTION_TITLE */
+export const DASHBOARD_TOP_ACTIONS_SECTION_TITLE = RECOMMENDATIONS_SECTION_TITLE;
 
 export const ACTION_CENTER_PAGE_TITLE = "Action Center";
 
@@ -162,6 +166,14 @@ export function recommendationsForActionCenter(
 
 export function actionCenterLinkLabel(): string {
   return "View all actions";
+}
+
+export function dashboardTopActionsFooterLabel(): string {
+  return `Showing top ${DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT} actions`;
+}
+
+export function dashboardViewAllActionsLinkLabel(): string {
+  return "View all actions →";
 }
 
 export function recommendationsPreviewEmptyMessage(): string {

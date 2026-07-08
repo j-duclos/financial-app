@@ -16,6 +16,7 @@ from django.db.models.functions import Coalesce
 
 from common.services.cache import (
     DASHBOARD_SUMMARY_CACHE_SECONDS,
+    get_dashboard_shared_context_cache_key,
     get_dashboard_summary_cache_key,
     get_dashboard_summary_details_cache_key,
     get_dashboard_summary_fast_cache_key,
@@ -69,6 +70,7 @@ from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 from transactions.models import Transaction
 
 ATTENTION_TOP_LIMIT = 3
+FAST_RECOMMENDATION_PREVIEW_LIMIT = 3
 
 _GENERIC_DASHBOARD_ACTIONS = frozenset(
     {
@@ -970,38 +972,123 @@ def _extract_dashboard_details(payload: dict[str, Any]) -> dict[str, Any]:
         "goals_summary": payload.get("goals_summary"),
         "bills": payload.get("bills"),
         "recommendation_hints": payload.get("recommendation_hints", []),
+        "recommendations": payload.get("recommendations", []),
         "net_worth": payload.get("net_worth", "0"),
         "month_to_date": payload.get("month_to_date"),
     }
 
 
-def _build_dashboard_summary(
+def _dashboard_scope_cache_params(user, *, days: int, as_of_date: date) -> tuple[list[int], dict[str, Any]]:
+    households = get_households_for_user(user)
+    household_ids = list(households.values_list("id", flat=True))
+    params = {
+        "user_id": user.pk,
+        "household_ids": household_ids,
+        "forecast_days": days,
+        "as_of_date": as_of_date,
+    }
+    return household_ids, params
+
+
+def _store_dashboard_shared_context(scope: dict[str, Any], context: dict[str, Any]) -> None:
+    cache_key = get_dashboard_shared_context_cache_key(**scope)
+    cache.set(cache_key, context, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+
+
+def _load_dashboard_shared_context(scope: dict[str, Any]) -> dict[str, Any] | None:
+    cache_key = get_dashboard_shared_context_cache_key(**scope)
+    cached = cache.get(cache_key)
+    return cached if isinstance(cached, dict) else None
+
+
+def _build_minimal_dashboard_debt_summary(
+    cards: list[Account], *, as_of: date | None = None
+) -> dict[str, Any] | None:
+    """Lightweight debt tile — balances and APR burn only, no payoff simulation."""
+    today = as_of or date.today()
+    total_debt = Decimal("0")
+    monthly_burn = Decimal("0")
+    for card in cards:
+        if not card.is_credit_card():
+            continue
+        owed = credit_owed_balance(card, today)
+        if owed <= 0:
+            continue
+        total_debt += owed
+        apr = _decimal(card.apr or 0)
+        monthly_burn += owed * apr / Decimal("1200")
+
+    if total_debt <= 0:
+        return None
+
+    return {
+        "label": "Credit card payoff",
+        "debt_free_date": None,
+        "total_debt": str(total_debt.quantize(Decimal("0.01"))),
+        "monthly_interest_burn": str(monthly_burn.quantize(Decimal("0.01"))),
+        "interest_saved_vs_minimums": None,
+        "message": None,
+        "planner_url": "/credit-cards",
+        "plan": None,
+    }
+
+
+def _build_fast_recommendation_preview(
+    attention_all: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Attention-derived preview only — no engine context or insights."""
+    from insights.services.dashboard_recommendations import (
+        SEVERITY_RANK,
+        _recommendations_from_attention,
+    )
+
+    preview = _recommendations_from_attention(attention_all)
+    preview.sort(
+        key=lambda r: (
+            SEVERITY_RANK.get(r.get("severity", "info"), 9),
+            -(int(r.get("priority_score") or 0)),
+            r.get("title") or "",
+        )
+    )
+    return preview[:FAST_RECOMMENDATION_PREVIEW_LIMIT], []
+
+
+def _log_dashboard_build_perf(
+    *,
+    label: str,
+    wall_start: float | None,
+    query_profiler: QueryProfiler | None,
+    phases: list[str] | None = None,
+) -> None:
+    if not perf_enabled() or wall_start is None:
+        return
+    if query_profiler is not None:
+        query_profiler.stop()
+    bt_count = get_build_timeline_count()
+    total_ms = (time.perf_counter() - wall_start) * 1000
+    callers = get_build_timeline_callers()
+    perf_print(
+        f"[PERF] {label} build_timeline_count={bt_count} elapsed_ms={total_ms:.0f}"
+    )
+    if phases:
+        perf_print(f"[PERF] {label} phases={','.join(phases)}")
+    if bt_count > 1 and callers:
+        perf_print(f"[PERF] {label} build_timeline_callers={','.join(callers)}")
+    if query_profiler is not None:
+        perf_print(f"[PERF] query_count={query_profiler.query_count}")
+
+
+def _compute_dashboard_core(
     user,
     *,
-    days: int = 30,
-    as_of_date: date | None = None,
-    mode: str = "full",
+    days: int,
+    today: date,
+    timer: PerfTimer | None,
+    shared_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Uncached dashboard aggregation (forecast, health, upcoming, bills, recommendations)."""
-    timer = PerfTimer() if perf_enabled() else None
-    query_profiler = QueryProfiler() if perf_enabled() else None
-    wall_start = time.perf_counter() if perf_enabled() else None
-    if query_profiler is not None:
-        query_profiler.start()
-
-    days = normalize_forecast_days(days)
-    today = as_of_date or date.today()
+    """Timeline, forecast, health, safe-to-spend, and attention — shared by fast and full."""
     forecast_end = today + timedelta(days=days)
-    upcoming_horizon = min(days, UPCOMING_DAYS)
-
-    if perf_enabled():
-        reset_build_timeline_count()
-        perf_print(f"[PERF] dashboard forecast_days_selected={days}")
-        perf_print(
-            f"[PERF] dashboard start_date={today.isoformat()} "
-            f"end_date={forecast_end.isoformat()}"
-        )
-        perf_print(f"[PERF] dashboard request start user={user.pk} days={days}")
+    phases: list[str] = []
 
     households = get_households_for_user(user)
     accounts = list(
@@ -1012,68 +1099,209 @@ def _build_dashboard_summary(
     accounts_by_id = {a.id: a for a in accounts}
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
-    _phase_timeline = phase_start(timer, "timeline_build")
-    timeline_rows = build_timeline(
-        user,
-        start_date=today,
-        end_date=forecast_end,
-        as_of_date=today,
-        projection_only=True,
-        caller="dashboard_summary",
-    )
-    phase_end(timer, _phase_timeline)
-
-    _phase_forecast = phase_start(timer, "forecast")
-    forecast_start = time.perf_counter() if perf_enabled() else None
-    forecasts = calculate_forecast_summaries_for_accounts(
-        user,
-        forecast_accounts,
-        as_of_date=today,
-        days=days,
-        timeline_rows=timeline_rows,
-    )
-    phase_end(timer, _phase_forecast)
-    if perf_enabled() and forecast_start is not None:
-        perf_print(
-            f"[PERF] forecast_summary elapsed_ms="
-            f"{(time.perf_counter() - forecast_start) * 1000:.0f}"
+    if shared_context is not None:
+        phases.append("shared_context")
+        timeline_rows = shared_context["timeline_rows"]
+        forecasts = shared_context["forecasts"]
+        health_by_id = shared_context["health_by_id"]
+        st_aggregate = shared_context["st_aggregate"]
+        attention_all = shared_context["attention_all"]
+    else:
+        _phase_timeline = phase_start(timer, "timeline_build")
+        phases.append("timeline_build")
+        timeline_rows = build_timeline(
+            user,
+            start_date=today,
+            end_date=forecast_end,
+            as_of_date=today,
+            projection_only=True,
+            caller="dashboard_summary",
         )
+        phase_end(timer, _phase_timeline)
 
-    _phase_health = phase_start(timer, "account_health")
-    health_start = time.perf_counter() if perf_enabled() else None
-    health_by_id = calculate_account_health_for_accounts(
-        user,
-        accounts,
-        as_of_date=today,
-        days=days,
-        timeline_rows=timeline_rows,
-    )
-    phase_end(timer, _phase_health)
-    if perf_enabled() and health_start is not None:
-        perf_print(
-            f"[PERF] account_health elapsed_ms="
-            f"{(time.perf_counter() - health_start) * 1000:.0f}"
+        _phase_forecast = phase_start(timer, "forecast")
+        phases.append("forecast")
+        forecast_start = time.perf_counter() if perf_enabled() else None
+        forecasts = calculate_forecast_summaries_for_accounts(
+            user,
+            forecast_accounts,
+            as_of_date=today,
+            days=days,
+            timeline_rows=timeline_rows,
         )
+        phase_end(timer, _phase_forecast)
+        if perf_enabled() and forecast_start is not None:
+            perf_print(
+                f"[PERF] forecast_summary elapsed_ms="
+                f"{(time.perf_counter() - forecast_start) * 1000:.0f}"
+            )
 
-    _phase_sts = phase_start(timer, "safe_to_spend")
-    sts_start = time.perf_counter() if perf_enabled() else None
-    st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
-    attention_all = build_attention_items(
-        health_by_id, accounts_by_id, forecasts, limit=999, today=today
-    )
+        _phase_health = phase_start(timer, "account_health")
+        phases.append("account_health")
+        health_start = time.perf_counter() if perf_enabled() else None
+        health_by_id = calculate_account_health_for_accounts(
+            user,
+            accounts,
+            as_of_date=today,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+        phase_end(timer, _phase_health)
+        if perf_enabled() and health_start is not None:
+            perf_print(
+                f"[PERF] account_health elapsed_ms="
+                f"{(time.perf_counter() - health_start) * 1000:.0f}"
+            )
+
+        _phase_sts = phase_start(timer, "safe_to_spend")
+        phases.append("safe_to_spend")
+        sts_start = time.perf_counter() if perf_enabled() else None
+        st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
+        attention_all = build_attention_items(
+            health_by_id, accounts_by_id, forecasts, limit=999, today=today
+        )
+        phase_end(timer, _phase_sts)
+        if perf_enabled() and sts_start is not None:
+            perf_print(
+                f"[PERF] safe_to_spend elapsed_ms="
+                f"{(time.perf_counter() - sts_start) * 1000:.0f}"
+            )
+
     attention = attention_all[:ATTENTION_TOP_LIMIT]
-
     total_sts = _decimal(st_aggregate.get("total_safe_to_spend") or 0)
     sts_status = _safe_to_spend_status(total_sts, st_aggregate)
     next_issue = _next_safe_to_spend_issue(st_aggregate, forecasts)
-    phase_end(timer, _phase_sts)
-    if perf_enabled() and sts_start is not None:
+    forecast_risk = _forecast_risk_from_aggregate(st_aggregate)
+
+    return {
+        "phases": phases,
+        "households": households,
+        "accounts": accounts,
+        "accounts_by_id": accounts_by_id,
+        "forecast_accounts": forecast_accounts,
+        "timeline_rows": timeline_rows,
+        "forecasts": forecasts,
+        "health_by_id": health_by_id,
+        "st_aggregate": st_aggregate,
+        "attention_all": attention_all,
+        "attention": attention,
+        "total_sts": total_sts,
+        "sts_status": sts_status,
+        "next_issue": next_issue,
+        "forecast_risk": forecast_risk,
+        "shared_context": {
+            "timeline_rows": timeline_rows,
+            "forecasts": forecasts,
+            "health_by_id": health_by_id,
+            "st_aggregate": st_aggregate,
+            "attention_all": attention_all,
+        },
+    }
+
+
+def _build_dashboard_summary(
+    user,
+    *,
+    days: int = 30,
+    as_of_date: date | None = None,
+    mode: str = "full",
+    shared_context: dict[str, Any] | None = None,
+    cache_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Uncached dashboard aggregation (forecast, health, upcoming, bills, recommendations)."""
+    timer = PerfTimer() if perf_enabled() else None
+    query_profiler = QueryProfiler() if perf_enabled() else None
+    wall_start = time.perf_counter() if perf_enabled() else None
+    if query_profiler is not None:
+        query_profiler.start()
+
+    days = normalize_forecast_days(days)
+    today = as_of_date or date.today()
+    upcoming_horizon = min(days, UPCOMING_DAYS)
+
+    if perf_enabled():
+        reset_build_timeline_count()
+        perf_print(f"[PERF] dashboard forecast_days_selected={days}")
         perf_print(
-            f"[PERF] safe_to_spend elapsed_ms="
-            f"{(time.perf_counter() - sts_start) * 1000:.0f}"
+            f"[PERF] dashboard start_date={today.isoformat()} "
+            f"end_date={(today + timedelta(days=days)).isoformat()}"
+        )
+        perf_print(f"[PERF] dashboard request start user={user.pk} days={days} mode={mode}")
+
+    core = _compute_dashboard_core(
+        user,
+        days=days,
+        today=today,
+        timer=timer,
+        shared_context=shared_context,
+    )
+    phases = list(core["phases"])
+    accounts = core["accounts"]
+    accounts_by_id = core["accounts_by_id"]
+    timeline_rows = core["timeline_rows"]
+    forecasts = core["forecasts"]
+    health_by_id = core["health_by_id"]
+    st_aggregate = core["st_aggregate"]
+    attention_all = core["attention_all"]
+    attention = core["attention"]
+    forecast_risk = core["forecast_risk"]
+
+    if mode == "fast":
+        _phase_snapshot = phase_start(timer, "snapshot_top_summary")
+        phases.append("snapshot_top_summary")
+        snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
+        snapshot_light = _compute_snapshot(snapshot_accounts, today=today, goals=[], mtd_net=None)
+        top_summary = _compute_top_summary(snapshot_accounts, snapshot_light, today=today)
+        phase_end(timer, _phase_snapshot)
+
+        from accounts.models import Account as AccountModel
+
+        debt_cards = list(
+            AccountModel.objects.non_deleted().filter(
+                household__in=core["households"],
+                account_type=AccountModel.AccountType.CREDIT,
+                is_hidden=False,
+            )
+        )
+        _phase_debt = phase_start(timer, "debt_minimal")
+        phases.append("debt_minimal")
+        debt_summary = _build_minimal_dashboard_debt_summary(debt_cards, as_of=today)
+        phase_end(timer, _phase_debt)
+
+        _phase_recommendations = phase_start(timer, "recommendations_preview")
+        phases.append("recommendations_preview")
+        recommendations, insights = _build_fast_recommendation_preview(attention_all)
+        phase_end(timer, _phase_recommendations)
+
+        _log_dashboard_build_perf(
+            label="dashboard_summary_fast",
+            wall_start=wall_start,
+            query_profiler=query_profiler,
+            phases=phases,
         )
 
+        payload: dict[str, Any] = {
+            "safe_to_spend": {
+                "window_days": days,
+                "amount": str(core["total_sts"].quantize(Decimal("0.01"))),
+                "status": core["sts_status"],
+                "next_issue": core["next_issue"],
+            },
+            "top_summary": top_summary,
+            "attention": attention,
+            "attention_total_count": len(attention_all),
+            "insights": insights,
+            "recommendations": recommendations,
+            "forecast_risk": forecast_risk,
+        }
+        if debt_summary is not None:
+            payload["debt"] = debt_summary
+        if cache_scope is not None:
+            _store_dashboard_shared_context(cache_scope, core["shared_context"])
+        return payload
+
     _phase_upcoming = phase_start(timer, "upcoming")
+    phases.append("upcoming")
     upcoming_events = build_upcoming_events(
         user,
         accounts,
@@ -1083,25 +1311,26 @@ def _build_dashboard_summary(
         upcoming_days=upcoming_horizon,
     )
 
-    transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
-    upcoming_grouped: dict[str, Any] | None = None
-    if mode != "fast":
-        upcoming_grouped = build_upcoming_groups(
-            upcoming_events,
-            transfer_rule_ids=transfer_rule_ids,
-            transfer_rule_targets=transfer_rule_targets,
-            transfer_rule_sources=transfer_rule_sources,
-            accounts_by_id=accounts_by_id,
-            health_by_id=health_by_id,
-            today=today,
-            max_transactions=UPCOMING_MAX_TRANSACTIONS,
-        )
+    transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
+        core["households"]
+    )
+    upcoming_grouped = build_upcoming_groups(
+        upcoming_events,
+        transfer_rule_ids=transfer_rule_ids,
+        transfer_rule_targets=transfer_rule_targets,
+        transfer_rule_sources=transfer_rule_sources,
+        accounts_by_id=accounts_by_id,
+        health_by_id=health_by_id,
+        today=today,
+        max_transactions=UPCOMING_MAX_TRANSACTIONS,
+    )
     phase_end(timer, _phase_upcoming)
 
     _phase_widgets = phase_start(timer, "widgets")
+    phases.append("widgets")
     net_worth_accounts = list(
         Account.objects.for_net_worth()
-        .filter(household__in=households, is_hidden=False)
+        .filter(household__in=core["households"], is_hidden=False)
     )
     snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
     mtd = _compute_month_to_date(user, today)
@@ -1117,7 +1346,7 @@ def _build_dashboard_summary(
     dashboard_goals = dashboard_buckets_for_user(user, limit=3, today=today)
     active_buckets = list(
         GoalBucket.objects.filter(
-            household__in=households,
+            household__in=core["households"],
             status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
         ).select_related("linked_account")
     )
@@ -1134,7 +1363,7 @@ def _build_dashboard_summary(
 
     debt_cards = list(
         AccountModel.objects.non_deleted().filter(
-            household__in=households,
+            household__in=core["households"],
             account_type=AccountModel.AccountType.CREDIT,
             is_hidden=False,
         )
@@ -1150,6 +1379,7 @@ def _build_dashboard_summary(
     )
 
     _phase_insights = phase_start(timer, "insights")
+    phases.append("insights")
     insights = build_dashboard_insights(
         user=user,
         attention=attention,
@@ -1159,7 +1389,7 @@ def _build_dashboard_summary(
         forecasts=forecasts,
         st_aggregate=st_aggregate,
         upcoming_events=upcoming_events,
-        upcoming_groups=(upcoming_grouped or {}).get("groups", []),
+        upcoming_groups=upcoming_grouped.get("groups", []),
         transfer_rule_ids=transfer_rule_ids,
         transfer_rule_targets=transfer_rule_targets,
         dashboard_goals=dashboard_goals,
@@ -1171,6 +1401,7 @@ def _build_dashboard_summary(
     phase_end(timer, _phase_insights)
 
     _phase_recommendations = phase_start(timer, "recommendations")
+    phases.append("recommendations")
     rec_ctx = build_recommendation_context(
         user,
         days=days,
@@ -1194,48 +1425,8 @@ def _build_dashboard_summary(
     recommendation_hints = recommendation_timeline_hints(recommendations)
     phase_end(timer, _phase_recommendations)
 
-    forecast_risk = _forecast_risk_from_aggregate(st_aggregate)
-
-    if mode == "fast":
-        _phase_snapshot = phase_start(timer, "snapshot_top_summary")
-        snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
-        snapshot_light = _compute_snapshot(snapshot_accounts, today=today, goals=[], mtd_net=None)
-        top_summary = _compute_top_summary(snapshot_accounts, snapshot_light, today=today)
-        phase_end(timer, _phase_snapshot)
-
-        if perf_enabled() and wall_start is not None:
-            if query_profiler is not None:
-                query_profiler.stop()
-            bt_count = get_build_timeline_count()
-            total_ms = (time.perf_counter() - wall_start) * 1000
-            callers = get_build_timeline_callers()
-            perf_print(
-                f"[PERF] dashboard_fast_total build_timeline_count={bt_count} total_ms={total_ms:.0f}"
-            )
-            if bt_count > 1 and callers:
-                perf_print(f"[PERF] dashboard_fast build_timeline_callers={','.join(callers)}")
-            if query_profiler is not None:
-                perf_print(f"[PERF] query_count={query_profiler.query_count}")
-
-        return {
-            "safe_to_spend": {
-                "window_days": days,
-                "amount": str(total_sts.quantize(Decimal("0.01"))),
-                "status": sts_status,
-                "next_issue": next_issue,
-            },
-            "top_summary": top_summary,
-            "attention": attention,
-            "attention_total_count": len(attention_all),
-            "debt": debt_summary,
-            "insights": insights,
-            "recommendations": recommendations,
-            "forecast_risk": forecast_risk,
-        }
-
-    assert upcoming_grouped is not None
-
     _phase_snapshot = phase_start(timer, "snapshot")
+    phases.append("snapshot")
     snapshot_goal_rows = [
         {
             "id": b.id,
@@ -1257,26 +1448,19 @@ def _build_dashboard_summary(
     top_summary = _compute_top_summary(snapshot_accounts, snapshot, today=today)
     phase_end(timer, _phase_snapshot)
 
-    if perf_enabled() and wall_start is not None:
-        if query_profiler is not None:
-            query_profiler.stop()
-        bt_count = get_build_timeline_count()
-        total_ms = (time.perf_counter() - wall_start) * 1000
-        callers = get_build_timeline_callers()
-        perf_print(
-            f"[PERF] dashboard_total build_timeline_count={bt_count} total_ms={total_ms:.0f}"
-        )
-        if bt_count > 1 and callers:
-            perf_print(f"[PERF] dashboard build_timeline_callers={','.join(callers)}")
-        if query_profiler is not None:
-            perf_print(f"[PERF] query_count={query_profiler.query_count}")
+    _log_dashboard_build_perf(
+        label="dashboard_summary_full",
+        wall_start=wall_start,
+        query_profiler=query_profiler,
+        phases=phases,
+    )
 
     return {
         "safe_to_spend": {
             "window_days": days,
-            "amount": str(total_sts.quantize(Decimal("0.01"))),
-            "status": sts_status,
-            "next_issue": next_issue,
+            "amount": str(core["total_sts"].quantize(Decimal("0.01"))),
+            "status": core["sts_status"],
+            "next_issue": core["next_issue"],
         },
         "top_summary": top_summary,
         "net_worth": _compute_net_worth(net_worth_accounts, today=today),
@@ -1395,7 +1579,14 @@ def build_dashboard_summary_fast(
         return cached
 
     wall_start = time.perf_counter()
-    result = _build_dashboard_summary(user, days=days, as_of_date=today, mode="fast")
+    _, scope = _dashboard_scope_cache_params(user, days=days, as_of_date=today)
+    result = _build_dashboard_summary(
+        user,
+        days=days,
+        as_of_date=today,
+        mode="fast",
+        cache_scope=scope,
+    )
     log_perf(
         "dashboard_summary_fast",
         cache="MISS",
@@ -1403,6 +1594,7 @@ def build_dashboard_summary_fast(
         days=days,
         households=len(household_ids),
         elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+        build_timeline_count=get_build_timeline_count(),
     )
     cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     return result
@@ -1455,7 +1647,15 @@ def build_dashboard_summary_details(
         return cached
 
     wall_start = time.perf_counter()
-    full_result = _build_dashboard_summary(user, days=days, as_of_date=today, mode="full")
+    _, scope = _dashboard_scope_cache_params(user, days=days, as_of_date=today)
+    shared_context = _load_dashboard_shared_context(scope)
+    full_result = _build_dashboard_summary(
+        user,
+        days=days,
+        as_of_date=today,
+        mode="full",
+        shared_context=shared_context,
+    )
     log_perf(
         "dashboard_summary_details",
         cache="MISS",
@@ -1463,6 +1663,8 @@ def build_dashboard_summary_details(
         days=days,
         households=len(household_ids),
         elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+        build_timeline_count=get_build_timeline_count(),
+        shared_context="HIT" if shared_context is not None else "MISS",
     )
     cache.set(full_key, full_result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     details = _extract_dashboard_details(full_result)

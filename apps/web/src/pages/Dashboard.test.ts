@@ -14,33 +14,36 @@ const accountsSource = readFileSync(
 );
 
 describe("Dashboard page structure", () => {
-  it("includes command-center sections", () => {
+  it("includes action-focused overview sections in priority order", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);
     expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
     expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
-    expect(dashboardSource).toMatch(/GoalsProgressSection/);
-    expect(dashboardSource).toMatch(/DashboardFinancialSnapshotLine/);
+    expect(dashboardSource).toMatch(/GoalsPreviewSection/);
+
+    const healthIdx = dashboardSource.indexOf("<DashboardTopSummaryBar");
+    const attentionIdx = dashboardSource.indexOf("<AttentionCardGrid");
+    const actionsIdx = dashboardSource.indexOf("<RecommendationsPreviewSection");
+    const upcomingIdx = dashboardSource.indexOf("<UpcomingMoneyFlowPreviewSection");
+    const goalsIdx = dashboardSource.indexOf("<GoalsPreviewSection");
+
+    expect(healthIdx).toBeGreaterThan(-1);
+    expect(attentionIdx).toBeGreaterThan(healthIdx);
+    expect(actionsIdx).toBeGreaterThan(attentionIdx);
+    expect(upcomingIdx).toBeGreaterThan(actionsIdx);
+    expect(goalsIdx).toBeGreaterThan(upcomingIdx);
   });
 
-  it("does not render large resource breakdown cards", () => {
+  it("does not render resource breakdown or legacy dashboard widgets", () => {
     expect(dashboardSource).not.toMatch(/FinancialSnapshotCard/);
     expect(dashboardSource).not.toMatch(/resourceBreakdown/);
-  });
-
-  it("does not render page title or legacy health cards", () => {
+    expect(dashboardSource).not.toMatch(/DashboardFinancialSnapshotLine/);
+    expect(dashboardSource).not.toMatch(/GoalsProgressSection/);
     expect(dashboardSource).not.toMatch(/BillsChecklistInsight/);
     expect(dashboardSource).not.toMatch(/DashboardHealthCards/);
     expect(dashboardSource).not.toMatch(/InsightsSection/);
     expect(dashboardSource).not.toMatch(/Forecast-aware command center/);
     expect(dashboardSource).not.toMatch(/<h1[^>]*>Dashboard<\/h1>/);
-  });
-
-  it("places compact snapshot after goals", () => {
-    const goalsIdx = dashboardSource.indexOf("<GoalsProgressSection");
-    const snapshotIdx = dashboardSource.indexOf("<DashboardFinancialSnapshotLine");
-    expect(goalsIdx).toBeGreaterThan(-1);
-    expect(snapshotIdx).toBeGreaterThan(goalsIdx);
   });
 });
 

@@ -1,9 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DashboardSummaryFast, FinancialGoal } from "@budget-app/shared";
 import { getDashboardDetails, getDashboardSummaryFast, listAccounts, listAllBuckets } from "@budget-app/api-client";
-import { topActiveGoalsForDashboard } from "../lib/goalsDashboard";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
 import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashboard/DashboardSkeleton";
@@ -12,8 +11,9 @@ import RecommendationsPreviewSection from "../components/dashboard/Recommendatio
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import type { DashboardAttentionItem } from "@budget-app/shared";
 import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
-import DashboardFinancialSnapshotLine from "../components/dashboard/DashboardFinancialSnapshotLine";
-import GoalsProgressSection from "../components/dashboard/GoalsProgressSection";
+import GoalsPreviewSection, {
+  GoalsPreviewSectionHeader,
+} from "../components/dashboard/GoalsPreviewSection";
 import QuickTransactionModal, {
   type QuickTransactionPreset,
 } from "../components/quickActions/QuickTransactionModal";
@@ -64,37 +64,54 @@ export default function Dashboard() {
     null
   );
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
+  const needsAccounts =
+    txnPreset != null || resolveRiskTarget != null || resolveRiskAccountId != null;
 
   const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
   });
 
+  const [detailsEnabled, setDetailsEnabled] = useState(false);
+  useEffect(() => {
+    if (!summaryFast || fastError) {
+      setDetailsEnabled(false);
+      return;
+    }
+    setDetailsEnabled(false);
+    const timer = window.setTimeout(() => setDetailsEnabled(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [summaryFast, fastError, forecastDays]);
+
   const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery({
     queryKey: ["dashboard-summary-details", forecastDays],
     queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
-    enabled: !!summaryFast && !fastError,
+    enabled: detailsEnabled,
   });
 
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "dashboard"],
     queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
+    enabled: needsAccounts,
   });
   const accounts = accountsData?.results ?? [];
 
   const { data: allGoals = [], isLoading: goalsLoading } = useQuery({
     queryKey: ["buckets", "all"],
     queryFn: () => listAllBuckets(),
+    enabled: !!details && !(details.goals?.length),
     staleTime: 0,
     refetchOnMount: "always",
   });
   const dashboardGoals = useMemo(() => {
     if (details?.goals?.length) return details.goals as FinancialGoal[];
-    return topActiveGoalsForDashboard(allGoals, 3);
+    return allGoals;
   }, [details?.goals, allGoals]);
+  const goalsPreviewLoading = goalsLoading && !(details?.goals?.length);
   const showOnboarding =
     summaryFast &&
-    accounts.length === 0 &&
+    parseFloat(summaryFast.top_summary?.liquid_cash ?? "0") === 0 &&
+    parseFloat(summaryFast.top_summary?.available_credit ?? "0") === 0 &&
     summaryFast.attention.length === 0 &&
     (summaryFast.recommendations?.length ?? summaryFast.insights.length) === 0;
 
@@ -167,42 +184,15 @@ export default function Dashboard() {
 
               {!details || detailsLoading ? (
                 <section>
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Goals &amp; Progress
-                    </h2>
-                  </div>
+                  <GoalsPreviewSectionHeader />
                   <DashboardSectionSkeleton rows={2} />
                 </section>
               ) : (
-                <section>
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Goals &amp; Progress
-                    </h2>
-                    <div className="flex items-center gap-3 shrink-0 text-xs">
-                      <Link to="/goals?new=1" className="text-blue-600 hover:underline">
-                        Add goal
-                      </Link>
-                      <Link to="/goals" className="text-blue-600 hover:underline">
-                        View goals
-                      </Link>
-                    </div>
-                  </div>
-                  <GoalsProgressSection
-                    goals={dashboardGoals}
-                    goalsLoading={goalsLoading}
-                    goalsSummary={details.goals_summary}
-                    warnings={details.goal_warnings ?? []}
-                  />
+                <section aria-label="Goals Progress">
+                  <GoalsPreviewSectionHeader />
+                  <GoalsPreviewSection goals={dashboardGoals} loading={goalsPreviewLoading} />
                 </section>
               )}
-
-              {!details || detailsLoading ? (
-                <DashboardSectionSkeleton rows={1} />
-              ) : details.snapshot ? (
-                <DashboardFinancialSnapshotLine snapshot={details.snapshot} />
-              ) : null}
             </>
           )}
 

@@ -1,5 +1,11 @@
 import type { FinancialGoal, FinancialGoalStatus } from "@budget-app/shared";
 
+type GoalPrioritySortable = {
+  status: FinancialGoalStatus;
+  priority: FinancialGoal["priority"];
+  name: string;
+};
+
 const STATUS_ORDER: Record<FinancialGoalStatus, number> = {
   active: 0,
   paused: 1,
@@ -20,7 +26,7 @@ function prioritySortKey(priority: FinancialGoal["priority"] | string | undefine
 }
 
 /** Every user goal for dashboard lists (active, paused, completed, archived). */
-export function goalsForDashboard(goals: FinancialGoal[]): FinancialGoal[] {
+export function goalsForDashboard<T extends GoalPrioritySortable>(goals: T[]): T[] {
   return [...goals].sort((a, b) => {
     const sa = STATUS_ORDER[a.status] ?? 9;
     const sb = STATUS_ORDER[b.status] ?? 9;
@@ -33,18 +39,25 @@ export function goalsForDashboard(goals: FinancialGoal[]): FinancialGoal[] {
 }
 
 /** Active/paused only — for snapshot savings footers and contribute defaults. */
-export function activeGoalsForDashboard(goals: FinancialGoal[]): FinancialGoal[] {
+export function activeGoalsForDashboard<T extends GoalPrioritySortable>(goals: T[]): T[] {
   return goalsForDashboard(goals).filter(
     (g) => g.status === "active" || g.status === "paused"
   );
 }
 
 /** Top N active/paused goals by priority for dashboard cards. */
-export function topActiveGoalsForDashboard(
-  goals: FinancialGoal[],
+export function topActiveGoalsForDashboard<T extends GoalPrioritySortable>(
+  goals: T[],
   limit = 3
-): FinancialGoal[] {
+): T[] {
   return activeGoalsForDashboard(goals).slice(0, limit);
+}
+
+/** Highest-priority active/paused goal for the dashboard preview. */
+export function primaryGoalForDashboard<T extends GoalPrioritySortable>(
+  goals: T[]
+): T | null {
+  return topActiveGoalsForDashboard(goals, 1)[0] ?? null;
 }
 
 /** Dashboard goal cards: 1 full width, 2 per row, up to 3 per row before wrapping. */

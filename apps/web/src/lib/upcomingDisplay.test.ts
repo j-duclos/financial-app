@@ -239,7 +239,7 @@ describe("upcomingDisplay", () => {
     expect(upcomingPreviewTruncatedMessage(5, 7, { dayWindowTruncated: true })).toMatch(
       /next 7 days/i
     );
-    expect(upcomingTimelineLinkLabel()).toBe("Open calendar");
+    expect(upcomingTimelineLinkLabel()).toBe("Open Calendar");
     expect(upcomingSectionCollapsedSummary([], 30)).toMatch(/No upcoming activity/);
     expect(upcomingSectionCollapsedSummary([group({ date: "2026-06-01" })], 30)).toBe(
       "1 day · 1 transaction"
