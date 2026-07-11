@@ -203,6 +203,71 @@ def _rematch_unmatched_imports_for_plaid_item(plaid_item: PlaidItem) -> None:
         _safe_match_imported_transaction(imp)
 
 
+def _create_plaid_sync_transaction(
+    *,
+    account_pk: int,
+    pid: str,
+    defaults: dict[str, Any],
+) -> Transaction:
+    """Insert a new Plaid row from /transactions/sync (never skip locked reconcile dates)."""
+    if bank_movement_already_on_ledger(
+        account_id=account_pk,
+        txn_date=defaults["date"],
+        amount=defaults["amount"],
+        payee=defaults.get("payee") or "",
+        imported_description=defaults.get("imported_description") or "",
+    ):
+        defaults = {**defaults, "import_match_status": Transaction.ImportMatchStatus.DUPLICATE}
+    created = Transaction.objects.create(plaid_transaction_id=pid, **defaults)
+    if created.import_match_status != Transaction.ImportMatchStatus.DUPLICATE:
+        _safe_match_imported_transaction(created)
+    return created
+
+
+def backfill_missing_plaid_imports(plaid_item: PlaidItem) -> dict[str, int]:
+    """
+    Create Plaid rows that exist at Plaid but are missing locally.
+
+    When sync previously skipped new posts inside a reconciled period, the cursor still
+    advanced — incremental sync will never replay those rows. A full history scan fixes that.
+    """
+    client = get_plaid_client()
+    access_token = decrypt_plaid_access_token(plaid_item.access_token_cipher)
+    id_to_account_pk: dict[str, int] = {}
+    for la in plaid_item.linked_accounts.select_related("account"):
+        if la.account.allows_plaid_sync():
+            id_to_account_pk[str(la.plaid_account_id)] = la.account_id
+
+    added = 0
+    cursor = ""
+    while True:
+        kwargs: dict[str, Any] = {"access_token": access_token, "count": 500}
+        if cursor:
+            kwargs["cursor"] = cursor
+        resp = client.transactions_sync(TransactionsSyncRequest(**kwargs))
+        data = resp.to_dict()
+        for txn in list(data.get("added") or []) + list(data.get("modified") or []):
+            if not isinstance(txn, dict):
+                continue
+            plaid_account_id = txn.get("account_id")
+            aid_key = str(plaid_account_id)
+            account_pk = id_to_account_pk.get(aid_key) if plaid_account_id else None
+            if account_pk is None:
+                continue
+            defaults = _plaid_txn_to_defaults(txn, account_pk)
+            if not defaults:
+                continue
+            pid = defaults.pop("plaid_transaction_id")
+            if Transaction.objects.filter(plaid_transaction_id=pid).exists():
+                continue
+            _create_plaid_sync_transaction(account_pk=account_pk, pid=pid, defaults=defaults)
+            added += 1
+        cursor = data.get("next_cursor") or ""
+        if not data.get("has_more"):
+            break
+    return {"backfill_added": added}
+
+
 def _apply_plaid_defaults_to_existing(existing: Transaction, defaults: dict[str, Any]) -> None:
     """
     Apply Plaid /transactions/sync fields to a row we already store.
@@ -652,16 +717,6 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     continue
                 pid = defaults.pop("plaid_transaction_id")
                 account = account_by_pk.get(account_pk)
-                if account and is_import_date_locked(account, defaults["date"]):
-                    skipped_reconciled_period += 1
-                    logger.info(
-                        "Skipping Plaid %s on %s for account %s — reconciled through %s",
-                        pid,
-                        defaults["date"],
-                        account_pk,
-                        import_locked_through_date(account),
-                    )
-                    continue
                 existing = Transaction.objects.filter(plaid_transaction_id=pid).first()
                 if existing:
                     if account and is_import_date_locked(account, defaults["date"]):
@@ -680,18 +735,11 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     _safe_match_imported_transaction(existing)
                     continue
 
-                if bank_movement_already_on_ledger(
-                    account_id=account_pk,
-                    txn_date=defaults["date"],
-                    amount=defaults["amount"],
-                    payee=defaults.get("payee") or "",
-                    imported_description=defaults.get("imported_description") or "",
-                ):
-                    defaults["import_match_status"] = Transaction.ImportMatchStatus.DUPLICATE
-                created = Transaction.objects.create(plaid_transaction_id=pid, **defaults)
+                # New bank posts must always be stored. Skipping them on locked reconcile
+                # dates dropped cursor-advanced Plaid rows (e.g. Exeterfina on the 2nd) while
+                # a later rule occurrence stayed pending.
+                _create_plaid_sync_transaction(account_pk=account_pk, pid=pid, defaults=defaults)
                 added += 1
-                if created.import_match_status != Transaction.ImportMatchStatus.DUPLICATE:
-                    _safe_match_imported_transaction(created)
 
             cursor = next_cursor
             plaid_item.transactions_cursor = cursor or ""
@@ -724,6 +772,13 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
         totals["skipped_reconciled_period"] = totals.get("skipped_reconciled_period", 0) + extra.get(
             "skipped_reconciled_period", 0
         )
+
+    try:
+        backfill = backfill_missing_plaid_imports(plaid_item)
+        totals.setdefault("backfill_added", 0)
+        totals["backfill_added"] += int(backfill.get("backfill_added") or 0)
+    except Exception:
+        logger.exception("backfill_missing_plaid_imports failed for plaid_item pk=%s", plaid_item.pk)
 
     try:
         _rematch_unmatched_imports_for_plaid_item(plaid_item)

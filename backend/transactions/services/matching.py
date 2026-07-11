@@ -368,7 +368,16 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
         if rule and (rule.name or "").strip():
             labels.append(rule.name)
     for label in labels:
-        if pi == normalize_description(label):
+        nl = normalize_description(label)
+        if not nl:
+            continue
+        if pi == nl:
+            return True
+        if (
+            planned.source == Transaction.Source.RULE
+            and planned.rule_id
+            and nl in pi
+        ):
             return True
     ref_i = _bank_reference_tokens(imported)
     ref_p = _bank_reference_tokens(planned)

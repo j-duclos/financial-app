@@ -194,7 +194,7 @@ def suppress_plaid_imports_in_locked_periods(*, account_id: int | None = None) -
     Disabled — marking existing UNMATCHED imports DUPLICATE on locked dates hid legitimate
     ledger rows (e.g. Capital One payments with no materialized ACTUAL twin).
 
-    New Plaid posts on locked dates are already skipped at sync insert time.
+    New Plaid posts on locked dates are stored at sync time; only modifications to existing rows are skipped.
     """
     return 0
 
