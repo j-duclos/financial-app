@@ -210,6 +210,20 @@ def _create_plaid_sync_transaction(
     defaults: dict[str, Any],
 ) -> Transaction:
     """Insert a new Plaid row from /transactions/sync (never skip locked reconcile dates)."""
+    account = Account.objects.filter(pk=account_pk).first()
+    txn_date = defaults["date"]
+    locked = bool(account and is_import_date_locked(account, txn_date))
+    # #region agent log
+    import json as _json, time as _time
+    try:
+        _rec_twin = Transaction.objects.filter(
+            account_id=account_pk, reconciled=True, date=txn_date, amount=defaults["amount"]
+        ).exclude(plaid_transaction_id=pid).count()
+        with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
+            _f.write(_json.dumps({"sessionId": "d6b188", "location": "plaid_link/services.py:_create_plaid_sync_transaction", "message": "creating plaid import", "data": {"account_pk": account_pk, "pid": pid, "date": str(txn_date), "amount": str(defaults["amount"]), "payee": (defaults.get("payee") or "")[:80], "locked": locked, "locked_through": str(import_locked_through_date(account)) if account else None, "reconciled_twin_count": _rec_twin}, "hypothesisId": "A", "timestamp": int(_time.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
     if bank_movement_already_on_ledger(
         account_id=account_pk,
         txn_date=defaults["date"],
@@ -738,6 +752,15 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                 # New bank posts must always be stored. Skipping them on locked reconcile
                 # dates dropped cursor-advanced Plaid rows (e.g. Exeterfina on the 2nd) while
                 # a later rule occurrence stayed pending.
+                # #region agent log
+                if account and is_import_date_locked(account, defaults["date"]):
+                    import json as _json, time as _time
+                    try:
+                        with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
+                            _f.write(_json.dumps({"sessionId": "d6b188", "location": "plaid_link/services.py:run_sync_pages", "message": "adding NEW plaid row on locked date", "data": {"account_pk": account_pk, "pid": pid, "date": str(defaults["date"]), "amount": str(defaults["amount"]), "payee": (defaults.get("payee") or "")[:80], "locked_through": str(import_locked_through_date(account))}, "hypothesisId": "A", "timestamp": int(_time.time() * 1000)}) + "\n")
+                    except Exception:
+                        pass
+                # #endregion
                 _create_plaid_sync_transaction(account_pk=account_pk, pid=pid, defaults=defaults)
                 added += 1
 

@@ -2705,6 +2705,14 @@ def repair_wrongly_suppressed_plaid_ledger(*, account_id: int | None = None) -> 
         elif imp.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
             if not should_restore_duplicate_plaid_import(imp):
                 continue
+        # #region agent log
+        import json as _json, time as _time
+        try:
+            with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
+                _f.write(_json.dumps({"sessionId": "d6b188", "location": "matching.py:repair_wrongly_suppressed_plaid_ledger", "message": "restoring hidden plaid import", "data": {"imp_pk": imp.pk, "date": str(imp.date), "amount": str(imp.amount), "payee": (imp.payee or "")[:80], "reconciled": imp.reconciled, "was_status": imp.import_match_status}, "hypothesisId": "D", "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
         imp.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
         imp.save(update_fields=["import_match_status", "updated_at"])
         restored += 1
@@ -2871,6 +2879,25 @@ def suppress_duplicate_plaid_imports_for_reconciled_transactions(
         if label:
             twin_qs = twin_qs.filter(Q(payee=label) | Q(imported_description=label))
         if not twin_qs.exists():
+            # #region agent log
+            import json as _json, time as _time
+            try:
+                from transactions.services.reconciliation import import_locked_through_date
+                _amt_twin = list(
+                    Transaction.objects.filter(
+                        account_id=imp.account_id,
+                        reconciled=True,
+                        date=imp.date,
+                        amount=imp.amount,
+                    )
+                    .exclude(pk=imp.pk)
+                    .values_list("payee", "imported_description")[:3]
+                )
+                with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
+                    _f.write(_json.dumps({"sessionId": "d6b188", "location": "matching.py:suppress_duplicate_plaid_imports", "message": "suppress skipped — no label twin", "data": {"imp_pk": imp.pk, "date": str(imp.date), "amount": str(imp.amount), "label": label[:80], "locked_through": str(import_locked_through_date(imp.account)), "reconciled_twins": _amt_twin}, "hypothesisId": "B", "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
             continue
         imp.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
         imp.save(update_fields=["import_match_status", "updated_at"])
@@ -2910,6 +2937,15 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         if imp.reconciled:
             continue
         if is_import_date_locked(imp.account, imp.date):
+            # #region agent log
+            import json as _json, time as _time
+            try:
+                from transactions.services.reconciliation import import_locked_through_date
+                with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
+                    _f.write(_json.dumps({"sessionId": "d6b188", "location": "matching.py:materialize_unmatched_plaid_imports", "message": "skipping locked-period import", "data": {"imp_pk": imp.pk, "date": str(imp.date), "amount": str(imp.amount), "payee": (imp.payee or "")[:80], "locked_through": str(import_locked_through_date(imp.account))}, "hypothesisId": "E", "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
             continue
         if _reconciled_ledger_twin_exists(imp):
             imp.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
