@@ -83,9 +83,10 @@ def _materialize_single_planned_occurrence(
     occurrence_date: date,
 ) -> Transaction:
     from timeline.services.ledger import _materialize_rule_occurrence
-    from timeline.services.rule_schedule import resolve_rule_params
+    from timeline.services.rule_schedule import resolve_rule_params, rule_occurrence_amount_for_account
 
     params = resolve_rule_params(rule, occurrence_date)
+    amount = rule_occurrence_amount_for_account(rule, params, account_id)
     enter_materialization_context(
         rules_processed=1,
         rule_ids=frozenset({rule.pk}),
@@ -95,7 +96,7 @@ def _materialize_single_planned_occurrence(
             rule,
             occurrence_date,
             account_id,
-            params.amount,
+            amount,
             rule.name,
             rule.category_id,
             force_exact_date=True,
@@ -128,14 +129,15 @@ def ensure_planned_occurrence_transaction(
         return None
 
     from transactions.services.matching import _matched_rule_occurrence_covers
-    from timeline.services.rule_schedule import resolve_rule_params
+    from timeline.services.rule_schedule import resolve_rule_params, rule_occurrence_amount_for_account
 
     params = resolve_rule_params(rule, occurrence_date)
+    leg_amount = rule_occurrence_amount_for_account(rule, params, account_id)
     covered = _matched_rule_occurrence_covers(
         rule_id=rule.pk,
         account_id=account_id,
         on_date=occurrence_date,
-        amount=params.amount,
+        amount=leg_amount,
     )
     if covered is not None and covered.date == occurrence_date:
         return _usable_rule_occurrence(covered)
@@ -259,6 +261,7 @@ def materialize_recurring_transactions_for_user(
     if account_ids:
         rematch_ids.update(account_ids)
         repair_unlinked_rule_transfer_pairs(account_ids)
+        repair_rule_transfer_leg_amounts(account_ids)
     if rule_ids:
         for rid in rule_ids:
             rule = RecurringRule.objects.filter(pk=rid).first()

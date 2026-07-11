@@ -169,6 +169,21 @@ def signed_amount_from_params(params: RuleScheduleParams) -> Decimal:
     return params.amount
 
 
+def rule_occurrence_amount_for_account(
+    rule: RecurringRule,
+    params: RuleScheduleParams,
+    account_id: int,
+) -> Decimal:
+    """Signed amount for one materialized leg of a rule occurrence."""
+    if rule.transfer_to_account_id:
+        amt = abs(params.amount)
+        if account_id == rule.account_id:
+            return -amt
+        if account_id == rule.transfer_to_account_id:
+            return amt
+    return signed_amount_from_params(params)
+
+
 def _schedules_for_rule(rule: RecurringRule):
     """Query schedules by rule id (avoids stale prefetched rule.schedules caches on updates)."""
     return RecurringRuleSchedule.objects.filter(rule_id=rule.pk)

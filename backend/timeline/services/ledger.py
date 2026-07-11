@@ -478,6 +478,21 @@ def _timeline_row_type_for_amount(amount: Decimal | None) -> str:
     return "INFLOW"
 
 
+def _timeline_row_type_for_transaction(txn: Transaction, amount: Decimal | None) -> str:
+    """Honor transfer leg direction even when a source leg was stored with the wrong sign."""
+    tg_id = getattr(txn, "transfer_group_id", None)
+    if tg_id:
+        tg = getattr(txn, "transfer_group", None)
+        if tg is None:
+            tg = TransferGroup.objects.filter(pk=tg_id).only("from_account_id", "to_account_id").first()
+        if tg is not None:
+            if tg.from_account_id == txn.account_id:
+                return "OUTFLOW"
+            if tg.to_account_id == txn.account_id:
+                return "INFLOW"
+    return _timeline_row_type_for_amount(amount)
+
+
 def _projected_rule_timeline_row(
     *,
     d: date,
@@ -713,14 +728,17 @@ def _link_rule_transfer_pair_transactions(
         return
     existing_tg_id = txn_from.transfer_group_id or txn_to.transfer_group_id
     if existing_tg_id:
-        updates: list[tuple[Transaction, list[str]]] = []
+        expected_from = -abs(in_amount)
+        expected_to = abs(in_amount)
         if not txn_from.transfer_group_id:
             txn_from.transfer_group_id = existing_tg_id
-            updates.append((txn_from, ["transfer_group_id", "updated_at"]))
         if not txn_to.transfer_group_id:
             txn_to.transfer_group_id = existing_tg_id
-            updates.append((txn_to, ["transfer_group_id", "updated_at"]))
-        for txn, fields in updates:
+        for txn, expected in ((txn_from, expected_from), (txn_to, expected_to)):
+            fields = ["transfer_group_id", "updated_at"]
+            if txn.amount != expected:
+                txn.amount = expected
+                fields.append("amount")
             txn.save(update_fields=fields)
         return
     from_acc = Account.objects.filter(pk=from_acc_id).first()
@@ -738,12 +756,61 @@ def _link_rule_transfer_pair_transactions(
     )
     txn_from.transfer_group = tg
     txn_to.transfer_group = tg
-    txn_from.save(update_fields=["transfer_group_id", "updated_at"])
-    txn_to.save(update_fields=["transfer_group_id", "updated_at"])
+    expected_from = -abs(in_amount)
+    expected_to = abs(in_amount)
+    from_updates = ["transfer_group_id", "updated_at"]
+    to_updates = ["transfer_group_id", "updated_at"]
+    if txn_from.amount != expected_from:
+        txn_from.amount = expected_from
+        from_updates.append("amount")
+    if txn_to.amount != expected_to:
+        txn_to.amount = expected_to
+        to_updates.append("amount")
+    txn_from.save(update_fields=from_updates)
+    txn_to.save(update_fields=to_updates)
     cache = get_active_balance_cache()
     if cache is not None:
         cache.note_transaction_saved(txn_from)
         cache.note_transaction_saved(txn_to)
+
+
+def repair_rule_transfer_leg_amounts(account_ids: Iterable[int]) -> int:
+    """Fix source/destination signs on linked rule transfer pairs (bank outflow must be negative)."""
+    ids = list(account_ids)
+    if not ids:
+        return 0
+    repaired = 0
+    tg_ids = (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            rule_id__isnull=False,
+            transfer_group_id__isnull=False,
+            source=Transaction.Source.RULE,
+        )
+        .values_list("transfer_group_id", flat=True)
+        .distinct()
+    )
+    for tg in TransferGroup.objects.filter(pk__in=tg_ids).iterator():
+        legs = list(
+            Transaction.objects.filter(
+                transfer_group_id=tg.pk,
+                rule_id__isnull=False,
+                source=Transaction.Source.RULE,
+            )
+        )
+        if not legs:
+            continue
+        expected_from = -abs(tg.amount)
+        expected_to = abs(tg.amount)
+        for leg in legs:
+            expected = expected_from if leg.account_id == tg.from_account_id else expected_to
+            if leg.account_id not in (tg.from_account_id, tg.to_account_id):
+                continue
+            if leg.amount != expected:
+                leg.amount = expected
+                leg.save(update_fields=["amount", "updated_at"])
+                repaired += 1
+    return repaired
 
 
 def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
@@ -2584,7 +2651,7 @@ def _build_timeline_impl(
                 "category_id": t.category_id,
                 "category_name": t.category.name if t.category else None,
                 "amount": amt,
-                "type": "INFLOW" if amt >= 0 else "OUTFLOW",
+                "type": _timeline_row_type_for_transaction(t, amt),
                 "status": t.status,
                 "source": row_source,
                 "rule_id": t.rule_id,
