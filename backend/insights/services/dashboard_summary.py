@@ -55,9 +55,9 @@ from accounts.services.available_to_spend import (
     _decimal,
     calculate_forecast_summaries_for_accounts,
     cash_account_risk_shortfall,
-    dashboard_safe_to_spend_aggregate,
     normalize_forecast_days,
 )
+from accounts.services.lowest_projected_cash import get_lowest_projected_cash
 from core.utils import get_households_for_user
 from insights.services.dashboard_upcoming import (
     CREDIT_CARD_PAYMENT_CATEGORY,
@@ -1005,6 +1005,59 @@ def build_upcoming_events(
     return events
 
 
+def _forecast_risk_from_lowest_projected_cash(
+    lowest_projected_cash: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not lowest_projected_cash:
+        return {
+            "next_risk_date": None,
+            "lowest_projected_balance": None,
+            "lowest_projected_balance_account_id": None,
+            "lowest_projected_balance_account_name": None,
+        }
+    return {
+        "next_risk_date": lowest_projected_cash.get("date"),
+        "lowest_projected_balance": lowest_projected_cash.get("amount"),
+        "lowest_projected_balance_account_id": lowest_projected_cash.get("account_id"),
+        "lowest_projected_balance_account_name": lowest_projected_cash.get("account_name"),
+    }
+
+
+def _legacy_safe_to_spend_from_lowest_projected_cash(
+    lowest_projected_cash: dict[str, Any] | None,
+    *,
+    days: int,
+) -> dict[str, Any]:
+    """Backward-compatible safe_to_spend shape for non-top-bar consumers."""
+    if not lowest_projected_cash:
+        return {
+            "window_days": days,
+            "amount": "0.00",
+            "status": "healthy",
+            "next_issue": None,
+        }
+    is_negative = bool(lowest_projected_cash.get("is_negative"))
+    next_issue = None
+    if lowest_projected_cash.get("account_id") and lowest_projected_cash.get("date"):
+        next_issue = {
+            "account_id": lowest_projected_cash["account_id"],
+            "account_name": lowest_projected_cash.get("account_name") or "",
+            "risk_date": lowest_projected_cash.get("date"),
+            "reason": (
+                "Projected balance drops below zero"
+                if is_negative
+                else "Lowest projected balance in forecast window"
+            ),
+            "recommended_action": None,
+        }
+    return {
+        "window_days": days,
+        "amount": lowest_projected_cash["amount"],
+        "status": "critical" if is_negative else "healthy",
+        "next_issue": next_issue,
+    }
+
+
 def _forecast_risk_from_aggregate(st_aggregate: dict[str, Any]) -> dict[str, Any]:
     worst = st_aggregate.get("worst_projected_account") or {}
     return {
@@ -1018,17 +1071,12 @@ def _forecast_risk_from_aggregate(st_aggregate: dict[str, Any]) -> dict[str, Any
 def _forecast_risk_from_full_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("forecast_risk"):
         return payload["forecast_risk"]
-    next_issue = (payload.get("safe_to_spend") or {}).get("next_issue") or {}
-    return {
-        "next_risk_date": next_issue.get("risk_date"),
-        "lowest_projected_balance": None,
-        "lowest_projected_balance_account_id": next_issue.get("account_id"),
-        "lowest_projected_balance_account_name": next_issue.get("account_name"),
-    }
+    return _forecast_risk_from_lowest_projected_cash(payload.get("lowest_projected_cash"))
 
 
 def _extract_dashboard_fast(payload: dict[str, Any]) -> dict[str, Any]:
     return {
+        "lowest_projected_cash": payload.get("lowest_projected_cash"),
         "safe_to_spend": payload["safe_to_spend"],
         "top_summary": payload.get("top_summary"),
         "attention": payload.get("attention", []),
@@ -1186,7 +1234,7 @@ def _compute_dashboard_core(
         timeline_rows = shared_context["timeline_rows"]
         forecasts = shared_context["forecasts"]
         health_by_id = shared_context["health_by_id"]
-        st_aggregate = shared_context["st_aggregate"]
+        lowest_projected_cash = shared_context["lowest_projected_cash"]
         attention_all = shared_context["attention_all"]
     else:
         _phase_timeline = phase_start(timer, "timeline_build")
@@ -1235,32 +1283,30 @@ def _compute_dashboard_core(
                 f"{(time.perf_counter() - health_start) * 1000:.0f}"
             )
 
-        _phase_sts = phase_start(timer, "safe_to_spend")
-        phases.append("safe_to_spend")
-        sts_start = time.perf_counter() if perf_enabled() else None
-        st_aggregate = dashboard_safe_to_spend_aggregate(
+        _phase_lpc = phase_start(timer, "lowest_projected_cash")
+        phases.append("lowest_projected_cash")
+        lpc_start = time.perf_counter() if perf_enabled() else None
+        lowest_projected_cash = get_lowest_projected_cash(
             accounts_by_id,
-            user=user,
-            forecast_summaries=forecasts,
-            timeline_rows=timeline_rows,
-            as_of_date=today,
-            days=days,
+            timeline_rows,
+            today=today,
+            end_date=forecast_end,
         )
         attention_all = build_attention_items(
             health_by_id, accounts_by_id, forecasts, limit=999, today=today
         )
-        phase_end(timer, _phase_sts)
-        if perf_enabled() and sts_start is not None:
+        phase_end(timer, _phase_lpc)
+        if perf_enabled() and lpc_start is not None:
             perf_print(
-                f"[PERF] safe_to_spend elapsed_ms="
-                f"{(time.perf_counter() - sts_start) * 1000:.0f}"
+                f"[PERF] lowest_projected_cash elapsed_ms="
+                f"{(time.perf_counter() - lpc_start) * 1000:.0f}"
             )
 
     attention = attention_all[:ATTENTION_TOP_LIMIT]
-    total_sts = _decimal(st_aggregate.get("total_safe_to_spend") or 0)
-    sts_status = _safe_to_spend_status(total_sts, st_aggregate)
-    next_issue = _next_safe_to_spend_issue(st_aggregate, forecasts)
-    forecast_risk = _forecast_risk_from_aggregate(st_aggregate)
+    legacy_safe_to_spend = _legacy_safe_to_spend_from_lowest_projected_cash(
+        lowest_projected_cash, days=days
+    )
+    forecast_risk = _forecast_risk_from_lowest_projected_cash(lowest_projected_cash)
 
     return {
         "phases": phases,
@@ -1271,18 +1317,16 @@ def _compute_dashboard_core(
         "timeline_rows": timeline_rows,
         "forecasts": forecasts,
         "health_by_id": health_by_id,
-        "st_aggregate": st_aggregate,
+        "lowest_projected_cash": lowest_projected_cash,
+        "legacy_safe_to_spend": legacy_safe_to_spend,
         "attention_all": attention_all,
         "attention": attention,
-        "total_sts": total_sts,
-        "sts_status": sts_status,
-        "next_issue": next_issue,
         "forecast_risk": forecast_risk,
         "shared_context": {
             "timeline_rows": timeline_rows,
             "forecasts": forecasts,
             "health_by_id": health_by_id,
-            "st_aggregate": st_aggregate,
+            "lowest_projected_cash": lowest_projected_cash,
             "attention_all": attention_all,
         },
     }
@@ -1330,10 +1374,27 @@ def _build_dashboard_summary(
     timeline_rows = core["timeline_rows"]
     forecasts = core["forecasts"]
     health_by_id = core["health_by_id"]
-    st_aggregate = core["st_aggregate"]
+    lowest_projected_cash = core["lowest_projected_cash"]
+    legacy_safe_to_spend = core["legacy_safe_to_spend"]
     attention_all = core["attention_all"]
     attention = core["attention"]
     forecast_risk = core["forecast_risk"]
+    st_aggregate = {
+        "total_safe_to_spend": legacy_safe_to_spend.get("amount", "0"),
+        "accounts_at_risk_count": 0,
+        "accounts_at_risk": [],
+        "next_risk_date": (lowest_projected_cash or {}).get("date"),
+        "worst_projected_account": (
+            {
+                "account_id": lowest_projected_cash.get("account_id"),
+                "account_name": lowest_projected_cash.get("account_name"),
+                "lowest_projected_balance": lowest_projected_cash.get("amount"),
+                "risk_date": lowest_projected_cash.get("date"),
+            }
+            if lowest_projected_cash
+            else None
+        ),
+    }
 
     if mode == "fast":
         _phase_snapshot = phase_start(timer, "snapshot_top_summary")
@@ -1370,12 +1431,8 @@ def _build_dashboard_summary(
         )
 
         payload: dict[str, Any] = {
-            "safe_to_spend": {
-                "window_days": days,
-                "amount": str(core["total_sts"].quantize(Decimal("0.01"))),
-                "status": core["sts_status"],
-                "next_issue": core["next_issue"],
-            },
+            "lowest_projected_cash": lowest_projected_cash,
+            "safe_to_spend": legacy_safe_to_spend,
             "top_summary": top_summary,
             "attention": attention,
             "attention_total_count": len(attention_all),
@@ -1545,12 +1602,8 @@ def _build_dashboard_summary(
     )
 
     return {
-        "safe_to_spend": {
-            "window_days": days,
-            "amount": str(core["total_sts"].quantize(Decimal("0.01"))),
-            "status": core["sts_status"],
-            "next_issue": core["next_issue"],
-        },
+        "lowest_projected_cash": lowest_projected_cash,
+        "safe_to_spend": legacy_safe_to_spend,
         "top_summary": top_summary,
         "net_worth": _compute_net_worth(net_worth_accounts, today=today),
         "month_to_date": mtd,

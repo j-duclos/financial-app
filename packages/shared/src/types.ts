@@ -860,8 +860,19 @@ export interface DashboardForecastRisk {
   lowest_projected_balance_account_name?: string | null;
 }
 
+/** Lowest projected cash balance in the dashboard forecast window (one account, one date). */
+export interface DashboardLowestProjectedCash {
+  amount: string;
+  account_id: number;
+  account_name: string;
+  date: string;
+  is_negative: boolean;
+}
+
 /** Above-the-fold dashboard payload for fast first paint. */
 export interface DashboardSummaryFast {
+  lowest_projected_cash: DashboardLowestProjectedCash | null;
+  /** @deprecated Use lowest_projected_cash for the dashboard top bar. */
   safe_to_spend: DashboardSummary["safe_to_spend"];
   top_summary?: DashboardTopSummary;
   attention: DashboardAttentionItem[];
@@ -891,6 +902,8 @@ export interface DashboardSummaryDetails {
 }
 
 export interface DashboardSummary {
+  lowest_projected_cash: DashboardLowestProjectedCash | null;
+  /** @deprecated Use lowest_projected_cash for the dashboard top bar. */
   safe_to_spend: {
     window_days: number;
     amount: string;

@@ -149,7 +149,7 @@ export default function Dashboard() {
             </h2>
             <AttentionCardGrid
               items={summaryFast.attention}
-              windowDays={summaryFast.safe_to_spend.window_days}
+              windowDays={forecastDays}
               totalCount={summaryFast.attention_total_count}
               onMoveMoney={(item) => setTxnPreset(attentionTransferPreset(item))}
               onResolveRisk={setResolveRiskTarget}
@@ -178,7 +178,17 @@ export default function Dashboard() {
               ) : (
                 <UpcomingMoneyFlowPreviewSection
                   groups={details.upcoming_groups ?? []}
-                  nextIssue={summaryFast.safe_to_spend.next_issue}
+                  nextIssue={
+                    summaryFast.lowest_projected_cash
+                      ? {
+                          risk_date: summaryFast.lowest_projected_cash.date,
+                          account_name: summaryFast.lowest_projected_cash.account_name,
+                          reason: summaryFast.lowest_projected_cash.is_negative
+                            ? "Projected balance drops below zero"
+                            : undefined,
+                        }
+                      : summaryFast.safe_to_spend.next_issue
+                  }
                 />
               )}
 

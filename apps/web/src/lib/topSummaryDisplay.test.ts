@@ -1,49 +1,46 @@
 import { describe, expect, it } from "vitest";
-import type { DashboardSummary } from "@budget-app/shared";
+import type { DashboardLowestProjectedCash } from "@budget-app/shared";
 import {
   availableCreditSubtitle,
-  safeToSpendDisplayValue,
-  safeToSpendHealthySubtitle,
-  safeToSpendRiskSubtitle,
+  lowestProjectedCashAmountClass,
+  lowestProjectedCashDisplayValue,
+  lowestProjectedCashLabel,
+  lowestProjectedCashSubtitle,
 } from "./topSummaryDisplay";
 
-function sts(
-  overrides: Partial<DashboardSummary["safe_to_spend"]> = {}
-): DashboardSummary["safe_to_spend"] {
+function lpc(overrides: Partial<DashboardLowestProjectedCash> = {}): DashboardLowestProjectedCash {
   return {
-    amount: "100",
-    status: "healthy",
-    window_days: 30,
-    next_issue: null,
+    amount: "421.18",
+    account_id: 1,
+    account_name: "Main",
+    date: "2026-07-22",
+    is_negative: false,
     ...overrides,
   };
 }
 
 describe("topSummaryDisplay", () => {
-  it("safeToSpendDisplayValue frames shortfalls as headroom, not balance", () => {
-    expect(safeToSpendDisplayValue("250")).toBe("$250.00");
-    expect(safeToSpendDisplayValue("-3678.44")).toBe("You are short by $3,678.44");
+  it("lowestProjectedCashDisplayValue shows the actual projected balance", () => {
+    expect(lowestProjectedCashDisplayValue("421.18")).toBe("$421.18");
+    expect(lowestProjectedCashDisplayValue("-572.60")).toBe("-$572.60");
   });
 
-  it("safeToSpendRiskSubtitle describes cushion timing without implying account balance", () => {
-    expect(
-      safeToSpendRiskSubtitle(
-        sts({ amount: "-50", status: "critical", next_issue: { risk_date: "2026-06-17" } })
-      )
-    ).toBe("Short by 06-17-26 after bills, buffers, and reserved savings");
-    expect(
-      safeToSpendRiskSubtitle(
-        sts({ amount: "10", status: "critical", next_issue: { risk_date: "2026-06-17" } })
-      )
-    ).toBe("Earliest issue: 06-17-26");
-    expect(safeToSpendRiskSubtitle(sts({ status: "watch", next_issue: { risk_date: "2026-06-04" } }))).toBe(
-      "Earliest issue: 06-04-26"
+  it("lowestProjectedCashLabel switches for negative balances", () => {
+    expect(lowestProjectedCashLabel(false)).toBe("Lowest Projected Cash");
+    expect(lowestProjectedCashLabel(true)).toBe("Projected Cash Shortfall");
+  });
+
+  it("lowestProjectedCashSubtitle shows account and date only", () => {
+    expect(lowestProjectedCashSubtitle(lpc())).toMatch(/Main/);
+    expect(lowestProjectedCashSubtitle(lpc())).toMatch(/07-22-26/);
+    expect(lowestProjectedCashSubtitle(lpc({ is_negative: true, amount: "-572.60", date: "2026-07-08" }))).not.toMatch(
+      /buffer/i
     );
   });
 
-  it("safeToSpendHealthySubtitle describes spending cushion headroom", () => {
-    expect(safeToSpendHealthySubtitle(30)).toMatch(/Headroom after bills, buffers, and reserved savings/);
-    expect(safeToSpendHealthySubtitle(30)).toMatch(/30-day/);
+  it("lowestProjectedCashAmountClass highlights negative balances", () => {
+    expect(lowestProjectedCashAmountClass(true)).toBe("text-red-700");
+    expect(lowestProjectedCashAmountClass(false)).toBe("text-emerald-800");
   });
 
   it("availableCreditSubtitle includes total limit and utilization when present", () => {

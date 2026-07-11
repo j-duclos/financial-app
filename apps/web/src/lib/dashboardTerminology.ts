@@ -6,10 +6,10 @@ export const DASHBOARD_SECTION = {
 } as const;
 
 export const FINANCIAL_HEALTH = {
-  safeToSpend: {
-    label: "Spending Cushion",
-    help: "This is not your account balance. It is your lowest projected spending/bills balance after subtracting required buffers and reserved goal money.",
-    healthySubtitle: "Headroom after bills, buffers, and reserved savings",
+  lowestProjectedCash: {
+    label: "Lowest Projected Cash",
+    negativeLabel: "Projected Cash Shortfall",
+    help: "The lowest projected balance among your cash accounts during the forecast window — one account on one date. Not adjusted for buffers or goal reserves.",
   },
   availableCash: {
     label: "Available Cash",

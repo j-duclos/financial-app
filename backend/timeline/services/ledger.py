@@ -264,19 +264,25 @@ def forecast_lowest_balance_from_rows(
     account_ids: set[int],
     today: date,
     end_date: date,
+    opening: dict[int, Decimal] | None = None,
 ) -> tuple[Decimal | None, date | None, int | None]:
     """
     Lowest intra-day balance from today through end_date for the given accounts.
 
     Same walk as build_timeline_calendar and the Transactions ledger: opening at end of
     yesterday, then apply today+ rows in ledger display order (superseded planned skipped).
+
+    Pass ``opening`` to skip per-account balance queries (dashboard timeline reuse).
     """
     if not account_ids:
         return None, None, None
 
-    opening: dict[int, Decimal] = {
-        aid: _balance_at_end_of_date(aid, today - timedelta(days=1)) for aid in account_ids
-    }
+    if opening is None:
+        opening = {
+            aid: _balance_at_end_of_date(aid, today - timedelta(days=1)) for aid in account_ids
+        }
+    else:
+        opening = {aid: opening.get(aid, Decimal("0")) for aid in account_ids}
 
     rows_by_account: dict[int, list[dict]] = defaultdict(list)
     for r in rows:

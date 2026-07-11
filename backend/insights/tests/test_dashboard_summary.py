@@ -114,6 +114,20 @@ def credit_card(db, household):
     )
 
 
+def test_dashboard_summary_api_returns_lowest_projected_cash(auth_client, checking):
+    r = auth_client.get("/api/insights/dashboard/summary/?days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert "lowest_projected_cash" in data
+    assert "safe_to_spend" in data
+    lpc = data["lowest_projected_cash"]
+    if lpc is not None:
+        assert "amount" in lpc
+        assert "account_id" in lpc
+        assert "date" in lpc
+        assert "is_negative" in lpc
+
+
 def test_dashboard_summary_api_returns_safe_to_spend(auth_client, checking):
     r = auth_client.get("/api/insights/dashboard/summary/?days=30")
     assert r.status_code == 200
@@ -128,6 +142,7 @@ def test_dashboard_summary_fast_api_returns_above_the_fold(auth_client, checking
     r = auth_client.get("/api/insights/dashboard/summary-fast/?days=30")
     assert r.status_code == 200
     data = r.json()
+    assert "lowest_projected_cash" in data
     assert "safe_to_spend" in data
     assert "top_summary" in data
     assert "attention" in data
@@ -152,6 +167,7 @@ def test_dashboard_fast_and_details_match_full_summary(user, checking):
     fast = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
     details = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
 
+    assert fast["lowest_projected_cash"] == full["lowest_projected_cash"]
     assert fast["safe_to_spend"] == full["safe_to_spend"]
     assert fast["top_summary"] == full["top_summary"]
     assert fast["attention"] == full["attention"]
@@ -908,9 +924,12 @@ def test_dashboard_details_reuses_shared_context_timeline(user, checking):
         "timeline_rows": [{"id": "cached-row"}],
         "forecasts": {},
         "health_by_id": {},
-        "st_aggregate": {
-            "total_safe_to_spend": Decimal("0"),
-            "worst_projected_account": {},
+        "lowest_projected_cash": {
+            "amount": "0.00",
+            "account_id": checking.id,
+            "account_name": "Main",
+            "date": AS_OF.isoformat(),
+            "is_negative": False,
         },
         "attention_all": [],
     }

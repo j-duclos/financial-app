@@ -12,12 +12,15 @@ describe("DashboardTopSummaryBar", () => {
     expect(typeof mod.default).toBe("function");
   });
 
-  it("renders human-first labels and avoids deprecated accounting terms", () => {
+  it("renders Lowest Projected Cash and avoids deprecated accounting terms", () => {
     const source = readFileSync(join(dir, "DashboardTopSummaryBar.tsx"), "utf8");
     expect(source).toContain("FINANCIAL_HEALTH.cashAfterDebt.label");
     expect(source).toContain("FINANCIAL_HEALTH.availableCash.label");
-    expect(source).toContain("FINANCIAL_HEALTH.safeToSpend.help");
-    expect(source).toContain("safeToSpendDisplayValue");
+    expect(source).toContain("FINANCIAL_HEALTH.lowestProjectedCash.help");
+    expect(source).toContain("lowestProjectedCashDisplayValue");
+    expect(source).toContain("lowest_projected_cash");
+    expect(source).not.toContain("Spending Cushion");
+    expect(source).not.toContain("safeToSpendDisplayValue");
     expect(source).toMatch(/hero/);
     expect(source).toContain("Forecast window");
     expect(source).toContain("forecast-window-select");

@@ -1,4 +1,9 @@
-import type { DashboardSummary, DashboardSummaryFast, DashboardTopSummary } from "@budget-app/shared";
+import type {
+  DashboardLowestProjectedCash,
+  DashboardSummary,
+  DashboardSummaryFast,
+  DashboardTopSummary,
+} from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 import { formatHealthRiskDate } from "./accountHealthDisplay";
 import { riskStatusClass, riskStatusLabel } from "./safeToSpendLabels";
@@ -29,7 +34,28 @@ export function topSummaryFromDashboard(
   };
 }
 
-/** Dashboard hero value — shortfall wording instead of a negative balance. */
+/** Dashboard hero value — actual projected balance (not cushion wording). */
+export function lowestProjectedCashDisplayValue(amount: string): string {
+  return formatCurrency(amount);
+}
+
+export function lowestProjectedCashLabel(isNegative: boolean): string {
+  return isNegative ? "Projected Cash Shortfall" : "Lowest Projected Cash";
+}
+
+export function lowestProjectedCashSubtitle(
+  lowest: DashboardLowestProjectedCash
+): string {
+  const dateLabel = formatHealthRiskDate(lowest.date);
+  const account = lowest.account_name?.trim() || "Account";
+  return `${account} · ${dateLabel}`;
+}
+
+export function lowestProjectedCashAmountClass(isNegative: boolean): string {
+  return isNegative ? "text-red-700" : "text-emerald-800";
+}
+
+/** @deprecated Dashboard top bar uses lowestProjectedCash* helpers. */
 export function safeToSpendDisplayValue(amount: string): string {
   const value = parseFloat(amount);
   if (Number.isFinite(value) && value < 0) {

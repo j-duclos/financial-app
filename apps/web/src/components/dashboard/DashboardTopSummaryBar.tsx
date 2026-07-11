@@ -1,5 +1,5 @@
 import { formatCurrency } from "@budget-app/shared";
-import type { DashboardDebtSummary, DashboardSummaryFast } from "@budget-app/shared";
+import type { DashboardLowestProjectedCash, DashboardSummaryFast } from "@budget-app/shared";
 import { DASHBOARD_SECTION, FINANCIAL_HEALTH } from "../../lib/dashboardTerminology";
 import {
   FORECAST_DAY_OPTIONS,
@@ -7,12 +7,10 @@ import {
 } from "../../lib/safeToSpendLabels";
 import {
   availableCreditSubtitle,
-  riskStatusClass,
-  riskStatusLabel,
-  safeToSpendAmountClass,
-  safeToSpendDisplayValue,
-  safeToSpendHealthySubtitle,
-  safeToSpendRiskSubtitle,
+  lowestProjectedCashAmountClass,
+  lowestProjectedCashDisplayValue,
+  lowestProjectedCashLabel,
+  lowestProjectedCashSubtitle,
   topSummaryFromDashboard,
 } from "../../lib/topSummaryDisplay";
 import DashboardMetricTile from "./DashboardMetricTile";
@@ -26,7 +24,7 @@ type Props = {
   loading?: boolean;
 };
 
-function healthSkeletonCount(debt?: DashboardDebtSummary | null) {
+function healthSkeletonCount(debt?: DashboardSummaryFast["debt"]) {
   const hasDebt = debt?.total_debt && parseFloat(debt.total_debt) > 0;
   return hasDebt ? 5 : 4;
 }
@@ -59,6 +57,24 @@ function ForecastWindowControl({
   );
 }
 
+function LowestProjectedCashTile({ lowest }: { lowest: DashboardLowestProjectedCash }) {
+  const isNegative = lowest.is_negative;
+  return (
+    <DashboardMetricTile
+      label={lowestProjectedCashLabel(isNegative)}
+      value={lowestProjectedCashDisplayValue(lowest.amount)}
+      valueClassName={lowestProjectedCashAmountClass(isNegative)}
+      help={FINANCIAL_HEALTH.lowestProjectedCash.help}
+      hero
+      subtitle={
+        <span className={isNegative ? "font-medium text-red-700" : "text-gray-600"}>
+          {lowestProjectedCashSubtitle(lowest)}
+        </span>
+      }
+    />
+  );
+}
+
 export default function DashboardTopSummaryBar({
   summary,
   forecastDays,
@@ -66,9 +82,8 @@ export default function DashboardTopSummaryBar({
   loading = false,
 }: Props) {
   const top = summary ? topSummaryFromDashboard(summary) : null;
-  const sts = summary?.safe_to_spend;
+  const lowest = summary?.lowest_projected_cash;
   const debt = summary?.debt;
-  const riskSub = sts ? safeToSpendRiskSubtitle(sts) : null;
   const net = top ? parseFloat(top.net_position) : 0;
   const skeletonCount = healthSkeletonCount(debt);
   const hasDebt = debt?.total_debt && parseFloat(debt.total_debt) > 0;
@@ -86,7 +101,7 @@ export default function DashboardTopSummaryBar({
         />
       </div>
       <div className={gridClass}>
-        {loading || !sts ? (
+        {loading || !summary ? (
           Array.from({ length: skeletonCount }).map((_, i) => (
             <div
               key={i}
@@ -96,29 +111,17 @@ export default function DashboardTopSummaryBar({
           ))
         ) : (
           <>
-            <DashboardMetricTile
-              label={FINANCIAL_HEALTH.safeToSpend.label}
-              value={safeToSpendDisplayValue(sts.amount)}
-              valueClassName={safeToSpendAmountClass(sts)}
-              help={FINANCIAL_HEALTH.safeToSpend.help}
-              hero
-              subtitle={
-                riskSub ? (
-                  <span className="font-medium text-red-700">{riskSub}</span>
-                ) : (
-                  <span className="text-gray-600">{safeToSpendHealthySubtitle(sts.window_days)}</span>
-                )
-              }
-              badge={
-                sts.status !== "healthy" ? (
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-[8px] sm:text-[9px] font-semibold uppercase ${riskStatusClass(sts.status)}`}
-                  >
-                    {riskStatusLabel(sts.status)}
-                  </span>
-                ) : null
-              }
-            />
+            {lowest ? (
+              <LowestProjectedCashTile lowest={lowest} />
+            ) : (
+              <DashboardMetricTile
+                label={FINANCIAL_HEALTH.lowestProjectedCash.label}
+                value="—"
+                help={FINANCIAL_HEALTH.lowestProjectedCash.help}
+                hero
+                subtitle={<span className="text-gray-500">No forecast cash accounts</span>}
+              />
+            )}
             <DashboardMetricTile
               label={FINANCIAL_HEALTH.availableCash.label}
               value={formatCurrency(top!.liquid_cash)}
