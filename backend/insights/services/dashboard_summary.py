@@ -1151,6 +1151,7 @@ def _log_dashboard_build_perf(
     perf_print(
         f"[PERF] {label} build_timeline_count={bt_count} elapsed_ms={total_ms:.0f}"
     )
+    perf_print(f"[PERF] dashboard_request total_timeline_builds={bt_count}")
     if phases:
         perf_print(f"[PERF] {label} phases={','.join(phases)}")
     if bt_count > 1 and callers:
@@ -1237,7 +1238,14 @@ def _compute_dashboard_core(
         _phase_sts = phase_start(timer, "safe_to_spend")
         phases.append("safe_to_spend")
         sts_start = time.perf_counter() if perf_enabled() else None
-        st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
+        st_aggregate = dashboard_safe_to_spend_aggregate(
+            accounts_by_id,
+            user=user,
+            forecast_summaries=forecasts,
+            timeline_rows=timeline_rows,
+            as_of_date=today,
+            days=days,
+        )
         attention_all = build_attention_items(
             health_by_id, accounts_by_id, forecasts, limit=999, today=today
         )

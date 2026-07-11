@@ -182,7 +182,11 @@ def test_safe_to_spend_next_issue_uses_cash_forecast_not_credit_attention(
     forecasts = calculate_forecast_summaries_for_accounts(
         user, accounts, as_of_date=AS_OF, days=30
     )
-    aggregate = dashboard_safe_to_spend_aggregate(forecasts, {a.id: a for a in accounts})
+    aggregate = dashboard_safe_to_spend_aggregate(
+        {a.id: a for a in accounts},
+        user=user,
+        forecast_summaries=forecasts,
+    )
     next_issue = _next_safe_to_spend_issue(aggregate, forecasts)
 
     assert next_issue is not None

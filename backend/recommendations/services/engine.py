@@ -90,7 +90,14 @@ def build_recommendation_context(
             )
 
     if st_aggregate is None:
-        st_aggregate = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
+        st_aggregate = dashboard_safe_to_spend_aggregate(
+            accounts_by_id,
+            user=user,
+            forecast_summaries=forecasts,
+            timeline_rows=timeline_rows,
+            as_of_date=today,
+            days=days,
+        )
 
     if health_by_id is None:
         health_by_id = calculate_account_health_for_accounts(

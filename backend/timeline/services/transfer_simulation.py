@@ -305,7 +305,11 @@ def simulate_transfer_impact(
     base_forecasts = calculate_forecast_summaries_for_accounts(
         user, forecast_accounts, as_of_date=today, days=min(horizon_days, 90)
     )
-    base_sts = dashboard_safe_to_spend_aggregate(base_forecasts, accounts_by_id)
+    base_sts = dashboard_safe_to_spend_aggregate(
+        accounts_by_id,
+        user=user,
+        forecast_summaries=base_forecasts,
+    )
 
     # Safe-to-spend uses current forecast engine (transfer not persisted); surface base value.
     sts_after = base_sts.get("total_safe_to_spend")

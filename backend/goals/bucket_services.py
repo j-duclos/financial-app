@@ -6,9 +6,10 @@ transactions. allocated_amount is denormalized from contributions for fast reads
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterable
 
 from django.db.models import Sum
 from django.utils import timezone
@@ -91,12 +92,50 @@ def sync_bucket_allocated_amount(bucket: GoalBucket) -> Decimal:
     return total
 
 
+def bucket_reserves_by_account(
+    user,
+    account_ids: Iterable[int],
+    *,
+    today: date | None = None,
+) -> dict[int, Decimal]:
+    """
+    Bulk load safe-to-spend goal reserves per linked account.
+
+    One query for all buckets; avoids per-account bucket_reserve_for_account() calls
+    during dashboard forecast batching.
+    """
+    today = today or date.today()
+    id_set = {int(aid) for aid in account_ids}
+    if not id_set:
+        return {}
+
+    buckets = GoalBucket.objects.filter(
+        linked_account_id__in=id_set,
+        status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
+        include_in_safe_to_spend=True,
+    ).select_related("linked_account")
+
+    totals: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    for bucket in buckets:
+        aid = bucket.linked_account_id
+        if aid is None:
+            continue
+        totals[aid] += _effective_bucket_current(bucket, as_of=today, user=user)
+
+    return {aid: _quantize_money(totals.get(aid, Decimal("0"))) for aid in id_set}
+
+
 def bucket_reserve_for_account(
     account_id: int,
     *,
     today: date | None = None,
+    user=None,
 ) -> Decimal:
     """Sum of explicit bucket allocations on this account (reduces safe-to-spend)."""
+    if user is not None:
+        return bucket_reserves_by_account(user, [account_id], today=today).get(
+            account_id, Decimal("0")
+        )
     qs = GoalBucket.objects.filter(
         linked_account_id=account_id,
         status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),

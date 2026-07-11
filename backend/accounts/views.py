@@ -763,7 +763,11 @@ class AccountViewSet(ModelViewSet):
         summaries = calculate_forecast_summaries_for_accounts(
             request.user, accounts, days=days
         )
-        aggregate = dashboard_safe_to_spend_aggregate(summaries, accounts_by_id)
+        aggregate = dashboard_safe_to_spend_aggregate(
+            accounts_by_id,
+            user=request.user,
+            forecast_summaries=summaries,
+        )
         health_by_id = calculate_account_health_for_accounts(
             request.user, accounts, days=days
         )

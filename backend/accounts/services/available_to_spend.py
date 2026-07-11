@@ -23,8 +23,10 @@ from common.services.cache import (
 from common.services.profiler import (
     PerfTimer,
     QueryProfiler,
+    get_build_timeline_count,
     log_perf,
     perf_enabled,
+    perf_print,
     phase_end,
     phase_start,
 )
@@ -50,6 +52,13 @@ ROLES_WITHOUT_AVAILABLE_TO_SPEND = frozenset(
         Account.AccountRole.CREDIT_CARD,
         Account.AccountRole.LOAN,
         Account.AccountRole.INVESTMENT,
+    }
+)
+
+DASHBOARD_SPENDING_CUSHION_ROLES = frozenset(
+    {
+        Account.AccountRole.SPENDING,
+        Account.AccountRole.BILLS,
     }
 )
 
@@ -224,6 +233,7 @@ def _calculate_account_forecast_summary(
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
     timeline_rows: Optional[list[dict]] = None,
+    bucket_reserve: Decimal | None = None,
 ) -> dict[str, Any]:
     """Uncached forecast summary for one account."""
     days = normalize_forecast_days(days)
@@ -285,13 +295,18 @@ def _calculate_account_forecast_summary(
     first_below_buffer_date = metrics["first_below_buffer_date"]
     first_below_buffer_balance = metrics["first_below_buffer_balance"]
     end_of_day = metrics["end_of_day"]
-    bucket_allocation = Decimal("0")
-    try:
-        from goals.bucket_services import bucket_reserve_for_account
-
-        bucket_allocation = bucket_reserve_for_account(account.pk, today=today)
-    except Exception:
+    if bucket_reserve is not None:
+        bucket_allocation = bucket_reserve
+    else:
         bucket_allocation = Decimal("0")
+        try:
+            from goals.bucket_services import bucket_reserve_for_account
+
+            bucket_allocation = bucket_reserve_for_account(
+                account.pk, today=today, user=user
+            )
+        except Exception:
+            bucket_allocation = Decimal("0")
 
     available = lowest - minimum_buffer - bucket_allocation
     status = _risk_status(lowest, available, minimum_buffer, current_balance)
@@ -519,6 +534,12 @@ def _calculate_forecast_summaries_for_accounts(
         built_timeline = timeline_rows
         phase_end(timer, _phase_timeline)
 
+    from goals.bucket_services import bucket_reserves_by_account
+
+    bucket_reserve_by_account = bucket_reserves_by_account(
+        user, supported_ids, today=today
+    )
+
     result: dict[int, dict[str, Any]] = {}
     _phase_summaries = phase_start(timer, "account_summaries")
     for account in accounts:
@@ -529,6 +550,7 @@ def _calculate_forecast_summaries_for_accounts(
                 as_of_date=today,
                 days=days,
                 timeline_rows=timeline_rows,
+                bucket_reserve=bucket_reserve_by_account.get(account.id, Decimal("0")),
             )
         else:
             result[account.id] = _calculate_account_forecast_summary(
@@ -728,30 +750,88 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def dashboard_safe_to_spend_aggregate(
-    summaries: dict[int, dict[str, Any]],
-    accounts_by_id: dict[int, Account],
+    accounts: list[Account] | dict[int, Account],
+    *,
+    user=None,
+    forecast_summaries: dict[int, dict[str, Any]] | None = None,
+    timeline_rows: Optional[list[dict]] = None,
+    balance_map: dict[int, Decimal] | None = None,
+    as_of_date: Optional[date] = None,
+    days: int = DEFAULT_FORECAST_DAYS,
 ) -> dict[str, Any]:
     """
-    Aggregate safe-to-spend across spending/bills accounts for dashboard widget.
+    Aggregate safe-to-spend (Spending Cushion) across spending/bills accounts.
+
+    When ``forecast_summaries`` is supplied (dashboard assembly), no timeline or
+    forecast batch work is performed. Otherwise summaries are computed once, reusing
+    ``timeline_rows`` when provided.
     """
+    del balance_map  # reserved for future balance-map reuse; summaries carry balances today
+
+    if isinstance(accounts, dict):
+        accounts_by_id = accounts
+        account_list = list(accounts.values())
+    else:
+        account_list = list(accounts)
+        accounts_by_id = {a.id: a for a in account_list}
+
+    reused_forecast = forecast_summaries is not None
+    timeline_builds_before = get_build_timeline_count() if perf_enabled() else 0
+
+    if forecast_summaries is None:
+        if user is None:
+            raise ValueError("user is required when forecast_summaries is not provided")
+        forecast_summaries = calculate_forecast_summaries_for_accounts(
+            user,
+            account_list,
+            as_of_date=as_of_date,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+
+    if perf_enabled():
+        timeline_builds = get_build_timeline_count() - timeline_builds_before
+        perf_print(
+            f"[PERF] dashboard_spending_cushion reused_forecast={str(reused_forecast).lower()}"
+        )
+        perf_print(f"[PERF] dashboard_spending_cushion timeline_builds={timeline_builds}")
+
+    minimum_buffer_by_account = {
+        aid: _decimal(acc.minimum_buffer or 0)
+        for aid, acc in accounts_by_id.items()
+    }
+
     total = Decimal("0")
     at_risk: list[dict[str, Any]] = []
     worst: Optional[dict[str, Any]] = None
     next_risk_date: Optional[date] = None
+    components: list[dict[str, Any]] = []
+    accounts_included = 0
 
-    prominent_roles = {
-        Account.AccountRole.SPENDING,
-        Account.AccountRole.BILLS,
-    }
-
-    for aid, summary in summaries.items():
+    for aid, summary in forecast_summaries.items():
         account = accounts_by_id.get(aid)
         if not account or not summary.get("supports_available_to_spend"):
             continue
-        if account.role not in prominent_roles:
+        if account.role not in DASHBOARD_SPENDING_CUSHION_ROLES:
             continue
+
         avail = _decimal(summary["available_to_spend"])
+        lowest = _decimal(summary["lowest_projected_balance"])
+        buffer = _decimal(summary.get("minimum_buffer") or minimum_buffer_by_account.get(aid, 0))
+        reserved = _decimal(summary.get("bucket_allocation") or 0)
+
         total += avail
+        accounts_included += 1
+        components.append(
+            {
+                "account_id": aid,
+                "lowest_projected_balance": str(lowest),
+                "minimum_buffer": str(buffer),
+                "reserved_goals": str(reserved),
+                "spending_cushion": str(avail),
+            }
+        )
+
         status = summary.get("risk_status")
         if status in (RISK_STATUS_CRITICAL, RISK_STATUS_RISK, RISK_STATUS_WATCH):
             entry = {
@@ -771,7 +851,6 @@ def dashboard_safe_to_spend_aggregate(
                         next_risk_date = rd_date
                 except ValueError:
                     pass
-            lowest = _decimal(summary["lowest_projected_balance"])
             if worst is None or lowest < _decimal(worst["lowest_projected_balance"]):
                 worst = {
                     "account_id": aid,
@@ -780,8 +859,13 @@ def dashboard_safe_to_spend_aggregate(
                     "risk_date": summary.get("risk_date"),
                 }
 
+    amount = str(total.quantize(Decimal("0.01")))
     return {
-        "total_safe_to_spend": str(total),
+        "amount": amount,
+        "accounts_included": accounts_included,
+        "earliest_issue_date": next_risk_date.isoformat() if next_risk_date else None,
+        "components": components,
+        "total_safe_to_spend": amount,
         "accounts_at_risk_count": len(at_risk),
         "accounts_at_risk": at_risk,
         "next_risk_date": next_risk_date.isoformat() if next_risk_date else None,

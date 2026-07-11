@@ -328,7 +328,11 @@ def _metrics_from_calendar(
     forecasts = calculate_forecast_summaries_for_accounts(
         user, forecast_accounts, as_of_date=today, days=min(horizon_days, 90)
     )
-    sts = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
+    sts = dashboard_safe_to_spend_aggregate(
+        accounts_by_id,
+        user=user,
+        forecast_summaries=forecasts,
+    )
 
     risk_days, first_risk_date, last_risk_date = _risk_date_span(calendar, today)
 
@@ -1031,7 +1035,11 @@ def evaluate_affordability(
         user, forecast_accounts, as_of_date=today, days=min((end_date - today).days, 90)
     )
     accounts_by_id = {a.id: a for a in accounts}
-    sts_after = dashboard_safe_to_spend_aggregate(forecasts, accounts_by_id)
+    sts_after = dashboard_safe_to_spend_aggregate(
+        accounts_by_id,
+        user=user,
+        forecast_summaries=forecasts,
+    )
 
     return {
         "affordable": can_afford,
