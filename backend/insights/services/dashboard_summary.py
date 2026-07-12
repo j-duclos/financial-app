@@ -793,6 +793,15 @@ def _dashboard_credit_cards(accounts: list[Account]) -> list[Account]:
     return [a for a in accounts if a.is_credit_card()]
 
 
+def _dashboard_debt_accounts(accounts: list[Account]) -> list[Account]:
+    """Active liability accounts included in dashboard total debt (credit cards + loans)."""
+    return [
+        a
+        for a in accounts
+        if a.status == Account.Status.ACTIVE and _is_snapshot_debt_account(a)
+    ]
+
+
 def _signed_balance_for_credit(
     acc: Account,
     *,
@@ -885,36 +894,101 @@ def _compute_cash_after_debt(
     return result
 
 
-def _compute_dashboard_debt_metrics(
-    cards: list[Account],
-    *,
-    today: date,
+def calculate_dashboard_debt_metrics(
+    debt_accounts: list[Account],
     balance_by_account: dict[int, Decimal] | None = None,
-) -> dict[str, Decimal]:
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
     """
-    Current owed balances for dashboard debt tiles — credit cards only, same scope
-    as the debt payoff summary. Uses the shared balance map when provided.
+    Current owed balances and estimated monthly interest for dashboard debt tiles.
+
+    Uses the shared balance map when provided — no per-account ledger queries.
+    Scope matches Cash After Debt and snapshot debt totals (credit cards + loans).
     """
+    from credit_cards.services.payoff import _effective_apr
+
+    today = today or date.today()
+    start = time.perf_counter() if perf_enabled() else None
+    fallback_queries = 0
+
     total_debt = Decimal("0")
+    credit_card_debt = Decimal("0")
+    loan_debt = Decimal("0")
     monthly_burn = Decimal("0")
-    for card in cards:
-        if not card.is_credit_card():
+    apr_weighted_sum = Decimal("0")
+    apr_weight_sum = Decimal("0")
+    debt_account_count = 0
+
+    for acc in debt_accounts:
+        if acc.status != Account.Status.ACTIVE:
             continue
-        signed, _ = _signed_balance_for_credit(
-            card, today=today, balance_by_account=balance_by_account
-        )
-        owed = calculate_credit_metrics(card, signed)["owed"]
+        if not _is_snapshot_debt_account(acc):
+            continue
+
+        if balance_by_account is not None:
+            signed = balance_by_account.get(acc.pk, Decimal("0"))
+            if acc.is_credit_card():
+                owed = calculate_credit_metrics(acc, signed)["owed"]
+            else:
+                owed = credit_owed_from_signed_balance(signed)
+        else:
+            fallback_queries += 1
+            owed = _debt_owed_at(acc, today, today=today)
+
         if owed <= 0:
             continue
+
+        debt_account_count += 1
         total_debt += owed
-        apr = _decimal(card.apr or 0)
-        monthly_burn += owed * apr / Decimal("1200")
+        if acc.is_credit_card():
+            credit_card_debt += owed
+        else:
+            loan_debt += owed
+
+        apr = _effective_apr(acc)
+        if apr > 0:
+            monthly_burn += owed * apr / Decimal("1200")
+            apr_weighted_sum += owed * apr
+            apr_weight_sum += owed
+
+    weighted_average_apr: Decimal | None = None
+    if apr_weight_sum > 0:
+        weighted_average_apr = (apr_weighted_sum / apr_weight_sum).quantize(Decimal("0.01"))
+
+    if perf_enabled() and start is not None:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        perf_print(
+            "[PERF] dashboard_debt_payoff "
+            f"debt_accounts={debt_account_count} "
+            f"balance_source={'shared_map' if balance_by_account is not None else 'per_account'} "
+            f"full_simulation=false "
+            f"additional_queries={fallback_queries} "
+            f"elapsed_ms={elapsed_ms:.1f}"
+        )
 
     return {
         "total_debt": total_debt.quantize(Decimal("0.01")),
-        "credit_card_debt": total_debt,
+        "credit_card_debt": credit_card_debt.quantize(Decimal("0.01")),
+        "loan_debt": loan_debt.quantize(Decimal("0.01")),
         "estimated_monthly_interest": monthly_burn.quantize(Decimal("0.01")),
+        "weighted_average_apr": weighted_average_apr,
+        "debt_account_count": debt_account_count,
     }
+
+
+def _compute_dashboard_debt_metrics(
+    debt_accounts: list[Account],
+    *,
+    today: date,
+    balance_by_account: dict[int, Decimal] | None = None,
+) -> dict[str, Any]:
+    """Backward-compatible alias for calculate_dashboard_debt_metrics."""
+    return calculate_dashboard_debt_metrics(
+        debt_accounts,
+        balance_by_account,
+        today=today,
+    )
 
 
 def _compute_top_summary(
@@ -945,8 +1019,10 @@ def _compute_top_summary(
     if debt_metrics is not None:
         total_debt = debt_metrics["total_debt"]
     else:
-        total_debt = _compute_dashboard_debt_metrics(
-            cards, today=today, balance_by_account=balance_by_account
+        total_debt = calculate_dashboard_debt_metrics(
+            _dashboard_debt_accounts(accounts),
+            balance_by_account,
+            today=today,
         )["total_debt"]
 
     cash_after_debt = _compute_cash_after_debt(liquid_cash, total_debt)
@@ -1363,28 +1439,44 @@ def _load_dashboard_shared_context(scope: dict[str, Any]) -> dict[str, Any] | No
 
 
 def _build_minimal_dashboard_debt_summary(
-    cards: list[Account],
+    debt_accounts: list[Account],
     *,
     as_of: date | None = None,
     balance_by_account: dict[int, Decimal] | None = None,
-    debt_metrics: dict[str, Decimal] | None = None,
+    debt_metrics: dict[str, Any] | None = None,
+    payoff_projection: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Lightweight debt tile — balances and APR burn only, no payoff simulation."""
     today = as_of or date.today()
-    metrics = debt_metrics or _compute_dashboard_debt_metrics(
-        cards, today=today, balance_by_account=balance_by_account
+    metrics = debt_metrics or calculate_dashboard_debt_metrics(
+        debt_accounts, balance_by_account, today=today
     )
     total_debt = metrics["total_debt"]
     if total_debt <= 0:
         return None
 
+    debt_free_date = (payoff_projection or {}).get("debt_free_date")
+    if debt_free_date:
+        try:
+            d = date.fromisoformat(str(debt_free_date)[:10])
+            label = f"Debt-free by {d.strftime('%b %Y')}"
+        except ValueError:
+            label = "Open planner for payoff date"
+    else:
+        label = "Open planner for payoff date"
+
+    saved = (payoff_projection or {}).get("interest_saved_vs_minimums")
+    msg = None
+    if saved and Decimal(str(saved)) > 0:
+        msg = f"Your plan saves ${saved} interest vs minimums only"
+
     return {
-        "label": "Credit card payoff",
-        "debt_free_date": None,
+        "label": label,
+        "debt_free_date": debt_free_date,
         "total_debt": str(total_debt),
         "monthly_interest_burn": str(metrics["estimated_monthly_interest"]),
-        "interest_saved_vs_minimums": None,
-        "message": None,
+        "interest_saved_vs_minimums": saved,
+        "message": msg,
         "planner_url": "/credit-cards",
         "plan": None,
     }
@@ -1678,19 +1770,20 @@ def _build_dashboard_summary(
         phases.append("snapshot_top_summary")
         snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
         credit_cards = _dashboard_credit_cards(accounts)
+        debt_accounts = _dashboard_debt_accounts(accounts)
         balance_accounts = _accounts_for_dashboard_balances(
             snapshot_accounts=snapshot_accounts,
-            debt_cards=credit_cards,
+            debt_cards=debt_accounts,
         )
         balance_by_account, _ = _load_dashboard_balance_maps(
             balance_accounts,
             today=today,
             include_prior=False,
         )
-        debt_metrics = _compute_dashboard_debt_metrics(
-            credit_cards,
+        debt_metrics = calculate_dashboard_debt_metrics(
+            debt_accounts,
+            balance_by_account,
             today=today,
-            balance_by_account=balance_by_account,
         )
         top_summary = _compute_top_summary(
             snapshot_accounts,
@@ -1704,11 +1797,21 @@ def _build_dashboard_summary(
 
         _phase_debt = phase_start(timer, "debt_minimal")
         phases.append("debt_minimal")
-        debt_summary = _build_minimal_dashboard_debt_summary(
+        from credit_cards.services.debt_engine import get_cached_debt_payoff_projection
+
+        payoff_projection = get_cached_debt_payoff_projection(
+            user.pk,
+            list(core["households"].values_list("id", flat=True)),
             credit_cards,
+            balance_by_account=balance_by_account,
+            as_of=today,
+        )
+        debt_summary = _build_minimal_dashboard_debt_summary(
+            debt_accounts,
             as_of=today,
             balance_by_account=balance_by_account,
             debt_metrics=debt_metrics,
+            payoff_projection=payoff_projection,
         )
         phase_end(timer, _phase_debt)
 
@@ -1801,25 +1904,29 @@ def _build_dashboard_summary(
     from credit_cards.services.debt_engine import build_dashboard_debt_summary
 
     credit_cards = _dashboard_credit_cards(accounts)
+    debt_accounts = _dashboard_debt_accounts(accounts)
     balance_accounts = _accounts_for_dashboard_balances(
         snapshot_accounts=snapshot_accounts,
         net_worth_accounts=net_worth_accounts,
-        debt_cards=credit_cards,
+        debt_cards=debt_accounts,
     )
     balance_by_account, prior_balance_by_account = _load_dashboard_balance_maps(
         balance_accounts,
         today=today,
         include_prior=True,
     )
-    debt_metrics = _compute_dashboard_debt_metrics(
-        credit_cards,
+    debt_metrics = calculate_dashboard_debt_metrics(
+        debt_accounts,
+        balance_by_account,
         today=today,
-        balance_by_account=balance_by_account,
     )
     debt_summary = build_dashboard_debt_summary(
         credit_cards,
         as_of=today,
         balance_by_account=balance_by_account,
+        user_id=user.pk,
+        household_ids=list(core["households"].values_list("id", flat=True)),
+        debt_metrics=debt_metrics,
     )
     phase_end(timer, _phase_widgets)
 

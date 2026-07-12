@@ -3,13 +3,21 @@ Household debt payoff engine: multi-card simulation, strategies, what-if, milest
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Any, Optional
 
+from django.core.cache import cache
+
 from accounts.models import Account
 from accounts.services.credit_card import ledger_owed_balance
+from common.services.cache import (
+    DEBT_PAYOFF_PROJECTION_CACHE_SECONDS,
+    get_debt_payoff_projection_cache_key,
+)
+from common.services.profiler import perf_enabled, perf_print
 from credit_cards.services.payoff import (
     _effective_apr,
     calculate_monthly_interest,
@@ -530,6 +538,103 @@ def _utilization_forecast(states: list[CardState], timeline: list) -> list[dict[
     return forecast
 
 
+def _debt_payoff_projection_fingerprint(
+    cards: list[Account],
+    balance_by_account: dict | None,
+    *,
+    strategy: str = "avalanche",
+    mode: str = "aggressive",
+    extra_monthly: Decimal = Decimal("100"),
+) -> str:
+    parts = [strategy, mode, str(extra_monthly)]
+    for card in sorted(cards, key=lambda a: a.pk):
+        if not card.is_credit_card():
+            continue
+        if balance_by_account is not None:
+            from accounts.services.balances import calculate_credit_metrics
+
+            owed = calculate_credit_metrics(
+                card,
+                balance_by_account.get(card.pk, Decimal("0")),
+            )["owed"]
+        else:
+            owed = ledger_owed_balance(card, date.today())
+        parts.append(
+            f"{card.pk}:{owed}:{_effective_apr(card)}:"
+            f"{card.minimum_payment_amount}:{card.credit_limit}"
+        )
+    digest = hashlib.md5("|".join(parts).encode(), usedforsecurity=False).hexdigest()
+    return digest[:16]
+
+
+def get_cached_debt_payoff_projection(
+    user_id: int,
+    household_ids: list[int],
+    cards: list[Account],
+    *,
+    balance_by_account: dict | None = None,
+    as_of: date | None = None,
+    strategy: str = "avalanche",
+    mode: str = "aggressive",
+    extra_monthly: Decimal = Decimal("100"),
+) -> dict[str, Any] | None:
+    """Return cached payoff projection when fresh; never runs simulation."""
+    today = as_of or date.today()
+    fingerprint = _debt_payoff_projection_fingerprint(
+        cards,
+        balance_by_account,
+        strategy=strategy,
+        mode=mode,
+        extra_monthly=extra_monthly,
+    )
+    cache_key = get_debt_payoff_projection_cache_key(
+        user_id=user_id,
+        household_ids=household_ids,
+        fingerprint=fingerprint,
+        as_of_date=today,
+    )
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict):
+        if perf_enabled():
+            perf_print("[PERF] dashboard_debt_payoff_projection cache=HIT")
+        return cached
+    if perf_enabled():
+        perf_print(
+            "[PERF] dashboard_debt_payoff_projection cache=MISS "
+            "simulation_skipped_in_fast_endpoint=true"
+        )
+    return None
+
+
+def _cache_debt_payoff_projection(
+    user_id: int,
+    household_ids: list[int],
+    cards: list[Account],
+    projection: dict[str, Any],
+    *,
+    balance_by_account: dict | None = None,
+    as_of: date | None = None,
+    strategy: str = "avalanche",
+    mode: str = "aggressive",
+    extra_monthly: Decimal = Decimal("100"),
+) -> None:
+    today = as_of or date.today()
+    fingerprint = _debt_payoff_projection_fingerprint(
+        cards,
+        balance_by_account,
+        strategy=strategy,
+        mode=mode,
+        extra_monthly=extra_monthly,
+    )
+    cache_key = get_debt_payoff_projection_cache_key(
+        user_id=user_id,
+        household_ids=household_ids,
+        fingerprint=fingerprint,
+        as_of_date=today,
+    )
+    cache.set(cache_key, projection, timeout=DEBT_PAYOFF_PROJECTION_CACHE_SECONDS)
+
+
 def _empty_plan(today: date, *, paid_off: bool = False) -> dict[str, Any]:
     return {
         "as_of": today.isoformat(),
@@ -563,31 +668,100 @@ def build_dashboard_debt_summary(
     *,
     as_of: date | None = None,
     balance_by_account: dict | None = None,
+    user_id: int | None = None,
+    household_ids: list[int] | None = None,
+    debt_metrics: dict[str, Any] | None = None,
+    strategy: str = "avalanche",
+    mode: str = "aggressive",
+    extra_monthly: Decimal = Decimal("100"),
 ) -> dict[str, Any]:
-    plan = simulate_household_debt(
-        cards,
-        strategy="avalanche",
-        mode="aggressive",
-        extra_monthly=Decimal("100"),
-        as_of=as_of,
-        balance_by_account=balance_by_account,
-    )
-    label = "No credit card debt"
-    if Decimal(plan.get("total_debt") or 0) > 0:
-        if plan.get("debt_free_date"):
-            d = date.fromisoformat(plan["debt_free_date"])
-            label = f"Debt-free projected: {d.strftime('%b %Y')}"
-        else:
-            label = "Payoff needs higher payments"
+    today = as_of or date.today()
+
+    if debt_metrics is None:
+        from insights.services.dashboard_summary import calculate_dashboard_debt_metrics
+
+        debt_metrics = calculate_dashboard_debt_metrics(
+            [c for c in cards if c.is_credit_card()],
+            balance_by_account,
+            today=today,
+        )
+
+    total_debt = debt_metrics.get("total_debt", Decimal("0"))
+    if total_debt <= 0:
+        return {
+            "label": "No credit card debt",
+            "debt_free_date": today.isoformat(),
+            "total_debt": "0.00",
+            "monthly_interest_burn": "0.00",
+            "interest_saved_vs_minimums": None,
+            "message": None,
+            "planner_url": "/credit-cards",
+            "plan": _empty_plan(today, paid_off=True),
+        }
+
+    projection: dict[str, Any] | None = None
+    if user_id is not None and household_ids is not None:
+        projection = get_cached_debt_payoff_projection(
+            user_id,
+            household_ids,
+            cards,
+            balance_by_account=balance_by_account,
+            as_of=today,
+            strategy=strategy,
+            mode=mode,
+            extra_monthly=extra_monthly,
+        )
+
+    if projection is not None:
+        plan = projection.get("plan") or {}
+    else:
+        plan = simulate_household_debt(
+            cards,
+            strategy=strategy,
+            mode=mode,
+            extra_monthly=extra_monthly,
+            as_of=today,
+            balance_by_account=balance_by_account,
+        )
+        projection = {
+            "debt_free_date": plan.get("debt_free_date"),
+            "months_to_debt_free": plan.get("months_to_debt_free"),
+            "debt_free_possible": plan.get("debt_free_possible"),
+            "interest_saved_vs_minimums": plan.get("interest_saved_vs_minimums"),
+            "plan": plan,
+        }
+        if user_id is not None and household_ids is not None:
+            _cache_debt_payoff_projection(
+                user_id,
+                household_ids,
+                cards,
+                projection,
+                balance_by_account=balance_by_account,
+                as_of=today,
+                strategy=strategy,
+                mode=mode,
+                extra_monthly=extra_monthly,
+            )
+
+    debt_free_date = projection.get("debt_free_date")
+    if debt_free_date:
+        d = date.fromisoformat(str(debt_free_date)[:10])
+        label = f"Debt-free projected: {d.strftime('%b %Y')}"
+    elif projection.get("debt_free_possible") is False:
+        label = "Payoff needs higher payments"
+    else:
+        label = "Open planner for payoff date"
+
+    saved = projection.get("interest_saved_vs_minimums")
     msg = None
-    saved = plan.get("interest_saved_vs_minimums")
-    if saved and Decimal(saved) > 0:
+    if saved and Decimal(str(saved)) > 0:
         msg = f"Your plan saves ${saved} interest vs minimums only"
+
     return {
         "label": label,
-        "debt_free_date": plan.get("debt_free_date"),
-        "total_debt": plan.get("total_debt"),
-        "monthly_interest_burn": plan.get("monthly_interest_burn"),
+        "debt_free_date": debt_free_date,
+        "total_debt": str(total_debt),
+        "monthly_interest_burn": str(debt_metrics["estimated_monthly_interest"]),
         "interest_saved_vs_minimums": saved,
         "message": msg,
         "planner_url": "/credit-cards",

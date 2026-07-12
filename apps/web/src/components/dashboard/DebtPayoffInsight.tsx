@@ -2,6 +2,9 @@ import { Link } from "react-router-dom";
 import type { DashboardDebtSummary } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 
+const INTEREST_TOOLTIP =
+  "Estimated interest is based on current balances and APRs. Open Payment Planner for a full payoff projection.";
+
 type Props = {
   debt: DashboardDebtSummary;
   /** Compact tile for the financial health grid. */
@@ -21,15 +24,20 @@ export default function DebtPayoffInsight({ debt, grid = false }: Props) {
           Debt payoff
         </p>
         <p className="text-base sm:text-lg md:text-xl font-semibold leading-tight text-indigo-950 line-clamp-2">
-          {debt.label}
+          {formatCurrency(debt.total_debt)} owed
         </p>
         <div className="space-y-0.5">
+          {debt.label && debt.label !== "Open planner for payoff date" ? (
+            <p className="text-[10px] sm:text-xs text-indigo-800 line-clamp-2">{debt.label}</p>
+          ) : null}
           {debt.message ? (
             <p className="text-[10px] sm:text-xs text-indigo-800 line-clamp-2">{debt.message}</p>
           ) : null}
-          <p className="text-[10px] sm:text-xs text-gray-600 line-clamp-1">
-            {formatCurrency(debt.total_debt)} owed ·{" "}
-            {formatCurrency(debt.monthly_interest_burn)}/mo interest
+          <p
+            className="text-[10px] sm:text-xs text-gray-600 line-clamp-1"
+            title={INTEREST_TOOLTIP}
+          >
+            Est. {formatCurrency(debt.monthly_interest_burn)}/mo interest
           </p>
           <Link
             to={url}
@@ -45,15 +53,17 @@ export default function DebtPayoffInsight({ debt, grid = false }: Props) {
   return (
     <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-200 rounded-lg p-3 space-y-1">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-indigo-950">{debt.label}</p>
+        <p className="text-sm font-semibold text-indigo-950">
+          {formatCurrency(debt.total_debt)} owed
+        </p>
         <Link to={url} className="text-sm font-medium text-indigo-700 hover:underline shrink-0">
           Payment Planner →
         </Link>
       </div>
+      {debt.label ? <p className="text-xs text-indigo-800">{debt.label}</p> : null}
       {debt.message && <p className="text-xs text-indigo-800">{debt.message}</p>}
-      <p className="text-xs text-gray-600">
-        {formatCurrency(debt.total_debt)} owed ·{" "}
-        {formatCurrency(debt.monthly_interest_burn)}/mo interest burn
+      <p className="text-xs text-gray-600" title={INTEREST_TOOLTIP}>
+        Est. {formatCurrency(debt.monthly_interest_burn)}/mo interest
       </p>
     </div>
   );

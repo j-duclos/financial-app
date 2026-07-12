@@ -57,7 +57,11 @@ def detect_survival_mode(ctx: RecommendationContext) -> bool:
     return critical_count >= 2 or (total_sts < 0 and critical_count >= 1)
 
 
-def detect_move_money_opportunities(ctx: RecommendationContext) -> list[Detection]:
+def detect_move_money_opportunities(
+    ctx: RecommendationContext,
+    *,
+    account_id: int | None = None,
+) -> list[Detection]:
     out: list[Detection] = []
     donors: list[tuple[Account, Decimal]] = []
     for acc in ctx.accounts:
@@ -74,6 +78,8 @@ def detect_move_money_opportunities(ctx: RecommendationContext) -> list[Detectio
     donors.sort(key=lambda x: x[1], reverse=True)
 
     for acc in ctx.accounts:
+        if account_id is not None and acc.id != account_id:
+            continue
         forecast = ctx.forecasts.get(acc.id)
         if not forecast or not forecast.get("supports_available_to_spend"):
             continue
@@ -180,10 +186,16 @@ def _daily_balances_for_account(
     return {"lowest": lowest, "lowest_date": lowest_date, "by_date": by_date}
 
 
-def detect_bill_delay_opportunities(ctx: RecommendationContext) -> list[Detection]:
+def detect_bill_delay_opportunities(
+    ctx: RecommendationContext,
+    *,
+    account_id: int | None = None,
+) -> list[Detection]:
     out: list[Detection] = []
     window_end = ctx.today + timedelta(days=ctx.days)
     for acc in ctx.accounts:
+        if account_id is not None and acc.id != account_id:
+            continue
         if not acc.participates_in_forecast():
             continue
         forecast = ctx.forecasts.get(acc.id)
@@ -437,9 +449,15 @@ def detect_survival_recommendations(ctx: RecommendationContext) -> list[Detectio
     ]
 
 
-def detect_restore_buffer(ctx: RecommendationContext) -> list[Detection]:
+def detect_restore_buffer(
+    ctx: RecommendationContext,
+    *,
+    account_id: int | None = None,
+) -> list[Detection]:
     out: list[Detection] = []
     for acc in ctx.accounts:
+        if account_id is not None and acc.id != account_id:
+            continue
         forecast = ctx.forecasts.get(acc.id)
         if not forecast or not forecast.get("supports_available_to_spend"):
             continue
@@ -478,4 +496,14 @@ def run_all_detectors(ctx: RecommendationContext) -> list[Detection]:
     detections.extend(detect_subscription_issues(ctx))
     detections.extend(detect_goal_gaps(ctx))
     detections.extend(detect_debt_payoff(ctx))
+    return detections
+
+
+def run_detectors_for_account(ctx: RecommendationContext, account_id: int) -> list[Detection]:
+    """Run only detectors that can produce actions for a single cash account."""
+    ctx.survival_mode = detect_survival_mode(ctx)
+    detections: list[Detection] = []
+    detections.extend(detect_move_money_opportunities(ctx, account_id=account_id))
+    detections.extend(detect_bill_delay_opportunities(ctx, account_id=account_id))
+    detections.extend(detect_restore_buffer(ctx, account_id=account_id))
     return detections

@@ -5,6 +5,8 @@ Uses forecast engine, recommendation detectors, and transfer simulation — not 
 """
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Optional
@@ -25,9 +27,18 @@ from recommendations.services.calculators import (
     transfer_amount_to_restore,
 )
 from recommendations.services.context import RecommendationContext
-from recommendations.services.detectors import Detection, run_all_detectors
+from recommendations.services.detectors import Detection, run_detectors_for_account
 from recommendations.services.generators import generate_from_detection
-from timeline.services.transfer_simulation import simulate_transfer_impact
+from timeline.services.transfer_simulation import (
+    TransferSimulationContext,
+    prepare_transfer_simulation_context,
+    simulate_transfer_impact,
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_SIMULATED_TRANSFER_ACTIONS = 3
+MAX_RETURNED_ACTIONS = 8
 
 
 def _horizon_days_to_label(days: int) -> str:
@@ -179,12 +190,33 @@ def _simulate_delay_bill(
     }
 
 
+def _horizon_simulation_preview(sim: dict[str, Any]) -> dict[str, Any]:
+    base = _decimal(sim.get("base_horizon_lowest_projected_balance"))
+    simulated = _decimal(sim.get("simulated_horizon_lowest_projected_balance"))
+    improvement = simulated - base if base is not None and simulated is not None else None
+    return {
+        "base_lowest_projected_balance": sim.get("base_horizon_lowest_projected_balance"),
+        "simulated_lowest_projected_balance": sim.get("simulated_horizon_lowest_projected_balance"),
+        "simulated_lowest_date": sim.get("simulated_horizon_lowest_date"),
+        "base_horizon_lowest_projected_balance": sim.get("base_horizon_lowest_projected_balance"),
+        "base_horizon_lowest_date": sim.get("base_horizon_lowest_date"),
+        "simulated_horizon_lowest_projected_balance": sim.get("simulated_horizon_lowest_projected_balance"),
+        "simulated_horizon_lowest_date": sim.get("simulated_horizon_lowest_date"),
+        "risk_resolved": sim.get("risk_resolved", False),
+        "result_status": sim.get("result_status"),
+        "improvement_amount": (
+            str(improvement.quantize(Decimal("0.01"))) if improvement is not None else None
+        ),
+        "recovery_insight": sim.get("recovery_insight"),
+        "transfer_date": sim.get("transfer_date"),
+    }
+
+
 def _simulation_preview_move(
     det: Detection,
     ctx: RecommendationContext,
-    user,
     *,
-    horizon: str,
+    prepared: TransferSimulationContext,
 ) -> dict[str, Any]:
     if not det.related_account_id or not det.account_id or not det.amount:
         return {}
@@ -192,36 +224,25 @@ def _simulation_preview_move(
     focus = det.target_date or transfer_date
     try:
         sim = simulate_transfer_impact(
-            user,
+            ctx.user,
             from_account_id=det.related_account_id,
             to_account_id=det.account_id,
             amount=det.amount,
             transfer_date=transfer_date,
             focus_date=focus,
-            horizon=horizon,
+            horizon=prepared.horizon,
             as_of_date=ctx.today,
+            prepared_context=prepared,
         )
-        base = _decimal(sim.get("base_lowest_projected_balance"))
-        simulated = _decimal(sim.get("simulated_lowest_projected_balance"))
-        improvement = simulated - base if base is not None else None
-        return {
-            "base_lowest_projected_balance": sim.get("base_lowest_projected_balance"),
-            "simulated_lowest_projected_balance": sim.get("simulated_lowest_projected_balance"),
-            "simulated_lowest_date": sim.get("horizon_lowest_date"),
-            "risk_resolved": sim.get("risk_resolved", False),
-            "result_status": sim.get("result_status"),
-            "improvement_amount": (
-                str(improvement.quantize(Decimal("0.01"))) if improvement is not None else None
-            ),
-            "recovery_insight": sim.get("recovery_insight"),
-            "transfer_date": transfer_date.isoformat(),
-        }
-    except (ValueError, Exception):
+        return _horizon_simulation_preview(sim)
+    except ValueError as exc:
+        logger.info(
+            "resolve_risk transfer simulation skipped account=%s from=%s: %s",
+            det.account_id,
+            det.related_account_id,
+            exc,
+        )
         return {}
-
-
-def _detection_for_account(detections: list[Detection], account_id: int) -> list[Detection]:
-    return [det for det in detections if det.account_id == account_id]
 
 
 def _action_dto(
@@ -251,20 +272,56 @@ def _action_dto(
     }
 
 
+def _candidate_needs_transfer_simulation(det: Detection) -> bool:
+    if det.kind == "move_money":
+        return True
+    if det.kind == "restore_buffer" and det.related_account_id:
+        return True
+    return False
+
+
+def _restore_buffer_as_move_detection(det: Detection, forecast: dict[str, Any], account: Account) -> Detection:
+    lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
+    buffer = _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0)
+    gap = transfer_amount_to_restore(lowest, buffer)
+    est_improve = min(gap, det.amount or gap)
+    return Detection(
+        kind="move_money",
+        severity=det.severity,
+        account_id=det.account_id,
+        related_account_id=det.related_account_id,
+        amount=det.amount or est_improve,
+        target_date=det.target_date,
+        reason=det.reason,
+    )
+
+
 def build_resolve_risk_plan(
     user,
     account_id: int,
     *,
     days: int = 30,
     as_of_date: date | None = None,
+    ctx: RecommendationContext | None = None,
 ) -> dict[str, Any]:
     from recommendations.services.engine import build_recommendation_context
 
+    request_start = time.perf_counter()
     days = normalize_forecast_days(days)
     today = as_of_date or timezone.localdate()
     horizon = _horizon_days_to_label(days)
 
-    ctx = build_recommendation_context(user, days=days, as_of_date=today)
+    if ctx is None:
+        ctx_start = time.perf_counter()
+        ctx = build_recommendation_context(user, days=days, as_of_date=today)
+        logger.info(
+            "resolve_risk context preparation account=%s elapsed_ms=%.0f",
+            account_id,
+            (time.perf_counter() - ctx_start) * 1000,
+        )
+    else:
+        logger.info("resolve_risk reusing prebuilt context account=%s", account_id)
+
     account = ctx.accounts_by_id.get(account_id)
     if not account:
         raise ValueError("Account not found")
@@ -280,43 +337,66 @@ def build_resolve_risk_plan(
         }
 
     summary = _risk_summary(account, forecast, days=days, today=today)
-    all_detections = run_all_detectors(ctx)
-    relevant = _detection_for_account(all_detections, account_id)
 
-    # Ensure at least one move-money option when critical negative
+    detector_start = time.perf_counter()
+    relevant = run_detectors_for_account(ctx, account_id)
+    logger.info(
+        "resolve_risk detector execution account=%s detections=%d elapsed_ms=%.0f",
+        account_id,
+        len(relevant),
+        (time.perf_counter() - detector_start) * 1000,
+    )
+
     if not any(d.kind == "move_money" for d in relevant):
-        lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-        buffer = _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0)
-        amount = transfer_amount_to_restore(lowest, buffer)
+        amount = transfer_amount_to_restore(
+            _decimal(forecast.get("lowest_projected_balance") or 0),
+            _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0),
+        )
         if amount > 0:
-            risk_date_str = forecast.get("risk_date")
-            risk_date = (
-                date.fromisoformat(str(risk_date_str)[:10])
-                if risk_date_str
-                else today + timedelta(days=7)
-            )
             from recommendations.services.detectors import detect_move_money_opportunities
 
-            for det in detect_move_money_opportunities(ctx):
-                if det.account_id == account_id:
-                    relevant.insert(0, det)
-                    break
+            for det in detect_move_money_opportunities(ctx, account_id=account_id):
+                relevant.insert(0, det)
+                break
 
-    actions: list[dict[str, Any]] = []
+    candidates: list[tuple[Detection, dict[str, Any]]] = []
     seen_keys: set[str] = set()
-
     for det in relevant:
         key = f"{det.kind}-{det.rule_id}-{det.related_account_id}-{det.days_shift}"
         if key in seen_keys:
             continue
         seen_keys.add(key)
-
         rec = generate_from_detection(det, ctx)
+        candidates.append((det, rec))
+
+    candidates.sort(key=lambda pair: -(pair[1].get("priority_score") or 0))
+
+    sim_prep_start = time.perf_counter()
+    prepared = prepare_transfer_simulation_context(
+        user,
+        horizon=horizon,
+        as_of_date=ctx.today,
+        household_id=account.household_id,
+        scenario_id=ctx.scenario_id,
+        accounts=ctx.accounts,
+        accounts_by_id=ctx.accounts_by_id,
+        base_forecasts=ctx.forecasts,
+        base_sts=ctx.st_aggregate,
+        timeline_rows=ctx.timeline_rows,
+    )
+    logger.info(
+        "resolve_risk base simulation preparation account=%s elapsed_ms=%.0f",
+        account_id,
+        (time.perf_counter() - sim_prep_start) * 1000,
+    )
+
+    transfer_sim_budget = MAX_SIMULATED_TRANSFER_ACTIONS
+    actions: list[dict[str, Any]] = []
+
+    for det, rec in candidates:
         simulation: dict[str, Any] = {}
 
-        if det.kind == "move_money":
-            simulation = _simulation_preview_move(det, ctx, user, horizon=horizon)
-        elif det.kind == "delay_bill":
+        if det.kind == "delay_bill":
             simulation = _simulate_delay_bill(det, ctx, account)
         elif det.kind in ("reduce_spending", "restore_buffer"):
             lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
@@ -332,21 +412,31 @@ def build_resolve_risk_plan(
                 "improvement_amount": str(est_improve.quantize(Decimal("0.01"))),
                 "result_status": "partial",
             }
-            if det.kind == "move_money" or (det.kind == "restore_buffer" and det.related_account_id):
-                simulation = _simulation_preview_move(
-                    Detection(
-                        kind="move_money",
-                        severity=det.severity,
-                        account_id=det.account_id,
-                        related_account_id=det.related_account_id,
-                        amount=det.amount or est_improve,
-                        target_date=det.target_date,
-                        reason=det.reason,
-                    ),
-                    ctx,
-                    user,
-                    horizon=horizon,
-                ) or simulation
+            if det.kind == "restore_buffer" and det.related_account_id and transfer_sim_budget > 0:
+                move_det = _restore_buffer_as_move_detection(det, forecast, account)
+                sim_start = time.perf_counter()
+                simulated = _simulation_preview_move(move_det, ctx, prepared=prepared)
+                logger.info(
+                    "resolve_risk scenario simulation account=%s kind=restore_buffer elapsed_ms=%.0f",
+                    account_id,
+                    (time.perf_counter() - sim_start) * 1000,
+                )
+                if simulated:
+                    transfer_sim_budget -= 1
+                    simulation = simulated
+        elif _candidate_needs_transfer_simulation(det) and transfer_sim_budget > 0:
+            sim_start = time.perf_counter()
+            simulation = _simulation_preview_move(det, ctx, prepared=prepared)
+            logger.info(
+                "resolve_risk scenario simulation account=%s kind=%s elapsed_ms=%.0f",
+                account_id,
+                det.kind,
+                (time.perf_counter() - sim_start) * 1000,
+            )
+            transfer_sim_budget -= 1
+
+        if simulation.get("result_status") == "failed" and _candidate_needs_transfer_simulation(det):
+            continue
 
         if not simulation and det.projected_improvement:
             simulation = {
@@ -364,9 +454,16 @@ def build_resolve_risk_plan(
         )
     )
 
+    logger.info(
+        "resolve_risk total account=%s actions=%d elapsed_ms=%.0f",
+        account_id,
+        len(actions[:MAX_RETURNED_ACTIONS]),
+        (time.perf_counter() - request_start) * 1000,
+    )
+
     return {
         "eligible": True,
         "summary": summary,
-        "actions": actions[:8],
+        "actions": actions[:MAX_RETURNED_ACTIONS],
         "snooze_id": f"attention-{account_id}",
     }

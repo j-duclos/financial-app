@@ -9,6 +9,8 @@ Designed for extension: payment delays, debt payoff, and scenario sandbox can re
 """
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
@@ -18,18 +20,16 @@ from django.utils import timezone
 
 from accounts.models import Account
 from accounts.services.available_to_spend import (
-    calculate_forecast_summaries_for_accounts,
+    calculate_account_forecast_summary,
     dashboard_safe_to_spend_aggregate,
 )
 from core.utils import get_households_for_user
-from insights.services.forecast_severity import (
-    SEVERITY_DANGEROUS,
-    SEVERITY_TIGHT,
-    recovery_threshold_for_severity,
-)
 from timeline.models import ScenarioOneTimeEvent
 from timeline.services.calendar import build_timeline_calendar
+from timeline.services.ledger import build_timeline
 from timeline.services.scenario_comparison import _horizon_to_end
+
+logger = logging.getLogger(__name__)
 
 
 def _decimal(val) -> Decimal:
@@ -38,6 +38,25 @@ def _decimal(val) -> Decimal:
     if isinstance(val, Decimal):
         return val
     return Decimal(str(val))
+
+
+@dataclass
+class TransferSimulationContext:
+    """Reusable base data for multiple transfer what-if scenarios."""
+
+    user: Any
+    accounts: list[Account]
+    accounts_by_id: dict[int, Account]
+    today: date
+    end_date: date
+    horizon: str
+    household_id: int
+    scenario_id: int | None
+    base_calendar: dict[str, Any]
+    base_timeline_rows: list[dict]
+    base_forecasts: dict[int, dict[str, Any]]
+    base_sts: dict[str, Any]
+    horizon_days: int
 
 
 def _transfer_category_name(to_account: Account) -> str:
@@ -84,6 +103,93 @@ def transfer_ephemeral_events(
     ]
 
 
+def prepare_transfer_simulation_context(
+    user,
+    *,
+    horizon: str = "6m",
+    as_of_date: Optional[date] = None,
+    household_id: Optional[int] = None,
+    scenario_id: Optional[int] = None,
+    accounts: Optional[list[Account]] = None,
+    accounts_by_id: Optional[dict[int, Account]] = None,
+    base_forecasts: Optional[dict[int, dict[str, Any]]] = None,
+    base_sts: Optional[dict[str, Any]] = None,
+    timeline_rows: Optional[list[dict]] = None,
+) -> TransferSimulationContext:
+    """Build expensive immutable base state once for batch transfer simulations."""
+    today = as_of_date or timezone.localdate()
+    end_date = _horizon_to_end(today, horizon)
+    horizon_days = max((end_date - today).days, 7)
+
+    if accounts is None or accounts_by_id is None:
+        households = get_households_for_user(user)
+        accounts = list(Account.objects.filter(household__in=households).order_by("name"))
+        accounts_by_id = {a.id: a for a in accounts}
+
+    resolved_household = household_id
+    if resolved_household is None and accounts:
+        resolved_household = accounts[0].household_id
+
+    if timeline_rows is None:
+        timeline_rows = build_timeline(
+            user,
+            start_date=today,
+            end_date=end_date,
+            scenario_id=scenario_id,
+            household_id=resolved_household,
+            as_of_date=today,
+            projection_only=True,
+            caller="transfer_simulation_base",
+        )
+
+    base_calendar = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=end_date,
+        scenario_id=scenario_id,
+        household_id=resolved_household,
+        as_of_date=today,
+        timeline_rows=timeline_rows,
+    )
+
+    forecast_days = min(horizon_days, 90)
+    if base_forecasts is None:
+        forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
+        base_forecasts = {
+            account.id: calculate_account_forecast_summary(
+                user,
+                account,
+                as_of_date=today,
+                days=forecast_days,
+                timeline_rows=timeline_rows,
+            )
+            for account in forecast_accounts
+        }
+
+    if base_sts is None:
+        base_sts = dashboard_safe_to_spend_aggregate(
+            accounts_by_id,
+            user=user,
+            forecast_summaries=base_forecasts,
+        )
+
+    return TransferSimulationContext(
+        user=user,
+        accounts=accounts,
+        accounts_by_id=accounts_by_id,
+        today=today,
+        end_date=end_date,
+        horizon=horizon,
+        household_id=int(resolved_household),
+        scenario_id=scenario_id,
+        base_calendar=base_calendar,
+        base_timeline_rows=timeline_rows,
+        base_forecasts=base_forecasts,
+        base_sts=base_sts,
+        horizon_days=horizon_days,
+    )
+
+
 def _account_balance_on_day(day: dict[str, Any], account_id: int) -> Decimal | None:
     balances = day.get("account_balances") or {}
     raw = balances.get(str(account_id)) or balances.get(account_id)
@@ -124,52 +230,53 @@ def _focus_day(calendar: dict[str, Any], focus_date: str) -> Optional[dict[str, 
     return None
 
 
-def _severity_for_day(day: dict[str, Any]) -> Optional[str]:
-    level = day.get("heat_level")
-    if level in (SEVERITY_DANGEROUS, SEVERITY_TIGHT):
-        return level
-    if day.get("is_negative"):
-        return SEVERITY_DANGEROUS
-    if day.get("has_risk"):
-        return SEVERITY_TIGHT
-    return None
+def _focus_date_balance(day: Optional[dict[str, Any]], account_id: int) -> Optional[Decimal]:
+    if not day:
+        return None
+    if day.get("lowest_projected_balance_account_id") == account_id:
+        return _decimal(day.get("lowest_projected_balance"))
+    return _account_balance_on_day(day, account_id)
 
 
-def _risk_resolved_for_account(
-    day: dict[str, Any],
-    account_id: int,
-    accounts_by_id: dict[int, Account],
+def _source_account_safe_after_transfer(
+    source_lowest: Optional[Decimal],
+    source_buffer: Decimal,
 ) -> bool:
-    severity = _severity_for_day(day)
-    if not severity:
+    if source_lowest is None:
         return True
-    acc = accounts_by_id.get(account_id)
-    buffer = _decimal(acc.minimum_buffer or 0) if acc else Decimal("0")
-    threshold = recovery_threshold_for_severity(severity, buffer)
-    bal = _account_balance_on_day(day, account_id)
-    if bal is None:
-        bal = _decimal(day.get("lowest_projected_balance"))
-    return bal is not None and bal >= threshold
+    if source_lowest < Decimal("0"):
+        return False
+    if source_buffer > 0 and source_lowest < source_buffer:
+        return False
+    return True
 
 
-def _result_status(
+def _evaluate_transfer_result(
     *,
-    base_day: Optional[dict[str, Any]],
-    sim_day: Optional[dict[str, Any]],
-    to_account_id: int,
-    accounts_by_id: dict[int, Account],
-) -> str:
-    """resolved | partial | failed"""
-    if not sim_day:
-        return "failed"
-    if _risk_resolved_for_account(sim_day, to_account_id, accounts_by_id):
-        return "resolved"
-    if base_day:
-        base_bal = _account_balance_on_day(base_day, to_account_id)
-        sim_bal = _account_balance_on_day(sim_day, to_account_id)
-        if base_bal is not None and sim_bal is not None and sim_bal > base_bal:
-            return "partial"
-    return "failed"
+    base_horizon_lowest: Optional[Decimal],
+    sim_horizon_lowest: Optional[Decimal],
+    to_account: Account,
+    source_lowest: Optional[Decimal],
+    source_buffer: Decimal,
+) -> tuple[str, bool]:
+    """Return (result_status, risk_resolved) using horizon-wide destination metrics."""
+    if not _source_account_safe_after_transfer(source_lowest, source_buffer):
+        return "failed", False
+
+    dest_buffer = _decimal(to_account.minimum_buffer or 0)
+    threshold = dest_buffer if dest_buffer > 0 else Decimal("0")
+
+    if sim_horizon_lowest is not None and sim_horizon_lowest >= threshold:
+        return "resolved", True
+
+    if (
+        base_horizon_lowest is not None
+        and sim_horizon_lowest is not None
+        and sim_horizon_lowest > base_horizon_lowest
+    ):
+        return "partial", False
+
+    return "failed", False
 
 
 def _recovery_insight(
@@ -208,6 +315,30 @@ def _recovery_insight(
     return "Transfer helps but the day may still run tight."
 
 
+def _merged_sim_forecasts(
+    prepared: TransferSimulationContext,
+    *,
+    from_account_id: int,
+    to_account_id: int,
+    sim_timeline_rows: list[dict],
+) -> dict[int, dict[str, Any]]:
+    """Recalculate only affected accounts; reuse unchanged base forecasts."""
+    merged = dict(prepared.base_forecasts)
+    forecast_days = min(prepared.horizon_days, 90)
+    for account_id in (from_account_id, to_account_id):
+        account = prepared.accounts_by_id.get(account_id)
+        if not account or not account.participates_in_forecast():
+            continue
+        merged[account_id] = calculate_account_forecast_summary(
+            prepared.user,
+            account,
+            as_of_date=prepared.today,
+            days=forecast_days,
+            timeline_rows=sim_timeline_rows,
+        )
+    return merged
+
+
 def simulate_transfer_impact(
     user,
     *,
@@ -220,19 +351,43 @@ def simulate_transfer_impact(
     scenario_id: Optional[int] = None,
     horizon: str = "6m",
     as_of_date: Optional[date] = None,
+    prepared_context: TransferSimulationContext | None = None,
 ) -> dict[str, Any]:
     """
     Compare base forecast vs forecast with one hypothetical transfer.
 
     Pure / deterministic — no DB writes.
     """
-    today = as_of_date or timezone.localdate()
-    end_date = _horizon_to_end(today, horizon)
     amt = abs(_decimal(amount)).quantize(Decimal("0.01"))
 
-    households = get_households_for_user(user)
-    accounts = list(Account.objects.filter(household__in=households).order_by("name"))
-    accounts_by_id = {a.id: a for a in accounts}
+    if prepared_context is not None:
+        prepared = prepared_context
+        accounts_by_id = prepared.accounts_by_id
+        today = prepared.today
+        end_date = prepared.end_date
+        resolved_household = prepared.household_id
+        scenario_id = prepared.scenario_id
+        base_calendar = prepared.base_calendar
+    else:
+        today = as_of_date or timezone.localdate()
+        end_date = _horizon_to_end(today, horizon)
+        households = get_households_for_user(user)
+        accounts = list(Account.objects.filter(household__in=households).order_by("name"))
+        accounts_by_id = {a.id: a for a in accounts}
+        from_acc = accounts_by_id.get(from_account_id)
+        if not from_acc:
+            raise ValueError("Account not found")
+        resolved_household = household_id or from_acc.household_id
+        prepared = prepare_transfer_simulation_context(
+            user,
+            horizon=horizon,
+            as_of_date=today,
+            household_id=resolved_household,
+            scenario_id=scenario_id,
+            accounts=accounts,
+            accounts_by_id=accounts_by_id,
+        )
+        base_calendar = prepared.base_calendar
 
     from_acc = accounts_by_id.get(from_account_id)
     to_acc = accounts_by_id.get(to_account_id)
@@ -247,23 +402,24 @@ def simulate_transfer_impact(
     if amt <= 0:
         raise ValueError("Amount must be positive")
 
-    resolved_household = household_id or from_acc.household_id
     focus_iso = (focus_date or transfer_date).isoformat()
-
-    base_calendar = build_timeline_calendar(
-        user,
-        start_date=today,
-        end_date=end_date,
-        scenario_id=scenario_id,
-        household_id=resolved_household,
-        as_of_date=today,
-    )
 
     ephemeral = transfer_ephemeral_events(
         from_account=from_acc,
         to_account=to_acc,
         amount=amt,
         transfer_date=transfer_date,
+    )
+    sim_timeline_rows = build_timeline(
+        user,
+        start_date=today,
+        end_date=end_date,
+        scenario_id=scenario_id,
+        household_id=resolved_household,
+        as_of_date=today,
+        ephemeral_events=ephemeral,
+        projection_only=True,
+        caller="transfer_simulation_scenario",
     )
     sim_calendar = build_timeline_calendar(
         user,
@@ -272,62 +428,55 @@ def simulate_transfer_impact(
         scenario_id=scenario_id,
         household_id=resolved_household,
         as_of_date=today,
-        ephemeral_events=ephemeral,
+        timeline_rows=sim_timeline_rows,
     )
 
     base_day = _focus_day(base_calendar, focus_iso)
     sim_day = _focus_day(sim_calendar, focus_iso)
 
-    base_lowest, base_lowest_date = _lowest_balance_for_account(
+    base_horizon_lowest, base_horizon_lowest_date = _lowest_balance_for_account(
         base_calendar, to_account_id, on_or_after=today
     )
-    sim_lowest, sim_lowest_date = _lowest_balance_for_account(
+    sim_horizon_lowest, sim_horizon_lowest_date = _lowest_balance_for_account(
         sim_calendar, to_account_id, on_or_after=today
     )
 
-    source_lowest, _ = _lowest_balance_for_account(sim_calendar, from_account_id, on_or_after=today)
+    base_focus_balance = _focus_date_balance(base_day, to_account_id)
+    sim_focus_balance = _focus_date_balance(sim_day, to_account_id)
+
+    source_horizon_lowest, _ = _lowest_balance_for_account(
+        sim_calendar, from_account_id, on_or_after=today
+    )
     source_buffer = _decimal(from_acc.minimum_buffer or 0)
-    source_warning = (
-        source_lowest is not None
-        and source_buffer > 0
-        and source_lowest < source_buffer
-    ) or (source_lowest is not None and source_lowest < 0)
+    source_warning = not _source_account_safe_after_transfer(source_horizon_lowest, source_buffer)
 
-    status = _result_status(
-        base_day=base_day,
-        sim_day=sim_day,
-        to_account_id=to_account_id,
-        accounts_by_id=accounts_by_id,
+    status, risk_resolved = _evaluate_transfer_result(
+        base_horizon_lowest=base_horizon_lowest,
+        sim_horizon_lowest=sim_horizon_lowest,
+        to_account=to_acc,
+        source_lowest=source_horizon_lowest,
+        source_buffer=source_buffer,
     )
 
-    forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
-    horizon_days = max((end_date - today).days, 7)
-    base_forecasts = calculate_forecast_summaries_for_accounts(
-        user, forecast_accounts, as_of_date=today, days=min(horizon_days, 90)
-    )
-    base_sts = dashboard_safe_to_spend_aggregate(
-        accounts_by_id,
-        user=user,
-        forecast_summaries=base_forecasts,
-    )
-
-    # Safe-to-spend uses current forecast engine (transfer not persisted); surface base value.
-    sts_after = base_sts.get("total_safe_to_spend")
-
-    focus_lowest_base = None
-    focus_lowest_sim = None
-    if base_day:
-        focus_lowest_base = _decimal(
-            base_day.get("lowest_projected_balance")
-            if base_day.get("lowest_projected_balance_account_id") == to_account_id
-            else _account_balance_on_day(base_day, to_account_id)
+    if prepared_context is not None:
+        sim_forecasts = _merged_sim_forecasts(
+            prepared,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+            sim_timeline_rows=sim_timeline_rows,
         )
-    if sim_day:
-        focus_lowest_sim = _decimal(
-            sim_day.get("lowest_projected_balance")
-            if sim_day.get("lowest_projected_balance_account_id") == to_account_id
-            else _account_balance_on_day(sim_day, to_account_id)
-        )
+        sts_after = dashboard_safe_to_spend_aggregate(
+            accounts_by_id,
+            user=user,
+            forecast_summaries=sim_forecasts,
+        ).get("total_safe_to_spend")
+        base_sts = prepared.base_sts.get("total_safe_to_spend")
+    else:
+        sts_after = prepared.base_sts.get("total_safe_to_spend")
+        base_sts = prepared.base_sts.get("total_safe_to_spend")
+
+    def _fmt(val: Optional[Decimal]) -> Optional[str]:
+        return str(val.quantize(Decimal("0.01"))) if val is not None else None
 
     return {
         "from_account_id": from_account_id,
@@ -336,26 +485,22 @@ def simulate_transfer_impact(
         "transfer_date": transfer_date.isoformat(),
         "focus_date": focus_iso,
         "result_status": status,
-        "risk_resolved": status == "resolved",
-        "base_lowest_projected_balance": (
-            str(focus_lowest_base.quantize(Decimal("0.01")))
-            if focus_lowest_base is not None
-            else (str(base_lowest.quantize(Decimal("0.01"))) if base_lowest is not None else None)
-        ),
-        "simulated_lowest_projected_balance": (
-            str(focus_lowest_sim.quantize(Decimal("0.01")))
-            if focus_lowest_sim is not None
-            else (str(sim_lowest.quantize(Decimal("0.01"))) if sim_lowest is not None else None)
-        ),
-        "horizon_lowest_projected_balance": (
-            str(sim_lowest.quantize(Decimal("0.01"))) if sim_lowest is not None else None
-        ),
-        "horizon_lowest_date": sim_lowest_date,
-        "base_horizon_lowest_date": base_lowest_date,
+        "risk_resolved": risk_resolved,
+        "base_focus_date_balance": _fmt(base_focus_balance),
+        "simulated_focus_date_balance": _fmt(sim_focus_balance),
+        "base_horizon_lowest_projected_balance": _fmt(base_horizon_lowest),
+        "base_horizon_lowest_date": base_horizon_lowest_date,
+        "simulated_horizon_lowest_projected_balance": _fmt(sim_horizon_lowest),
+        "simulated_horizon_lowest_date": sim_horizon_lowest_date,
+        # Legacy fields — mapped to horizon-wide destination metrics for consistency.
+        "base_lowest_projected_balance": _fmt(base_horizon_lowest),
+        "simulated_lowest_projected_balance": _fmt(sim_horizon_lowest),
+        "horizon_lowest_projected_balance": _fmt(sim_horizon_lowest),
+        "horizon_lowest_date": sim_horizon_lowest_date,
         "base_next_risk_date": (base_calendar.get("summary") or {}).get("next_risk_date"),
         "simulated_next_risk_date": (sim_calendar.get("summary") or {}).get("next_risk_date"),
         "safe_to_spend_after": sts_after,
-        "base_safe_to_spend": base_sts.get("total_safe_to_spend"),
+        "base_safe_to_spend": base_sts,
         "recovery_date": sim_day.get("recovery_date") if sim_day else None,
         "recovery_days_until": sim_day.get("recovery_days_until") if sim_day else None,
         "recovery_description": sim_day.get("recovery_description") if sim_day else None,
@@ -368,9 +513,7 @@ def simulate_transfer_impact(
         ),
         "source_account_id": from_account_id,
         "source_account_name": from_acc.effective_display_name,
-        "source_lowest_projected_balance": (
-            str(source_lowest.quantize(Decimal("0.01"))) if source_lowest is not None else None
-        ),
+        "source_lowest_projected_balance": _fmt(source_horizon_lowest),
         "source_minimum_buffer": str(source_buffer.quantize(Decimal("0.01"))),
         "source_buffer_warning": source_warning,
         "to_account_name": to_acc.effective_display_name,

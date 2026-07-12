@@ -22,6 +22,10 @@ DASHBOARD_SUMMARY_CACHE_VERSION = "v1"
 # Dashboard cache is shorter than forecast cache — widgets combine live balances, bills, and goals.
 DASHBOARD_SUMMARY_CACHE_SECONDS = 90
 
+DEBT_PAYOFF_PROJECTION_CACHE_VERSION = "v1"
+# Payoff simulation is expensive; cache keyed on balances/APRs/min payments + user version.
+DEBT_PAYOFF_PROJECTION_CACHE_SECONDS = 300
+
 
 def _user_forecast_version_key(user_id: int) -> str:
     return f"forecast_summary:ver:user:{user_id}"
@@ -117,6 +121,22 @@ def get_dashboard_summary_details_cache_key(
         f"dashboard_summary_details:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
         f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+    )
+
+
+def get_debt_payoff_projection_cache_key(
+    *,
+    user_id: int,
+    household_ids: Iterable[int | None],
+    fingerprint: str,
+    as_of_date: date,
+) -> str:
+    """Cache key for household credit-card payoff projection (debt-free date, interest saved)."""
+    ver = get_user_dashboard_cache_version(user_id)
+    return (
+        f"debt_payoff_projection:{DEBT_PAYOFF_PROJECTION_CACHE_VERSION}:user:{user_id}"
+        f":households:{_sorted_scope_ids(household_ids)}"
+        f":fp:{fingerprint}:asof:{as_of_date.isoformat()}:ver:{ver}"
     )
 
 

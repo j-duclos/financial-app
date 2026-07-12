@@ -1496,6 +1496,10 @@ export interface ResolveRiskSimulationPreview {
   base_lowest_projected_balance?: string | null;
   simulated_lowest_projected_balance?: string | null;
   simulated_lowest_date?: string | null;
+  base_horizon_lowest_projected_balance?: string | null;
+  base_horizon_lowest_date?: string | null;
+  simulated_horizon_lowest_projected_balance?: string | null;
+  simulated_horizon_lowest_date?: string | null;
   risk_resolved?: boolean;
   result_status?: "resolved" | "partial" | "failed" | string;
   improvement_amount?: string | null;

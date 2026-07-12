@@ -63,12 +63,26 @@ export function formatResolveRiskLowest(balance: string | null | undefined): str
 export function simulationPreviewLines(
   preview: ResolveRiskSimulationPreview | undefined
 ): { lowestLine: string | null; improvementLine: string | null; statusLabel: string | null } {
-  if (!preview?.simulated_lowest_projected_balance && !preview?.base_lowest_projected_balance) {
+  if (
+    !preview?.simulated_lowest_projected_balance &&
+    !preview?.simulated_horizon_lowest_projected_balance &&
+    !preview?.base_lowest_projected_balance
+  ) {
     return { lowestLine: null, improvementLine: null, statusLabel: null };
   }
-  const sim = preview.simulated_lowest_projected_balance;
-  const lowestLine =
-    sim != null ? `Lowest projected becomes ${formatCurrency(sim)}` : null;
+  const sim =
+    preview.simulated_horizon_lowest_projected_balance ??
+    preview.simulated_lowest_projected_balance;
+  const simDate =
+    preview.simulated_horizon_lowest_date ?? preview.simulated_lowest_date ?? null;
+  const dateSuffix =
+    simDate != null && simDate.length >= 10
+      ? ` on ${new Date(`${simDate.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        })}`
+      : "";
+  const lowestLine = sim != null ? `Lowest projected becomes ${formatCurrency(sim)}${dateSuffix}` : null;
   let improvementLine: string | null = null;
   if (preview.improvement_amount) {
     const imp = parseFloat(preview.improvement_amount);
