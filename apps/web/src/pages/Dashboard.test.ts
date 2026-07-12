@@ -17,20 +17,17 @@ describe("Dashboard page structure", () => {
   it("includes action-focused overview sections in priority order", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);
-    expect(dashboardSource).toMatch(/RecommendationsPreviewSection/);
     expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
     expect(dashboardSource).toMatch(/GoalsPreviewSection/);
 
     const healthIdx = dashboardSource.indexOf("<DashboardTopSummaryBar");
     const attentionIdx = dashboardSource.indexOf("<AttentionCardGrid");
-    const actionsIdx = dashboardSource.indexOf("<RecommendationsPreviewSection");
     const upcomingIdx = dashboardSource.indexOf("<UpcomingMoneyFlowPreviewSection");
     const goalsIdx = dashboardSource.indexOf("<GoalsPreviewSection");
 
     expect(healthIdx).toBeGreaterThan(-1);
     expect(attentionIdx).toBeGreaterThan(healthIdx);
-    expect(actionsIdx).toBeGreaterThan(attentionIdx);
-    expect(upcomingIdx).toBeGreaterThan(actionsIdx);
+    expect(upcomingIdx).toBeGreaterThan(attentionIdx);
     expect(goalsIdx).toBeGreaterThan(upcomingIdx);
   });
 

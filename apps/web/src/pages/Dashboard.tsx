@@ -7,8 +7,6 @@ import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
 import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashboard/DashboardSkeleton";
 import { AttentionCardGrid } from "../components/dashboard/AttentionCard";
-import RecommendationsPreviewSection from "../components/dashboard/RecommendationsPreviewSection";
-import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
 import GoalsPreviewSection, {
   GoalsPreviewSectionHeader,
@@ -18,7 +16,6 @@ import QuickTransactionModal, {
 } from "../components/quickActions/QuickTransactionModal";
 import ActionToast from "../components/quickActions/ActionToast";
 import { attentionTransferPreset } from "../lib/attentionCardDisplay";
-import { recommendationTransferPreset } from "../lib/recommendationDisplay";
 import {
   DEFAULT_PASSIVE_FORECAST_DAYS,
   type ForecastDays,
@@ -59,8 +56,7 @@ export default function Dashboard() {
   );
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
-  const needsAccounts = txnPreset != null || resolveRiskAccountId != null;
+  const needsAccounts = txnPreset != null;
 
   const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
@@ -150,15 +146,6 @@ export default function Dashboard() {
             />
           </section>
 
-          <RecommendationsPreviewSection
-            summary={summaryFast}
-            onExecuteTransfer={(rec) => {
-              const preset = recommendationTransferPreset(rec);
-              if (preset) setTxnPreset(preset);
-            }}
-            onResolveRisk={(accountId) => setResolveRiskAccountId(accountId)}
-          />
-
           {detailsError ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Some dashboard sections could not load. Refresh to try again.
@@ -203,27 +190,6 @@ export default function Dashboard() {
         </>
       )}
 
-      {resolveRiskAccountId != null && (
-        <ResolveRiskModal
-          open
-          accountId={resolveRiskAccountId}
-          accountName={
-            accounts.find((a) => a.id === resolveRiskAccountId)?.effective_display_name ??
-            "Account"
-          }
-          forecastDays={forecastDays}
-          accounts={accounts}
-          onClose={() => setResolveRiskAccountId(null)}
-          onApplyTransfer={(preset) => {
-            setTxnPreset(preset);
-            setResolveRiskAccountId(null);
-          }}
-          onSnoozed={() => {
-            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
-            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
-          }}
-        />
-      )}
       <ActionToast message={toast} onDismiss={() => setToast(null)} />
       <QuickTransactionModal
         open={txnPreset != null}

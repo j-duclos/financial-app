@@ -8,16 +8,7 @@ const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const RECOMMENDATION_LIMIT = 5;
 
-/** Dashboard preview: highest-priority actions only. */
-export const DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT = 3;
-
 export const ACTION_CENTER_PATH = "/action-center";
-
-/** Dashboard section heading — action-focused overview. */
-export const RECOMMENDATIONS_SECTION_TITLE = "Top Actions";
-
-/** @deprecated Use RECOMMENDATIONS_SECTION_TITLE */
-export const DASHBOARD_TOP_ACTIONS_SECTION_TITLE = RECOMMENDATIONS_SECTION_TITLE;
 
 export const ACTION_CENTER_PAGE_TITLE = "Action Center";
 
@@ -124,21 +115,6 @@ export function recommendationsForDisplay(
     .slice(0, limit);
 }
 
-export function recommendationsForDashboardPreview(
-  recommendations: DashboardRecommendation[] | undefined,
-  insights: DashboardInsight[] | undefined,
-  dismissed: Set<string>,
-  snoozed: Set<string>
-): DashboardRecommendation[] {
-  return recommendationsForDisplay(
-    recommendations,
-    insights,
-    dismissed,
-    snoozed,
-    DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT
-  );
-}
-
 /** Full Action Center list — includes snoozed and dismissed entries with state labels. */
 export function recommendationsForActionCenter(
   recommendations: DashboardRecommendation[] | undefined,
@@ -166,18 +142,6 @@ export function recommendationsForActionCenter(
 
 export function actionCenterLinkLabel(): string {
   return "View all actions";
-}
-
-export function dashboardTopActionsFooterLabel(): string {
-  return `Showing top ${DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT} actions`;
-}
-
-export function dashboardViewAllActionsLinkLabel(): string {
-  return "View all actions →";
-}
-
-export function recommendationsPreviewEmptyMessage(): string {
-  return "No urgent actions — open Action Center for the full list.";
 }
 
 /** Stable / positive cards are not shown in the recommendations grid. */

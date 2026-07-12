@@ -9,9 +9,7 @@ import {
   recommendationTransferPreset,
   isHealthyRecommendationSeverity,
   recommendationsForDisplay,
-  recommendationsForDashboardPreview,
   recommendationsForActionCenter,
-  DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT,
   compareRecommendationsByPriority,
 } from "./recommendationDisplay";
 
@@ -198,38 +196,6 @@ describe("recommendationDisplay", () => {
       secondary_action_type: null,
     };
     expect(recommendationImpactLine(rec)).toBe("Avoids overdraft and restores buffer.");
-  });
-
-  it("dashboard preview limits to three active recommendations", () => {
-    const rec = (id: string, severity: string, score: number): DashboardRecommendation => ({
-      id,
-      severity: severity as DashboardRecommendation["severity"],
-      title: id,
-      why: "x",
-      recommended_action: null,
-      impact_label: null,
-      impact_value: null,
-      primary_action_label: null,
-      primary_action_url: null,
-      primary_action_type: null,
-      secondary_action_label: null,
-      secondary_action_url: null,
-      secondary_action_type: null,
-      priority_score: score,
-    });
-    const preview = recommendationsForDashboardPreview(
-      [
-        rec("a", "watch", 10),
-        rec("b", "critical", 5),
-        rec("c", "warning", 20),
-        rec("d", "watch", 30),
-      ],
-      undefined,
-      new Set(),
-      new Set()
-    );
-    expect(preview).toHaveLength(DASHBOARD_RECOMMENDATION_PREVIEW_LIMIT);
-    expect(preview[0].id).toBe("b");
   });
 
   it("action center includes snoozed and dismissed with state", () => {
