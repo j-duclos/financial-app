@@ -77,7 +77,7 @@ from insights.services.dashboard_upcoming import (
     load_transfer_rule_context,
 )
 from timeline.models import RecurringRule
-from timeline.services.ledger import _balance_at_end_of_date, build_timeline
+from timeline.services.ledger import build_timeline
 from transactions.models import Transaction
 
 ATTENTION_TOP_LIMIT = 3
@@ -1116,31 +1116,12 @@ def _classify_timeline_kind(
     return "bill"
 
 
-def _projected_balance_after(
-    account_id: int,
-    event_date: date,
-    timeline_rows: list[dict],
-    today: date,
-) -> str | None:
-    try:
-        balance = _balance_at_end_of_date(account_id, today)
-    except Exception:
+def _projected_balance_from_timeline_row(row: dict[str, Any]) -> str | None:
+    """Use precomputed running_balance from build_timeline — same as calendar events."""
+    raw = row.get("running_balance")
+    if raw is None:
         return None
-    by_date: dict[date, Decimal] = defaultdict(lambda: Decimal("0"))
-    for r in timeline_rows:
-        if r.get("account_id") != account_id:
-            continue
-        rd = r.get("date")
-        if isinstance(rd, str):
-            rd = date.fromisoformat(rd[:10])
-        if rd is None or rd <= today or rd > event_date:
-            continue
-        by_date[rd] += _decimal(r.get("amount") or 0)
-    d = today + timedelta(days=1)
-    while d <= event_date:
-        balance += by_date.get(d, Decimal("0"))
-        d += timedelta(days=1)
-    return str(balance.quantize(Decimal("0.01")))
+    return str(_decimal(raw).quantize(Decimal("0.01")))
 
 
 def build_upcoming_events(
@@ -1194,7 +1175,7 @@ def build_upcoming_events(
         kind = _classify_timeline_kind(
             row, accounts_by_id, transfer_rule_ids, transfer_rule_targets
         )
-        projected = _projected_balance_after(account_id, rd, timeline_rows, today)
+        projected = _projected_balance_from_timeline_row(row)
         txn_id = row.get("transaction_id")
         rule_id = row.get("rule_id")
         event_id = f"{rd.isoformat()}-{account_id}-{txn_id or 'r'}-{rule_id or 'x'}-{len(events)}"

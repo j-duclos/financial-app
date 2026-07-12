@@ -1044,6 +1044,52 @@ def test_dashboard_details_skips_heavy_sections(user, checking):
     assert result["snapshot"] == {}
 
 
+def test_build_upcoming_events_uses_timeline_running_balance(user, checking):
+    """Per-txn projected balance must match build_timeline running_balance, not ledger replay."""
+    from insights.services.dashboard_summary import build_upcoming_events
+
+    event_day = AS_OF + timedelta(days=3)
+    timeline_rows = [
+        {
+            "date": event_day.isoformat(),
+            "account_id": checking.id,
+            "account_name": "Main",
+            "description": "Paycheck",
+            "amount": "500.00",
+            "running_balance": "2847.33",
+            "transaction_id": 101,
+            "rule_id": None,
+            "category_name": "Income",
+            "status": "planned",
+            "source": "rule",
+        },
+        {
+            "date": event_day.isoformat(),
+            "account_id": checking.id,
+            "account_name": "Main",
+            "description": "Rent",
+            "amount": "-1200.00",
+            "running_balance": "1647.33",
+            "transaction_id": 102,
+            "rule_id": None,
+            "category_name": "Rent",
+            "status": "planned",
+            "source": "rule",
+        },
+    ]
+    events = build_upcoming_events(
+        user,
+        [checking],
+        {},
+        today=AS_OF,
+        timeline_rows=timeline_rows,
+        upcoming_days=14,
+    )
+    by_desc = {e["description"]: e for e in events}
+    assert by_desc["Paycheck"]["projected_balance"] == "2847.33"
+    assert by_desc["Rent"]["projected_balance"] == "1647.33"
+
+
 def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
     """Dashboard build_timeline uses today → today+days, not a fixed long horizon."""
     from contextlib import ExitStack

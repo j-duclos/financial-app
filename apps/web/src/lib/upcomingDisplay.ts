@@ -333,7 +333,7 @@ export function upcomingPreviewNextRiskDay(
       ),
     };
   }
-  if (nextIssue?.risk_date) {
+  if (nextIssue?.risk_date && nextIssue.reason) {
     const match = groups.find((g) => g.date === nextIssue.risk_date);
     return {
       date: nextIssue.risk_date,
