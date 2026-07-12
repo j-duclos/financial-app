@@ -345,14 +345,47 @@ describe("upcomingDisplay", () => {
           ],
         }),
       ],
-      null
+      null,
+      today
     );
-    expect(preview.days).toBe(UPCOMING_PREVIEW_DAYS);
+    expect(preview.daysHorizon).toBe(UPCOMING_PREVIEW_DAYS);
     expect(preview.maxTotalItems).toBe(UPCOMING_PREVIEW_MAX_ITEMS);
     expect(preview.truncated).toBe(true);
     expect(preview.truncatedMessage).toMatch(/up to 5/i);
     expect(preview.groups).toHaveLength(1);
-    expect(upcomingDisplayTransactionCount(preview.groups[0]!)).toBe(5);
+    expect(preview.days).toHaveLength(1);
+    expect(preview.days[0]!.transactions).toHaveLength(5);
     expect(preview.nextRisk?.date).toBe("2026-06-27");
+  });
+
+  it("shows one first-below-zero warning per account", () => {
+    const today = "2026-06-26";
+    const account = "Main";
+    const firstDay = group({
+      date: "2026-06-27",
+      show_lowest_balance_marker: true,
+      lowest_projected_balance: "-50.00",
+      lowest_projected_balance_account_name: account,
+      is_negative: true,
+    });
+    const secondDay = group({
+      date: "2026-06-28",
+      show_lowest_balance_marker: true,
+      lowest_projected_balance: "-80.00",
+      lowest_projected_balance_account_name: account,
+      is_negative: true,
+    });
+    const preview = buildUpcomingDashboardPreview(
+      [firstDay, secondDay],
+      {
+        risk_date: "2026-06-27",
+        account_name: account,
+      },
+      today
+    );
+    expect(preview.days[0]!.firstNegativeWarning).toBe(
+      "Main first falls below zero today"
+    );
+    expect(preview.days[1]!.firstNegativeWarning).toBeNull();
   });
 });

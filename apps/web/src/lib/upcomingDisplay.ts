@@ -25,6 +25,10 @@ export const UPCOMING_PREVIEW_DAYS = 7;
 /** Dashboard preview: max transaction rows across all preview days. */
 export const UPCOMING_PREVIEW_MAX_ITEMS = 5;
 
+/** Dashboard preview footer — transfers do not affect household net. */
+export const UPCOMING_PREVIEW_TRANSFER_FOOTER =
+  "Transfers move money between your accounts and do not change household cash flow.";
+
 export const UPCOMING_MAX_VISIBLE_TRANSACTIONS = 25;
 
 /** Default visible rows per day before "show more" (matches backend UPCOMING_PER_DAY_VISIBLE). */
@@ -231,26 +235,113 @@ export type UpcomingPreviewRisk = {
   date: string;
   accountName?: string | null;
   reason?: string | null;
+  projectedEndBalance?: string | null;
 };
+
+export type UpcomingPreviewDayBlock = {
+  group: DashboardUpcomingGroup;
+  transactions: DashboardUpcomingTransaction[];
+  firstNegativeWarning: string | null;
+};
+
+export type UpcomingDashboardPreviewLayout = {
+  groups: DashboardUpcomingGroup[];
+  days: UpcomingPreviewDayBlock[];
+  daysHorizon: number;
+  truncated: boolean;
+  truncatedMessage: string | null;
+  nextRisk: UpcomingPreviewRisk | null;
+  maxTotalItems: number;
+  anyTransfers: boolean;
+  spansMultipleMonths: boolean;
+};
+
+/** Projected end-of-day balance for a cash account on a grouped day. */
+export function upcomingPreviewProjectedEndBalance(
+  group: DashboardUpcomingGroup,
+  accountName?: string | null
+): string | null {
+  if (!accountName) {
+    return group.lowest_projected_balance ?? null;
+  }
+  if (group.lowest_projected_balance_account_name === accountName) {
+    return group.lowest_projected_balance ?? null;
+  }
+  const row = group.lowest_projected_balances?.find((r) => r.account_name === accountName);
+  return row?.balance ?? group.lowest_projected_balance ?? null;
+}
+
+/** One warning when an account first crosses below zero on this day. */
+export function upcomingPreviewFirstNegativeWarning(
+  group: DashboardUpcomingGroup,
+  accountName: string | null | undefined,
+  accountWasAlreadyNegative: boolean
+): string | null {
+  if (!accountName || accountWasAlreadyNegative) return null;
+  if (group.lowest_projected_balance_account_name !== accountName) return null;
+  if (!group.show_lowest_balance_marker) return null;
+  const balance = parseAmount(group.lowest_projected_balance);
+  if (balance >= 0) return null;
+  return `${accountName} first falls below zero today`;
+}
+
+function previewSpansMultipleMonths(groups: DashboardUpcomingGroup[]): boolean {
+  const keys = new Set(groups.map(upcomingMonthKey));
+  return keys.size > 1;
+}
+
+function buildPreviewDayBlocks(
+  groups: DashboardUpcomingGroup[],
+  riskAccountName?: string | null
+): UpcomingPreviewDayBlock[] {
+  let accountWasNegative = false;
+  return groups.map((group) => {
+    const warning = upcomingPreviewFirstNegativeWarning(
+      group,
+      riskAccountName,
+      accountWasNegative
+    );
+    const balance = parseAmount(
+      upcomingPreviewProjectedEndBalance(group, riskAccountName)
+    );
+    if (balance < 0) {
+      accountWasNegative = true;
+    }
+    return {
+      group,
+      transactions: upcomingDisplayTransactions(group),
+      firstNegativeWarning: warning,
+    };
+  });
+}
 
 /** First at-risk day in preview window, or dashboard next_issue fallback. */
 export function upcomingPreviewNextRiskDay(
   groups: DashboardUpcomingGroup[],
   nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null
 ): UpcomingPreviewRisk | null {
+  const riskAccount = nextIssue?.account_name ?? null;
   const risky = groups.find((g) => g.has_risk);
   if (risky) {
     return {
       date: risky.date,
-      accountName: risky.affected_account_name,
+      accountName: risky.affected_account_name ?? riskAccount,
       reason: risky.risk_reason ?? risky.heat_reason,
+      projectedEndBalance: upcomingPreviewProjectedEndBalance(
+        risky,
+        risky.affected_account_name ?? riskAccount
+      ),
     };
   }
   if (nextIssue?.risk_date) {
+    const match = groups.find((g) => g.date === nextIssue.risk_date);
     return {
       date: nextIssue.risk_date,
       accountName: nextIssue.account_name,
       reason: nextIssue.reason,
+      projectedEndBalance: match
+        ? upcomingPreviewProjectedEndBalance(match, nextIssue.account_name)
+        : null,
     };
   }
   return null;
@@ -258,25 +349,24 @@ export function upcomingPreviewNextRiskDay(
 
 export function buildUpcomingDashboardPreview(
   groups: DashboardUpcomingGroup[],
-  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null
-): {
-  groups: DashboardUpcomingGroup[];
-  days: number;
-  truncated: boolean;
-  truncatedMessage: string | null;
-  nextRisk: UpcomingPreviewRisk | null;
-  maxTotalItems: number;
-} {
-  const dayFiltered = filterUpcomingGroupsForPreview(groups);
+  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null,
+  today: string = todayIsoLocal()
+): UpcomingDashboardPreviewLayout {
+  const dayFiltered = filterUpcomingGroupsForPreview(groups, UPCOMING_PREVIEW_DAYS, today);
   const dayWindowTruncated = dayFiltered.length < groups.length;
   const { groups: limitedGroups, truncated: itemTruncated } = limitUpcomingGroupsByItemCount(
     dayFiltered,
     UPCOMING_PREVIEW_MAX_ITEMS
   );
   const truncated = itemTruncated || dayWindowTruncated;
+  const nextRisk = upcomingPreviewNextRiskDay(dayFiltered, nextIssue);
+  const riskAccount = nextRisk?.accountName ?? nextIssue?.account_name ?? null;
+  const dayBlocks = buildPreviewDayBlocks(limitedGroups, riskAccount);
+
   return {
     groups: limitedGroups,
-    days: UPCOMING_PREVIEW_DAYS,
+    days: dayBlocks,
+    daysHorizon: UPCOMING_PREVIEW_DAYS,
     truncated,
     truncatedMessage: truncated
       ? upcomingPreviewTruncatedMessage(UPCOMING_PREVIEW_MAX_ITEMS, UPCOMING_PREVIEW_DAYS, {
@@ -284,8 +374,10 @@ export function buildUpcomingDashboardPreview(
           dayWindowTruncated,
         })
       : null,
-    nextRisk: upcomingPreviewNextRiskDay(dayFiltered, nextIssue),
+    nextRisk,
     maxTotalItems: UPCOMING_PREVIEW_MAX_ITEMS,
+    anyTransfers: limitedGroups.some(groupShowsTransferNote),
+    spansMultipleMonths: previewSpansMultipleMonths(limitedGroups),
   };
 }
 

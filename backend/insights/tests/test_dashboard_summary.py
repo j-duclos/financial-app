@@ -166,13 +166,18 @@ def test_dashboard_fast_and_details_match_full_summary(user, checking):
     full = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
     fast = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
     details = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
+    full_details = _extract_dashboard_details(full)
 
     assert fast["lowest_projected_cash"] == full["lowest_projected_cash"]
     assert fast["safe_to_spend"] == full["safe_to_spend"]
     assert fast["top_summary"] == full["top_summary"]
     assert fast["attention"] == full["attention"]
     assert fast["forecast_risk"] == full["forecast_risk"]
-    assert _extract_dashboard_details(full) == details
+    assert details["upcoming_groups"] == full_details["upcoming_groups"]
+    assert details["upcoming"] == full_details["upcoming"]
+    assert details["upcoming_truncated"] == full_details["upcoming_truncated"]
+    assert details["upcoming_total_count"] == full_details["upcoming_total_count"]
+    assert details["goals"] == full_details["goals"]
 
 
 def test_safe_to_spend_next_issue_uses_cash_forecast_not_credit_attention(
@@ -983,9 +988,60 @@ def test_dashboard_details_reuses_shared_context_timeline(user, checking):
             patch("recommendations.services.engine.recommendation_timeline_hints", return_value=[])
         )
         mock_rec_ctx.return_value = object()
-        _build_dashboard_summary(user, days=30, as_of_date=AS_OF, mode="full", shared_context=shared)
+        _build_dashboard_summary(user, days=30, as_of_date=AS_OF, mode="details", shared_context=shared)
 
     mock_build.assert_not_called()
+
+
+def test_dashboard_details_skips_heavy_sections(user, checking):
+    """Details path builds upcoming + goals only — no insights, debt, or recommendations."""
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.build_upcoming_events",
+                return_value=[],
+            )
+        )
+        stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.build_upcoming_groups",
+                return_value={"groups": [], "truncated": False, "total_event_count": 0},
+            )
+        )
+        stack.enter_context(patch("goals.bucket_services.dashboard_buckets_for_user", return_value=[]))
+        stack.enter_context(
+            patch(
+                "goals.bucket_services.calculate_aggregate_bucket_summary",
+                return_value={"goals_active_count": 0, "warnings": []},
+            )
+        )
+        mock_bills = stack.enter_context(
+            patch("bills.services.build_dashboard_bill_summary")
+        )
+        mock_debt = stack.enter_context(
+            patch("credit_cards.services.debt_engine.build_dashboard_debt_summary")
+        )
+        mock_insights = stack.enter_context(
+            patch("insights.services.dashboard_insights.build_dashboard_insights")
+        )
+        mock_rec_ctx = stack.enter_context(
+            patch("recommendations.services.engine.build_recommendation_context")
+        )
+        stack.enter_context(
+            patch("recommendations.services.engine.build_dashboard_recommendation_list", return_value=[])
+        )
+        result = _build_dashboard_summary(user, days=30, as_of_date=AS_OF, mode="details")
+
+    mock_bills.assert_not_called()
+    mock_debt.assert_not_called()
+    mock_insights.assert_not_called()
+    mock_rec_ctx.assert_not_called()
+    assert "upcoming_groups" in result
+    assert "goals" in result
+    assert result["recommendations"] == []
+    assert result["snapshot"] == {}
 
 
 def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):

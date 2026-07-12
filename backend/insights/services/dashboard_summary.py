@@ -1198,12 +1198,18 @@ def build_upcoming_events(
         txn_id = row.get("transaction_id")
         rule_id = row.get("rule_id")
         event_id = f"{rd.isoformat()}-{account_id}-{txn_id or 'r'}-{rule_id or 'x'}-{len(events)}"
+        account = accounts_by_id.get(account_id) if account_id else None
+        account_name = (
+            account.effective_display_name
+            if account
+            else (row.get("account_name") or "")
+        )
         events.append(
             {
                 "id": event_id,
                 "date": rd.isoformat(),
                 "account_id": account_id,
-                "account_name": row.get("account_name") or "",
+                "account_name": account_name,
                 "description": row.get("description") or "—",
                 "amount": str(_decimal(amount).quantize(Decimal("0.01"))),
                 "kind": kind,
@@ -1412,6 +1418,102 @@ def _extract_dashboard_details(payload: dict[str, Any]) -> dict[str, Any]:
         "recommendations": payload.get("recommendations", []),
         "net_worth": payload.get("net_worth", "0"),
         "month_to_date": payload.get("month_to_date"),
+    }
+
+
+def _empty_dashboard_details_stubs() -> dict[str, Any]:
+    """Placeholder fields for lazy details — not computed on the lightweight path."""
+    return {
+        "snapshot": {},
+        "bills": None,
+        "recommendation_hints": [],
+        "recommendations": [],
+        "net_worth": "0",
+        "month_to_date": None,
+    }
+
+
+def _build_dashboard_upcoming_payload(
+    user,
+    core: dict[str, Any],
+    *,
+    today: date,
+    upcoming_horizon: int,
+    timer: PerfTimer | None,
+    phases: list[str],
+) -> dict[str, Any]:
+    """Grouped upcoming transactions — shared by details and full dashboard builds."""
+    accounts = core["accounts"]
+    accounts_by_id = core["accounts_by_id"]
+    timeline_rows = core["timeline_rows"]
+    health_by_id = core["health_by_id"]
+
+    _phase_upcoming = phase_start(timer, "upcoming")
+    phases.append("upcoming")
+    upcoming_events = build_upcoming_events(
+        user,
+        accounts,
+        health_by_id,
+        today=today,
+        timeline_rows=timeline_rows,
+        upcoming_days=upcoming_horizon,
+    )
+
+    transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
+        core["households"]
+    )
+    upcoming_grouped = build_upcoming_groups(
+        upcoming_events,
+        transfer_rule_ids=transfer_rule_ids,
+        transfer_rule_targets=transfer_rule_targets,
+        transfer_rule_sources=transfer_rule_sources,
+        accounts_by_id=accounts_by_id,
+        health_by_id=health_by_id,
+        today=today,
+        max_transactions=UPCOMING_MAX_TRANSACTIONS,
+    )
+    phase_end(timer, _phase_upcoming)
+
+    return {
+        "upcoming": upcoming_events[:UPCOMING_MAX_TRANSACTIONS],
+        "upcoming_groups": upcoming_grouped["groups"],
+        "upcoming_truncated": upcoming_grouped["truncated"],
+        "upcoming_total_count": upcoming_grouped["total_event_count"],
+        "upcoming_days": upcoming_horizon,
+    }
+
+
+def _build_dashboard_goals_payload(
+    user,
+    core: dict[str, Any],
+    *,
+    today: date,
+    timer: PerfTimer | None,
+    phases: list[str],
+) -> dict[str, Any]:
+    """Goals preview tiles — lightweight lazy section for the dashboard."""
+    from goals.bucket_services import (
+        calculate_aggregate_bucket_summary,
+        dashboard_buckets_for_user,
+    )
+    from goals.models import GoalBucket
+
+    _phase_goals = phase_start(timer, "goals")
+    phases.append("goals")
+    dashboard_goals = dashboard_buckets_for_user(user, limit=3, today=today)
+    active_buckets = list(
+        GoalBucket.objects.filter(
+            household__in=core["households"],
+            status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
+        ).select_related("linked_account")
+    )
+    goals_aggregate = calculate_aggregate_bucket_summary(active_buckets, today=today)
+    phase_end(timer, _phase_goals)
+
+    return {
+        "goals": dashboard_goals,
+        "goal_warnings": goals_aggregate.get("warnings", []),
+        "goals_summary": goals_aggregate,
     }
 
 
@@ -1843,31 +1945,46 @@ def _build_dashboard_summary(
             _store_dashboard_shared_context(cache_scope, core["shared_context"])
         return payload
 
-    _phase_upcoming = phase_start(timer, "upcoming")
-    phases.append("upcoming")
-    upcoming_events = build_upcoming_events(
-        user,
-        accounts,
-        health_by_id,
-        today=today,
-        timeline_rows=timeline_rows,
-        upcoming_days=upcoming_horizon,
-    )
+    if mode == "details":
+        upcoming_payload = _build_dashboard_upcoming_payload(
+            user,
+            core,
+            today=today,
+            upcoming_horizon=upcoming_horizon,
+            timer=timer,
+            phases=phases,
+        )
+        goals_payload = _build_dashboard_goals_payload(
+            user,
+            core,
+            today=today,
+            timer=timer,
+            phases=phases,
+        )
 
-    transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
-        core["households"]
-    )
-    upcoming_grouped = build_upcoming_groups(
-        upcoming_events,
-        transfer_rule_ids=transfer_rule_ids,
-        transfer_rule_targets=transfer_rule_targets,
-        transfer_rule_sources=transfer_rule_sources,
-        accounts_by_id=accounts_by_id,
-        health_by_id=health_by_id,
+        _log_dashboard_build_perf(
+            label="dashboard_summary_details",
+            wall_start=wall_start,
+            query_profiler=query_profiler,
+            phases=phases,
+        )
+
+        return {
+            **upcoming_payload,
+            **goals_payload,
+            **_empty_dashboard_details_stubs(),
+        }
+
+    upcoming_payload = _build_dashboard_upcoming_payload(
+        user,
+        core,
         today=today,
-        max_transactions=UPCOMING_MAX_TRANSACTIONS,
+        upcoming_horizon=upcoming_horizon,
+        timer=timer,
+        phases=phases,
     )
-    phase_end(timer, _phase_upcoming)
+    upcoming_events = upcoming_payload["upcoming"]
+    upcoming_grouped_groups = upcoming_payload["upcoming_groups"]
 
     _phase_widgets = phase_start(timer, "widgets")
     phases.append("widgets")
@@ -1937,6 +2054,10 @@ def _build_dashboard_summary(
         recommendation_timeline_hints,
     )
 
+    transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
+        core["households"]
+    )
+
     _phase_insights = phase_start(timer, "insights")
     phases.append("insights")
     insights = build_dashboard_insights(
@@ -1948,7 +2069,7 @@ def _build_dashboard_summary(
         forecasts=forecasts,
         st_aggregate=st_aggregate,
         upcoming_events=upcoming_events,
-        upcoming_groups=upcoming_grouped.get("groups", []),
+        upcoming_groups=upcoming_grouped_groups,
         transfer_rule_ids=transfer_rule_ids,
         transfer_rule_targets=transfer_rule_targets,
         dashboard_goals=dashboard_goals,
@@ -2035,11 +2156,11 @@ def _build_dashboard_summary(
         "month_to_date": mtd,
         "attention": attention,
         "attention_total_count": len(attention_all),
-        "upcoming": upcoming_events[:UPCOMING_MAX_TRANSACTIONS],
-        "upcoming_groups": upcoming_grouped["groups"],
-        "upcoming_truncated": upcoming_grouped["truncated"],
-        "upcoming_total_count": upcoming_grouped["total_event_count"],
-        "upcoming_days": upcoming_horizon,
+        "upcoming": upcoming_payload["upcoming"],
+        "upcoming_groups": upcoming_payload["upcoming_groups"],
+        "upcoming_truncated": upcoming_payload["upcoming_truncated"],
+        "upcoming_total_count": upcoming_payload["upcoming_total_count"],
+        "upcoming_days": upcoming_payload["upcoming_days"],
         "snapshot": snapshot,
         "goals": dashboard_goals,
         "goal_warnings": goal_warnings,
@@ -2217,11 +2338,11 @@ def build_dashboard_summary_details(
     wall_start = time.perf_counter()
     _, scope = _dashboard_scope_cache_params(user, days=days, as_of_date=today)
     shared_context = _load_dashboard_shared_context(scope)
-    full_result = _build_dashboard_summary(
+    details_result = _build_dashboard_summary(
         user,
         days=days,
         as_of_date=today,
-        mode="full",
+        mode="details",
         shared_context=shared_context,
     )
     log_perf(
@@ -2234,7 +2355,6 @@ def build_dashboard_summary_details(
         build_timeline_count=get_build_timeline_count(),
         shared_context="HIT" if shared_context is not None else "MISS",
     )
-    cache.set(full_key, full_result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
-    details = _extract_dashboard_details(full_result)
+    details = _extract_dashboard_details(details_result)
     cache.set(cache_key, details, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     return details

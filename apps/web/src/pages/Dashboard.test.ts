@@ -31,6 +31,18 @@ describe("Dashboard page structure", () => {
     expect(goalsIdx).toBeGreaterThan(upcomingIdx);
   });
 
+  it("uses a lightweight upcoming preview without the full calendar list", () => {
+    const previewSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../components/dashboard/UpcomingMoneyFlowPreview.tsx"),
+      "utf8"
+    );
+    expect(previewSource).not.toMatch(/UpcomingList/);
+    expect(previewSource).toMatch(/UPCOMING_PREVIEW_TRANSFER_FOOTER/);
+    expect(previewSource).not.toMatch(/balance_after/);
+    const calendarLinks = previewSource.match(/to=\{UPCOMING_CALENDAR_PATH\}/g) ?? [];
+    expect(calendarLinks).toHaveLength(1);
+  });
+
   it("does not render resource breakdown or legacy dashboard widgets", () => {
     expect(dashboardSource).not.toMatch(/FinancialSnapshotCard/);
     expect(dashboardSource).not.toMatch(/resourceBreakdown/);
