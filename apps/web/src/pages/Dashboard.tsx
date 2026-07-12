@@ -9,7 +9,6 @@ import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashb
 import { AttentionCardGrid } from "../components/dashboard/AttentionCard";
 import RecommendationsPreviewSection from "../components/dashboard/RecommendationsPreviewSection";
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
-import type { DashboardAttentionItem } from "@budget-app/shared";
 import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
 import GoalsPreviewSection, {
   GoalsPreviewSectionHeader,
@@ -60,12 +59,8 @@ export default function Dashboard() {
   );
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [resolveRiskTarget, setResolveRiskTarget] = useState<DashboardAttentionItem | null>(
-    null
-  );
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
-  const needsAccounts =
-    txnPreset != null || resolveRiskTarget != null || resolveRiskAccountId != null;
+  const needsAccounts = txnPreset != null || resolveRiskAccountId != null;
 
   const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
@@ -152,7 +147,6 @@ export default function Dashboard() {
               windowDays={forecastDays}
               totalCount={summaryFast.attention_total_count}
               onMoveMoney={(item) => setTxnPreset(attentionTransferPreset(item))}
-              onResolveRisk={setResolveRiskTarget}
             />
           </section>
 
@@ -209,24 +203,19 @@ export default function Dashboard() {
         </>
       )}
 
-      {(resolveRiskTarget || resolveRiskAccountId != null) && (
+      {resolveRiskAccountId != null && (
         <ResolveRiskModal
           open
-          accountId={resolveRiskTarget?.account_id ?? resolveRiskAccountId!}
+          accountId={resolveRiskAccountId}
           accountName={
-            resolveRiskTarget?.account_name ??
             accounts.find((a) => a.id === resolveRiskAccountId)?.effective_display_name ??
             "Account"
           }
           forecastDays={forecastDays}
           accounts={accounts}
-          onClose={() => {
-            setResolveRiskTarget(null);
-            setResolveRiskAccountId(null);
-          }}
+          onClose={() => setResolveRiskAccountId(null)}
           onApplyTransfer={(preset) => {
             setTxnPreset(preset);
-            setResolveRiskTarget(null);
             setResolveRiskAccountId(null);
           }}
           onSnoozed={() => {

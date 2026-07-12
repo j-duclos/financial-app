@@ -9,6 +9,7 @@ import {
 } from "../../lib/paymentPlannerDisplay";
 import { isTransferCategoryName } from "../transactions/transactionsLedgerUtils";
 import PaymentPlannerSection from "./PaymentPlannerSection";
+import TransferSourceBalancePreview from "./TransferSourceBalancePreview";
 
 export type QuickTransactionMode =
   | "expense"
@@ -26,6 +27,8 @@ export type QuickTransactionPreset = {
   defaultAmount?: string;
   defaultPayee?: string;
   defaultDate?: string;
+  /** Dashboard attention fix-shortfall flow — show source balance preview in transfer modal. */
+  fixShortfall?: boolean;
   /** Prefills payment planner radio selection (credit card / loan payments). */
   paymentPlanOption?: PaymentPlanOptionId;
 };
@@ -107,6 +110,7 @@ export default function QuickTransactionModal({
     preset?.mode === "transfer" || preset?.mode === "credit_card_payment";
   const isPayment = preset?.mode === "credit_card_payment";
   const isBankTransfer = preset?.mode === "transfer";
+  const showFixShortfallPreview = Boolean(preset?.fixShortfall && isBankTransfer);
 
   const transferCategory = useMemo(() => {
     const name = isPayment ? "Credit Card Payment" : "Bank Transfer";
@@ -454,6 +458,13 @@ export default function QuickTransactionModal({
                   ))}
                 </select>
               </div>
+              {showFixShortfallPreview && fromAccount && date ? (
+                <TransferSourceBalancePreview
+                  sourceAccount={fromAccount}
+                  transferDate={date}
+                  transferAmount={amount}
+                />
+              ) : null}
             </>
           ) : null}
           {isPayment ? (

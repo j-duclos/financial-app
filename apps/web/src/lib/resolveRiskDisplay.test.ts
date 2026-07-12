@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Account, DashboardAttentionItem, DashboardRecommendation } from "@budget-app/shared";
+import type { Account, DashboardRecommendation } from "@budget-app/shared";
 import {
   accountShowsResolveRisk,
-  attentionShowsResolveRisk,
   recommendationShowsResolveRisk,
   simulationPreviewLines,
 } from "./resolveRiskDisplay";
@@ -33,29 +32,6 @@ describe("accountShowsResolveRisk", () => {
   it("returns true when lowest projected balance is negative", () => {
     expect(
       accountShowsResolveRisk(cashAccount({ lowest_projected_balance_30_days: "-12.50" }))
-    ).toBe(true);
-  });
-});
-
-describe("attentionShowsResolveRisk", () => {
-  it("excludes credit and healthy statuses", () => {
-    expect(
-      attentionShowsResolveRisk({
-        account_type: "CREDIT",
-        status: "critical",
-      } as DashboardAttentionItem)
-    ).toBe(false);
-    expect(
-      attentionShowsResolveRisk({
-        account_type: "CHECKING",
-        status: "watch",
-      } as DashboardAttentionItem)
-    ).toBe(false);
-    expect(
-      attentionShowsResolveRisk({
-        account_type: "CHECKING",
-        status: "risk",
-      } as DashboardAttentionItem)
     ).toBe(true);
   });
 });

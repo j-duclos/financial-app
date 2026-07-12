@@ -9,6 +9,8 @@ import { normalizeSeverity, severityLabel, severityTokens } from "./severity";
 
 export { PAYMENT_PLANNER_LABEL };
 
+export const ATTENTION_FIX_SHORTFALL_LABEL = "Fix Shortfall";
+
 export const ATTENTION_MAX_CARDS = 3;
 
 export const ATTENTION_VIEW_ALL_PATH = "/accounts?attention=1";
@@ -97,11 +99,6 @@ export function attentionIssueIcon(item: DashboardAttentionItem): LucideIcon {
   return AlertTriangle;
 }
 
-export function attentionShowsResolveRisk(item: DashboardAttentionItem): boolean {
-  if (item.account_type === "CREDIT") return false;
-  return item.status === "critical" || item.status === "risk";
-}
-
 export function attentionShowsPaymentPlanner(item: DashboardAttentionItem): boolean {
   return item.account_type === "CREDIT" || item.account_role === "credit_card";
 }
@@ -130,6 +127,9 @@ export function attentionShowsSecondaryAction(item: DashboardAttentionItem): boo
 }
 
 export function attentionSecondaryLabel(item: DashboardAttentionItem): string | null {
+  if (item.secondary_action?.type === "move_money") {
+    return ATTENTION_FIX_SHORTFALL_LABEL;
+  }
   const raw = item.secondary_action?.label ?? null;
   return raw ? normalizePaymentActionLabel(raw) : null;
 }
@@ -138,13 +138,19 @@ export function attentionSecondaryOpensTransferModal(item: DashboardAttentionIte
   return item.secondary_action?.type === "move_money";
 }
 
-/** Preset for funding an account that needs cash (dashboard attention "Move money"). */
+/** Preset for funding an account that needs cash (dashboard attention fix shortfall). */
 export function attentionTransferPreset(item: DashboardAttentionItem): QuickTransactionPreset {
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const riskDate = item.risk_date?.slice(0, 10);
+  const defaultDate = riskDate && riskDate >= todayIso ? riskDate : todayIso;
   return {
     accountId: item.account_id,
     mode: "transfer",
     transferToAccountId: item.account_id,
     defaultAmount: item.amount ?? undefined,
+    defaultDate,
+    fixShortfall: true,
   };
 }
 

@@ -1,6 +1,5 @@
 import type {
   Account,
-  DashboardAttentionItem,
   DashboardRecommendation,
   ResolveRiskAction,
   ResolveRiskPlan,
@@ -48,11 +47,6 @@ export function recommendationShowsResolveRisk(rec: DashboardRecommendation): bo
   if (recommendationIsCreditPayment(rec)) return false;
   const sev = normalizeSeverity(rec.severity);
   return sev === "critical" || sev === "at_risk";
-}
-
-export function attentionShowsResolveRisk(item: DashboardAttentionItem): boolean {
-  if (item.account_type === "CREDIT") return false;
-  return item.status === "critical" || item.status === "risk";
 }
 
 export function formatResolveRiskLowest(balance: string | null | undefined): string {

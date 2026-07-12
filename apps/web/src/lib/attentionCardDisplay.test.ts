@@ -94,15 +94,18 @@ describe("attentionCardDisplay", () => {
     const cash = sampleItem();
     expect(cash.recommended_action).toContain("Move $37.06");
     expect(attentionPrimaryLabel(cash)).toBe("Open ledger");
-    expect(attentionSecondaryLabel(cash)).toBe("Move money");
+    expect(attentionSecondaryLabel(cash)).toBe("Fix Shortfall");
     expect(attentionShowsSecondaryAction(cash)).toBe(true);
     expect(attentionSecondaryOpensTransferModal(cash)).toBe(true);
-    expect(attentionTransferPreset(cash)).toEqual({
-      accountId: 1,
-      mode: "transfer",
-      transferToAccountId: 1,
-      defaultAmount: "37.06",
-    });
+    expect(attentionTransferPreset(cash)).toEqual(
+      expect.objectContaining({
+        accountId: 1,
+        mode: "transfer",
+        transferToAccountId: 1,
+        defaultAmount: "37.06",
+        fixShortfall: true,
+      })
+    );
   });
 
   it("credit card shows payment planner paths", () => {

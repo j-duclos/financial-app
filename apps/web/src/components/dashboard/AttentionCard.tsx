@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 import type { DashboardAttentionItem } from "@budget-app/shared";
 import {
-  attentionShowsResolveRisk,
   ATTENTION_MAX_CARDS,
   ATTENTION_VIEW_ALL_PATH,
   attentionAccountTypeLabel,
@@ -31,10 +30,9 @@ import SeverityBadge from "../shared/SeverityBadge";
 interface AttentionCardProps {
   item: DashboardAttentionItem;
   onMoveMoney?: (item: DashboardAttentionItem) => void;
-  onResolveRisk?: (item: DashboardAttentionItem) => void;
 }
 
-export default function AttentionCard({ item, onMoveMoney, onResolveRisk }: AttentionCardProps) {
+export default function AttentionCard({ item, onMoveMoney }: AttentionCardProps) {
   const showSecondary = attentionShowsSecondaryAction(item);
   const styles = attentionSeverityStyles(item.status);
   const primaryIssue = attentionPrimaryIssue(item);
@@ -82,15 +80,6 @@ export default function AttentionCard({ item, onMoveMoney, onResolveRisk }: Atte
       )}
 
       <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
-        {attentionShowsResolveRisk(item) && onResolveRisk && (
-          <button
-            type="button"
-            onClick={() => onResolveRisk(item)}
-            className="inline-flex items-center rounded-md bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700"
-          >
-            Resolve risk
-          </button>
-        )}
         <Link
           to={attentionLedgerPath(item.account_id)}
           state={attentionLedgerState(item.account_id)}
@@ -134,13 +123,11 @@ export function AttentionCardGrid({
   windowDays,
   totalCount,
   onMoveMoney,
-  onResolveRisk,
 }: {
   items: DashboardAttentionItem[];
   windowDays: number;
   totalCount: number;
   onMoveMoney?: (item: DashboardAttentionItem) => void;
-  onResolveRisk?: (item: DashboardAttentionItem) => void;
 }) {
   const cards = attentionCardsForDisplay(items, ATTENTION_MAX_CARDS);
 
@@ -160,7 +147,6 @@ export function AttentionCardGrid({
             key={item.account_id}
             item={item}
             onMoveMoney={onMoveMoney}
-            onResolveRisk={onResolveRisk}
           />
         ))}
       </div>
