@@ -1188,6 +1188,36 @@ describe("creditOwedAsOfDateFromTimeline", () => {
 });
 
 describe("buildLedgerRows fallback", () => {
+  it("uses transaction direction when computing fallback ledger balances", () => {
+    const rows = buildLedgerRows(
+      [
+        {
+          id: 1,
+          date: "2024-01-01",
+          payee: "Groceries",
+          amount: "50",
+          direction: "OUTFLOW",
+        } as never,
+        {
+          id: 2,
+          date: "2024-01-02",
+          payee: "Paycheck",
+          amount: "100",
+          direction: "INFLOW",
+        } as never,
+      ],
+      0,
+      "USD",
+      false
+    );
+
+    const outflowRow = rows.find((r) => r.type === "transaction" && r.txn.id === 1);
+    const inflowRow = rows.find((r) => r.type === "transaction" && r.txn.id === 2);
+
+    expect(outflowRow?.balance).toBeCloseTo(-50, 2);
+    expect(inflowRow?.balance).toBeCloseTo(50, 2);
+  });
+
   it("inserts today balance before first future transaction", () => {
     const futureDate = "2099-06-01";
     const rows = buildLedgerRows(

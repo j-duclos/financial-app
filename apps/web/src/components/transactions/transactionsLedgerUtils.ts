@@ -263,7 +263,7 @@ export function buildLedgerRows(
       rows.push({ type: "today_balance", balance: bal });
       todayRowInserted = true;
     }
-    const amt = parseFloat(txn.amount);
+    const amt = signedTransactionLedgerAmount(txn);
     if (Number.isNaN(amt)) continue;
     running = applyTimelineAmountToBalance(running, amt, isCredit);
     rows.push({ type: "transaction", txn, balance: running });
@@ -290,7 +290,7 @@ export function resolveFallbackLedgerOpening(
   for (const txn of transactions) {
     if ((txn.source || "").toUpperCase() === "INTEREST") continue;
     if (txn.date > today) continue;
-    const amt = parseFloat(txn.amount);
+    const amt = signedTransactionLedgerAmount(txn);
     if (Number.isNaN(amt)) continue;
     running = applyTimelineAmountToBalance(running, amt, isCredit);
     sumThroughToday = running;
@@ -531,6 +531,16 @@ export function signedTimelineLedgerAmount(row: TimelineRow): number {
   return raw;
 }
 
+/** Signed amount for running-balance math on a transaction row. */
+export function signedTransactionLedgerAmount(txn: Transaction): number {
+  const raw = parseFloat(txn.amount);
+  if (Number.isNaN(raw)) return 0;
+  const direction = (txn.direction || "").toUpperCase();
+  if (direction === "OUTFLOW") return -Math.abs(raw);
+  if (direction === "INFLOW") return Math.abs(raw);
+  return raw;
+}
+
 /**
  * Apply a timeline amount to a running ledger balance.
  * Credit cards use positive running values as amount owed (charges up, payments down).
@@ -541,25 +551,7 @@ export function applyTimelineAmountToBalance(
   isCredit: boolean
 ): number {
   if (Number.isNaN(amount)) return running;
-  const next = running + amount;
-  // #region agent log
-  if (isCredit && running < 0 && amount > 0 && next > 0) {
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "299140" },
-      body: JSON.stringify({
-        sessionId: "299140",
-        runId: "post-fix",
-        hypothesisId: "A-math-abs-flip",
-        location: "transactionsLedgerUtils.ts:applyTimelineAmountToBalance",
-        message: "credit overpayment stays signed",
-        data: { running, amount, next },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-  return next;
+  return running + amount;
 }
 
 /** Undo one timeline posting when reverse-walking from today's account balance. */
@@ -583,8 +575,8 @@ function assignPastBalancesFromTodayAnchor(
     const row = rows[i];
     const amt =
       row.type === "transaction_from_timeline"
-        ? parseFloat(row.row.amount)
-        : parseFloat(row.txn.amount);
+        ? signedTimelineLedgerAmount(row.row)
+        : signedTransactionLedgerAmount(row.txn);
     rows[i] = { ...row, balance: running };
     running = undoTimelineAmountFromBalance(running, amt, isCredit);
   }
@@ -850,7 +842,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   let running = start;
 
   for (const txn of pastTxns) {
-    const amt = parseFloat(txn.amount);
+    const amt = signedTransactionLedgerAmount(txn);
     if (Number.isNaN(amt)) continue;
     running = applyTimelineAmountToBalance(running, amt, isCredit);
     rows.push({ type: "transaction", txn, balance: running });
