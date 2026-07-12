@@ -846,10 +846,16 @@ export interface RecommendationTimelineHint {
 
 export interface DashboardTopSummary {
   liquid_cash: string;
+  /** Audit field — same value as liquid_cash (Available Cash card). */
+  available_cash?: string;
   available_credit: string;
   /** Sum of credit limits on active credit accounts (same scope as available_credit). */
   total_credit_limit: string | null;
   credit_utilization: string | null;
+  /** Audit field — same scope as dashboard debt summary total_debt. */
+  total_debt?: string;
+  /** Cash After Debt = available_cash − total_debt (alias of net_position). */
+  cash_after_debt?: string;
   net_position: string;
 }
 

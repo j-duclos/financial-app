@@ -22,8 +22,8 @@ export const FINANCIAL_HEALTH = {
   },
   cashAfterDebt: {
     label: "Cash After Debt",
-    subtitle: "Available cash minus owed balances",
-    help: "Available cash minus current debt balances. Not full net worth.",
+    subtitle: "Available cash minus total debt",
+    help: "Current liquid cash minus current total debt. This is not a forecasted balance.",
   },
 } as const;
 

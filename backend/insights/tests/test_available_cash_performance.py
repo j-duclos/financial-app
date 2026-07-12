@@ -160,7 +160,9 @@ def test_top_summary_shares_one_balance_snapshot(checking, savings, credit_card)
         accounts, today=AS_OF, balance_by_account=balance_map
     )
     assert Decimal(top["available_credit"]) > Decimal("0")
-    assert top["net_position"] is not None
+    assert Decimal(top["cash_after_debt"]) == Decimal(top["liquid_cash"]) - Decimal(
+        top["total_debt"]
+    )
 
 
 def test_bulk_balance_map_uses_one_transaction_query_per_date(checking, savings):
