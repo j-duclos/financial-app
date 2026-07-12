@@ -8,8 +8,7 @@ export const DASHBOARD_SECTION = {
 export const FINANCIAL_HEALTH = {
   lowestProjectedCash: {
     label: "Lowest Projected Cash",
-    negativeLabel: "Projected Cash Shortfall",
-    help: "The lowest projected balance among your cash accounts during the forecast window — one account on one date. Not adjusted for buffers or goal reserves.",
+    help: "The lowest actual projected balance among your active cash accounts during the selected forecast window.",
   },
   availableCash: {
     label: "Available Cash",

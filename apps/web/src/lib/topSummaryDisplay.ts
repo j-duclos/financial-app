@@ -34,68 +34,23 @@ export function topSummaryFromDashboard(
   };
 }
 
-/** Dashboard hero value — actual projected balance (not cushion wording). */
 export function lowestProjectedCashDisplayValue(amount: string): string {
   return formatCurrency(amount);
 }
 
-export function lowestProjectedCashLabel(isNegative: boolean): string {
-  return isNegative ? "Projected Cash Shortfall" : "Lowest Projected Cash";
-}
-
 export function lowestProjectedCashSubtitle(
-  lowest: DashboardLowestProjectedCash
+  metric: DashboardLowestProjectedCash
 ): string {
-  const dateLabel = formatHealthRiskDate(lowest.date);
-  const account = lowest.account_name?.trim() || "Account";
+  const dateLabel = metric.date ? formatHealthRiskDate(metric.date) : "—";
+  const account = metric.account_name?.trim() || "Account";
   return `${account} · ${dateLabel}`;
 }
 
-export function lowestProjectedCashAmountClass(isNegative: boolean): string {
-  return isNegative ? "text-red-700" : "text-emerald-800";
-}
-
-/** @deprecated Dashboard top bar uses lowestProjectedCash* helpers. */
-export function safeToSpendDisplayValue(amount: string): string {
-  const value = parseFloat(amount);
-  if (Number.isFinite(value) && value < 0) {
-    return `You are short by ${formatCurrency(String(Math.abs(value)))}`;
-  }
-  return formatCurrency(amount);
-}
-
-export function safeToSpendRiskSubtitle(
-  safeToSpend: DashboardSummary["safe_to_spend"]
-): string | null {
-  const amount = parseFloat(safeToSpend.amount);
-  const next = safeToSpend.next_issue;
-  const dateLabel = next?.risk_date ? formatHealthRiskDate(next.risk_date) : null;
-
-  if (amount < 0) {
-    return dateLabel
-      ? `Short by ${dateLabel} after bills, buffers, and reserved savings`
-      : "Shortfall after bills, buffers, and reserved savings";
-  }
-  if (safeToSpend.status === "critical") {
-    return dateLabel ? `Earliest issue: ${dateLabel}` : "Issue projected in forecast window";
-  }
-  if (safeToSpend.status === "risk" || safeToSpend.status === "watch") {
-    return dateLabel ? `Earliest issue: ${dateLabel}` : "Tight headroom in forecast window";
-  }
-  return null;
-}
-
-export function safeToSpendHealthySubtitle(windowDays: number): string {
-  return `Headroom after bills, buffers, and reserved savings (${windowDays}-day view)`;
-}
-
-export function safeToSpendAmountClass(
-  safeToSpend: DashboardSummary["safe_to_spend"]
+export function lowestProjectedCashAmountClass(
+  metric: DashboardLowestProjectedCash
 ): string {
-  const amount = parseFloat(safeToSpend.amount);
-  if (safeToSpend.status === "critical" || amount < 0) return "text-red-700";
-  if (safeToSpend.status === "watch") return "text-amber-800";
-  return "text-emerald-800";
+  const amount = parseFloat(metric.amount);
+  return Number.isFinite(amount) && amount < 0 ? "text-red-700" : "text-emerald-800";
 }
 
 export function creditUtilizationSummary(util: string | null | undefined): string | null {

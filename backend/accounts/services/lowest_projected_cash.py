@@ -107,6 +107,53 @@ def _opening_balances_from_timeline_rows(
     return opening
 
 
+def get_lowest_projected_cash_from_forecasts(
+    accounts: list[Account] | dict[int, Account],
+    forecast_summaries: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """
+    Single lowest projected cash balance from precomputed per-account forecast summaries.
+
+    Reuses dashboard forecast batch output — no timeline rebuild and no buffer/goal math.
+    """
+    if isinstance(accounts, dict):
+        accounts_by_id = accounts
+    else:
+        accounts_by_id = {a.id: a for a in accounts}
+
+    best_amount: Decimal | None = None
+    best_aid: int | None = None
+    best_date: str | None = None
+
+    for aid, summary in forecast_summaries.items():
+        account = accounts_by_id.get(aid)
+        if not account or not account_eligible_for_lowest_projected_cash(account):
+            continue
+        if not summary.get("supports_available_to_spend"):
+            continue
+        lowest_raw = summary.get("lowest_projected_balance")
+        if lowest_raw is None:
+            continue
+        lowest = _decimal(lowest_raw)
+        if best_amount is None or lowest < best_amount:
+            best_amount = lowest
+            best_aid = aid
+            best_date = (summary.get("lowest_projected_balance_date") or "")[:10] or None
+
+    if best_amount is None or best_aid is None:
+        return None
+
+    account = accounts_by_id.get(best_aid)
+    amount = best_amount.quantize(Decimal("0.01"))
+    return {
+        "amount": str(amount),
+        "account_id": best_aid,
+        "account_name": account.effective_display_name if account else "",
+        "date": best_date,
+        "is_negative": amount < 0,
+    }
+
+
 def get_lowest_projected_cash(
     accounts: list[Account] | dict[int, Account],
     timeline_rows: list[dict],

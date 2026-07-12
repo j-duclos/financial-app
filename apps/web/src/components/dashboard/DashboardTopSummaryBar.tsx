@@ -9,7 +9,6 @@ import {
   availableCreditSubtitle,
   lowestProjectedCashAmountClass,
   lowestProjectedCashDisplayValue,
-  lowestProjectedCashLabel,
   lowestProjectedCashSubtitle,
   topSummaryFromDashboard,
 } from "../../lib/topSummaryDisplay";
@@ -58,12 +57,12 @@ function ForecastWindowControl({
 }
 
 function LowestProjectedCashTile({ lowest }: { lowest: DashboardLowestProjectedCash }) {
-  const isNegative = lowest.is_negative;
+  const isNegative = parseFloat(lowest.amount) < 0;
   return (
     <DashboardMetricTile
-      label={lowestProjectedCashLabel(isNegative)}
+      label={FINANCIAL_HEALTH.lowestProjectedCash.label}
       value={lowestProjectedCashDisplayValue(lowest.amount)}
-      valueClassName={lowestProjectedCashAmountClass(isNegative)}
+      valueClassName={lowestProjectedCashAmountClass(lowest)}
       help={FINANCIAL_HEALTH.lowestProjectedCash.help}
       hero
       subtitle={

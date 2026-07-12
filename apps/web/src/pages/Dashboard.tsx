@@ -187,7 +187,7 @@ export default function Dashboard() {
                             ? "Projected balance drops below zero"
                             : undefined,
                         }
-                      : summaryFast.safe_to_spend.next_issue
+                      : null
                   }
                 />
               )}

@@ -10,6 +10,7 @@ from accounts.models import Account
 from accounts.services.lowest_projected_cash import (
     account_eligible_for_lowest_projected_cash,
     get_lowest_projected_cash,
+    get_lowest_projected_cash_from_forecasts,
 )
 from categories.models import Category
 from core.models import Household, HouseholdMembership
@@ -209,7 +210,37 @@ def test_case_d_credit_card_excluded(user, main, credit_card, expense_category):
     assert not account_eligible_for_lowest_projected_cash(credit_card)
 
 
-def test_dashboard_uses_timeline_without_second_build(user, main, expense_category):
+def test_from_forecasts_picks_single_lowest_main_over_bills(user, main, bills):
+    """Main -298.74 on Jul 8 beats Bills 200 on Jul 10 — no summing."""
+    forecasts = {
+        main.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "-298.74",
+            "lowest_projected_balance_date": "2026-07-08",
+            "minimum_buffer": "1000",
+            "bucket_allocation": "2000",
+            "available_to_spend": "-3298.74",
+        },
+        bills.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "200.00",
+            "lowest_projected_balance_date": "2026-07-10",
+            "minimum_buffer": "100",
+            "bucket_allocation": "0",
+            "available_to_spend": "100.00",
+        },
+    }
+    result = get_lowest_projected_cash_from_forecasts([main, bills], forecasts)
+
+    assert result is not None
+    assert result["amount"] == "-298.74"
+    assert result["account_id"] == main.id
+    assert result["account_name"] == "Main"
+    assert result["date"] == "2026-07-08"
+    assert result["is_negative"] is True
+
+
+def test_dashboard_uses_forecasts_not_second_timeline(user, main, expense_category):
     from contextlib import ExitStack
 
     Transaction.objects.create(
@@ -223,16 +254,29 @@ def test_dashboard_uses_timeline_without_second_build(user, main, expense_catego
     )
 
     with ExitStack() as stack:
-        mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_timeline")
+        mock_from_forecasts = stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.get_lowest_projected_cash_from_forecasts",
+                return_value={
+                    "amount": "-298.74",
+                    "account_id": main.id,
+                    "account_name": "Main",
+                    "date": "2026-07-08",
+                    "is_negative": True,
+                },
+            ),
         )
-        mock_build.side_effect = lambda *args, **kwargs: build_timeline(
-            user,
-            start_date=kwargs.get("start_date", AS_OF),
-            end_date=kwargs.get("end_date", AS_OF + timedelta(days=30)),
-            as_of_date=kwargs.get("as_of_date", AS_OF),
-            projection_only=True,
-            caller="test",
+        mock_timeline_lpc = stack.enter_context(
+            patch("insights.services.dashboard_summary.get_lowest_projected_cash")
+        )
+        mock_build = stack.enter_context(
+            patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+        )
+        stack.enter_context(
+            patch(
+                "insights.services.dashboard_summary.calculate_forecast_summaries_for_accounts",
+                return_value={main.id: {"supports_available_to_spend": True}},
+            )
         )
         stack.enter_context(
             patch(
@@ -270,9 +314,9 @@ def test_dashboard_uses_timeline_without_second_build(user, main, expense_catego
         result = _build_dashboard_summary(user, days=30, as_of_date=AS_OF, mode="fast")
 
     assert mock_build.call_count == 1
-    assert "lowest_projected_cash" in result
-    assert result["lowest_projected_cash"] is not None
-    assert "safe_to_spend" in result
+    assert mock_from_forecasts.call_count == 1
+    mock_timeline_lpc.assert_not_called()
+    assert result["lowest_projected_cash"]["amount"] == "-298.74"
 
 
 def test_pure_helper_does_not_query_database(user, main):

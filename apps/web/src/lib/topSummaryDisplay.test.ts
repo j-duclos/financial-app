@@ -4,7 +4,6 @@ import {
   availableCreditSubtitle,
   lowestProjectedCashAmountClass,
   lowestProjectedCashDisplayValue,
-  lowestProjectedCashLabel,
   lowestProjectedCashSubtitle,
 } from "./topSummaryDisplay";
 
@@ -22,25 +21,27 @@ function lpc(overrides: Partial<DashboardLowestProjectedCash> = {}): DashboardLo
 describe("topSummaryDisplay", () => {
   it("lowestProjectedCashDisplayValue shows the actual projected balance", () => {
     expect(lowestProjectedCashDisplayValue("421.18")).toBe("$421.18");
-    expect(lowestProjectedCashDisplayValue("-572.60")).toBe("-$572.60");
-  });
-
-  it("lowestProjectedCashLabel switches for negative balances", () => {
-    expect(lowestProjectedCashLabel(false)).toBe("Lowest Projected Cash");
-    expect(lowestProjectedCashLabel(true)).toBe("Projected Cash Shortfall");
+    expect(lowestProjectedCashDisplayValue("-298.74")).toBe("-$298.74");
+    expect(lowestProjectedCashDisplayValue("-298.74")).not.toMatch(/short by/i);
   });
 
   it("lowestProjectedCashSubtitle shows account and date only", () => {
-    expect(lowestProjectedCashSubtitle(lpc())).toMatch(/Main/);
-    expect(lowestProjectedCashSubtitle(lpc())).toMatch(/07-22-26/);
-    expect(lowestProjectedCashSubtitle(lpc({ is_negative: true, amount: "-572.60", date: "2026-07-08" }))).not.toMatch(
-      /buffer/i
+    expect(lowestProjectedCashSubtitle(lpc())).toBe("Main · 07-22-26");
+    expect(lowestProjectedCashSubtitle(lpc({ amount: "-298.74", date: "2026-07-08" }))).toBe(
+      "Main · 07-08-26"
+    );
+    expect(lowestProjectedCashSubtitle(lpc({ amount: "-298.74", date: "2026-07-08" }))).not.toMatch(
+      /buffer|reserved|short by/i
     );
   });
 
-  it("lowestProjectedCashAmountClass highlights negative balances", () => {
-    expect(lowestProjectedCashAmountClass(true)).toBe("text-red-700");
-    expect(lowestProjectedCashAmountClass(false)).toBe("text-emerald-800");
+  it("lowestProjectedCashAmountClass highlights negative balances only", () => {
+    expect(lowestProjectedCashAmountClass(lpc({ amount: "-298.74", is_negative: true }))).toBe(
+      "text-red-700"
+    );
+    expect(lowestProjectedCashAmountClass(lpc({ amount: "421.18", is_negative: false }))).toBe(
+      "text-emerald-800"
+    );
   });
 
   it("availableCreditSubtitle includes total limit and utilization when present", () => {

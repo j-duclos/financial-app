@@ -863,9 +863,9 @@ export interface DashboardForecastRisk {
 /** Lowest projected cash balance in the dashboard forecast window (one account, one date). */
 export interface DashboardLowestProjectedCash {
   amount: string;
-  account_id: number;
-  account_name: string;
-  date: string;
+  account_id: number | null;
+  account_name: string | null;
+  date: string | null;
   is_negative: boolean;
 }
 

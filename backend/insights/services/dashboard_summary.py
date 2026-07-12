@@ -57,7 +57,10 @@ from accounts.services.available_to_spend import (
     cash_account_risk_shortfall,
     normalize_forecast_days,
 )
-from accounts.services.lowest_projected_cash import get_lowest_projected_cash
+from accounts.services.lowest_projected_cash import (
+    get_lowest_projected_cash,
+    get_lowest_projected_cash_from_forecasts,
+)
 from core.utils import get_households_for_user
 from insights.services.dashboard_upcoming import (
     CREDIT_CARD_PAYMENT_CATEGORY,
@@ -1286,11 +1289,9 @@ def _compute_dashboard_core(
         _phase_lpc = phase_start(timer, "lowest_projected_cash")
         phases.append("lowest_projected_cash")
         lpc_start = time.perf_counter() if perf_enabled() else None
-        lowest_projected_cash = get_lowest_projected_cash(
+        lowest_projected_cash = get_lowest_projected_cash_from_forecasts(
             accounts_by_id,
-            timeline_rows,
-            today=today,
-            end_date=forecast_end,
+            forecasts,
         )
         attention_all = build_attention_items(
             health_by_id, accounts_by_id, forecasts, limit=999, today=today
