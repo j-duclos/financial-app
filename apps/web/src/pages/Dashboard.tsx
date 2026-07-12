@@ -108,6 +108,44 @@ export default function Dashboard() {
 
   usePerfPageLoad("dashboard", !fastLoading && !fastError, { forecast_days: forecastDays });
 
+  useEffect(() => {
+    if (!details?.upcoming_groups?.length) return;
+    const jul13 = details.upcoming_groups.find((g) => g.date?.includes("07-13") || g.date?.includes("07-13"));
+    const firstGroup = details.upcoming_groups[0];
+    // #region agent log
+    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bd00da" },
+      body: JSON.stringify({
+        sessionId: "bd00da",
+        runId: "pre-fix",
+        hypothesisId: "A,E",
+        location: "Dashboard.tsx:details-loaded",
+        message: "frontend received dashboard details",
+        data: {
+          groupCount: details.upcoming_groups.length,
+          lowestProjectedCash: summaryFast?.lowest_projected_cash ?? null,
+          firstGroup: firstGroup
+            ? {
+                date: firstGroup.date,
+                lowest_projected_balance: firstGroup.lowest_projected_balance,
+                firstTxnBalanceAfter: firstGroup.transactions?.[0]?.balance_after ?? null,
+              }
+            : null,
+          jul13Group: jul13
+            ? {
+                date: jul13.date,
+                lowest_projected_balance: jul13.lowest_projected_balance,
+                firstTxnBalanceAfter: jul13.transactions?.[0]?.balance_after ?? null,
+              }
+            : null,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }, [details, summaryFast?.lowest_projected_cash]);
+
   return (
     <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
       <section aria-label={DASHBOARD_SECTION.financialHealth}>
