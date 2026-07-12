@@ -37,6 +37,7 @@ from common.services.profiler import (
 from accounts.models import Account
 from accounts.services.balances import (
     bulk_signed_ledger_balances,
+    calculate_credit_metrics,
     compute_net_worth,
     credit_owed_balance,
     credit_owed_from_signed_balance,
@@ -648,14 +649,20 @@ def _snapshot_totals(
             continue
         if _is_snapshot_debt_account(acc):
             if balance_by_account is not None:
-                owed = credit_owed_from_signed_balance(
-                    balance_by_account.get(acc.pk, Decimal("0"))
-                )
+                signed = balance_by_account.get(acc.pk, Decimal("0"))
+                owed = credit_owed_from_signed_balance(signed)
             else:
                 owed = _debt_owed_at(acc, as_of, today=today)
+                signed = -owed if owed > 0 else Decimal("0")
             credit_debt += owed
-            if as_of >= today:
-                util = acc.utilization_percent
+            if acc.is_credit_card():
+                if balance_by_account is not None and as_of >= today:
+                    util = calculate_credit_metrics(acc, signed)["utilization_percent"]
+                elif as_of >= today:
+                    util = acc.utilization_percent
+                else:
+                    limit = _decimal(acc.credit_limit or 0)
+                    util = (owed / limit * Decimal("100")) if limit > 0 else None
             else:
                 limit = _decimal(acc.credit_limit or 0)
                 util = (owed / limit * Decimal("100")) if limit > 0 else None
@@ -780,12 +787,91 @@ def _active_credit_accounts_for_available_credit(
     return [a for a in accounts if a.counts_toward_available_credit()]
 
 
+def _dashboard_credit_cards(accounts: list[Account]) -> list[Account]:
+    """Revolving credit accounts for debt tiles — derived from the dashboard account list."""
+    return [a for a in accounts if a.is_credit_card()]
+
+
+def _signed_balance_for_credit(
+    acc: Account,
+    *,
+    today: date,
+    balance_by_account: dict[int, Decimal] | None,
+) -> tuple[Decimal, bool]:
+    """Return signed ledger balance and whether a per-account ledger query was used."""
+    if balance_by_account is not None:
+        return balance_by_account.get(acc.pk, Decimal("0")), False
+    owed = credit_owed_balance(acc, today)
+    return (-owed if owed > 0 else Decimal("0")), True
+
+
+def _compute_available_credit(
+    credit_accounts: list[Account],
+    *,
+    today: date | None = None,
+    balance_by_account: dict[int, Decimal] | None = None,
+) -> dict[str, Decimal | None]:
+    """
+    Aggregate available credit, limits, owed, and weighted utilization.
+
+    Only active revolving cards with ``counts_toward_available_credit()`` and a
+    positive credit limit contribute to the dashboard Available Credit total.
+    """
+    today = today or date.today()
+    start = time.perf_counter() if perf_enabled() else None
+    eligible = _active_credit_accounts_for_available_credit(credit_accounts)
+
+    available_credit = Decimal("0")
+    total_credit_limit = Decimal("0")
+    total_credit_owed = Decimal("0")
+    fallback_queries = 0
+
+    for acc in eligible:
+        limit = _decimal(acc.credit_limit or 0)
+        if limit <= 0:
+            continue
+        signed, used_fallback = _signed_balance_for_credit(
+            acc, today=today, balance_by_account=balance_by_account
+        )
+        if used_fallback:
+            fallback_queries += 1
+        metrics = calculate_credit_metrics(acc, signed)
+        owed = metrics["owed"]
+        total_credit_limit += limit
+        total_credit_owed += owed
+        available_credit += metrics["available"]
+
+    weighted_util: Decimal | None = None
+    if total_credit_limit > 0:
+        weighted_util = (
+            total_credit_owed / total_credit_limit * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+    if perf_enabled() and start is not None:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        perf_print(
+            "[PERF] available_credit "
+            f"credit_accounts={len(eligible)} "
+            f"balance_source={'shared_map' if balance_by_account is not None else 'per_account'} "
+            f"additional_queries={fallback_queries} "
+            f"elapsed_ms={elapsed_ms:.1f}"
+        )
+
+    return {
+        "available_credit": available_credit,
+        "total_credit_limit": total_credit_limit,
+        "total_credit_owed": total_credit_owed,
+        "weighted_utilization": weighted_util,
+    }
+
+
 def _compute_top_summary(
     accounts: list[Account],
     snapshot: dict[str, Any],
     *,
     today: date | None = None,
     balance_by_account: dict[int, Decimal] | None = None,
+    credit_accounts: list[Account] | None = None,
 ) -> dict[str, Any]:
     """Available cash, available credit, and cash-after-debt for the Financial Health row."""
     today = today or date.today()
@@ -793,28 +879,15 @@ def _compute_top_summary(
         accounts, today=today, balance_by_account=balance_by_account
     )
 
-    available_credit = Decimal("0")
-    total_credit_limit = Decimal("0")
-    total_credit_owed = Decimal("0")
-    for acc in _active_credit_accounts_for_available_credit(accounts):
-        limit = _decimal(acc.credit_limit or 0)
-        if limit <= 0:
-            continue
-        if balance_by_account is not None:
-            owed = credit_owed_from_signed_balance(
-                balance_by_account.get(acc.pk, Decimal("0"))
-            )
-        else:
-            owed = credit_owed_balance(acc, today)
-        total_credit_limit += limit
-        total_credit_owed += owed
-        available_credit += max(Decimal("0"), limit - owed)
-
-    weighted_util: str | None = None
-    if total_credit_limit > 0:
-        weighted_util = str(
-            (total_credit_owed / total_credit_limit * Decimal("100")).quantize(Decimal("0.01"))
-        )
+    cards = credit_accounts if credit_accounts is not None else _dashboard_credit_cards(accounts)
+    credit_totals = _compute_available_credit(
+        cards,
+        today=today,
+        balance_by_account=balance_by_account,
+    )
+    available_credit = credit_totals["available_credit"]
+    total_credit_limit = credit_totals["total_credit_limit"]
+    weighted_util = credit_totals["weighted_utilization"]
 
     if balance_by_account is not None:
         cash, credit_debt, _, _ = _snapshot_totals(
@@ -832,7 +905,9 @@ def _compute_top_summary(
             if total_credit_limit > 0
             else None
         ),
-        "credit_utilization": weighted_util,
+        "credit_utilization": (
+            str(weighted_util) if weighted_util is not None else None
+        ),
         "net_position": net_position,
     }
 
@@ -1242,12 +1317,10 @@ def _build_minimal_dashboard_debt_summary(
     for card in cards:
         if not card.is_credit_card():
             continue
-        if balance_by_account is not None:
-            owed = credit_owed_from_signed_balance(
-                balance_by_account.get(card.pk, Decimal("0"))
-            )
-        else:
-            owed = credit_owed_balance(card, today)
+        signed, _ = _signed_balance_for_credit(
+            card, today=today, balance_by_account=balance_by_account
+        )
+        owed = calculate_credit_metrics(card, signed)["owed"]
         if owed <= 0:
             continue
         total_debt += owed
@@ -1556,19 +1629,10 @@ def _build_dashboard_summary(
         _phase_snapshot = phase_start(timer, "snapshot_top_summary")
         phases.append("snapshot_top_summary")
         snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
-
-        from accounts.models import Account as AccountModel
-
-        debt_cards = list(
-            AccountModel.objects.non_deleted().filter(
-                household__in=core["households"],
-                account_type=AccountModel.AccountType.CREDIT,
-                is_hidden=False,
-            )
-        )
+        credit_cards = _dashboard_credit_cards(accounts)
         balance_accounts = _accounts_for_dashboard_balances(
             snapshot_accounts=snapshot_accounts,
-            debt_cards=debt_cards,
+            debt_cards=credit_cards,
         )
         balance_by_account, _ = _load_dashboard_balance_maps(
             balance_accounts,
@@ -1580,13 +1644,14 @@ def _build_dashboard_summary(
             {},
             today=today,
             balance_by_account=balance_by_account,
+            credit_accounts=credit_cards,
         )
         phase_end(timer, _phase_snapshot)
 
         _phase_debt = phase_start(timer, "debt_minimal")
         phases.append("debt_minimal")
         debt_summary = _build_minimal_dashboard_debt_summary(
-            debt_cards,
+            credit_cards,
             as_of=today,
             balance_by_account=balance_by_account,
         )
@@ -1678,20 +1743,13 @@ def _build_dashboard_summary(
 
     bills_summary = build_dashboard_bill_summary(user, as_of_date=today)
 
-    from accounts.models import Account as AccountModel
     from credit_cards.services.debt_engine import build_dashboard_debt_summary
 
-    debt_cards = list(
-        AccountModel.objects.non_deleted().filter(
-            household__in=core["households"],
-            account_type=AccountModel.AccountType.CREDIT,
-            is_hidden=False,
-        )
-    )
+    credit_cards = _dashboard_credit_cards(accounts)
     balance_accounts = _accounts_for_dashboard_balances(
         snapshot_accounts=snapshot_accounts,
         net_worth_accounts=net_worth_accounts,
-        debt_cards=debt_cards,
+        debt_cards=credit_cards,
     )
     balance_by_account, prior_balance_by_account = _load_dashboard_balance_maps(
         balance_accounts,
@@ -1699,7 +1757,7 @@ def _build_dashboard_summary(
         include_prior=True,
     )
     debt_summary = build_dashboard_debt_summary(
-        debt_cards,
+        credit_cards,
         as_of=today,
         balance_by_account=balance_by_account,
     )
@@ -1786,6 +1844,7 @@ def _build_dashboard_summary(
         snapshot,
         today=today,
         balance_by_account=balance_by_account,
+        credit_accounts=credit_cards,
     )
     phase_end(timer, _phase_snapshot)
 

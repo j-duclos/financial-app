@@ -29,6 +29,28 @@ def credit_owed_from_signed_balance(balance: Decimal) -> Decimal:
     return abs(balance)
 
 
+def calculate_credit_metrics(
+    account: Account,
+    signed_balance: Decimal,
+) -> dict[str, Decimal | None]:
+    """
+    Per-card credit metrics from a signed ledger balance and account limit.
+
+    Credit debt is negative in the ledger; owed is always non-negative.
+    """
+    limit = Decimal(str(account.credit_limit or 0))
+    owed = credit_owed_from_signed_balance(signed_balance)
+    available = max(Decimal("0"), limit - owed) if limit > 0 else Decimal("0")
+    utilization_percent: Decimal | None = None
+    if limit > 0:
+        utilization_percent = (owed / limit * Decimal("100")).quantize(Decimal("0.01"))
+    return {
+        "owed": owed,
+        "available": available,
+        "utilization_percent": utilization_percent,
+    }
+
+
 def credit_owed_balance(account: Account, as_of: date | None = None) -> Decimal:
     """Positive amount owed on a credit card from the ledger (zero if not in debt)."""
     return ledger_owed_balance(account, as_of)

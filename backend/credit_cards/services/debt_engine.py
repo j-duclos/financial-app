@@ -79,11 +79,12 @@ def _load_card_states(
         if not card.is_credit_card():
             continue
         if balance_by_account is not None:
-            from accounts.services.balances import credit_owed_from_signed_balance
+            from accounts.services.balances import calculate_credit_metrics
 
-            owed = credit_owed_from_signed_balance(
-                balance_by_account.get(card.pk, Decimal("0"))
-            )
+            owed = calculate_credit_metrics(
+                card,
+                balance_by_account.get(card.pk, Decimal("0")),
+            )["owed"]
         else:
             owed = ledger_owed_balance(card, as_of)
         if owed < 0:

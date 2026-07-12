@@ -9,6 +9,7 @@ from django.test.utils import CaptureQueriesContext
 from accounts.models import Account
 from accounts.services.balances import (
     bulk_signed_ledger_balances,
+    calculate_credit_metrics,
     compute_net_worth,
     credit_owed_from_signed_balance,
     signed_ledger_balance,
@@ -114,6 +115,38 @@ def test_bulk_signed_ledger_balances_single_query(checking, credit_card):
 def test_credit_owed_from_signed_balance():
     assert credit_owed_from_signed_balance(Decimal("100")) == Decimal("0")
     assert credit_owed_from_signed_balance(Decimal("-250")) == Decimal("250")
+
+
+def test_calculate_credit_metrics_owed_and_available(credit_card, household):
+    credit_card.credit_limit = Decimal("5000")
+    metrics = calculate_credit_metrics(credit_card, Decimal("-1200"))
+    assert metrics["owed"] == Decimal("1200")
+    assert metrics["available"] == Decimal("3800")
+    assert metrics["utilization_percent"] == Decimal("24.00")
+
+
+def test_calculate_credit_metrics_positive_balance_no_debt(credit_card):
+    credit_card.credit_limit = Decimal("5000")
+    metrics = calculate_credit_metrics(credit_card, Decimal("200"))
+    assert metrics["owed"] == Decimal("0")
+    assert metrics["available"] == Decimal("5000")
+    assert metrics["utilization_percent"] == Decimal("0.00")
+
+
+def test_calculate_credit_metrics_over_limit(credit_card):
+    credit_card.credit_limit = Decimal("1000")
+    metrics = calculate_credit_metrics(credit_card, Decimal("-1500"))
+    assert metrics["owed"] == Decimal("1500")
+    assert metrics["available"] == Decimal("0")
+    assert metrics["utilization_percent"] == Decimal("150.00")
+
+
+def test_calculate_credit_metrics_zero_limit(credit_card):
+    credit_card.credit_limit = Decimal("0")
+    metrics = calculate_credit_metrics(credit_card, Decimal("-500"))
+    assert metrics["owed"] == Decimal("500")
+    assert metrics["available"] == Decimal("0")
+    assert metrics["utilization_percent"] is None
 
 
 def test_compute_net_worth_accepts_balance_map(checking, credit_card):
