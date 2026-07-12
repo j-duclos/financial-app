@@ -2511,39 +2511,6 @@ def _build_timeline_impl(
                 if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
                     sb = -sb
                 opening[aid] = sb
-        # #region agent log
-        if caller.startswith("dashboard"):
-            import json as _json
-            import time as _time
-
-            try:
-                with open("/Users/capone/Dev_work/.cursor/debug-bd00da.log", "a", encoding="utf-8") as _f:
-                    _f.write(
-                        _json.dumps(
-                            {
-                                "sessionId": "bd00da",
-                                "runId": "pre-fix",
-                                "hypothesisId": "B",
-                                "location": "ledger.py:build_timeline:opening",
-                                "message": "dashboard timeline opening balances",
-                                "data": {
-                                    "caller": caller,
-                                    "exclude_reconciled_past": exclude_reconciled_past,
-                                    "projection_only": projection_only,
-                                    "opening": {str(k): str(v) for k, v in opening.items()},
-                                    "account_names": {
-                                        str(aid): getattr(accs.get(aid), "name", None)
-                                        for aid in account_ids
-                                    },
-                                },
-                                "timestamp": int(_time.time() * 1000),
-                            }
-                        )
-                        + "\n"
-                    )
-            except OSError:
-                pass
-        # #endregion
         phase_end(timer, _phase_setup)
 
         rows: list[dict] = []

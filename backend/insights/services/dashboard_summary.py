@@ -80,41 +80,6 @@ from timeline.models import RecurringRule
 from timeline.services.ledger import build_timeline
 from transactions.models import Transaction
 
-DEBUG_LOG_PATH = "/Users/capone/Dev_work/.cursor/debug-bd00da.log"
-
-
-def _agent_debug_log(
-    location: str,
-    message: str,
-    data: dict[str, Any],
-    *,
-    hypothesis_id: str,
-    run_id: str = "pre-fix",
-) -> None:
-    # #region agent log
-    import json
-
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as _f:
-            _f.write(
-                json.dumps(
-                    {
-                        "sessionId": "bd00da",
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    }
-                )
-                + "\n"
-            )
-    except OSError:
-        pass
-    # #endregion
-
-
 ATTENTION_TOP_LIMIT = 3
 FAST_RECOMMENDATION_PREVIEW_LIMIT = 3
 
@@ -1151,6 +1116,30 @@ def _classify_timeline_kind(
     return "bill"
 
 
+def _build_dashboard_timeline(
+    user,
+    *,
+    today: date,
+    end_date: date,
+    caller: str,
+) -> list[dict]:
+    """
+    Ledger-aligned forecast timeline for dashboard upcoming, health, and forecasts.
+
+    Matches the Transactions page when hide-reconciled-past is enabled: each account
+    opens at its latest reconciled balance and reconciled history rows are omitted.
+    """
+    return build_timeline(
+        user,
+        start_date=today,
+        end_date=end_date,
+        as_of_date=today,
+        projection_only=True,
+        exclude_reconciled_past=True,
+        caller=caller,
+    )
+
+
 def _projected_balance_from_timeline_row(row: dict[str, Any]) -> str | None:
     """Use precomputed running_balance from build_timeline — same as calendar events."""
     raw = row.get("running_balance")
@@ -1175,12 +1164,10 @@ def build_upcoming_events(
     accounts_by_id = {a.id: a for a in accounts}
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
+        timeline_rows = _build_dashboard_timeline(
             user,
-            start_date=today,
+            today=today,
             end_date=window_end,
-            as_of_date=today,
-            projection_only=True,
             caller="dashboard_upcoming",
         )
 
@@ -1240,51 +1227,6 @@ def build_upcoming_events(
                 "transfer_group_id": row.get("transfer_group_id"),
             }
         )
-
-    # #region agent log
-    _sample_rows = [
-        {
-            "date": r.get("date"),
-            "account_id": r.get("account_id"),
-            "account_name": r.get("account_name"),
-            "description": (r.get("description") or "")[:60],
-            "amount": str(r.get("amount")),
-            "running_balance": str(r.get("running_balance")),
-        }
-        for r in timeline_rows
-        if r.get("account_id")
-        and (
-            "henry" in (r.get("description") or "").lower()
-            or "meds" in (r.get("description") or "").lower()
-        )
-    ][:3]
-    _sample_events = [
-        {
-            "date": e.get("date"),
-            "account_name": e.get("account_name"),
-            "description": (e.get("description") or "")[:60],
-            "amount": e.get("amount"),
-            "projected_balance": e.get("projected_balance"),
-        }
-        for e in events
-        if "henry" in (e.get("description") or "").lower()
-        or "meds" in (e.get("description") or "").lower()
-    ][:3]
-    _agent_debug_log(
-        "dashboard_summary.py:build_upcoming_events",
-        "upcoming events built from timeline rows",
-        {
-            "today": today.isoformat(),
-            "window_end": window_end.isoformat(),
-            "timeline_row_count": len(timeline_rows),
-            "event_count": len(events),
-            "henry_timeline_rows": _sample_rows,
-            "henry_events": _sample_events,
-            "shared_timeline": timeline_rows is not None,
-        },
-        hypothesis_id="B,C",
-    )
-    # #endregion
 
     for aid, health in health_by_id.items():
         status = health.get("status", HEALTH_STATUS_HEALTHY)
@@ -1773,12 +1715,10 @@ def _compute_dashboard_core(
     else:
         _phase_timeline = phase_start(timer, "timeline_build")
         phases.append("timeline_build")
-        timeline_rows = build_timeline(
+        timeline_rows = _build_dashboard_timeline(
             user,
-            start_date=today,
+            today=today,
             end_date=forecast_end,
-            as_of_date=today,
-            projection_only=True,
             caller="dashboard_summary",
         )
         phase_end(timer, _phase_timeline)
@@ -2347,17 +2287,6 @@ def build_dashboard_summary_fast(
         build_timeline_count=get_build_timeline_count(),
     )
     cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
-    # #region agent log
-    _agent_debug_log(
-        "dashboard_summary.py:build_dashboard_summary_fast",
-        "fast summary built",
-        {
-            "cache": "MISS",
-            "lowest_projected_cash": result.get("lowest_projected_cash"),
-        },
-        hypothesis_id="D",
-    )
-    # #endregion
     return result
 
 
@@ -2388,26 +2317,6 @@ def build_dashboard_summary_details(
             days=days,
             households=len(household_ids),
         )
-        # #region agent log
-        _groups = full_cached.get("upcoming_groups") or []
-        _agent_debug_log(
-            "dashboard_summary.py:build_dashboard_summary_details",
-            "details cache HIT_FULL",
-            {
-                "cache": "HIT_FULL",
-                "group_count": len(_groups),
-                "first_groups": [
-                    {
-                        "date": g.get("date"),
-                        "lowest_projected_balance": g.get("lowest_projected_balance"),
-                        "txn_balance_after": (g.get("transactions") or [{}])[0].get("balance_after"),
-                    }
-                    for g in _groups[:3]
-                ],
-            },
-            hypothesis_id="A",
-        )
-        # #endregion
         return _extract_dashboard_details(full_cached)
 
     cache_key = get_dashboard_summary_details_cache_key(
@@ -2425,26 +2334,6 @@ def build_dashboard_summary_details(
             days=days,
             households=len(household_ids),
         )
-        # #region agent log
-        _groups = cached.get("upcoming_groups") or []
-        _agent_debug_log(
-            "dashboard_summary.py:build_dashboard_summary_details",
-            "details cache HIT",
-            {
-                "cache": "HIT",
-                "group_count": len(_groups),
-                "first_groups": [
-                    {
-                        "date": g.get("date"),
-                        "lowest_projected_balance": g.get("lowest_projected_balance"),
-                        "txn_balance_after": (g.get("transactions") or [{}])[0].get("balance_after"),
-                    }
-                    for g in _groups[:3]
-                ],
-            },
-            hypothesis_id="A",
-        )
-        # #endregion
         return cached
 
     wall_start = time.perf_counter()
@@ -2468,27 +2357,5 @@ def build_dashboard_summary_details(
         shared_context="HIT" if shared_context is not None else "MISS",
     )
     details = _extract_dashboard_details(details_result)
-    # #region agent log
-    _groups = details.get("upcoming_groups") or []
-    _agent_debug_log(
-        "dashboard_summary.py:build_dashboard_summary_details",
-        "details cache MISS — fresh build",
-        {
-            "cache": "MISS",
-            "shared_context": "HIT" if shared_context is not None else "MISS",
-            "group_count": len(_groups),
-            "first_groups": [
-                {
-                    "date": g.get("date"),
-                    "lowest_projected_balance": g.get("lowest_projected_balance"),
-                    "lowest_account": g.get("lowest_projected_balance_account_name"),
-                    "txn_balance_after": (g.get("transactions") or [{}])[0].get("balance_after"),
-                }
-                for g in _groups[:3]
-            ],
-        },
-        hypothesis_id="A,B,C",
-    )
-    # #endregion
     cache.set(cache_key, details, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     return details

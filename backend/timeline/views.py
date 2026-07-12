@@ -764,45 +764,6 @@ class TimelineView(APIView):
                 caller="timeline_page",
             )
             # #region agent log
-            import json as _json
-            import time as _time
-
-            _henry = [
-                {
-                    "date": str(r.get("date")),
-                    "amount": str(r.get("amount")),
-                    "running_balance": str(r.get("running_balance")),
-                    "desc": (r.get("description") or "")[:60],
-                }
-                for r in rows
-                if "henry" in (r.get("description") or "").lower()
-                or "meds" in (r.get("description") or "").lower()
-            ][:3]
-            if account_id is not None or _henry:
-                try:
-                    with open("/Users/capone/Dev_work/.cursor/debug-bd00da.log", "a", encoding="utf-8") as _f:
-                        _f.write(
-                            _json.dumps(
-                                {
-                                    "sessionId": "bd00da",
-                                    "runId": "pre-fix",
-                                    "hypothesisId": "B",
-                                    "location": "timeline/views.py:TimelineView.get",
-                                    "message": "transactions timeline built",
-                                    "data": {
-                                        "account_id": account_id,
-                                        "exclude_reconciled_past": exclude_reconciled_past,
-                                        "henry_rows": _henry,
-                                    },
-                                    "timestamp": int(_time.time() * 1000),
-                                }
-                            )
-                            + "\n"
-                        )
-                except OSError:
-                    pass
-            # #endregion
-            # #region agent log
             import json
             import time
 
