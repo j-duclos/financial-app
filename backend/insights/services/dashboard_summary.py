@@ -35,7 +35,13 @@ from common.services.profiler import (
 )
 
 from accounts.models import Account
-from accounts.services.balances import compute_net_worth, credit_owed_balance, signed_ledger_balance
+from accounts.services.balances import (
+    bulk_signed_ledger_balances,
+    compute_net_worth,
+    credit_owed_balance,
+    credit_owed_from_signed_balance,
+    signed_ledger_balance,
+)
 from accounts.services.account_health import (
     SAVINGS_ROLES,
     _target_utilization_percent,
@@ -87,6 +93,30 @@ _GENERIC_DASHBOARD_ACTIONS = frozenset(
 SAVINGS_ACCOUNT_ROLES = SAVINGS_ROLES
 
 SNAPSHOT_SAVINGS_ROLES = SAVINGS_ROLES | frozenset({Account.AccountRole.INVESTMENT})
+
+# Roles included in Available Cash when account type is not checking/savings/cash.
+AVAILABLE_CASH_ACCOUNT_ROLES = frozenset(
+    {
+        Account.AccountRole.SPENDING,
+        Account.AccountRole.SAVINGS,
+        Account.AccountRole.EMERGENCY_FUND,
+    }
+)
+AVAILABLE_CASH_ACCOUNT_TYPES = frozenset(
+    {
+        Account.AccountType.CHECKING,
+        Account.AccountType.SAVINGS,
+        Account.AccountType.CASH,
+    }
+)
+EXCLUDED_AVAILABLE_CASH_ROLES = frozenset(
+    {
+        Account.AccountRole.BILLS,
+        Account.AccountRole.INVESTMENT,
+        Account.AccountRole.CREDIT_CARD,
+        Account.AccountRole.LOAN,
+    }
+)
 SNAPSHOT_SAVINGS_TYPES = frozenset(
     {
         Account.AccountType.SAVINGS,
@@ -548,34 +578,42 @@ def _counts_toward_liquid_cash(acc: Account) -> bool:
     """Checking, savings, and cash accounts — excludes bills pools and investments."""
     if _is_snapshot_debt_account(acc):
         return False
-    if acc.role in (
-        Account.AccountRole.BILLS,
-        Account.AccountRole.INVESTMENT,
-        Account.AccountRole.CREDIT_CARD,
-        Account.AccountRole.LOAN,
-    ):
+    if acc.role in EXCLUDED_AVAILABLE_CASH_ROLES:
         return False
-    if acc.account_type in (
-        Account.AccountType.CHECKING,
-        Account.AccountType.SAVINGS,
-        Account.AccountType.CASH,
-    ):
+    if acc.account_type in AVAILABLE_CASH_ACCOUNT_TYPES:
         return True
-    return acc.role in (
-        Account.AccountRole.SPENDING,
-        Account.AccountRole.SAVINGS,
-        Account.AccountRole.EMERGENCY_FUND,
-    )
+    return acc.role in AVAILABLE_CASH_ACCOUNT_ROLES
 
 
-def _compute_liquid_cash(accounts: list[Account], *, today: date) -> Decimal:
+def _compute_liquid_cash(
+    accounts: list[Account],
+    *,
+    today: date,
+    balance_by_account: dict[int, Decimal] | None = None,
+) -> Decimal:
+    start = time.perf_counter() if perf_enabled() else None
+    considered = 0
     total = Decimal("0")
     for acc in accounts:
         if acc.status == Account.Status.DELETED:
             continue
         if not _counts_toward_liquid_cash(acc):
             continue
-        total += _non_debt_balance_at(acc, today, today=today)
+        considered += 1
+        if balance_by_account is not None:
+            total += balance_by_account.get(acc.pk, Decimal("0"))
+        else:
+            total += _non_debt_balance_at(acc, today, today=today)
+
+    if perf_enabled() and start is not None:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        perf_print(
+            "[PERF] available_cash "
+            f"accounts_considered={considered} "
+            f"balance_source={'shared_map' if balance_by_account is not None else 'per_account'} "
+            f"additional_queries=0 "
+            f"elapsed_ms={elapsed_ms:.1f}"
+        )
     return total
 
 
@@ -592,6 +630,7 @@ def _snapshot_totals(
     as_of: date,
     *,
     today: date,
+    balance_by_account: dict[int, Decimal] | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal | None]:
     """
     Return spending_accounts (cash), credit_debt, savings, avg_utilization at as_of.
@@ -608,7 +647,12 @@ def _snapshot_totals(
         if acc.status == Account.Status.DELETED:
             continue
         if _is_snapshot_debt_account(acc):
-            owed = _debt_owed_at(acc, as_of, today=today)
+            if balance_by_account is not None:
+                owed = credit_owed_from_signed_balance(
+                    balance_by_account.get(acc.pk, Decimal("0"))
+                )
+            else:
+                owed = _debt_owed_at(acc, as_of, today=today)
             credit_debt += owed
             if as_of >= today:
                 util = acc.utilization_percent
@@ -619,9 +663,15 @@ def _snapshot_totals(
                 util_sum += _decimal(util)
                 util_count += 1
         elif _is_snapshot_savings_bucket(acc):
-            savings += _non_debt_balance_at(acc, as_of, today=today)
+            if balance_by_account is not None:
+                savings += balance_by_account.get(acc.pk, Decimal("0"))
+            else:
+                savings += _non_debt_balance_at(acc, as_of, today=today)
         else:
-            cash += _non_debt_balance_at(acc, as_of, today=today)
+            if balance_by_account is not None:
+                cash += balance_by_account.get(acc.pk, Decimal("0"))
+            else:
+                cash += _non_debt_balance_at(acc, as_of, today=today)
 
     avg_util: Decimal | None = None
     if util_count > 0:
@@ -659,27 +709,52 @@ def _compute_snapshot(
     today: date | None = None,
     goals: list[dict[str, Any]] | None = None,
     mtd_net: Decimal | None = None,
+    balance_by_account: dict[int, Decimal] | None = None,
+    prior_balance_by_account: dict[int, Decimal] | None = None,
+    include_comparisons: bool = True,
 ) -> dict[str, Any]:
     today = today or date.today()
     prior_end = today.replace(day=1) - timedelta(days=1)
 
-    cash, credit_debt, savings, util = _snapshot_totals(accounts, today, today=today)
+    cash, credit_debt, savings, util = _snapshot_totals(
+        accounts, today, today=today, balance_by_account=balance_by_account
+    )
     # Cash After Debt (top row): spending accounts minus owed balances; excludes savings.
     net_position = cash - credit_debt
 
-    prev_cash, prev_debt, prev_savings, _ = _snapshot_totals(accounts, prior_end, today=today)
-    prev_net = prev_cash - prev_debt
+    prev_cash = prev_debt = prev_savings = Decimal("0")
+    prev_net = Decimal("0")
+    cash_change_pct: str | None = None
+    savings_change_pct: str | None = None
+    net_position_change_pct: str | None = None
+
+    if include_comparisons:
+        if prior_balance_by_account is not None:
+            prev_cash, prev_debt, prev_savings, _ = _snapshot_totals(
+                accounts,
+                prior_end,
+                today=today,
+                balance_by_account=prior_balance_by_account,
+            )
+        else:
+            prev_cash, prev_debt, prev_savings, _ = _snapshot_totals(
+                accounts, prior_end, today=today
+            )
+        prev_net = prev_cash - prev_debt
+        cash_change_pct = _pct_change(cash, prev_cash)
+        savings_change_pct = _pct_change(savings, prev_savings)
+        net_position_change_pct = _pct_change(net_position, prev_net)
 
     goal_progress = _avg_goal_progress_pct(goals)
     snapshot: dict[str, Any] = {
         "cash": str(cash.quantize(Decimal("0.01"))),
-        "cash_change_pct": _pct_change(cash, prev_cash),
+        "cash_change_pct": cash_change_pct,
         "credit_debt": str(credit_debt.quantize(Decimal("0.01"))),
         "utilization": str(util) if util is not None else None,
         "savings": str(savings.quantize(Decimal("0.01"))),
-        "savings_change_pct": _pct_change(savings, prev_savings),
+        "savings_change_pct": savings_change_pct,
         "net_position": str(net_position.quantize(Decimal("0.01"))),
-        "net_position_change_pct": _pct_change(net_position, prev_net),
+        "net_position_change_pct": net_position_change_pct,
     }
     if goal_progress is not None:
         snapshot["savings_goal_progress_pct"] = goal_progress
@@ -688,9 +763,14 @@ def _compute_snapshot(
     return snapshot
 
 
-def _compute_net_worth(accounts: list[Account], *, today: date | None = None) -> str:
+def _compute_net_worth(
+    accounts: list[Account],
+    *,
+    today: date | None = None,
+    balance_by_account: dict[int, Decimal] | None = None,
+) -> str:
     today = today or date.today()
-    total = compute_net_worth(accounts, today)
+    total = compute_net_worth(accounts, today, balance_by_account=balance_by_account)
     return str(total.quantize(Decimal("0.01")))
 
 
@@ -705,10 +785,13 @@ def _compute_top_summary(
     snapshot: dict[str, Any],
     *,
     today: date | None = None,
+    balance_by_account: dict[int, Decimal] | None = None,
 ) -> dict[str, Any]:
     """Available cash, available credit, and cash-after-debt for the Financial Health row."""
     today = today or date.today()
-    liquid_cash = _compute_liquid_cash(accounts, today=today)
+    liquid_cash = _compute_liquid_cash(
+        accounts, today=today, balance_by_account=balance_by_account
+    )
 
     available_credit = Decimal("0")
     total_credit_limit = Decimal("0")
@@ -717,7 +800,12 @@ def _compute_top_summary(
         limit = _decimal(acc.credit_limit or 0)
         if limit <= 0:
             continue
-        owed = credit_owed_balance(acc, today)
+        if balance_by_account is not None:
+            owed = credit_owed_from_signed_balance(
+                balance_by_account.get(acc.pk, Decimal("0"))
+            )
+        else:
+            owed = credit_owed_balance(acc, today)
         total_credit_limit += limit
         total_credit_owed += owed
         available_credit += max(Decimal("0"), limit - owed)
@@ -728,6 +816,14 @@ def _compute_top_summary(
             (total_credit_owed / total_credit_limit * Decimal("100")).quantize(Decimal("0.01"))
         )
 
+    if balance_by_account is not None:
+        cash, credit_debt, _, _ = _snapshot_totals(
+            accounts, today, today=today, balance_by_account=balance_by_account
+        )
+        net_position = str((cash - credit_debt).quantize(Decimal("0.01")))
+    else:
+        net_position = snapshot.get("net_position") or "0"
+
     return {
         "liquid_cash": str(liquid_cash.quantize(Decimal("0.01"))),
         "available_credit": str(available_credit.quantize(Decimal("0.01"))),
@@ -737,7 +833,7 @@ def _compute_top_summary(
             else None
         ),
         "credit_utilization": weighted_util,
-        "net_position": snapshot.get("net_position") or "0",
+        "net_position": net_position,
     }
 
 
@@ -1134,7 +1230,10 @@ def _load_dashboard_shared_context(scope: dict[str, Any]) -> dict[str, Any] | No
 
 
 def _build_minimal_dashboard_debt_summary(
-    cards: list[Account], *, as_of: date | None = None
+    cards: list[Account],
+    *,
+    as_of: date | None = None,
+    balance_by_account: dict[int, Decimal] | None = None,
 ) -> dict[str, Any] | None:
     """Lightweight debt tile — balances and APR burn only, no payoff simulation."""
     today = as_of or date.today()
@@ -1143,7 +1242,12 @@ def _build_minimal_dashboard_debt_summary(
     for card in cards:
         if not card.is_credit_card():
             continue
-        owed = credit_owed_balance(card, today)
+        if balance_by_account is not None:
+            owed = credit_owed_from_signed_balance(
+                balance_by_account.get(card.pk, Decimal("0"))
+            )
+        else:
+            owed = credit_owed_balance(card, today)
         if owed <= 0:
             continue
         total_debt += owed
@@ -1163,6 +1267,57 @@ def _build_minimal_dashboard_debt_summary(
         "planner_url": "/credit-cards",
         "plan": None,
     }
+
+
+def _accounts_for_dashboard_balances(
+    *,
+    snapshot_accounts: list[Account],
+    net_worth_accounts: list[Account] | None = None,
+    debt_cards: list[Account] | None = None,
+) -> list[Account]:
+    by_id: dict[int, Account] = {a.pk: a for a in snapshot_accounts}
+    for acc in net_worth_accounts or []:
+        by_id.setdefault(acc.pk, acc)
+    for acc in debt_cards or []:
+        by_id.setdefault(acc.pk, acc)
+    return list(by_id.values())
+
+
+def _load_dashboard_balance_maps(
+    accounts: list[Account],
+    *,
+    today: date,
+    include_prior: bool = False,
+) -> tuple[dict[int, Decimal], dict[int, Decimal] | None]:
+    """Bulk-load signed ledger balances once (optional prior month-end for comparisons)."""
+    from django.conf import settings
+    from django.db import connection
+
+    account_list = list(accounts)
+    query_count_before = len(connection.queries) if getattr(settings, "DEBUG", False) else None
+    map_start = time.perf_counter() if perf_enabled() else None
+
+    today_map = bulk_signed_ledger_balances(account_list, today)
+
+    prior_map: dict[int, Decimal] | None = None
+    if include_prior:
+        prior_end = today.replace(day=1) - timedelta(days=1)
+        prior_map = bulk_signed_ledger_balances(account_list, prior_end)
+
+    if perf_enabled() and map_start is not None:
+        balance_queries = 0
+        if query_count_before is not None:
+            balance_queries = len(connection.queries) - query_count_before
+        elapsed_ms = (time.perf_counter() - map_start) * 1000
+        perf_print(
+            "[PERF] dashboard_balance_map "
+            f"accounts={len(account_list)} "
+            f"include_prior={include_prior} "
+            f"balance_queries={balance_queries} "
+            f"elapsed_ms={elapsed_ms:.1f}"
+        )
+
+    return today_map, prior_map
 
 
 def _build_fast_recommendation_preview(
@@ -1401,9 +1556,6 @@ def _build_dashboard_summary(
         _phase_snapshot = phase_start(timer, "snapshot_top_summary")
         phases.append("snapshot_top_summary")
         snapshot_accounts = [a for a in accounts if a.status == Account.Status.ACTIVE]
-        snapshot_light = _compute_snapshot(snapshot_accounts, today=today, goals=[], mtd_net=None)
-        top_summary = _compute_top_summary(snapshot_accounts, snapshot_light, today=today)
-        phase_end(timer, _phase_snapshot)
 
         from accounts.models import Account as AccountModel
 
@@ -1414,9 +1566,30 @@ def _build_dashboard_summary(
                 is_hidden=False,
             )
         )
+        balance_accounts = _accounts_for_dashboard_balances(
+            snapshot_accounts=snapshot_accounts,
+            debt_cards=debt_cards,
+        )
+        balance_by_account, _ = _load_dashboard_balance_maps(
+            balance_accounts,
+            today=today,
+            include_prior=False,
+        )
+        top_summary = _compute_top_summary(
+            snapshot_accounts,
+            {},
+            today=today,
+            balance_by_account=balance_by_account,
+        )
+        phase_end(timer, _phase_snapshot)
+
         _phase_debt = phase_start(timer, "debt_minimal")
         phases.append("debt_minimal")
-        debt_summary = _build_minimal_dashboard_debt_summary(debt_cards, as_of=today)
+        debt_summary = _build_minimal_dashboard_debt_summary(
+            debt_cards,
+            as_of=today,
+            balance_by_account=balance_by_account,
+        )
         phase_end(timer, _phase_debt)
 
         _phase_recommendations = phase_start(timer, "recommendations_preview")
@@ -1515,7 +1688,21 @@ def _build_dashboard_summary(
             is_hidden=False,
         )
     )
-    debt_summary = build_dashboard_debt_summary(debt_cards, as_of=today)
+    balance_accounts = _accounts_for_dashboard_balances(
+        snapshot_accounts=snapshot_accounts,
+        net_worth_accounts=net_worth_accounts,
+        debt_cards=debt_cards,
+    )
+    balance_by_account, prior_balance_by_account = _load_dashboard_balance_maps(
+        balance_accounts,
+        today=today,
+        include_prior=True,
+    )
+    debt_summary = build_dashboard_debt_summary(
+        debt_cards,
+        as_of=today,
+        balance_by_account=balance_by_account,
+    )
     phase_end(timer, _phase_widgets)
 
     from insights.services.dashboard_insights import build_dashboard_insights
@@ -1590,9 +1777,16 @@ def _build_dashboard_summary(
         today=today,
         goals=snapshot_goal_rows,
         mtd_net=None,
+        balance_by_account=balance_by_account,
+        prior_balance_by_account=prior_balance_by_account,
     )
 
-    top_summary = _compute_top_summary(snapshot_accounts, snapshot, today=today)
+    top_summary = _compute_top_summary(
+        snapshot_accounts,
+        snapshot,
+        today=today,
+        balance_by_account=balance_by_account,
+    )
     phase_end(timer, _phase_snapshot)
 
     _log_dashboard_build_perf(
@@ -1606,7 +1800,11 @@ def _build_dashboard_summary(
         "lowest_projected_cash": lowest_projected_cash,
         "safe_to_spend": legacy_safe_to_spend,
         "top_summary": top_summary,
-        "net_worth": _compute_net_worth(net_worth_accounts, today=today),
+        "net_worth": _compute_net_worth(
+            net_worth_accounts,
+            today=today,
+            balance_by_account=balance_by_account,
+        ),
         "month_to_date": mtd,
         "attention": attention,
         "attention_total_count": len(attention_all),

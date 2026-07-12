@@ -68,12 +68,24 @@ def _minimum_payment(card: Account, balance: Decimal) -> Decimal:
     return _quantize(max(Decimal("25"), balance * Decimal("0.02")))
 
 
-def _load_card_states(cards: list[Account], *, as_of: date) -> list[CardState]:
+def _load_card_states(
+    cards: list[Account],
+    *,
+    as_of: date,
+    balance_by_account: dict | None = None,
+) -> list[CardState]:
     states: list[CardState] = []
     for card in cards:
         if not card.is_credit_card():
             continue
-        owed = ledger_owed_balance(card, as_of)
+        if balance_by_account is not None:
+            from accounts.services.balances import credit_owed_from_signed_balance
+
+            owed = credit_owed_from_signed_balance(
+                balance_by_account.get(card.pk, Decimal("0"))
+            )
+        else:
+            owed = ledger_owed_balance(card, as_of)
         if owed < 0:
             owed = Decimal("0")
         limit = Decimal(str(card.credit_limit or 0))
@@ -156,6 +168,7 @@ def simulate_household_debt(
     as_of: date | None = None,
     max_months: int = 360,
     _skip_baseline: bool = False,
+    balance_by_account: dict | None = None,
 ) -> dict[str, Any]:
     today = as_of or date.today()
     if strategy not in DEBT_STRATEGIES:
@@ -163,7 +176,11 @@ def simulate_household_debt(
     if mode not in PAYOFF_MODES:
         mode = "aggressive"
 
-    states = _load_card_states(cards, as_of=today)
+    states = _load_card_states(
+        cards,
+        as_of=today,
+        balance_by_account=balance_by_account,
+    )
     if not states:
         return _empty_plan(today, paid_off=True)
 
@@ -278,6 +295,7 @@ def simulate_household_debt(
         debt_free_date,
         total_interest,
         planned_monthly_payments=first_month_planned,
+        balance_by_account=balance_by_account,
     )
     milestones = _build_milestones(states, cards, timeline, payoff_order, today)
     recommendations = _build_recommendations(
@@ -285,7 +303,12 @@ def simulate_household_debt(
     )
     utilization_forecast = _utilization_forecast(states, timeline)
 
-    total_debt = sum(_quantize(ledger_owed_balance(c, today)) for c in cards if c.is_credit_card())
+    if balance_by_account is not None:
+        total_debt = sum((s.balance for s in states), Decimal("0"))
+    else:
+        total_debt = sum(
+            _quantize(ledger_owed_balance(c, today)) for c in cards if c.is_credit_card()
+        )
     weighted_apr = _weighted_apr(states)
     return {
         "as_of": today.isoformat(),
@@ -331,6 +354,7 @@ def _build_card_summaries(
     total_interest: Decimal,
     *,
     planned_monthly_payments: dict[int, Decimal] | None = None,
+    balance_by_account: dict | None = None,
 ) -> list[dict[str, Any]]:
     state_by_id = {s.account.pk: s for s in final_states}
     order_rank = {aid: i + 1 for i, aid in enumerate(payoff_order)}
@@ -339,7 +363,14 @@ def _build_card_summaries(
     for card in all_cards:
         if not card.is_credit_card():
             continue
-        owed = ledger_owed_balance(card, today)
+        if balance_by_account is not None:
+            from accounts.services.balances import credit_owed_from_signed_balance
+
+            owed = credit_owed_from_signed_balance(
+                balance_by_account.get(card.pk, Decimal("0"))
+            )
+        else:
+            owed = ledger_owed_balance(card, today)
         if owed <= 0 and card.pk not in payoff_order:
             continue
         st = state_by_id.get(card.pk)
@@ -526,13 +557,19 @@ def _empty_plan(today: date, *, paid_off: bool = False) -> dict[str, Any]:
     }
 
 
-def build_dashboard_debt_summary(cards: list[Account], *, as_of: date | None = None) -> dict[str, Any]:
+def build_dashboard_debt_summary(
+    cards: list[Account],
+    *,
+    as_of: date | None = None,
+    balance_by_account: dict | None = None,
+) -> dict[str, Any]:
     plan = simulate_household_debt(
         cards,
         strategy="avalanche",
         mode="aggressive",
         extra_monthly=Decimal("100"),
         as_of=as_of,
+        balance_by_account=balance_by_account,
     )
     label = "No credit card debt"
     if Decimal(plan.get("total_debt") or 0) > 0:
