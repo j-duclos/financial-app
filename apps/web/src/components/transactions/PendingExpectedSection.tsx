@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import type { TimelineRow } from "@budget-app/shared";
-import TransactionRow, { timelineRowToData } from "./TransactionRow";
+import TransactionRow, { canSelectTransactionForBatchDelete, timelineRowToData } from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LedgerColumnHeader,
@@ -28,6 +29,9 @@ type Props = {
   onMatchRow: (row: TimelineRow) => void;
   onDeleteRow: (row: TimelineRow) => void;
   actionsPending: boolean;
+  selectedIds: Set<number>;
+  onToggleSelected: (transactionId: number, selected: boolean) => void;
+  onSetSelectedIds: (ids: number[], selected: boolean) => void;
 };
 
 /**
@@ -47,8 +51,28 @@ export default function PendingExpectedSection({
   onMatchRow,
   onDeleteRow,
   actionsPending,
+  selectedIds,
+  onToggleSelected,
+  onSetSelectedIds,
 }: Props) {
-  const displayable = pending.filter((row) => row.type === "transaction_from_timeline");
+  const displayable = useMemo(
+    () => pending.filter((row) => row.type === "transaction_from_timeline"),
+    [pending]
+  );
+  const selectableIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const row of displayable) {
+      const data = timelineRowToData(row.row, row.balance, "expected");
+      if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+        ids.push(data.transactionId);
+      }
+    }
+    return ids;
+  }, [displayable]);
+  const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
+  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
+  const someSelected = selectedInSection > 0 && !allSelected;
+
   if (displayable.length === 0 || hiddenByPast) return null;
 
   return (
@@ -62,7 +86,13 @@ export default function PendingExpectedSection({
           tone="entry"
           className="border-b-0 text-blue-900"
         />
-        <LedgerColumnHeader className="bg-blue-50/80 border-blue-100" />
+        <LedgerColumnHeader
+          className="bg-blue-50/80 border-blue-100"
+          selectAllChecked={allSelected}
+          selectAllIndeterminate={someSelected}
+          selectAllDisabled={actionsPending || selectableIds.length === 0}
+          onSelectAllChange={(checked) => onSetSelectedIds(selectableIds, checked)}
+        />
       </div>
 
       <div
@@ -98,6 +128,10 @@ export default function PendingExpectedSection({
                 showMatch
                 onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                 actionsDisabled={actionsPending}
+                selected={
+                  data.transactionId != null ? selectedIds.has(data.transactionId) : false
+                }
+                onSelectedChange={onToggleSelected}
               />
             );
           })}

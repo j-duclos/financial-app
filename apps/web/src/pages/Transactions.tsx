@@ -157,6 +157,9 @@ export default function Transactions() {
   const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<Set<number>>(
+    () => new Set()
+  );
   const [matchDialog, setMatchDialog] = useState<{
     transactionId: number;
     label: string;
@@ -375,6 +378,10 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsTimeFilter(timeFilter);
   }, [timeFilter]);
+
+  useEffect(() => {
+    setSelectedTransactionIds(new Set());
+  }, [accountId]);
 
   useEffect(() => {
     saveStoredTransactionsForecastRange(forecastRange);
@@ -1357,6 +1364,34 @@ export default function Transactions() {
     },
   });
 
+  const batchDeleteMu = useMutation({
+    mutationFn: async (ids: number[]) => {
+      const results = await Promise.allSettled(ids.map((id) => deleteTransaction(id)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const deleted = ids.length - failed;
+      return { deleted, failed, total: ids.length };
+    },
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+    },
+    onSuccess: (result) => {
+      setSelectedTransactionIds(new Set());
+      if (result.failed > 0) {
+        setDeleteError(
+          `Deleted ${result.deleted} of ${result.total}; ${result.failed} could not be deleted (reconciled or locked).`
+        );
+      } else {
+        setDeleteError(null);
+      }
+      afterFinancialEdit({ refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setDeleteError(msg || "Failed to delete selected transactions");
+    },
+  });
+
   const skipOccurrenceMu = useMutation({
     mutationFn: skipTransactionOccurrence,
     onMutate: () => {
@@ -1433,13 +1468,15 @@ export default function Transactions() {
     confirmMu.isPending ||
     moveDateMu.isPending ||
     matchMu.isPending ||
-    deleteMu.isPending;
+    deleteMu.isPending ||
+    batchDeleteMu.isPending;
 
   const balanceAffectingMutationPending =
     updateMu.isPending ||
     createMu.isPending ||
     createTransferMu.isPending ||
     deleteMu.isPending ||
+    batchDeleteMu.isPending ||
     skipOccurrenceMu.isPending ||
     confirmMu.isPending ||
     moveDateMu.isPending ||
@@ -1867,6 +1904,40 @@ export default function Transactions() {
     if (window.confirm(`Delete ${label}?`)) deleteMu.mutate(id);
   }
 
+  function toggleSelectedTransaction(id: number, selected: boolean) {
+    setSelectedTransactionIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function setSelectedTransactionGroup(ids: number[], selected: boolean) {
+    setSelectedTransactionIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  function confirmBatchDelete() {
+    const ids = Array.from(selectedTransactionIds);
+    if (ids.length === 0) return;
+    setDeleteError(null);
+    const noun = ids.length === 1 ? "transaction" : "transactions";
+    if (
+      window.confirm(
+        `Delete ${ids.length} selected ${noun}? This cannot be undone. Reconciled rows will be skipped.`
+      )
+    ) {
+      batchDeleteMu.mutate(ids);
+    }
+  }
+
   function confirmSkipOccurrence(id: number, label: string) {
     setDeleteError(null);
     if (
@@ -2064,6 +2135,34 @@ export default function Transactions() {
         </div>
       )}
 
+      {selectedTransactionIds.size > 0 && (
+        <div className="mb-3 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 shadow-sm">
+          <span className="font-medium">
+            {selectedTransactionIds.size} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedTransactionIds(new Set())}
+              disabled={batchDeleteMu.isPending}
+              className="rounded border border-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={confirmBatchDelete}
+              disabled={batchDeleteMu.isPending}
+              className="rounded bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {batchDeleteMu.isPending
+                ? "Deleting…"
+                : `Delete ${selectedTransactionIds.size} selected`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {!accountId ? (
         <div className="flex-1 flex items-center justify-center text-gray-500">
           Select an account to view the transaction ledger
@@ -2130,7 +2229,10 @@ export default function Transactions() {
             onDuplicate={duplicateTransaction}
             onDeleteRow={confirmDeleteRow}
             onDelete={confirmDelete}
-            deletePending={deleteMu.isPending}
+            deletePending={deleteMu.isPending || batchDeleteMu.isPending}
+            selectedIds={selectedTransactionIds}
+            onToggleSelected={toggleSelectedTransaction}
+            onSetSelectedIds={setSelectedTransactionGroup}
           />
 
           {ledgerSections.pending.length > 0 ? (
@@ -2147,6 +2249,9 @@ export default function Transactions() {
               onMatchRow={openMatchExpectedRow}
               onDeleteRow={confirmDeleteRow}
               actionsPending={forecastActionsLocked}
+              selectedIds={selectedTransactionIds}
+              onToggleSelected={toggleSelectedTransaction}
+              onSetSelectedIds={setSelectedTransactionGroup}
             />
           ) : null}
 
@@ -2201,6 +2306,9 @@ export default function Transactions() {
                 ? parseFloat(String(account.minimum_buffer))
                 : null
             }
+            selectedIds={selectedTransactionIds}
+            onToggleSelected={toggleSelectedTransaction}
+            onSetSelectedIds={setSelectedTransactionGroup}
           />
         </div>
       )}

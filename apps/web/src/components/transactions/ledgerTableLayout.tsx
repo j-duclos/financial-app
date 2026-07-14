@@ -17,9 +17,9 @@ export function ledgerSectionExpandTooltip(
   return "Expand forecast to full height (past shrinks to header)";
 }
 
-/** Shared column grid: Date | Type | Description | Kind | Category | Amount | Balance | actions */
+/** Shared column grid: Select | Date | Type | Description | Kind | Category | Amount | Balance | actions */
 export const LEDGER_TABLE_GRID =
-  "grid grid-cols-[8.5rem_2.5rem_minmax(14rem,1fr)_5rem_minmax(6rem,12rem)_6.5rem_6.5rem_2.75rem] gap-x-3 items-center w-full";
+  "grid grid-cols-[1.5rem_8.5rem_2.5rem_minmax(14rem,1fr)_5rem_minmax(6rem,12rem)_6.5rem_6.5rem_2.75rem] gap-x-3 items-center w-full";
 
 type SectionHeaderProps = {
   title: string;
@@ -97,6 +97,10 @@ export function LedgerColumnHeader({
   hideBalance = false,
   hideKind = false,
   hideType = false,
+  selectAllChecked = false,
+  selectAllIndeterminate = false,
+  onSelectAllChange,
+  selectAllDisabled = false,
 }: {
   className?: string;
   /** Center labels (new-transaction entry row) */
@@ -107,6 +111,10 @@ export function LedgerColumnHeader({
   hideKind?: boolean;
   /** New-transaction row has no type column label */
   hideType?: boolean;
+  selectAllChecked?: boolean;
+  selectAllIndeterminate?: boolean;
+  onSelectAllChange?: (checked: boolean) => void;
+  selectAllDisabled?: boolean;
 }) {
   const label = centered ? "text-center" : "";
   const amountLabel = centered ? "text-center" : "text-right";
@@ -114,6 +122,23 @@ export function LedgerColumnHeader({
     <div
       className={`${LEDGER_TABLE_GRID} px-4 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100 bg-white ${className}`}
     >
+      {onSelectAllChange ? (
+        <span className="flex justify-center">
+          <input
+            type="checkbox"
+            checked={selectAllChecked}
+            ref={(el) => {
+              if (el) el.indeterminate = selectAllIndeterminate && !selectAllChecked;
+            }}
+            onChange={(e) => onSelectAllChange(e.target.checked)}
+            disabled={selectAllDisabled}
+            aria-label="Select all deletable transactions"
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+          />
+        </span>
+      ) : (
+        <span aria-hidden />
+      )}
       <span className={label}>Date</span>
       {hideType ? <span aria-hidden /> : <span className={`${label} text-center`}>Type</span>}
       <span className={label}>Description</span>

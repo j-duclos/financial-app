@@ -26,6 +26,11 @@ export type TransactionRowData = {
   readOnly?: boolean;
 };
 
+/** Rows with a real transaction id that are not reconciled / read-only interest. */
+export function canSelectTransactionForBatchDelete(row: TransactionRowData): boolean {
+  return row.transactionId != null && !row.reconciled && !row.readOnly;
+}
+
 type Props = {
   row: TransactionRowData;
   variant: "past" | "future" | "expected";
@@ -40,6 +45,9 @@ type Props = {
   onMatch?: () => void;
   showMatch?: boolean;
   actionsDisabled?: boolean;
+  /** Multi-select for batch delete. */
+  selected?: boolean;
+  onSelectedChange?: (transactionId: number, selected: boolean) => void;
   /** Row background / border styling (forecast buffer/risk or schedule highlight). */
   rowSurface?: ForecastRowSeverityClasses;
   /** Tooltip when a scheduled row is highlighted as unmatched vs later imports. */
@@ -119,6 +127,8 @@ export default function TransactionRow({
   onMatch,
   showMatch,
   actionsDisabled,
+  selected = false,
+  onSelectedChange,
   rowSurface,
   scheduleHighlightTitle,
 }: Props) {
@@ -127,6 +137,7 @@ export default function TransactionRow({
   const abs = Math.abs(row.amount);
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);
   const clickable = Boolean(onEdit) && !row.readOnly;
+  const selectable = canSelectTransactionForBatchDelete(row);
   const kind = resolveTransactionKind({
     type: row.source.type,
     direction: row.source.direction,
@@ -139,6 +150,7 @@ export default function TransactionRow({
   const surfaceClasses = rowSurface
     ? `${rowSurface.backgroundClass} ${rowSurface.hoverClass} ${rowSurface.borderClass}`
     : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
+  const selectedSurface = selected ? "bg-blue-50/70" : "";
 
   return (
     <article
@@ -154,8 +166,22 @@ export default function TransactionRow({
           onEdit?.();
         }
       }}
-      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${surfaceClasses} ${clickable ? "cursor-pointer" : ""}`}
+      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${surfaceClasses} ${selectedSurface} ${clickable ? "cursor-pointer" : ""}`}
     >
+      <span className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+        {onSelectedChange && selectable && row.transactionId != null ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(e) => onSelectedChange(row.transactionId!, e.target.checked)}
+            disabled={actionsDisabled}
+            aria-label={`Select ${row.payee}`}
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+          />
+        ) : (
+          <span aria-hidden className="h-3.5 w-3.5" />
+        )}
+      </span>
       <time className="text-xs text-gray-500 tabular-nums">{formatDateDisplay(row.date)}</time>
       <div className="flex justify-center">
         <TransactionStatusIcons

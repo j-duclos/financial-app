@@ -1,6 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useMemo, useRef, useEffect } from "react";
 import { formatCurrency } from "@budget-app/shared";
-import TransactionRow, { timelineRowToData, transactionToData } from "./TransactionRow";
+import TransactionRow, {
+  canSelectTransactionForBatchDelete,
+  timelineRowToData,
+  transactionToData,
+} from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LEDGER_TABLE_GRID,
@@ -38,6 +42,9 @@ type Props = {
   onDeleteRow: (row: import("@budget-app/shared").TimelineRow) => void;
   onDelete: (transactionId: number, label: string) => void;
   deletePending: boolean;
+  selectedIds: Set<number>;
+  onToggleSelected: (transactionId: number, selected: boolean) => void;
+  onSetSelectedIds: (ids: number[], selected: boolean) => void;
 };
 
 export default function PastSection({
@@ -58,12 +65,37 @@ export default function PastSection({
   onDeleteRow,
   onDelete,
   deletePending,
+  selectedIds,
+  onToggleSelected,
+  onSetSelectedIds,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fmtBal = (bal: number) => formatCurrency(bal, currency);
   const creditClass = (bal: number) => creditBalanceColorClass(isCredit, bal);
 
   const showBody = !minimized;
+
+  const selectableIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const row of past) {
+      if (row.type === "transaction_from_timeline") {
+        const data = timelineRowToData(row.row, row.balance, "past");
+        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+          ids.push(data.transactionId);
+        }
+      } else if (row.type === "transaction") {
+        const data = transactionToData(row.txn, row.balance);
+        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+          ids.push(data.transactionId);
+        }
+      }
+    }
+    return ids;
+  }, [past]);
+
+  const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
+  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
+  const someSelected = selectedInSection > 0 && !allSelected;
 
   useEffect(() => {
     if (!showBody) return;
@@ -96,7 +128,13 @@ export default function PastSection({
       />
       {showBody && (
         <>
-          <LedgerColumnHeader className="shrink-0" />
+          <LedgerColumnHeader
+            className="shrink-0"
+            selectAllChecked={allSelected}
+            selectAllIndeterminate={someSelected}
+            selectAllDisabled={deletePending || selectableIds.length === 0}
+            onSelectAllChange={(checked) => onSetSelectedIds(selectableIds, checked)}
+          />
           <div
             ref={scrollRef}
             className={`ledger-scroll overflow-y-auto overscroll-y-contain border-b border-gray-100 ${
@@ -110,6 +148,7 @@ export default function PastSection({
           >
             {start?.type === "starting_balance" && (
               <div className={`${LEDGER_TABLE_GRID} px-4 py-2 bg-gray-50 border-b border-gray-100 text-sm`}>
+                <span aria-hidden />
                 <span className="text-gray-400 text-xs">—</span>
                 <span aria-hidden />
                 <span className="font-medium text-gray-600">Starting Balance</span>
@@ -159,6 +198,10 @@ export default function PastSection({
                       }
                       onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                       actionsDisabled={deletePending}
+                      selected={
+                        data.transactionId != null ? selectedIds.has(data.transactionId) : false
+                      }
+                      onSelectedChange={onToggleSelected}
                     />
                   );
                 }
@@ -179,6 +222,8 @@ export default function PastSection({
                           : () => onDelete(row.txn.id, row.txn.payee)
                       }
                       actionsDisabled={deletePending}
+                      selected={selectedIds.has(row.txn.id)}
+                      onSelectedChange={onToggleSelected}
                     />
                   );
                 }

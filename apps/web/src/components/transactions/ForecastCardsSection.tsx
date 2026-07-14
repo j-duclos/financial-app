@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
-import TransactionRow, { timelineRowToData, transactionToData } from "./TransactionRow";
+import TransactionRow, {
+  canSelectTransactionForBatchDelete,
+  timelineRowToData,
+  transactionToData,
+} from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LedgerColumnHeader,
@@ -41,6 +45,9 @@ type Props = {
   onDeleteTransaction: (transactionId: number, label: string) => void;
   deletePending: boolean;
   minimumBuffer: number | null;
+  selectedIds: Set<number>;
+  onToggleSelected: (transactionId: number, selected: boolean) => void;
+  onSetSelectedIds: (ids: number[], selected: boolean) => void;
 };
 
 export default function ForecastCardsSection({
@@ -60,6 +67,9 @@ export default function ForecastCardsSection({
   onDeleteTransaction,
   deletePending,
   minimumBuffer,
+  selectedIds,
+  onToggleSelected,
+  onSetSelectedIds,
 }: Props) {
   const forecastRows = useMemo(
     () =>
@@ -69,6 +79,27 @@ export default function ForecastCardsSection({
       ),
     [future]
   );
+
+  const selectableIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const row of forecastRows) {
+      if (row.type === "transaction") {
+        const data = transactionToData(row.txn, row.balance);
+        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+          ids.push(data.transactionId);
+        }
+      } else {
+        const data = timelineRowToData(row.row, row.balance, "future");
+        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+          ids.push(data.transactionId);
+        }
+      }
+    }
+    return ids;
+  }, [forecastRows]);
+  const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
+  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
+  const someSelected = selectedInSection > 0 && !allSelected;
 
   const showBody = !hiddenByPast;
   const sectionClass = hiddenByPast ? "flex-none shrink-0" : "flex-1 min-h-0";
@@ -91,7 +122,15 @@ export default function ForecastCardsSection({
           expandChevron="forecast"
           className="border-b-0"
         />
-        {showBody && <LedgerColumnHeader className="bg-amber-50/80 border-amber-100" />}
+        {showBody && (
+          <LedgerColumnHeader
+            className="bg-amber-50/80 border-amber-100"
+            selectAllChecked={allSelected}
+            selectAllIndeterminate={someSelected}
+            selectAllDisabled={deletePending || selectableIds.length === 0}
+            onSelectAllChange={(checked) => onSetSelectedIds(selectableIds, checked)}
+          />
+        )}
       </div>
 
       {showBody && (
@@ -127,6 +166,8 @@ export default function ForecastCardsSection({
                           : undefined
                       }
                       actionsDisabled={deletePending}
+                      selected={selectedIds.has(row.txn.id)}
+                      onSelectedChange={onToggleSelected}
                     />
                   );
                 }
@@ -173,6 +214,10 @@ export default function ForecastCardsSection({
                     onSkip={editable ? () => onSkipRow(row.row) : undefined}
                     onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                     actionsDisabled={deletePending}
+                    selected={
+                      data.transactionId != null ? selectedIds.has(data.transactionId) : false
+                    }
+                    onSelectedChange={onToggleSelected}
                   />
                 );
               })}

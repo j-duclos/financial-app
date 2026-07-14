@@ -85,6 +85,7 @@ export default function InlineAddRow({
         }}
       >
         <div className={`${LEDGER_TABLE_GRID} px-4 py-2 bg-blue-50/30 border-b border-blue-100`}>
+          <span aria-hidden />
           <input
             type="date"
             value={form.date}
