@@ -208,22 +208,24 @@ def _create_plaid_sync_transaction(
     account_pk: int,
     pid: str,
     defaults: dict[str, Any],
-) -> Transaction:
-    """Insert a new Plaid row from /transactions/sync (never skip locked reconcile dates)."""
+) -> Transaction | None:
+    """
+    Insert a new Plaid row from /transactions/sync.
+
+    Hard rule: never import on or before the account's last reconciled period end.
+    Returns None when the date is locked (caller must not count it as added).
+    """
     account = Account.objects.filter(pk=account_pk).first()
     txn_date = defaults["date"]
-    locked = bool(account and is_import_date_locked(account, txn_date))
-    # #region agent log
-    import json as _json, time as _time
-    try:
-        _rec_twin = Transaction.objects.filter(
-            account_id=account_pk, reconciled=True, date=txn_date, amount=defaults["amount"]
-        ).exclude(plaid_transaction_id=pid).count()
-        with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
-            _f.write(_json.dumps({"sessionId": "d6b188", "location": "plaid_link/services.py:_create_plaid_sync_transaction", "message": "creating plaid import", "data": {"account_pk": account_pk, "pid": pid, "date": str(txn_date), "amount": str(defaults["amount"]), "payee": (defaults.get("payee") or "")[:80], "locked": locked, "locked_through": str(import_locked_through_date(account)) if account else None, "reconciled_twin_count": _rec_twin}, "hypothesisId": "A", "timestamp": int(_time.time() * 1000)}) + "\n")
-    except Exception:
-        pass
-    # #endregion
+    if account and is_import_date_locked(account, txn_date):
+        logger.info(
+            "Skipping new Plaid import %s on %s for account %s — reconciled through %s",
+            pid,
+            txn_date,
+            account_pk,
+            import_locked_through_date(account),
+        )
+        return None
     if bank_movement_already_on_ledger(
         account_id=account_pk,
         txn_date=defaults["date"],
@@ -242,8 +244,8 @@ def backfill_missing_plaid_imports(plaid_item: PlaidItem) -> dict[str, int]:
     """
     Create Plaid rows that exist at Plaid but are missing locally.
 
-    When sync previously skipped new posts inside a reconciled period, the cursor still
-    advanced — incremental sync will never replay those rows. A full history scan fixes that.
+    Only imports dated after the account's last reconciled period end — closed periods
+    are a hard cutoff.
     """
     client = get_plaid_client()
     access_token = decrypt_plaid_access_token(plaid_item.access_token_cipher)
@@ -274,7 +276,11 @@ def backfill_missing_plaid_imports(plaid_item: PlaidItem) -> dict[str, int]:
             pid = defaults.pop("plaid_transaction_id")
             if Transaction.objects.filter(plaid_transaction_id=pid).exists():
                 continue
-            _create_plaid_sync_transaction(account_pk=account_pk, pid=pid, defaults=defaults)
+            created = _create_plaid_sync_transaction(
+                account_pk=account_pk, pid=pid, defaults=defaults
+            )
+            if created is None:
+                continue
             added += 1
         cursor = data.get("next_cursor") or ""
         if not data.get("has_more"):
@@ -749,19 +755,23 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     _safe_match_imported_transaction(existing)
                     continue
 
-                # New bank posts must always be stored. Skipping them on locked reconcile
-                # dates dropped cursor-advanced Plaid rows (e.g. Exeterfina on the 2nd) while
-                # a later rule occurrence stayed pending.
-                # #region agent log
+                # Hard cutoff: last reconciled period end is the latest date we ever import.
                 if account and is_import_date_locked(account, defaults["date"]):
-                    import json as _json, time as _time
-                    try:
-                        with open("/Users/capone/Dev_work/.cursor/debug-d6b188.log", "a") as _f:
-                            _f.write(_json.dumps({"sessionId": "d6b188", "location": "plaid_link/services.py:run_sync_pages", "message": "adding NEW plaid row on locked date", "data": {"account_pk": account_pk, "pid": pid, "date": str(defaults["date"]), "amount": str(defaults["amount"]), "payee": (defaults.get("payee") or "")[:80], "locked_through": str(import_locked_through_date(account))}, "hypothesisId": "A", "timestamp": int(_time.time() * 1000)}) + "\n")
-                    except Exception:
-                        pass
-                # #endregion
-                _create_plaid_sync_transaction(account_pk=account_pk, pid=pid, defaults=defaults)
+                    skipped_reconciled_period += 1
+                    logger.info(
+                        "Skipping new Plaid import %s on %s for account %s — reconciled through %s",
+                        pid,
+                        defaults["date"],
+                        account_pk,
+                        import_locked_through_date(account),
+                    )
+                    continue
+                created = _create_plaid_sync_transaction(
+                    account_pk=account_pk, pid=pid, defaults=defaults
+                )
+                if created is None:
+                    skipped_reconciled_period += 1
+                    continue
                 added += 1
 
             cursor = next_cursor
@@ -818,6 +828,7 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
             if acc is not None:
                 sync_reconciled_ledger_integrity(acc)
             ensure_reconciled_plaid_ledger_visibility(account_id=aid)
+            suppress_plaid_imports_in_locked_periods(account_id=aid)
             reconcile_orphan_matched_plaid_imports(account_id=aid)
             repair_invalid_transaction_matches(account_id=aid)
             repair_mismatched_import_links(account_id=aid)

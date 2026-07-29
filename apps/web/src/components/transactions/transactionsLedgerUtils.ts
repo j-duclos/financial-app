@@ -716,43 +716,18 @@ export function buildLedgerRowsFromTimeline(
     pastOpeningOverride != null && Number.isFinite(pastOpeningOverride)
       ? hideReconciledOpeningBalance(pastOpeningOverride, isCredit)!
       : null;
-  const unreconciledAnchor =
-    postReconcileAnchor != null && Number.isFinite(postReconcileAnchor)
-      ? hideReconciledOpeningBalance(postReconcileAnchor, isCredit)!
-      : null;
+  // postReconcileAnchor kept for call-site compat; show-all must not jump to it mid-chain
+  // (that produced impossible math like -162.39 + 162.39 → +162.39).
+  void postReconcileAnchor;
 
   const pastLedgerRows: LedgerRow[] = [];
 
-  if (hideReconciledStart != null) {
-    let running = hideReconciledStart;
-    for (const r of past) {
-      running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
-      pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance: running });
-    }
-  } else {
-    let running: number | null = null;
-    let unreconciledChainStarted = false;
-    for (const r of past) {
-      const stored = storedReconciledBalanceDisplay(r.reconciled_balance, isCredit);
-      let balance: number;
-      if (r.reconciled && stored != null) {
-        balance = stored;
-        running = stored;
-      } else {
-        if (!unreconciledChainStarted && unreconciledAnchor != null) {
-          running = unreconciledAnchor;
-          unreconciledChainStarted = true;
-        } else if (running == null) {
-          running = configuredOpening;
-        }
-        running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
-        balance = running;
-        if (!r.reconciled) {
-          unreconciledChainStarted = true;
-        }
-      }
-      pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance });
-    }
+  // Always accumulate in date order. Never jump to stored reconciled_balance — those values
+  // can be wrong (credit sign / partial sessions) and break adjacent-row arithmetic.
+  let running = hideReconciledStart ?? configuredOpening;
+  for (const r of past) {
+    running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
+    pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance: running });
   }
 
   rows.push(...pastLedgerRows);

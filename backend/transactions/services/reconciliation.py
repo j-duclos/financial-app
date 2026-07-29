@@ -7,7 +7,7 @@ from typing import Any, Iterable, Optional
 
 from django.core.exceptions import ValidationError
 from django.db import transaction as db_transaction
-from django.db.models import Max, QuerySet, Sum
+from django.db.models import Max, Q, QuerySet, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -191,12 +191,59 @@ def is_import_date_locked(account: Account, txn_date: date) -> bool:
 
 def suppress_plaid_imports_in_locked_periods(*, account_id: int | None = None) -> int:
     """
-    Disabled — marking existing UNMATCHED imports DUPLICATE on locked dates hid legitimate
-    ledger rows (e.g. Capital One payments with no materialized ACTUAL twin).
+    Hide unreconciled Plaid-sourced rows dated on or before the last reconcile period end.
 
-    New Plaid posts on locked dates are stored at sync time; only modifications to existing rows are skipped.
+    Last reconciled date is a hard import cutoff — re-sync junk in a closed period must not
+    stay on the ledger. Reconciled rows are left alone. Manual ACTUAL leftovers (no Plaid id)
+    stay visible so the user can still delete/edit them.
     """
-    return 0
+    from accounts.models import Account
+
+    accounts = Account.objects.all()
+    if account_id is not None:
+        accounts = accounts.filter(pk=account_id)
+
+    suppressed = 0
+    for account in accounts.iterator():
+        cutoff = import_locked_through_date(account)
+        if cutoff is None:
+            continue
+        qs = Transaction.objects.filter(
+            account=account,
+            reconciled=False,
+            date__lte=cutoff,
+        ).filter(
+            Q(source=Transaction.Source.PLAID)
+            | (
+                Q(source=Transaction.Source.ACTUAL)
+                & ~Q(plaid_transaction_id__isnull=True)
+                & ~Q(plaid_transaction_id="")
+            )
+        ).exclude(
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.DUPLICATE,
+                Transaction.ImportMatchStatus.IGNORED,
+            ]
+        )
+        for txn in qs.iterator(chunk_size=200):
+            if TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists():
+                # Canonical matched import — keep visible even inside a locked window.
+                continue
+            txn.source = Transaction.Source.PLAID
+            txn.import_match_status = Transaction.ImportMatchStatus.DUPLICATE
+            txn.cleared = True
+            txn.status = Transaction.Status.CLEARED
+            txn.save(
+                update_fields=[
+                    "source",
+                    "import_match_status",
+                    "cleared",
+                    "status",
+                    "updated_at",
+                ]
+            )
+            suppressed += 1
+    return suppressed
 
 
 def is_all_reconciled_through_today(account: Account, as_of: Optional[date] = None) -> bool:
@@ -584,6 +631,7 @@ def sync_reconciled_ledger_integrity(
     )
 
     unsealed = unseal_surplus_reconciled_beyond_session_count(account)
+    locked_suppressed = suppress_plaid_imports_in_locked_periods(account_id=account.pk)
     suppressed = suppress_duplicate_plaid_imports_for_reconciled_transactions(
         account_id=account.pk
     )
@@ -591,12 +639,21 @@ def sync_reconciled_ledger_integrity(
     flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
     sealed = repair_unreconciled_in_last_closed_period(account) if seal_closed_period else 0
     matched = propagate_reconciled_status_to_match_legs(account_id=account.pk)
-    if unsealed or flags_from_entries or flags_from_fk or sealed or suppressed or matched:
+    if (
+        unsealed
+        or locked_suppressed
+        or flags_from_entries
+        or flags_from_fk
+        or sealed
+        or suppressed
+        or matched
+    ):
         from common.services.cache import invalidate_financial_cache_for_household
 
         invalidate_financial_cache_for_household(account.household_id)
     return {
         "unsealed_surplus": unsealed,
+        "locked_period_suppressed": locked_suppressed,
         "flags_from_entries": flags_from_entries,
         "flags_from_fk": flags_from_fk,
         "sealed": sealed,
@@ -849,10 +906,12 @@ def complete_reconciliation(
     )
     validate_no_overlapping_active_session(account, period_start, period_end)
     bank_current_balance = Decimal(str(bank_current_balance))
+    # Users enter credit "amount owed" as a positive number; store signed debt.
+    bank_current_balance = _normalize_credit_balance(account, bank_current_balance)
 
     prev = last_completed_reconciliation(account)
     if prev is not None:
-        opening_bal = prev.bank_current_balance
+        opening_bal = Decimal(str(prev.bank_current_balance))
     else:
         opening_bal = period_opening_balance(account, period_start)
     app_bal = app_current_balance(account, period_end)

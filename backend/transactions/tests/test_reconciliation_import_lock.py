@@ -172,7 +172,7 @@ class TestReconciledPeriodImportLock:
             )
         )
 
-    def test_suppress_never_hides_reconciled_plaid_in_locked_period(self, account, user):
+    def test_suppress_hides_unreconciled_plaid_in_locked_period(self, account, user):
         reconciled_cap_one = Transaction.objects.create(
             account=account,
             date=date(2026, 3, 26),
@@ -213,9 +213,16 @@ class TestReconciledPeriodImportLock:
         suppressed = suppress_plaid_imports_in_locked_periods(account_id=account.pk)
         reconciled_cap_one.refresh_from_db()
         stray.refresh_from_db()
-        assert suppressed == 0
+        assert suppressed == 1
         assert reconciled_cap_one.import_match_status != Transaction.ImportMatchStatus.DUPLICATE
-        assert stray.import_match_status == Transaction.ImportMatchStatus.UNMATCHED
+        assert stray.import_match_status == Transaction.ImportMatchStatus.DUPLICATE
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=account)).values_list(
+                "pk", flat=True
+            )
+        )
+        assert reconciled_cap_one.pk in visible
+        assert stray.pk not in visible
 
     def test_restore_duplicate_restores_reconciled_in_locked_period(self, account, user):
         cap_one = Transaction.objects.create(
@@ -284,7 +291,7 @@ class TestReconciledPeriodImportLock:
         assert restored == 1
         assert cap_one.import_match_status == Transaction.ImportMatchStatus.UNMATCHED
 
-    def test_suppress_is_disabled(self, account, user):
+    def test_suppress_hides_locked_date_resync_junk(self, account, user):
         anchor = post_transaction(
             user=user,
             account_id=account.pk,
@@ -310,6 +317,15 @@ class TestReconciledPeriodImportLock:
             plaid_transaction_id="plaid-cap-one-stray",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
-        assert suppress_plaid_imports_in_locked_periods(account_id=account.pk) == 0
+        assert suppress_plaid_imports_in_locked_periods(account_id=account.pk) == 1
         stray.refresh_from_db()
-        assert stray.import_match_status == Transaction.ImportMatchStatus.UNMATCHED
+        assert stray.import_match_status == Transaction.ImportMatchStatus.DUPLICATE
+        assert stray.pk not in set(
+            ledger_visible_transactions(Transaction.objects.filter(account=account)).values_list(
+                "pk", flat=True
+            )
+        )
+        # Restore must not resurrect locked-date junk.
+        assert restore_all_duplicate_plaid_imports(account_id=account.pk) == 0
+        stray.refresh_from_db()
+        assert stray.import_match_status == Transaction.ImportMatchStatus.DUPLICATE

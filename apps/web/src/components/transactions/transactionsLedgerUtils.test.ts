@@ -338,13 +338,63 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.past[1].balance).toBeCloseTo(-1171.96, 2);
   });
 
-  it("show-all uses stored reconciled_balance then anchors unreconciled chain at last reconcile", () => {
+  it("show-all accumulates sequentially and ignores bogus stored reconciled_balance", () => {
+    const rows = buildLedgerRowsFromTimeline(
+      [
+        {
+          date: "2026-05-02",
+          description: "INTEREST CHARGE-PURCHASES",
+          amount: "-4.08",
+          type: "OUTFLOW",
+          reconciled: true,
+          reconciled_balance: "-162.39",
+          account_id: 7,
+          status: "RECONCILED",
+        } as never,
+        {
+          date: "2026-05-13",
+          description: "CAPITAL ONE ONLINE PYMT",
+          amount: "162.39",
+          type: "INFLOW",
+          reconciled: true,
+          // Wrong stored value — must not win over sequential math.
+          reconciled_balance: "162.39",
+          account_id: 7,
+          status: "RECONCILED",
+        } as never,
+        {
+          date: "2026-07-02",
+          description: "SandBox Vr",
+          amount: "-346.02",
+          type: "OUTFLOW",
+          reconciled: false,
+          account_id: 7,
+          status: "CLEARED",
+        } as never,
+      ],
+      "2026-07-28",
+      158.31,
+      true,
+      null,
+      162.39
+    );
+    const sections = splitLedgerSections(rows);
+    // opening -158.31 + (-4.08) = -162.39
+    expect(sections.past[0].balance).toBeCloseTo(-162.39, 2);
+    // -162.39 + 162.39 = 0
+    expect(sections.past[1].balance).toBeCloseTo(0, 2);
+    // 0 - 346.02 = -346.02
+    expect(sections.past[2].balance).toBeCloseTo(-346.02, 2);
+  });
+
+  it("show-all walks from opening through reconciled and unreconciled rows", () => {
     const rows = buildLedgerRowsFromTimeline(
       [
         {
           date: "2026-06-02",
           description: "INTEREST CHARGE",
           amount: "-38.18",
+          type: "OUTFLOW",
           reconciled: true,
           reconciled_balance: "-1301.96",
           account_id: 6,
@@ -354,6 +404,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           date: "2026-06-03",
           description: "ED-3",
           amount: "-550.00",
+          type: "OUTFLOW",
           reconciled: false,
           account_id: 6,
           status: "CLEARED",
@@ -362,6 +413,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           date: "2026-06-11",
           description: "CAPITAL ONE ONLINE PYMT",
           amount: "200.00",
+          type: "INFLOW",
           reconciled: false,
           account_id: 6,
           status: "CLEARED",
@@ -370,18 +422,20 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           date: "2026-06-12",
           description: "Cox",
           amount: "-70.00",
+          type: "OUTFLOW",
           reconciled: false,
           account_id: 6,
           status: "CLEARED",
         } as never,
       ],
       "2026-06-30",
-      0,
+      1263.78,
       true,
       null,
       -1301.96
     );
     const sections = splitLedgerSections(rows);
+    // opening -1263.78 - 38.18 = -1301.96
     expect(sections.past[0].balance).toBeCloseTo(-1301.96, 2);
     expect(sections.past[1].balance).toBeCloseTo(-1851.96, 2);
     expect(sections.past[2].balance).toBeCloseTo(-1651.96, 2);

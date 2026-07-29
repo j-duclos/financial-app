@@ -2663,6 +2663,11 @@ def should_restore_duplicate_plaid_import(imp: Transaction) -> bool:
         session__is_active=True,
     ).exists():
         return True
+    # Closed reconcile periods are a hard import cutoff — do not resurrect locked-date junk.
+    from transactions.services.reconciliation import is_import_date_locked
+
+    if is_import_date_locked(imp.account, imp.date):
+        return False
     return not duplicate_plaid_import_has_visible_ledger_twin(imp)
 
 

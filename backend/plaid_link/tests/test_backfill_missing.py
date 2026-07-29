@@ -9,6 +9,7 @@ from accounts.models import Account
 from plaid_link.models import PlaidItem, PlaidLinkedAccount
 from plaid_link.services import backfill_missing_plaid_imports, sync_transactions_for_item
 from transactions.models import Transaction
+from transactions.services.matching import ledger_visible_transactions
 from transactions.services.posting import post_transaction
 from transactions.services.reconciliation import complete_reconciliation
 
@@ -92,6 +93,49 @@ class TestBackfillMissingPlaidImports:
 
     @patch("plaid_link.services.decrypt_plaid_access_token", return_value="token")
     @patch("plaid_link.services.get_plaid_client")
+    def test_backfill_skips_imports_on_or_before_reconciled_period(
+        self, mock_client, _mock_decrypt, plaid_item, user
+    ):
+        account = plaid_item.linked_accounts.first().account
+        anchor = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 7, 3),
+            payee="Coffee",
+            amount=Decimal("-4.00"),
+        )
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("996.00"),
+            checked_transaction_ids=[anchor.pk],
+            period_start=date(2026, 7, 3),
+            period_end=date(2026, 7, 3),
+            as_of=date(2026, 7, 3),
+        )
+
+        client = MagicMock()
+        mock_client.return_value = client
+        client.transactions_sync.return_value.to_dict.return_value = {
+            "added": [
+                _exeter_txn(txn_id="pl-exeter-locked", txn_date=date(2026, 7, 3)),
+                _exeter_txn(txn_id="pl-exeter-before", txn_date=date(2026, 7, 1)),
+                _exeter_txn(txn_id="pl-exeter-open", txn_date=date(2026, 7, 6)),
+            ],
+            "modified": [],
+            "removed": [],
+            "next_cursor": "cursor-done",
+            "has_more": False,
+        }
+
+        result = backfill_missing_plaid_imports(plaid_item)
+        assert result["backfill_added"] == 1
+        assert not Transaction.objects.filter(plaid_transaction_id="pl-exeter-locked").exists()
+        assert not Transaction.objects.filter(plaid_transaction_id="pl-exeter-before").exists()
+        assert Transaction.objects.filter(plaid_transaction_id="pl-exeter-open").exists()
+
+    @patch("plaid_link.services.decrypt_plaid_access_token", return_value="token")
+    @patch("plaid_link.services.get_plaid_client")
     @patch("plaid_link.services.reconcile_linked_account_ids_with_plaid")
     def test_sync_runs_backfill_after_incremental_pass(
         self, _mock_reconcile, mock_client, _mock_decrypt, plaid_item, user
@@ -142,3 +186,59 @@ class TestBackfillMissingPlaidImports:
         totals = sync_transactions_for_item(plaid_item)
         assert totals.get("backfill_added") == 1
         assert Transaction.objects.filter(plaid_transaction_id="pl-exeter-july-sync").exists()
+
+    @patch("plaid_link.services.decrypt_plaid_access_token", return_value="token")
+    @patch("plaid_link.services.get_plaid_client")
+    @patch("plaid_link.services.reconcile_linked_account_ids_with_plaid")
+    def test_sync_skips_new_imports_in_locked_period(
+        self, _mock_reconcile, mock_client, _mock_decrypt, plaid_item, user
+    ):
+        account = plaid_item.linked_accounts.first().account
+        amazon = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 3, 13),
+            payee="AMAZON MKTP",
+            amount=Decimal("-130.00"),
+        )
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("870.00"),
+            checked_transaction_ids=[amazon.pk],
+            period_start=date(2026, 3, 13),
+            period_end=date(2026, 3, 13),
+            as_of=date(2026, 3, 13),
+        )
+
+        client = MagicMock()
+        mock_client.return_value = client
+        client.transactions_sync.return_value.to_dict.return_value = {
+            "added": [
+                {
+                    "account_id": "pa-checking",
+                    "transaction_id": "pl-amazon-resync",
+                    "amount": 130.00,
+                    "date": "2026-03-13",
+                    "name": "Amazon",
+                    "merchant_name": "Amazon",
+                    "pending": False,
+                }
+            ],
+            "modified": [],
+            "removed": [],
+            "next_cursor": "cursor-done",
+            "has_more": False,
+        }
+        client.transactions_refresh.return_value = None
+
+        totals = sync_transactions_for_item(plaid_item)
+        assert totals.get("skipped_reconciled_period", 0) >= 1
+        assert not Transaction.objects.filter(plaid_transaction_id="pl-amazon-resync").exists()
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(
+                account=account, date=date(2026, 3, 13), amount=Decimal("-130.00")
+            )
+        )
+        assert visible.count() == 1
+        assert visible.first().pk == amazon.pk
