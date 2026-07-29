@@ -658,12 +658,24 @@ export type ImportMatchCandidate = {
   date: string;
   payee: string;
   amount: string;
+  reject?: string | null;
+};
+
+/** Why a nearby same-amount bank row is not offered as a candidate. */
+export type ImportMatchDiagnostic = {
+  transaction_id?: number;
+  date?: string;
+  payee?: string;
+  amount?: string;
+  source?: string;
+  import_match_status?: string;
+  reason: string;
 };
 
 /** Unmatched Plaid imports that could match this planned row. */
 export async function getTransactionImportCandidates(
   id: number
-): Promise<{ candidates: ImportMatchCandidate[] }> {
+): Promise<{ candidates: ImportMatchCandidate[]; diagnostics?: ImportMatchDiagnostic[] }> {
   return requestRequired(`/api/transactions/${id}/import-candidates/`);
 }
 

@@ -2080,10 +2080,48 @@ def _best_match_for_planned(planned: Transaction) -> tuple[Optional[Transaction]
     return best_imp, best_score
 
 
+def _materialized_bank_imports_for_planned(planned: Transaction) -> QuerySet[Transaction]:
+    """
+    Bank imports that ``materialize_unmatched_plaid_imports`` converted to source=ACTUAL.
+
+    These keep ``plaid_transaction_id`` and still render with the import icon, so the user sees a
+    bank row the expected-row match dialog must be able to offer (previously invisible because the
+    lookup required source=PLAID).
+    """
+    low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    return (
+        Transaction.objects.filter(
+            account_id=planned.account_id,
+            date__gte=low,
+            date__lte=high,
+            source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME],
+            scenario__isnull=True,
+        )
+        .exclude(pk=planned.pk)
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.IGNORED,
+                Transaction.ImportMatchStatus.DUPLICATE,
+            ]
+        )
+        .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+    )
+
+
 def find_import_candidates_for_planned(
     planned: Transaction,
 ) -> list[tuple[Transaction, int, dict[str, Any]]]:
-    """Return sorted Plaid imports that could fulfill this planned row."""
+    """
+    Return bank imports that could fulfill this planned row, best first.
+
+    Includes materialized imports (source=ACTUAL carrying a plaid id). Same account + exact amount
+    + date window are hard filters; weak payee text is reported via ``parts["reject"]`` rather than
+    dropped, because the user is explicitly choosing here (auto-match stays strict).
+    """
     if not _planned_row_eligible_as_import_match_candidate(planned):
         return []
     out: list[tuple[Transaction, int, dict[str, Any]]] = []
@@ -2091,6 +2129,7 @@ def find_import_candidates_for_planned(
     import_qs = (
         _unmatched_plaid_imports_for_planned(planned)
         | _sibling_matched_plaid_imports_for_planned(planned)
+        | _materialized_bank_imports_for_planned(planned)
     ).distinct()
     for imp in import_qs.select_related("account"):
         if imp.pk in seen:
@@ -2103,11 +2142,100 @@ def find_import_candidates_for_planned(
         if not _plaid_ids_compatible_for_match(imp, planned):
             continue
         sc, parts = score_candidate(imp, planned)
-        if sc <= 0:
-            continue
-        out.append((imp, sc, parts))
+        out.append((imp, max(sc, 0), parts))
     out.sort(key=lambda x: (-x[1], x[0].pk))
     return out
+
+
+def explain_import_candidate_exclusions(planned: Transaction) -> list[dict[str, Any]]:
+    """
+    Why nearby same-amount bank rows are not offered as candidates.
+
+    Powers the match dialog's empty state so "no imports found" is never a dead end.
+    """
+    if planned.amount is None:
+        return [{"reason": "planned_row_has_no_amount"}]
+    low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    offered = {imp.pk for imp, _sc, _parts in find_import_candidates_for_planned(planned)}
+    out: list[dict[str, Any]] = []
+
+    if not _planned_row_eligible_as_import_match_candidate(planned):
+        reason = "planned_row_not_eligible"
+        if (planned.plaid_transaction_id or "").strip():
+            reason = "planned_row_already_carries_a_bank_id"
+        elif TransactionMatch.objects.filter(planned_transaction_id=planned.pk).exists():
+            reason = "planned_row_already_matched"
+        out.append({"reason": reason})
+
+    nearby = (
+        Transaction.objects.filter(
+            account_id=planned.account_id,
+            date__gte=low,
+            date__lte=high,
+            amount=planned.amount,
+        )
+        .exclude(pk=planned.pk)
+        .select_related("account")
+        .order_by("date", "id")
+    )
+    for row in nearby:
+        if row.pk in offered:
+            continue
+        pid = (row.plaid_transaction_id or "").strip()
+        if not pid and row.source != Transaction.Source.PLAID:
+            reason = "not_a_bank_import"
+        elif TransactionMatch.objects.filter(imported_transaction_id=row.pk).exists():
+            reason = "already_matched_to_another_row"
+        elif TransactionMatch.objects.filter(planned_transaction_id=row.pk).exists():
+            reason = "already_matched_as_planned_row"
+        elif row.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+            reason = "marked_duplicate"
+        elif row.import_match_status == Transaction.ImportMatchStatus.IGNORED:
+            reason = "ignored_import"
+        elif row.reconciled:
+            reason = "reconciled"
+        elif not _plaid_ids_compatible_for_match(row, planned):
+            reason = "different_bank_transaction_id"
+        else:
+            reason = "excluded_by_candidate_filters"
+        out.append(
+            {
+                "transaction_id": row.pk,
+                "date": row.date.isoformat(),
+                "payee": row.payee,
+                "amount": str(row.amount),
+                "source": row.source,
+                "import_match_status": row.import_match_status,
+                "reason": reason,
+            }
+        )
+    return out
+
+
+def restore_materialized_import_to_plaid(row: Transaction) -> bool:
+    """
+    Flip a materialized bank row (source=ACTUAL + plaid id) back to source=PLAID.
+
+    Materialization is a display convenience; the row is genuinely a bank import, and match /
+    merge services require the import side to be source=PLAID.
+    """
+    if row.source == Transaction.Source.PLAID:
+        return False
+    if not (row.plaid_transaction_id or "").strip():
+        return False
+    if row.source not in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        return False
+    if row.rule_id or row.transfer_group_id:
+        return False
+    row.source = Transaction.Source.PLAID
+    if row.import_match_status in (
+        Transaction.ImportMatchStatus.NONE,
+        Transaction.ImportMatchStatus.DUPLICATE,
+    ):
+        row.import_match_status = Transaction.ImportMatchStatus.UNMATCHED
+    row.save(update_fields=["source", "import_match_status", "updated_at"])
+    return True
 
 
 def try_match_rule_to_pending_imports(planned: Transaction) -> Optional[TransactionMatch]:
@@ -2516,6 +2644,8 @@ def manual_match_transactions(
     imported = Transaction.objects.select_related("account").get(pk=imported_id)
     if planned.account.household_id != imported.account.household_id:
         raise ValueError("Accounts must belong to the same household.")
+    # Materialized imports (source=ACTUAL + plaid id) are bank rows the user can see and pick.
+    restore_materialized_import_to_plaid(imported)
     if imported.source != Transaction.Source.PLAID:
         raise ValueError("Imported side must be a Plaid transaction.")
 

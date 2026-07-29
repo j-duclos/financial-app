@@ -300,6 +300,81 @@ class ManualPlaidMergeTests(TestCase):
         existing.save(update_fields=["payee", "updated_at"])
         self.assertEqual(Transaction.objects.filter(plaid_transaction_id="pl-upd").count(), 1)
 
+    def test_materialized_import_is_offered_to_expected_row(self):
+        """Vivint case: import materialized to source=ACTUAL must still be matchable."""
+        from timeline.models import RecurringRule
+        from transactions.services.expected_lifecycle import match_expected_to_import
+        from transactions.services.matching import find_import_candidates_for_planned
+
+        rule = RecurringRule.objects.create(
+            household=self.h,
+            account=self.acc,
+            name="VIVINT INC/US CUSTOMERSUPPO UT 06/29",
+            amount=Decimal("-63.65"),
+            direction=RecurringRule.Direction.EXPENSE,
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            start_date=date(2026, 6, 29),
+        )
+        expected = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 29),
+            payee="VIVINT INC/US CUSTOMERSUPPO UT 06/29",
+            amount=Decimal("-63.65"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=rule,
+        )
+        materialized_import = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 29),
+            payee="Vivint",
+            amount=Decimal("-63.65"),
+            # materialize_unmatched_plaid_imports() flips source to ACTUAL, keeps the plaid id
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-vivint-jul29",
+            imported_description="VIVINT INC/US CUSTOMERSUPPO UT 07/29",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+
+        ranked = find_import_candidates_for_planned(expected)
+        self.assertEqual([imp.pk for imp, _sc, _p in ranked], [materialized_import.pk])
+
+        match_expected_to_import(expected, imported_id=materialized_import.pk, user=self.user)
+        expected.refresh_from_db()
+        materialized_import.refresh_from_db()
+        self.assertEqual(materialized_import.source, Transaction.Source.PLAID)
+        visible = set(
+            ledger_visible_transactions(
+                Transaction.objects.filter(account=self.acc, amount=Decimal("-63.65"))
+            ).values_list("pk", flat=True)
+        )
+        self.assertEqual(visible, {materialized_import.pk})
+
+    def test_diagnostics_explain_empty_candidate_list(self):
+        from transactions.services.matching import explain_import_candidate_exclusions
+
+        expected = Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 29),
+            payee="Vivint",
+            amount=Decimal("-63.65"),
+            source=Transaction.Source.ONE_TIME,
+            status=Transaction.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=self.acc,
+            date=date(2026, 7, 29),
+            payee="Vivint",
+            amount=Decimal("-63.65"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-vivint-dupe",
+            import_match_status=Transaction.ImportMatchStatus.DUPLICATE,
+        )
+        reasons = [d["reason"] for d in explain_import_candidate_exclusions(expected)]
+        self.assertIn("marked_duplicate", reasons)
+
     def test_plaid_txn_to_defaults_accepts_pending(self):
         defaults = _plaid_txn_to_defaults(
             {

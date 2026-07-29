@@ -30,6 +30,7 @@ from .services import (
 )
 from .services.immutability import reject_if_reconciled
 from .services.matching import (
+    explain_import_candidate_exclusions,
     find_candidate_matches,
     ignore_imported_transaction,
     manual_match_transactions,
@@ -584,21 +585,23 @@ class TransactionViewSet(ModelViewSet):
         """Unmatched Plaid imports that could match this planned row."""
         planned = self._get_lifecycle_transaction(pk)
         ranked = find_import_candidates_for_planned(planned)
-        return Response(
-            {
-                "candidates": [
-                    {
-                        "imported_transaction_id": imp.pk,
-                        "score": sc,
-                        "parts": parts,
-                        "date": imp.date.isoformat(),
-                        "payee": imp.payee,
-                        "amount": str(imp.amount),
-                    }
-                    for imp, sc, parts in ranked[:20]
-                ]
-            }
-        )
+        payload = {
+            "candidates": [
+                {
+                    "imported_transaction_id": imp.pk,
+                    "score": sc,
+                    "parts": parts,
+                    "date": imp.date.isoformat(),
+                    "payee": imp.payee,
+                    "amount": str(imp.amount),
+                    "reject": parts.get("reject"),
+                }
+                for imp, sc, parts in ranked[:20]
+            ]
+        }
+        if not payload["candidates"]:
+            payload["diagnostics"] = explain_import_candidate_exclusions(planned)[:20]
+        return Response(payload)
 
     @action(detail=True, methods=["post"], url_path="match")
     def match_import(self, request: Request, pk=None):
