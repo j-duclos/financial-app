@@ -1025,7 +1025,7 @@ class TestReconciliationSeal:
         assert t1.reconciled is True
         assert t1.reconciliation_id == rec.pk
 
-    def test_seal_all_rows_on_or_before_period_end(self, account, user):
+    def test_seal_rows_matching_statement_balance(self, account, user):
         opening = Decimal("1000.00")
         account.starting_balance = opening
         account.save(update_fields=["starting_balance"])
@@ -1052,6 +1052,13 @@ class TestReconciliationSeal:
                 amount=Decimal("-23.67"),
             ),
         ]
+        leftover = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 5, 20),
+            payee="Not on statement",
+            amount=Decimal("-99.00"),
+        )
         bank = opening + sum(t.amount for t in may_rows)
         rec = Reconciliation.objects.create(
             user=user,
@@ -1075,6 +1082,8 @@ class TestReconciliationSeal:
             txn.refresh_from_db()
             assert txn.reconciled is True, txn.payee
             assert txn.reconciliation_id == rec.pk
+        leftover.refresh_from_db()
+        assert leftover.reconciled is False
 
     def test_unreconcile_transactions_after_period_end(self, account, user):
         opening = Decimal("1000.00")
@@ -1094,7 +1103,8 @@ class TestReconciliationSeal:
             payee="After period",
             amount=Decimal("-25.00"),
         )
-        bank = opening + in_period.amount + after_period.amount
+        # Statement balance only includes in-period activity (after_period is next period).
+        bank = opening + in_period.amount
         rec = Reconciliation.objects.create(
             user=user,
             account=account,
@@ -1105,7 +1115,7 @@ class TestReconciliationSeal:
             difference=Decimal("0"),
             period_start_date=date(2026, 5, 1),
             period_end_date=date(2026, 6, 2),
-            transaction_count=2,
+            transaction_count=1,
             status=Reconciliation.Status.COMPLETED,
             is_active=True,
             completed_at=timezone.now(),
@@ -1133,4 +1143,62 @@ class TestReconciliationSeal:
         assert after_period.reconciled is False
         assert after_period.reconciliation_id is None
         assert in_period.reconciled is True
+
+    def test_complete_leaves_unchecked_editable_and_unseals_surplus(self, account, user):
+        """Partial complete must not lock leftovers; surplus seal-all entries are cleared."""
+        checked_a = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Deposit",
+            amount=Decimal("100.00"),
+        )
+        leftover = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Duplicate fee",
+            amount=Decimal("-50.00"),
+        )
+        checked_c = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 6, 1),
+            payee="Refund",
+            amount=Decimal("25.00"),
+        )
+        opening = last_reconciled_balance(account)
+        bank = opening + Decimal("125.00")
+        rec = complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=bank,
+            checked_transaction_ids=[checked_a.pk, checked_c.pk],
+            period_start=date(2026, 6, 1),
+            period_end=date(2026, 6, 1),
+        )
+        leftover.refresh_from_db()
+        assert leftover.reconciled is False
+
+        # Simulate prior seal-all bug: leftover was forced into the session.
+        leftover.reconciled = True
+        leftover.reconciliation = rec
+        leftover.reconciled_at = timezone.now()
+        leftover.status = Transaction.Status.RECONCILED
+        leftover.save(
+            update_fields=["reconciled", "reconciliation", "reconciled_at", "status"]
+        )
+        ReconciliationEntry.objects.create(
+            session=rec,
+            transaction=leftover,
+            reconciled_balance=bank,
+        )
+        from transactions.services.reconciliation import (
+            unseal_surplus_reconciled_beyond_session_count,
+        )
+
+        assert unseal_surplus_reconciled_beyond_session_count(account) == 1
+        leftover.refresh_from_db()
+        assert leftover.reconciled is False
+        assert leftover.reconciliation_id is None
 

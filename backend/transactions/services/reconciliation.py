@@ -574,7 +574,8 @@ def sync_reconciled_ledger_integrity(
     """
     Repair reconciled flags and hide re-imported Plaid duplicates.
 
-    Read paths (timeline, reconcile setup) must NOT call this — reconciled rows are immutable.
+    Read paths (timeline, reconcile setup) must NOT call seal — reconciled rows are immutable.
+    Unsealing surplus auto-sealed leftovers is safe on read paths (restores editability).
     seal_closed_period: only True from explicit reconcile-complete or the management command.
     """
     from .matching import (
@@ -582,6 +583,7 @@ def sync_reconciled_ledger_integrity(
         suppress_duplicate_plaid_imports_for_reconciled_transactions,
     )
 
+    unsealed = unseal_surplus_reconciled_beyond_session_count(account)
     suppressed = suppress_duplicate_plaid_imports_for_reconciled_transactions(
         account_id=account.pk
     )
@@ -589,11 +591,12 @@ def sync_reconciled_ledger_integrity(
     flags_from_fk = restore_reconciled_flags_from_reconciliation_link(account)
     sealed = repair_unreconciled_in_last_closed_period(account) if seal_closed_period else 0
     matched = propagate_reconciled_status_to_match_legs(account_id=account.pk)
-    if flags_from_entries or flags_from_fk or sealed or suppressed or matched:
+    if unsealed or flags_from_entries or flags_from_fk or sealed or suppressed or matched:
         from common.services.cache import invalidate_financial_cache_for_household
 
         invalidate_financial_cache_for_household(account.household_id)
     return {
+        "unsealed_surplus": unsealed,
         "flags_from_entries": flags_from_entries,
         "flags_from_fk": flags_from_fk,
         "sealed": sealed,
@@ -646,49 +649,86 @@ def _mark_transactions_reconciled_for_session(
             if pk not in existing
         ]
     )
+    entry_count = ReconciliationEntry.objects.filter(session=session).count()
+    if entry_count > (session.transaction_count or 0):
+        session.transaction_count = entry_count
+        session.save(update_fields=["transaction_count"])
+
+
+def unseal_surplus_reconciled_beyond_session_count(account: Account) -> int:
+    """
+    Undo seal-all leftovers: session entries beyond transaction_count from complete.
+
+    complete_reconciliation stores transaction_count = checked rows, then creates one
+    entry per checked id. A later seal-all appended entries for unchecked leftovers,
+    locking them incorrectly. Drop those surplus entries and clear their flags.
+    """
+    prev = last_completed_reconciliation(account)
+    if prev is None:
+        return 0
+    intentional = max(0, int(prev.transaction_count or 0))
+    entries = list(
+        ReconciliationEntry.objects.filter(session=prev).order_by("id", "pk")
+    )
+    if len(entries) <= intentional:
+        return 0
+    surplus = entries[intentional:]
+    surplus_entry_ids = [e.pk for e in surplus]
+    surplus_txn_ids = [e.transaction_id for e in surplus]
+    ReconciliationEntry.objects.filter(pk__in=surplus_entry_ids).delete()
+    updated = Transaction.objects.filter(pk__in=surplus_txn_ids, account=account).update(
+        reconciled=False,
+        reconciliation=None,
+        reconciled_at=None,
+        cleared=True,
+        status=Transaction.Status.CLEARED,
+    )
+    if updated:
+        from common.services.cache import invalidate_financial_cache_for_household
+
+        invalidate_financial_cache_for_household(account.household_id)
+    return updated
 
 
 def repair_unreconciled_in_last_closed_period(account: Account) -> int:
     """
-    Mark unreconciled rows belonging to the last closed statement as reconciled.
+    Seal unreconciled rows whose amounts complete the last closed statement balance.
 
-    Seals every ledger row on or before period_end, then any post-period imports whose
-    amounts complete the saved bank balance (import date skew after statement close).
+    Does not seal intentional unchecked leftovers from a partial reconcile — only rows
+    still needed to reach bank_current_balance (legacy sessions that never flagged rows,
+    or late imports whose amounts belong on the saved statement).
     """
     prev = last_completed_reconciliation(account)
     if prev is None or prev.period_end_date is None:
         return 0
-    period_end = prev.period_end_date
+    period_start = prev.period_start_date or prev.period_end_date
     opening = Decimal(str(prev.last_reconciled_balance))
     target = Decimal(str(prev.bank_current_balance))
-    now = timezone.now()
-    total = 0
-
-    through_end = list(
-        ledger_visible_transactions(
-            Transaction.objects.filter(
-                account=account,
-                reconciled=False,
-                date__lte=period_end,
-            )
-        ).order_by("date", "id")
+    already = Transaction.objects.filter(
+        account=account,
+        reconciliation=prev,
+        reconciled=True,
+    ).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"]
+    remaining_delta = target - opening - Decimal(str(already or 0))
+    ids = unreconciled_ids_through_balance_delta(
+        account,
+        period_start=period_start,
+        balance_delta=remaining_delta,
     )
-    if through_end:
-        ids = [t.pk for t in through_end]
-        _mark_transactions_reconciled_for_session(
-            account=account,
-            session=prev,
-            transaction_ids=ids,
-            opening_balance=opening,
-            reconciled_at=now,
-        )
-        total += len(ids)
+    if not ids:
+        return 0
+    now = timezone.now()
+    _mark_transactions_reconciled_for_session(
+        account=account,
+        session=prev,
+        transaction_ids=ids,
+        opening_balance=opening,
+        reconciled_at=now,
+    )
+    from common.services.cache import invalidate_financial_cache_for_household
 
-    if total:
-        from common.services.cache import invalidate_financial_cache_for_household
-
-        invalidate_financial_cache_for_household(account.household_id)
-    return total
+    invalidate_financial_cache_for_household(account.household_id)
+    return len(ids)
 
 
 def unreconcile_transactions_after_period_end(account: Account) -> int:
@@ -732,6 +772,8 @@ def get_setup_data(
     end: Optional[date] = None,
 ) -> dict[str, Any]:
     as_of = _as_of_date(as_of)
+    # Restore editability for leftovers incorrectly locked by seal-all (safe on read).
+    unseal_surplus_reconciled_beyond_session_count(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (
