@@ -148,6 +148,10 @@ def _resolve_transfer_pair(
 
 def _find_likely_transfer_counterpart(instance: Transaction, *, on_date) -> Optional[Transaction]:
     """When the Transfer row is missing, find the other leg by date, amount, and payee."""
+    from datetime import timedelta
+
+    from .rule_transfer_pairs import RULE_TRANSFER_DATE_SLACK_DAYS
+
     if instance.transfer_group_id:
         other = (
             Transaction.objects.filter(transfer_group_id=instance.transfer_group_id)
@@ -161,18 +165,78 @@ def _find_likely_transfer_counterpart(instance: Transaction, *, on_date) -> Opti
     abs_amt = abs(instance.amount)
     opp_amt = abs_amt if instance.amount < 0 else -abs_amt
     payee_root = (instance.payee or "").split("(")[0].strip()[:40]
-    qs = Transaction.objects.filter(
-        date=on_date,
+    base = Transaction.objects.filter(
         amount=opp_amt,
         account__household_id=instance.account.household_id,
     ).exclude(account_id=instance.account_id).exclude(pk=instance.pk)
     if instance.rule_id:
-        qs = qs.filter(rule_id=instance.rule_id)
+        base = base.filter(rule_id=instance.rule_id)
     else:
-        qs = qs.filter(source=Transaction.Source.ACTUAL)
+        base = base.filter(
+            source__in=[
+                Transaction.Source.ACTUAL,
+                Transaction.Source.RULE,
+                Transaction.Source.ONE_TIME,
+            ]
+        )
+    exact = base.filter(date=on_date)
     if payee_root:
-        qs = qs.filter(Q(payee__icontains=payee_root) | Q(payee__startswith=payee_root))
-    return qs.order_by("id").first()
+        hit = exact.filter(Q(payee__icontains=payee_root) | Q(payee__startswith=payee_root)).order_by("id").first()
+        if hit is not None:
+            return hit
+    hit = exact.order_by("id").first()
+    if hit is not None:
+        return hit
+    # Date moved on one leg only — still pair within a small window.
+    lo = on_date - timedelta(days=RULE_TRANSFER_DATE_SLACK_DAYS)
+    hi = on_date + timedelta(days=RULE_TRANSFER_DATE_SLACK_DAYS)
+    near = list(base.filter(date__gte=lo, date__lte=hi))
+    if not near:
+        return None
+    if payee_root:
+        payee_near = [
+            c
+            for c in near
+            if payee_root.lower() in (c.payee or "").lower()
+            or (c.payee or "").lower().startswith(payee_root.lower())
+        ]
+        if payee_near:
+            near = payee_near
+    return min(near, key=lambda t: (abs((t.date - on_date).days), t.pk))
+
+
+def _link_rule_transfer_pair_if_needed(instance: Transaction, other: Transaction) -> None:
+    """Persist TransferGroup so paired rule legs stay together on later edits."""
+    if instance.rule_id is None or other.rule_id is None or instance.rule_id != other.rule_id:
+        return
+    from timeline.models import RecurringRule
+    from timeline.services.ledger import _link_rule_transfer_pair_transactions
+
+    rule = RecurringRule.objects.filter(pk=instance.rule_id).first()
+    if rule is None or rule.transfer_to_account_id is None:
+        return
+    if instance.account_id == rule.account_id and other.account_id == rule.transfer_to_account_id:
+        txn_from, txn_to = instance, other
+    elif other.account_id == rule.account_id and instance.account_id == rule.transfer_to_account_id:
+        txn_from, txn_to = other, instance
+    else:
+        # Legs may have been retargeted; still link by sign.
+        if (instance.amount or 0) < 0:
+            txn_from, txn_to = instance, other
+        else:
+            txn_from, txn_to = other, instance
+    in_amount = abs(txn_to.amount or instance.amount or other.amount or Decimal("0"))
+    if in_amount <= 0:
+        return
+    _link_rule_transfer_pair_transactions(
+        rule=rule,
+        d=instance.date,
+        txn_from=txn_from,
+        txn_to=txn_to,
+        from_acc_id=txn_from.account_id,
+        to_acc_id=txn_to.account_id,
+        in_amount=in_amount,
+    )
 
 
 def _delete_stale_transfer_legs_on_date(
@@ -347,7 +411,7 @@ class TransactionViewSet(ModelViewSet):
         # select_related(transfer_out); without a refresh this row still looks unlinked in memory,
         # so pairing/sync and stale cleanup see the wrong counterpart — especially for rule
         # materializations that had no bridge before PATCH.
-        instance.refresh_from_db()
+        instance = Transaction.objects.select_related("account", "category").get(pk=instance.pk)
         new_date = serializer.validated_data.get("date")
         # If user explicitly cleared rule_id (PATCH null), skip this date on the rule and detach the paired leg.
         # Do not treat "rule_id omitted" on partial update as detach — validated_data.get("rule_id") would be None.
@@ -378,8 +442,11 @@ class TransactionViewSet(ModelViewSet):
                 .exclude(pk=instance.pk)
                 .first()
             )
-        if other is None and "date" in serializer.validated_data:
+        if other is None:
+            # Prefer the pre-edit date (leg may still sit there), then the saved date.
             other = _find_likely_transfer_counterpart(instance, on_date=old_date)
+            if other is None and instance.date != old_date:
+                other = _find_likely_transfer_counterpart(instance, on_date=instance.date)
 
         if other is None and instance.rule_id is not None:
             other = _ensure_rule_transfer_counterpart_after_update(
@@ -388,6 +455,11 @@ class TransactionViewSet(ModelViewSet):
                 old_amount=old_amount,
                 old_account_id=old_account_id,
             )
+
+        if other is not None and transfer is None and instance.rule_id is not None:
+            _link_rule_transfer_pair_if_needed(instance, other)
+            instance = Transaction.objects.select_related("account", "category").get(pk=instance.pk)
+            other.refresh_from_db()
 
         if other is not None:
             if (
@@ -404,7 +476,13 @@ class TransactionViewSet(ModelViewSet):
                     new_to = transfer_to_account_id
                     if new_to.pk != instance.account_id and getattr(new_to, "household_id", None) == instance.account.household_id:
                         Transaction.objects.filter(pk=other.pk).update(account=new_to)
-            if transfer is not None and transfer_to_account_id is not None:
+            # Destination retarget only when editing the paying (from) leg — never when the
+            # card/receiving side sent transfer_to_account_id as "Paid from".
+            if (
+                transfer is not None
+                and transfer_to_account_id is not None
+                and transfer.from_transaction_id == instance.pk
+            ):
                 new_to = transfer_to_account_id
                 if new_to.pk != instance.account_id and new_to.household_id == instance.account.household_id:
                     Transaction.objects.filter(pk=transfer.to_transaction_id).update(account=new_to)
@@ -459,39 +537,6 @@ class TransactionViewSet(ModelViewSet):
         data = dict(serializer.data)
         if other is not None:
             data["synced_to_account_id"] = other.account_id
-        # #region agent log
-        import json
-        import time
-
-        try:
-            with open("/Users/capone/Dev_work/.cursor/debug-88e096.log", "a") as _f:
-                _f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "88e096",
-                            "location": "transactions/views.py:update",
-                            "message": "transaction updated",
-                            "data": {
-                                "txn_id": instance.pk,
-                                "rule_id": instance.rule_id,
-                                "old_amount": str(old_amount),
-                                "new_amount": str(instance.amount),
-                                "response_amount": str(data.get("amount")),
-                                "old_date": str(old_date),
-                                "new_date": str(instance.date),
-                                "other_id": other.pk if other is not None else None,
-                                "other_amount": str(other.amount) if other is not None else None,
-                                "request_amount": str(request.data.get("amount")),
-                            },
-                            "timestamp": int(time.time() * 1000),
-                            "hypothesisId": "H4-H5",
-                        }
-                    )
-                    + "\n"
-                )
-        except OSError:
-            pass
-        # #endregion
         return Response(data)
 
     @action(detail=True, methods=["post"], url_path="confirm")

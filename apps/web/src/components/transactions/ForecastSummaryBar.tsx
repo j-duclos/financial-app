@@ -61,6 +61,13 @@ export default function ForecastSummaryBar({
         }`
       : "—";
 
+  const warningCount = householdWarnings.length;
+  const toggleLabel = expanded
+    ? "Hide details"
+    : warningCount > 0
+      ? `Details · ${warningCount} alert${warningCount === 1 ? "" : "s"}`
+      : "Details";
+
   return (
     <div className="rounded-lg border border-slate-200 bg-gradient-to-r from-slate-50 to-white shadow-sm overflow-hidden">
       <div className="px-4 py-3">
@@ -90,51 +97,56 @@ export default function ForecastSummaryBar({
           <button
             type="button"
             onClick={onToggle}
-            className="ml-auto text-sm font-medium text-blue-700 hover:text-blue-900 hover:underline"
+            className={`ml-auto text-sm font-medium hover:underline ${
+              !expanded && warningCount > 0
+                ? "text-amber-800 hover:text-amber-950"
+                : "text-blue-700 hover:text-blue-900"
+            }`}
             aria-expanded={expanded}
           >
-            {expanded ? "Hide forecast" : "View forecast"}
+            {toggleLabel}
           </button>
         </div>
 
         {expanded && (
-          <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Health</div>
-              <AccountHealthBadge
-                status={account.health_status ?? account.risk_status}
-                reason={account.health_reason ?? account.risk_reason}
-                account={account}
-              />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Recommendation</div>
-              <p className="text-sm text-gray-700">
-                {account.health_recommended_action ?? account.risk_reason ?? "No action needed."}
-              </p>
+          <div className="mt-4 pt-4 border-t border-slate-200 space-y-4">
+            {warningCount > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {householdWarnings.map((w, i) => (
+                  <span key={`${w.kind}-${w.accountName}-${w.date}`}>
+                    {i > 0 && " · "}
+                    {w.kind === "negative" ? (
+                      <>
+                        <strong>{w.accountName}</strong> negative by {formatDateDisplay(w.date)}
+                      </>
+                    ) : (
+                      <>
+                        <strong>{w.accountName}</strong> over limit by {formatDateDisplay(w.date)}
+                      </>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Health</div>
+                <AccountHealthBadge
+                  status={account.health_status ?? account.risk_status}
+                  reason={account.health_reason ?? account.risk_reason}
+                  account={account}
+                />
+              </div>
+              <div>
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Recommendation</div>
+                <p className="text-sm text-gray-700">
+                  {account.health_recommended_action ?? account.risk_reason ?? "No action needed."}
+                </p>
+              </div>
             </div>
           </div>
         )}
       </div>
-
-      {householdWarnings.length > 0 && (
-        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-xs text-amber-900">
-          {householdWarnings.map((w, i) => (
-            <span key={`${w.kind}-${w.accountName}-${w.date}`}>
-              {i > 0 && " · "}
-              {w.kind === "negative" ? (
-                <>
-                  <strong>{w.accountName}</strong> negative by {formatDateDisplay(w.date)}
-                </>
-              ) : (
-                <>
-                  <strong>{w.accountName}</strong> over limit by {formatDateDisplay(w.date)}
-                </>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

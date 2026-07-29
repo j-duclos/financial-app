@@ -82,26 +82,28 @@ class TransactionSerializer(serializers.ModelSerializer):
                     return AccountSerializer(tg.to_account).data
         if obj.rule_id:
             from timeline.models import RecurringRule
-            rule = RecurringRule.objects.filter(pk=obj.rule_id).select_related("transfer_to_account").first()
-            if rule and rule.transfer_to_account_id:
-                # Return the actual paired "to" transaction's account (same rule+date, other account), not the rule default
-                paired = (
-                    Transaction.objects.filter(
-                        rule_id=obj.rule_id, date=obj.date
-                    ).exclude(account_id=obj.account_id).select_related("account").first()
-                )
-                if paired and paired.account_id:
-                    return AccountSerializer(paired.account).data
-                return AccountSerializer(rule.transfer_to_account).data
-        return None
+            from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
 
-    def get_rule_name(self, obj):
-        """Return the recurring rule name when this transaction is from a rule, so the UI can show it."""
-        if not obj.rule_id:
-            return None
-        from timeline.models import RecurringRule
-        rule = RecurringRule.objects.filter(pk=obj.rule_id).values_list("name", flat=True).first()
-        return rule
+            rule = RecurringRule.objects.filter(pk=obj.rule_id).select_related(
+                "account", "transfer_to_account"
+            ).first()
+            if rule and rule.transfer_to_account_id:
+                paired = find_rule_transfer_counterpart_txn(
+                    rule_id=obj.rule_id,
+                    exclude_txn_pk=obj.pk,
+                    old_date=obj.date,
+                    old_amount=obj.amount or 0,
+                    old_account_id=obj.account_id,
+                    transfer_group_id=obj.transfer_group_id,
+                )
+                if paired is not None and paired.account_id:
+                    return AccountSerializer(paired.account).data
+                # Card (destination) leg → paying account; bank (source) leg → card account.
+                if obj.account_id == rule.transfer_to_account_id and rule.account_id:
+                    return AccountSerializer(rule.account).data
+                if obj.account_id == rule.account_id and rule.transfer_to_account_id:
+                    return AccountSerializer(rule.transfer_to_account).data
+        return None
 
     def get_linked_transaction_id(self, obj):
         """The other leg of a transfer (Transfer model or rule+date pair), if any."""
@@ -120,14 +122,26 @@ class TransactionSerializer(serializers.ModelSerializer):
             if sibling is not None:
                 return sibling.pk
         if obj.rule_id:
-            paired_pk = (
-                Transaction.objects.filter(rule_id=obj.rule_id, date=obj.date)
-                .exclude(pk=obj.pk)
-                .values_list("pk", flat=True)
-                .first()
+            from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
+
+            paired = find_rule_transfer_counterpart_txn(
+                rule_id=obj.rule_id,
+                exclude_txn_pk=obj.pk,
+                old_date=obj.date,
+                old_amount=obj.amount or 0,
+                old_account_id=obj.account_id,
+                transfer_group_id=obj.transfer_group_id,
             )
-            return paired_pk
+            return paired.pk if paired is not None else None
         return None
+
+    def get_rule_name(self, obj):
+        """Return the recurring rule name when this transaction is from a rule, so the UI can show it."""
+        if not obj.rule_id:
+            return None
+        from timeline.models import RecurringRule
+        rule = RecurringRule.objects.filter(pk=obj.rule_id).values_list("name", flat=True).first()
+        return rule
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -146,18 +160,15 @@ class TransactionSerializer(serializers.ModelSerializer):
         ``transfer_to_account_id`` is not a DB column; when set, create the paired inflow on the
         destination account (``Transfer`` + ``TransferGroup``). If the edited row is a matched
         Plaid import, the link is applied to the *planned* (canonical) outflow row.
+
+        On a credit-card inflow with no bridge yet, the same field means "Paid from" (paying bank).
         """
         has_to = "transfer_to_account_id" in validated_data
         to_account_obj = validated_data.pop("transfer_to_account_id", None) if has_to else None
-
-        # Incoming leg of an existing Transfer — destination is owned by the outflow row; viewset syncs date/amount.
-        if has_to and to_account_obj is not None:
-            try:
-                instance.transfer_in  # noqa: B018 — existence check
-                has_to = False
-                to_account_obj = None
-            except Transfer.DoesNotExist:
-                pass
+        # DRF's save() passes a shallow copy of validated_data; clear the serializer's copy too so
+        # the viewset does not treat paid-from / destination as a post-save retarget.
+        if has_to:
+            self.validated_data.pop("transfer_to_account_id", None)
 
         out_for_link = instance
         if has_to and to_account_obj is not None:
@@ -184,16 +195,48 @@ class TransactionSerializer(serializers.ModelSerializer):
 
         if has_to and to_account_obj is not None:
             # Incoming leg of an existing transfer — only the outflow row sets destination.
+            # Re-check after super().update so an amount flip (+ → −) can still become the payer.
+            already_transfer_in = False
             if instance.amount is not None and instance.amount >= 0:
                 try:
                     instance.transfer_in  # noqa: B018 — existence check
+                    already_transfer_in = True
                     has_to = False
                     to_account_obj = None
                 except Transfer.DoesNotExist:
                     pass
+            # Orphan credit-card inflow: transfer_to_account_id means "Paid from" (paying bank).
+            if (
+                has_to
+                and to_account_obj is not None
+                and not already_transfer_in
+                and instance.amount is not None
+                and instance.amount > 0
+                and getattr(instance.account, "account_type", None) == Account.AccountType.CREDIT
+            ):
+                from .services.posting import link_out_leg_from_existing_in_leg
+
+                out_leg = link_out_leg_from_existing_in_leg(
+                    in_txn=instance,
+                    from_account=to_account_obj,
+                    payee=instance.payee,
+                )
+                if out_leg is None:
+                    raise ValidationError(
+                        {
+                            "transfer_to_account_id": (
+                                "Could not create the payment on the paying account. "
+                                "Pick a different bank account, or link from the bank-side outflow."
+                            )
+                        }
+                    )
+                has_to = False
+                to_account_obj = None
+                # Fresh row so reverse Transfer relations are not stuck on DoesNotExist cache.
+                instance = Transaction.objects.get(pk=instance.pk)
             if has_to and to_account_obj is not None:
                 out_for_link.refresh_from_db()
-            if not hasattr(out_for_link, "transfer_out"):
+            if has_to and to_account_obj is not None and not hasattr(out_for_link, "transfer_out"):
                 if out_for_link.amount is None or out_for_link.amount >= 0:
                     raise ValidationError(
                         {
@@ -224,7 +267,10 @@ class TransactionSerializer(serializers.ModelSerializer):
                             )
                         }
                     )
+                instance = Transaction.objects.get(pk=instance.pk)
             if has_to:
+                # Signal to viewset only for true destination retargets on the paying outflow.
+                self.validated_data["transfer_to_account_id"] = to_account_obj
                 validated_data["transfer_to_account_id"] = to_account_obj
 
         return instance

@@ -848,6 +848,114 @@ def link_in_leg_from_existing_out_leg(
     return in_txn
 
 
+def link_out_leg_from_existing_in_leg(
+    *,
+    in_txn: Transaction,
+    from_account: Account,
+    payee: str | None = None,
+) -> Transaction | None:
+    """
+    Create the paying-account outflow and wire ``Transfer`` + ``TransferGroup`` when the user
+    sets "Paid from" on an orphaned credit-card inflow (receiving leg).
+    """
+    if in_txn.amount is None or in_txn.amount <= 0:
+        return None
+    if in_txn.account_id == from_account.id:
+        return None
+    if in_txn.account.household_id != from_account.household_id:
+        return None
+    if getattr(in_txn.account, "account_type", None) != Account.AccountType.CREDIT:
+        return None
+    if in_txn.transfer_group_id is not None:
+        return None
+    try:
+        in_txn.transfer_in
+        return None
+    except Transfer.DoesNotExist:
+        pass
+    try:
+        in_txn.transfer_out
+        return None
+    except Transfer.DoesNotExist:
+        pass
+
+    amount = abs(in_txn.amount)
+    out_amount = -amount
+    today = timezone.localdate()
+    pay_dt = in_txn.date
+    txn_status = Transaction.Status.PLANNED if pay_dt > today else Transaction.Status.CLEARED
+    tg_status = TransferGroup.Status.PLANNED if pay_dt > today else TransferGroup.Status.CLEARED
+    payee_text = (payee if payee is not None else "").strip() or in_txn.payee or "Transfer"
+    memo = (in_txn.memo or "")[:2000]
+
+    reuse_out: Transaction | None = None
+    if in_txn.rule_id:
+        for cand in Transaction.objects.filter(
+            account=from_account,
+            rule_id=in_txn.rule_id,
+            date=pay_dt,
+        ).exclude(pk=in_txn.pk):
+            try:
+                cand.transfer_out
+            except Transfer.DoesNotExist:
+                try:
+                    cand.transfer_in
+                except Transfer.DoesNotExist:
+                    reuse_out = cand
+                    break
+
+    with transaction.atomic():
+        tg = TransferGroup.objects.create(
+            household_id=in_txn.account.household_id,
+            from_account_id=from_account.id,
+            to_account=in_txn.account,
+            amount=amount,
+            scheduled_date=pay_dt,
+            status=tg_status,
+            created_by_id=None,
+        )
+        in_txn.transfer_group = tg
+        in_txn.save(update_fields=["transfer_group", "updated_at"])
+
+        if reuse_out is not None:
+            Transaction.objects.filter(pk=reuse_out.pk).update(
+                amount=out_amount,
+                payee=payee_text[:255],
+                memo=memo,
+                category_id=in_txn.category_id,
+                cleared=in_txn.cleared,
+                tags=list(in_txn.tags) if isinstance(in_txn.tags, list) else [],
+                status=txn_status,
+                planned_date=pay_dt,
+                transfer_group_id=tg.pk,
+            )
+            out_txn = Transaction.objects.get(pk=reuse_out.pk)
+        else:
+            out_txn = Transaction.objects.create(
+                account=from_account,
+                date=pay_dt,
+                payee=payee_text[:255],
+                memo=memo,
+                amount=out_amount,
+                category_id=in_txn.category_id,
+                cleared=in_txn.cleared,
+                tags=list(in_txn.tags) if isinstance(in_txn.tags, list) else [],
+                status=txn_status,
+                planned_date=pay_dt,
+                transfer_group=tg,
+                source=in_txn.source if in_txn.source else Transaction.Source.ACTUAL,
+                rule_id=in_txn.rule_id,
+            )
+        Transfer.objects.create(
+            from_transaction=out_txn,
+            to_transaction=in_txn,
+            amount=amount,
+            date=pay_dt,
+            memo=memo,
+        )
+    return out_txn
+
+
 def eligible_manual_transactions_queryset(account: Account):
     return (
         Transaction.objects.filter(

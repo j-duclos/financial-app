@@ -895,3 +895,137 @@ def test_patch_actual_transfer_date_removes_stale_leg_on_old_date(auth_client, h
         ).count()
         == 0
     )
+
+
+@pytest.mark.django_db
+def test_patch_card_leg_date_creates_missing_bank_outflow(auth_client, household):
+    """Editing only the Care Credit inflow must create/move the Chase paying leg with it."""
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Care Credit",
+        account=bank,
+        transfer_to_account=card,
+        category=cat,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("174.48"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=28,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    card_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 7, 28),
+        payee="Care Credit",
+        amount=Decimal("174.48"),
+        category=cat,
+        rule=rule,
+        source=Transaction.Source.RULE,
+    )
+    assert Transaction.objects.filter(account=bank).count() == 0
+
+    r = auth_client.patch(
+        f"/api/transactions/{card_leg.id}/",
+        {"date": "2026-07-30"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    assert r.data.get("synced_to_account_id") == bank.id
+
+    card_leg.refresh_from_db()
+    assert card_leg.date == date(2026, 7, 30)
+    bank_leg = Transaction.objects.get(account=bank)
+    assert bank_leg.date == date(2026, 7, 30)
+    assert bank_leg.amount == Decimal("-174.48")
+    assert bank_leg.rule_id == rule.id
+    assert card_leg.transfer_group_id is not None
+    assert bank_leg.transfer_group_id == card_leg.transfer_group_id
+
+
+@pytest.mark.django_db
+def test_patch_card_leg_date_moves_existing_bank_leg(auth_client, household):
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Care Credit",
+        account=bank,
+        transfer_to_account=card,
+        category=cat,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("100.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=25,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    bank_leg = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 7, 28),
+        payee="Care Credit",
+        amount=Decimal("-100.00"),
+        category=cat,
+        rule=rule,
+        source=Transaction.Source.RULE,
+    )
+    card_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 7, 28),
+        payee="Care Credit",
+        amount=Decimal("100.00"),
+        category=cat,
+        rule=rule,
+        source=Transaction.Source.RULE,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{card_leg.id}/",
+        {"date": "2026-07-30"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    bank_leg.refresh_from_db()
+    card_leg.refresh_from_db()
+    assert card_leg.date == date(2026, 7, 30)
+    assert bank_leg.date == date(2026, 7, 30)
+    assert bank_leg.transfer_group_id == card_leg.transfer_group_id
+    assert bank_leg.transfer_group_id is not None

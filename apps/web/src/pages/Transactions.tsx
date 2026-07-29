@@ -710,16 +710,21 @@ export default function Transactions() {
     String(editSourceAccount.account_type ?? "").toUpperCase() === "CREDIT" &&
     editForm.direction === "INFLOW";
   /** Incoming leg of an existing two-sided transfer — destination is chosen on the outflow row only. */
+  const editHasLinkedTransferLeg =
+    Boolean(editing) &&
+    (editing as { linked_transaction_id?: number | null }).linked_transaction_id != null;
   const editIsTransferInflowLeg =
     editForm.direction === "INFLOW" &&
-    Boolean(
-      editing &&
-        ((editing as { linked_transaction_id?: number | null }).linked_transaction_id != null ||
-          editIsLinkedTransfer)
-    );
-  /** “Payment to” / “Transfer to” only applies when money is leaving another account toward a destination — not when editing the card side of a payment. */
+    Boolean(editing && (editHasLinkedTransferLeg || editIsLinkedTransfer));
+  /** Orphan card payment (no bank leg linked yet) — user must pick Paid from. */
+  const editIsOrphanCcPaymentInflow =
+    editIsCreditCardInflow &&
+    editCategory?.name === "Credit Card Payment" &&
+    !editHasLinkedTransferLeg;
+  /** “Payment to” only on outflow; linked card inflows show static Paid from; orphans get a Paid from selector. */
   const hideEditTransferToSelector =
-    (editIsCreditCardInflow || editIsTransferInflowLeg) &&
+    editIsCreditCardInflow &&
+    editHasLinkedTransferLeg &&
     (editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name));
   const editTransferCounterparty = editing
     ? ((editing as { transfer_to_account?: { id?: number; name?: string } | null }).transfer_to_account ?? null)
@@ -731,6 +736,15 @@ export default function Transactions() {
         ? Number(editForm.account_id)
         : (editing.account_id ?? editing.account?.id);
     const sameHousehold = account.household?.id;
+    if (editIsOrphanCcPaymentInflow) {
+      // Paying account for a card payment — bank/cash, not another credit card.
+      return accounts.filter(
+        (a) =>
+          a.id !== fromAccountId &&
+          a.household?.id === sameHousehold &&
+          String(a.account_type ?? "").toUpperCase() !== "CREDIT"
+      );
+    }
     const creditOnly = editCategory?.name === "Credit Card Payment";
     return accounts.filter(
       (a) =>
@@ -738,13 +752,26 @@ export default function Transactions() {
         a.household?.id === sameHousehold &&
         (creditOnly ? a.account_type === "CREDIT" : true)
     );
-  }, [editing, account, accounts, editForm.account_id, editForm.category_id, editCategory?.name]);
+  }, [
+    editing,
+    account,
+    accounts,
+    editForm.account_id,
+    editForm.category_id,
+    editCategory?.name,
+    editIsOrphanCcPaymentInflow,
+  ]);
+  const showEditPaidFromSelector =
+    Boolean(editing) &&
+    editIsOrphanCcPaymentInflow &&
+    editTransferToAccounts.length > 0;
   const showEditTransferToSelector =
     Boolean(editing) &&
     editForm.direction === "OUTFLOW" &&
     editTransferToAccounts.length > 0 &&
     (editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name)) &&
-    !hideEditTransferToSelector;
+    !hideEditTransferToSelector &&
+    !editIsOrphanCcPaymentInflow;
   const editDestinationAccount = useMemo(
     () =>
       editForm.transfer_to_account_id
@@ -1751,14 +1778,24 @@ export default function Transactions() {
         : (editing.account_id ?? (editing.account as { id?: number })?.id);
     const editSrcSubmit =
       editAccountIdSubmit != null ? accounts.find((a) => a.id === editAccountIdSubmit) : null;
+    const isOrphanCcPaidFromSubmit =
+      editSrcSubmit != null &&
+      String(editSrcSubmit.account_type ?? "").toUpperCase() === "CREDIT" &&
+      editForm.direction === "INFLOW" &&
+      editCat?.name === "Credit Card Payment" &&
+      (editing as { linked_transaction_id?: number | null }).linked_transaction_id == null &&
+      typeof editForm.transfer_to_account_id === "number" &&
+      editForm.transfer_to_account_id > 0;
     const omitTransferToOnSubmit =
       editForm.direction === "INFLOW" &&
+      !isOrphanCcPaidFromSubmit &&
       (linkedTransfer || transferCategory);
     const includeTransferToOnSubmit =
-      !omitTransferToOnSubmit &&
-      editForm.direction === "OUTFLOW" &&
-      editForm.transfer_to_account_id &&
-      (linkedTransfer || transferCategory);
+      isOrphanCcPaidFromSubmit ||
+      (!omitTransferToOnSubmit &&
+        editForm.direction === "OUTFLOW" &&
+        editForm.transfer_to_account_id &&
+        (linkedTransfer || transferCategory));
     const payload = {
       date: editForm.date,
       payee: editForm.payee || "—",
@@ -1771,7 +1808,7 @@ export default function Transactions() {
     };
     if (applyToRule && editingRuleId != null) {
       const ruleDirection =
-        includeTransferToOnSubmit
+        isOrphanCcPaidFromSubmit || includeTransferToOnSubmit
           ? "TRANSFER"
           : editForm.direction === "INFLOW"
             ? "INCOME"
@@ -1781,11 +1818,19 @@ export default function Transactions() {
           name: editForm.payee || "—",
           amount: String(Math.abs(amt)),
           category_id: editForm.category_id || null,
-          account_id: editForm.account_id ? (editForm.account_id as number) : undefined,
-          direction: ruleDirection,
-          ...(includeTransferToOnSubmit
-            ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
-            : {}),
+          ...(isOrphanCcPaidFromSubmit
+            ? {
+                account_id: editForm.transfer_to_account_id as number,
+                transfer_to_account_id: editAccountIdSubmit as number,
+                direction: "TRANSFER" as const,
+              }
+            : {
+                account_id: editForm.account_id ? (editForm.account_id as number) : undefined,
+                direction: ruleDirection,
+                ...(includeTransferToOnSubmit
+                  ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
+                  : {}),
+              }),
         });
         queryClient.invalidateQueries({ queryKey: ["rules"] });
         afterFinancialEdit({ refreshAccounts: true });
@@ -1794,29 +1839,6 @@ export default function Transactions() {
         return;
       }
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
-      body: JSON.stringify({
-        sessionId: "88e096",
-        location: "Transactions.tsx:handleEditSubmit",
-        message: "edit submit",
-        data: {
-          txnId: editing.id,
-          ruleId: editingRuleId,
-          applyToRule,
-          requestedAmount: payload.amount,
-          editFormAmount: editForm.amount,
-          signedAmount,
-          date: payload.date,
-          payee: payload.payee,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "H3-H4",
-      }),
-    }).catch(() => {});
-    // #endregion
     updateMu.mutate({ id: editing.id, data: payload });
   }
 
@@ -2411,6 +2433,37 @@ export default function Transactions() {
                   </p>
                 )}
               </div>
+              {showEditPaidFromSelector && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Paid from</label>
+                  <select
+                    value={editForm.transfer_to_account_id}
+                    onChange={(e) => {
+                      const newId = e.target.value ? Number(e.target.value) : "";
+                      const picked = editTransferToAccounts.find((a) => a.id === newId);
+                      const pickedName = picked?.name ?? "";
+                      setEditForm((f) => {
+                        const base = (f.payee || "").replace(/\s*\([^)]+\)(?:\s*\([^)]+\))*\s*$/g, "").trim();
+                        return {
+                          ...f,
+                          transfer_to_account_id: newId,
+                          payee: base ? (pickedName ? `${base} (${pickedName})` : base) : pickedName,
+                        };
+                      });
+                    }}
+                    className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                    required
+                  >
+                    <option value="">Select paying account</option>
+                    {editTransferToAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Creates the matching outflow on that account so both legs of this card payment stay together.
+                  </p>
+                </div>
+              )}
               {showEditTransferToSelector && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700">

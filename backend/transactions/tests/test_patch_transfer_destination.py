@@ -27,11 +27,11 @@ class TestPatchTransferDestinationCreatesLeg(TestCase):
         self.care = Account.objects.create(
             household=self.h, account_type=Account.AccountType.CREDIT, name="Care Credit", currency="USD"
         )
-        self.cat = Category.objects.create(
+        self.cat, _ = Category.objects.get_or_create(
             household=self.h,
             name="Credit Card Payment",
             category_type=Category.CategoryType.EXPENSE,
-            sort_order=1,
+            defaults={"sort_order": 1},
         )
         self.client.force_authenticate(user=self.user)
 
@@ -284,6 +284,61 @@ class TestPatchTransferDestinationCreatesLeg(TestCase):
         card_only = Transaction.objects.get(account=self.care)
         self.assertEqual(card_only.amount, Decimal("174.47"))
 
+    def test_patch_paid_from_on_orphan_card_inflow_creates_bank_outflow(self):
+        in_leg = Transaction.objects.create(
+            account=self.care,
+            date=date(2026, 7, 30),
+            payee="Care Credit",
+            amount=Decimal("174.48"),
+            source=Transaction.Source.ACTUAL,
+            category=self.cat,
+        )
+        res = self.client.patch(
+            f"/api/transactions/{in_leg.pk}/",
+            {"transfer_to_account_id": self.chase.id},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        out_leg = Transaction.objects.get(account=self.chase)
+        self.assertEqual(out_leg.amount, Decimal("-174.48"))
+        self.assertEqual(out_leg.date, date(2026, 7, 30))
+        in_leg.refresh_from_db()
+        self.assertEqual(in_leg.transfer_group_id, out_leg.transfer_group_id)
+        Transfer.objects.get(from_transaction=out_leg, to_transaction=in_leg)
+        data = res.data
+        self.assertEqual(data["transfer_to_account"]["id"], self.chase.id)
+        self.assertEqual(data["linked_transaction_id"], out_leg.pk)
+
+    def test_serializer_card_rule_leg_exposes_paying_account_without_pair(self):
+        from transactions.serializers import TransactionSerializer
+
+        rule = RecurringRule.objects.create(
+            household=self.h,
+            name="Care Credit",
+            account=self.chase,
+            transfer_to_account=self.care,
+            category=self.cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("174.48"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=28,
+            start_date=date(2026, 1, 1),
+            active=True,
+        )
+        in_leg = Transaction.objects.create(
+            account=self.care,
+            date=date(2026, 7, 30),
+            payee="Care Credit",
+            amount=Decimal("174.48"),
+            source=Transaction.Source.RULE,
+            category=self.cat,
+            rule=rule,
+        )
+        data = TransactionSerializer(in_leg).data
+        self.assertEqual(data["transfer_to_account"]["id"], self.chase.id)
+
 
 class TestRepairOrphanTransferGroupLegs(TestCase):
     def setUp(self):
@@ -302,19 +357,25 @@ class TestRepairOrphanTransferGroupLegs(TestCase):
         )
 
     def test_repair_creates_missing_checking_outflow(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
         from transactions.services.posting import repair_orphan_transfer_group_legs
 
+        # Repair skips past ACTUAL-only orphans; use a future scheduled date.
+        pay_dt = timezone.localdate() + timedelta(days=14)
         tg = TransferGroup.objects.create(
             household=self.h,
             from_account=self.chase,
             to_account=self.savor,
             amount=Decimal("500.00"),
-            scheduled_date=date(2026, 7, 4),
+            scheduled_date=pay_dt,
             status=TransferGroup.Status.PLANNED,
         )
         in_leg = Transaction.objects.create(
             account=self.savor,
-            date=date(2026, 7, 4),
+            date=pay_dt,
             payee="Credit Card Pmt",
             amount=Decimal("500.00"),
             source=Transaction.Source.ACTUAL,
