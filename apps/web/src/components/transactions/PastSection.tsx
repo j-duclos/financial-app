@@ -14,7 +14,7 @@ import {
 import { creditBalanceColorClass, canEditLedgerTimelineRow, shouldHighlightUnmatchedScheduledRow, type LedgerRow } from "./transactionsLedgerUtils";
 import { unmatchedScheduleRowClasses, UNMATCHED_SCHEDULE_ROW_TITLE } from "./forecastRowSeverity";
 import type { TimelineRow } from "@budget-app/shared";
-
+import { sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 export const PAST_SCROLL_MIN_ROWS = COLLAPSED_LEDGER_ROWS;
 
 const ROW_REM = 2.5;
@@ -96,6 +96,18 @@ export default function PastSection({
   const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
   const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
   const someSelected = selectedInSection > 0 && !allSelected;
+
+  const selectionAnchorRef = useRef<number | null>(null);
+
+  function handleToggleSelected(id: number, selected: boolean, shiftKey = false) {
+    if (shiftKey && selectionAnchorRef.current != null) {
+      const range = sliceIdsByAnchor(selectableIds, selectionAnchorRef.current, id);
+      onSetSelectedIds(range, true);
+      return;
+    }
+    selectionAnchorRef.current = id;
+    onToggleSelected(id, selected);
+  }
 
   useEffect(() => {
     if (!showBody) return;
@@ -201,7 +213,7 @@ export default function PastSection({
                       selected={
                         data.transactionId != null ? selectedIds.has(data.transactionId) : false
                       }
-                      onSelectedChange={onToggleSelected}
+                      onSelectedChange={handleToggleSelected}
                     />
                   );
                 }
@@ -223,7 +235,7 @@ export default function PastSection({
                       }
                       actionsDisabled={deletePending}
                       selected={selectedIds.has(row.txn.id)}
-                      onSelectedChange={onToggleSelected}
+                      onSelectedChange={handleToggleSelected}
                     />
                   );
                 }

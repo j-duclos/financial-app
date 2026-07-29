@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { ReconcileTransactionRow } from "@budget-app/shared";
 import { deleteTransaction } from "@budget-app/api-client";
 import { ApiError } from "@budget-app/api-client";
 import { formatDateDisplay } from "../../lib/dateDisplay";
-
+import { sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 function parseAmount(value: string): number {
   const n = parseFloat(value);
   return Number.isFinite(n) ? n : 0;
@@ -27,6 +27,7 @@ export default function ReconcileRemainingPanel({
   onRemoved,
 }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const selectionAnchorRef = useRef<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const allSelected = transactions.length > 0 && selectedIds.size === transactions.length;
@@ -54,7 +55,18 @@ export default function ReconcileRemainingPanel({
     },
   });
 
-  function toggleSelected(id: number) {
+  function toggleSelected(id: number, shiftKey = false) {
+    const orderedIds = transactions.map((t) => t.id);
+    if (shiftKey && selectionAnchorRef.current != null) {
+      const range = sliceIdsByAnchor(orderedIds, selectionAnchorRef.current, id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const rid of range) next.add(rid);
+        return next;
+      });
+      return;
+    }
+    selectionAnchorRef.current = id;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -164,7 +176,12 @@ export default function ReconcileRemainingPanel({
                       <input
                         type="checkbox"
                         checked={selectedIds.has(t.id)}
-                        onChange={() => toggleSelected(t.id)}
+                        onClick={(e) => {
+                          if (!e.shiftKey) return;
+                          e.preventDefault();
+                          toggleSelected(t.id, true);
+                        }}
+                        onChange={() => toggleSelected(t.id, false)}
                         aria-label={`Select ${t.payee}`}
                         className="rounded border-gray-300"
                       />

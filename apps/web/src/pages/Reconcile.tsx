@@ -29,6 +29,7 @@ import { reconcileBalanceAfterChecks } from "../lib/reconcileCheckedBalance";
 import { reconcileVarianceDisplay } from "../lib/reconcileVarianceDisplay";
 import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
+import { sliceIdsByAnchor } from "../lib/shiftClickSelection";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 
@@ -48,6 +49,7 @@ export default function Reconcile() {
   const [periodEnd, setPeriodEnd] = useState("");
   const [bankBalanceInput, setBankBalanceInput] = useState("");
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const checkedAnchorRef = useRef<number | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [addDate, setAddDate] = useState("");
   const [addPayee, setAddPayee] = useState("");
@@ -642,7 +644,18 @@ export default function Reconcile() {
     },
   });
 
-  function toggleChecked(id: number) {
+  function toggleChecked(id: number, shiftKey = false) {
+    const orderedIds = transactions.map((t) => t.id);
+    if (shiftKey && checkedAnchorRef.current != null) {
+      const range = sliceIdsByAnchor(orderedIds, checkedAnchorRef.current, id);
+      setCheckedIds((prev) => {
+        const next = new Set(prev);
+        for (const rid of range) next.add(rid);
+        return next;
+      });
+      return;
+    }
+    checkedAnchorRef.current = id;
     setCheckedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -848,7 +861,12 @@ export default function Reconcile() {
                           <input
                             type="checkbox"
                             checked={checkedIds.has(t.id)}
-                            onChange={() => toggleChecked(t.id)}
+                            onClick={(e) => {
+                              if (!e.shiftKey) return;
+                              e.preventDefault();
+                              toggleChecked(t.id, true);
+                            }}
+                            onChange={() => toggleChecked(t.id, false)}
                             aria-label={`Select ${t.payee}`}
                             className="rounded border-gray-300"
                           />

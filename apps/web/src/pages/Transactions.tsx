@@ -34,6 +34,10 @@ import ExpectedMatchDialog from "../components/transactions/ExpectedMatchDialog"
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
 import {
+  projectionSelectionKey,
+  type TransactionRowData,
+} from "../components/transactions/TransactionRow";
+import {
   HideReconciledFilter,
   TransactionColumnFilters,
 } from "../components/transactions/TransactionsFilterBar";
@@ -160,6 +164,7 @@ export default function Transactions() {
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<Set<number>>(
     () => new Set()
   );
+  const [pendingSelectionKeys, setPendingSelectionKeys] = useState<Set<string>>(() => new Set());
   const [matchDialog, setMatchDialog] = useState<{
     transactionId: number;
     label: string;
@@ -1946,6 +1951,119 @@ export default function Transactions() {
     });
   }
 
+  function clearPendingSelectionKeys(keys: string[]) {
+    if (keys.length === 0) return;
+    setPendingSelectionKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of keys) next.delete(key);
+      return next;
+    });
+  }
+
+  async function resolveRowDataTransactionId(row: TransactionRowData): Promise<number | null> {
+    if (row.transactionId != null) return row.transactionId;
+    if (row.source.rule_id == null || row.accountId == null) return null;
+    if (forecastActionsLocked) return null;
+    setOccurrenceResolving(true);
+    setAwaitingTimelineRecalc(true);
+    try {
+      const resolved = await resolveRuleOccurrence({
+        rule_id: row.source.rule_id,
+        account_id: row.accountId,
+        occurrence_date: row.date,
+      });
+      await queryClient.cancelQueries({ queryKey: ["timeline"] });
+      await queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
+      return resolved.transaction_id ?? null;
+    } catch (err) {
+      setAwaitingTimelineRecalc(false);
+      throw err;
+    } finally {
+      setOccurrenceResolving(false);
+    }
+  }
+
+  async function toggleUnresolvedSelection(row: TransactionRowData, selected: boolean) {
+    const key = projectionSelectionKey(row);
+    if (!key) return;
+    if (!selected) {
+      clearPendingSelectionKeys([key]);
+      return;
+    }
+    setPendingSelectionKeys((prev) => new Set(prev).add(key));
+    setDeleteError(null);
+    try {
+      const transactionId = await resolveRowDataTransactionId(row);
+      clearPendingSelectionKeys([key]);
+      if (transactionId == null) {
+        setDeleteError("Could not load this scheduled transaction for selection.");
+        return;
+      }
+      toggleSelectedTransaction(transactionId, true);
+    } catch (err) {
+      clearPendingSelectionKeys([key]);
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not select scheduled transaction");
+    }
+  }
+
+  async function selectAllLedgerRows(rows: TransactionRowData[], selected: boolean) {
+    const unresolved = rows.filter((r) => r.transactionId == null);
+    const unresolvedKeys = unresolved
+      .map((r) => projectionSelectionKey(r))
+      .filter((k): k is string => k != null);
+    const knownIds = rows
+      .map((r) => r.transactionId)
+      .filter((id): id is number => id != null);
+
+    if (!selected) {
+      setSelectedTransactionGroup(knownIds, false);
+      clearPendingSelectionKeys(unresolvedKeys);
+      return;
+    }
+
+    setSelectedTransactionGroup(knownIds, true);
+    if (unresolved.length === 0) return;
+
+    setPendingSelectionKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of unresolvedKeys) next.add(key);
+      return next;
+    });
+    setDeleteError(null);
+    setOccurrenceResolving(true);
+    setAwaitingTimelineRecalc(true);
+    try {
+      const resolvedIds: number[] = [];
+      await Promise.all(
+        unresolved.map(async (row) => {
+          if (row.source.rule_id == null || row.accountId == null) return;
+          try {
+            const resolved = await resolveRuleOccurrence({
+              rule_id: row.source.rule_id,
+              account_id: row.accountId,
+              occurrence_date: row.date,
+            });
+            if (resolved.transaction_id != null) resolvedIds.push(resolved.transaction_id);
+          } catch {
+            /* skip rows that fail to materialize */
+          }
+        })
+      );
+      await queryClient.cancelQueries({ queryKey: ["timeline"] });
+      await queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
+      clearPendingSelectionKeys(unresolvedKeys);
+      if (resolvedIds.length > 0) setSelectedTransactionGroup(resolvedIds, true);
+    } catch (err) {
+      clearPendingSelectionKeys(unresolvedKeys);
+      setAwaitingTimelineRecalc(false);
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      setDeleteError(msg || "Could not select scheduled transactions");
+    } finally {
+      setOccurrenceResolving(false);
+    }
+  }
+
   function confirmBatchDelete() {
     const ids = Array.from(selectedTransactionIds);
     if (ids.length === 0) return;
@@ -2157,15 +2275,25 @@ export default function Transactions() {
         </div>
       )}
 
-      {selectedTransactionIds.size > 0 && (
-        <div className="mb-3 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 shadow-sm">
+      {(selectedTransactionIds.size > 0 || pendingSelectionKeys.size > 0) &&
+        !editing &&
+        !matchDialog && (
+        <div className="mb-3 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 shadow-sm">
           <span className="font-medium">
-            {selectedTransactionIds.size} selected
+            {selectedTransactionIds.size > 0
+              ? `${selectedTransactionIds.size} selected`
+              : "Selecting…"}
+            {pendingSelectionKeys.size > 0
+              ? `${selectedTransactionIds.size > 0 ? " · " : ""}resolving ${pendingSelectionKeys.size}…`
+              : ""}
           </span>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setSelectedTransactionIds(new Set())}
+              onClick={() => {
+                setSelectedTransactionIds(new Set());
+                setPendingSelectionKeys(new Set());
+              }}
               disabled={batchDeleteMu.isPending}
               className="rounded border border-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50"
             >
@@ -2272,8 +2400,11 @@ export default function Transactions() {
               onDeleteRow={confirmDeleteRow}
               actionsPending={forecastActionsLocked}
               selectedIds={selectedTransactionIds}
+              pendingSelectionKeys={pendingSelectionKeys}
               onToggleSelected={toggleSelectedTransaction}
+              onSelectUnresolved={toggleUnresolvedSelection}
               onSetSelectedIds={setSelectedTransactionGroup}
+              onSelectAllRows={selectAllLedgerRows}
             />
           ) : null}
 
@@ -2329,14 +2460,17 @@ export default function Transactions() {
                 : null
             }
             selectedIds={selectedTransactionIds}
+            pendingSelectionKeys={pendingSelectionKeys}
             onToggleSelected={toggleSelectedTransaction}
+            onSelectUnresolved={toggleUnresolvedSelection}
             onSetSelectedIds={setSelectedTransactionGroup}
+            onSelectAllRows={selectAllLedgerRows}
           />
         </div>
       )}
 
       {editing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-20">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">Edit transaction</h2>
             {deleteError && (

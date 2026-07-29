@@ -1,6 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { TimelineRow } from "@budget-app/shared";
-import TransactionRow, { canSelectTransactionForBatchDelete, timelineRowToData } from "./TransactionRow";
+import TransactionRow, {
+  canSelectTransactionForBatchDelete,
+  projectionSelectionKey,
+  timelineRowToData,
+  type TransactionRowData,
+} from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LedgerColumnHeader,
@@ -12,7 +17,7 @@ import {
   type LedgerRow,
 } from "./transactionsLedgerUtils";
 import { unmatchedScheduleRowClasses, UNMATCHED_SCHEDULE_ROW_TITLE } from "./forecastRowSeverity";
-
+import { ledgerRowSelectionKey, sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 const ROW_REM = 2.5;
 const compactScrollHeight = `${Math.min(COLLAPSED_LEDGER_ROWS, 4) * ROW_REM}rem`;
 
@@ -30,8 +35,11 @@ type Props = {
   onDeleteRow: (row: TimelineRow) => void;
   actionsPending: boolean;
   selectedIds: Set<number>;
+  pendingSelectionKeys: Set<string>;
   onToggleSelected: (transactionId: number, selected: boolean) => void;
+  onSelectUnresolved: (row: TransactionRowData, selected: boolean) => void;
   onSetSelectedIds: (ids: number[], selected: boolean) => void;
+  onSelectAllRows: (rows: TransactionRowData[], selected: boolean) => void;
 };
 
 /**
@@ -52,26 +60,69 @@ export default function PendingExpectedSection({
   onDeleteRow,
   actionsPending,
   selectedIds,
+  pendingSelectionKeys,
   onToggleSelected,
+  onSelectUnresolved,
   onSetSelectedIds,
+  onSelectAllRows,
 }: Props) {
   const displayable = useMemo(
     () => pending.filter((row) => row.type === "transaction_from_timeline"),
     [pending]
   );
-  const selectableIds = useMemo(() => {
-    const ids: number[] = [];
+  const selectableRows = useMemo(() => {
+    const rows: TransactionRowData[] = [];
     for (const row of displayable) {
       const data = timelineRowToData(row.row, row.balance, "expected");
-      if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
-        ids.push(data.transactionId);
-      }
+      if (canSelectTransactionForBatchDelete(data)) rows.push(data);
     }
-    return ids;
+    return rows;
   }, [displayable]);
+  const selectableIds = useMemo(
+    () =>
+      selectableRows
+        .map((r) => r.transactionId)
+        .filter((id): id is number => id != null),
+    [selectableRows]
+  );
+  const unresolvedKeys = useMemo(
+    () =>
+      selectableRows
+        .filter((r) => r.transactionId == null)
+        .map((r) => projectionSelectionKey(r))
+        .filter((k): k is string => k != null),
+    [selectableRows]
+  );
   const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
-  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
-  const someSelected = selectedInSection > 0 && !allSelected;
+  const pendingInSection = unresolvedKeys.filter((k) => pendingSelectionKeys.has(k)).length;
+  const selectableCount = selectableIds.length + unresolvedKeys.length;
+  const selectedCount = selectedInSection + pendingInSection;
+  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  const selectionAnchorRef = useRef<string | null>(null);
+
+  function handleRowSelect(row: TransactionRowData, selected: boolean, shiftKey = false) {
+    const key = ledgerRowSelectionKey(row);
+    if (!key) return;
+    const orderedKeys = selectableRows
+      .map((r) => ledgerRowSelectionKey(r))
+      .filter((k): k is string => k != null);
+
+    if (shiftKey && selectionAnchorRef.current != null) {
+      const keys = sliceIdsByAnchor(orderedKeys, selectionAnchorRef.current, key);
+      const rowsInRange = selectableRows.filter((r) => {
+        const k = ledgerRowSelectionKey(r);
+        return k != null && keys.includes(k);
+      });
+      onSelectAllRows(rowsInRange, true);
+      return;
+    }
+
+    selectionAnchorRef.current = key;
+    if (row.transactionId != null) onToggleSelected(row.transactionId, selected);
+    else onSelectUnresolved(row, selected);
+  }
 
   if (displayable.length === 0 || hiddenByPast) return null;
 
@@ -90,8 +141,15 @@ export default function PendingExpectedSection({
           className="bg-blue-50/80 border-blue-100"
           selectAllChecked={allSelected}
           selectAllIndeterminate={someSelected}
-          selectAllDisabled={actionsPending || selectableIds.length === 0}
-          onSelectAllChange={(checked) => onSetSelectedIds(selectableIds, checked)}
+          selectAllDisabled={actionsPending || selectableCount === 0}
+          onSelectAllChange={(checked) => {
+            if (!checked) {
+              onSetSelectedIds(selectableIds, false);
+              onSelectAllRows(selectableRows, false);
+              return;
+            }
+            onSelectAllRows(selectableRows, true);
+          }}
         />
       </div>
 
@@ -100,41 +158,49 @@ export default function PendingExpectedSection({
         style={{ maxHeight: compactScrollHeight }}
       >
         {displayable.map((row, index) => {
-            const data = timelineRowToData(row.row, row.balance, "expected");
-            const rowKey =
-              row.row.transaction_id != null
-                ? `pending-txn-${row.row.transaction_id}`
-                : row.row.rule_id != null
-                  ? `pending-rule-${row.row.rule_id}-${row.row.account_id}-${row.row.date}`
-                  : `pending-${row.row.account_id}-${row.row.date}-${index}`;
-            const editable = canEditLedgerTimelineRow(row.row);
-            const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(row.row, accountTimeline);
-            return (
-              <TransactionRow
-                key={rowKey}
-                row={{ ...data, id: rowKey }}
-                variant="expected"
-                currency={currency}
-                isCredit={isCredit}
-                rowSurface={unmatchedScheduleRowClasses()}
-                scheduleHighlightTitle={
-                  scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : "Expected transaction waiting for confirmation"
-                }
-                onConfirm={editable ? () => onConfirmRow(row.row) : undefined}
-                onEdit={editable ? () => onEditRow(row.row) : undefined}
-                onSkip={editable ? () => onSkipRow(row.row) : undefined}
-                onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
-                onMatch={editable ? () => onMatchRow(row.row) : undefined}
-                showMatch
-                onDelete={editable ? () => onDeleteRow(row.row) : undefined}
-                actionsDisabled={actionsPending}
-                selected={
-                  data.transactionId != null ? selectedIds.has(data.transactionId) : false
-                }
-                onSelectedChange={onToggleSelected}
-              />
-            );
-          })}
+          const data = timelineRowToData(row.row, row.balance, "expected");
+          const rowKey =
+            row.row.transaction_id != null
+              ? `pending-txn-${row.row.transaction_id}`
+              : row.row.rule_id != null
+                ? `pending-rule-${row.row.rule_id}-${row.row.account_id}-${row.row.date}`
+                : `pending-${row.row.account_id}-${row.row.date}-${index}`;
+          const editable = canEditLedgerTimelineRow(row.row);
+          const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(row.row, accountTimeline);
+          const pendingKey = projectionSelectionKey(data);
+          const isSelected =
+            data.transactionId != null
+              ? selectedIds.has(data.transactionId)
+              : pendingKey != null && pendingSelectionKeys.has(pendingKey);
+          return (
+            <TransactionRow
+              key={rowKey}
+              row={{ ...data, id: rowKey }}
+              variant="expected"
+              currency={currency}
+              isCredit={isCredit}
+              rowSurface={unmatchedScheduleRowClasses()}
+              scheduleHighlightTitle={
+                scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : "Expected transaction waiting for confirmation"
+              }
+              onConfirm={editable ? () => onConfirmRow(row.row) : undefined}
+              onEdit={editable ? () => onEditRow(row.row) : undefined}
+              onSkip={editable ? () => onSkipRow(row.row) : undefined}
+              onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
+              onMatch={editable ? () => onMatchRow(row.row) : undefined}
+              showMatch
+              onDelete={editable ? () => onDeleteRow(row.row) : undefined}
+              actionsDisabled={actionsPending}
+              selected={isSelected}
+              onSelectedChange={(id, checked, shiftKey) =>
+                handleRowSelect(data, checked, Boolean(shiftKey))
+              }
+              onSelectUnresolved={(r, checked, shiftKey) =>
+                handleRowSelect(r, checked, Boolean(shiftKey))
+              }
+            />
+          );
+        })}
       </div>
     </section>
   );

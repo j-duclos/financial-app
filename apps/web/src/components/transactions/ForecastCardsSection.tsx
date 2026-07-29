@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
 import TransactionRow, {
   canSelectTransactionForBatchDelete,
+  projectionSelectionKey,
   timelineRowToData,
   transactionToData,
+  type TransactionRowData,
 } from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
@@ -20,6 +22,7 @@ import {
   shouldHighlightUnmatchedScheduledRow,
   type LedgerRow,
 } from "./transactionsLedgerUtils";
+import { ledgerRowSelectionKey, sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 
 const ROW_REM = 2.5;
 const compactScrollHeight = `${COLLAPSED_LEDGER_ROWS * ROW_REM}rem`;
@@ -46,8 +49,11 @@ type Props = {
   deletePending: boolean;
   minimumBuffer: number | null;
   selectedIds: Set<number>;
+  pendingSelectionKeys: Set<string>;
   onToggleSelected: (transactionId: number, selected: boolean) => void;
+  onSelectUnresolved: (row: TransactionRowData, selected: boolean) => void;
   onSetSelectedIds: (ids: number[], selected: boolean) => void;
+  onSelectAllRows: (rows: TransactionRowData[], selected: boolean) => void;
 };
 
 export default function ForecastCardsSection({
@@ -68,8 +74,11 @@ export default function ForecastCardsSection({
   deletePending,
   minimumBuffer,
   selectedIds,
+  pendingSelectionKeys,
   onToggleSelected,
+  onSelectUnresolved,
   onSetSelectedIds,
+  onSelectAllRows,
 }: Props) {
   const forecastRows = useMemo(
     () =>
@@ -80,26 +89,65 @@ export default function ForecastCardsSection({
     [future]
   );
 
-  const selectableIds = useMemo(() => {
-    const ids: number[] = [];
+  const selectableRows = useMemo(() => {
+    const rows: TransactionRowData[] = [];
     for (const row of forecastRows) {
       if (row.type === "transaction") {
         const data = transactionToData(row.txn, row.balance);
-        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
-          ids.push(data.transactionId);
-        }
+        if (canSelectTransactionForBatchDelete(data)) rows.push(data);
       } else {
         const data = timelineRowToData(row.row, row.balance, "future");
-        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
-          ids.push(data.transactionId);
-        }
+        if (canSelectTransactionForBatchDelete(data)) rows.push(data);
       }
     }
-    return ids;
+    return rows;
   }, [forecastRows]);
+
+  const selectableIds = useMemo(
+    () =>
+      selectableRows
+        .map((r) => r.transactionId)
+        .filter((id): id is number => id != null),
+    [selectableRows]
+  );
+  const unresolvedKeys = useMemo(
+    () =>
+      selectableRows
+        .filter((r) => r.transactionId == null)
+        .map((r) => projectionSelectionKey(r))
+        .filter((k): k is string => k != null),
+    [selectableRows]
+  );
   const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
-  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
-  const someSelected = selectedInSection > 0 && !allSelected;
+  const pendingInSection = unresolvedKeys.filter((k) => pendingSelectionKeys.has(k)).length;
+  const selectableCount = selectableIds.length + unresolvedKeys.length;
+  const selectedCount = selectedInSection + pendingInSection;
+  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  const selectionAnchorRef = useRef<string | null>(null);
+
+  function handleRowSelect(row: TransactionRowData, selected: boolean, shiftKey = false) {
+    const key = ledgerRowSelectionKey(row);
+    if (!key) return;
+    const orderedKeys = selectableRows
+      .map((r) => ledgerRowSelectionKey(r))
+      .filter((k): k is string => k != null);
+
+    if (shiftKey && selectionAnchorRef.current != null) {
+      const keys = sliceIdsByAnchor(orderedKeys, selectionAnchorRef.current, key);
+      const rowsInRange = selectableRows.filter((r) => {
+        const k = ledgerRowSelectionKey(r);
+        return k != null && keys.includes(k);
+      });
+      onSelectAllRows(rowsInRange, true);
+      return;
+    }
+
+    selectionAnchorRef.current = key;
+    if (row.transactionId != null) onToggleSelected(row.transactionId, selected);
+    else onSelectUnresolved(row, selected);
+  }
 
   const showBody = !hiddenByPast;
   const sectionClass = hiddenByPast ? "flex-none shrink-0" : "flex-1 min-h-0";
@@ -127,8 +175,15 @@ export default function ForecastCardsSection({
             className="bg-amber-50/80 border-amber-100"
             selectAllChecked={allSelected}
             selectAllIndeterminate={someSelected}
-            selectAllDisabled={deletePending || selectableIds.length === 0}
-            onSelectAllChange={(checked) => onSetSelectedIds(selectableIds, checked)}
+            selectAllDisabled={deletePending || selectableCount === 0}
+            onSelectAllChange={(checked) => {
+              if (!checked) {
+                onSetSelectedIds(selectableIds, false);
+                onSelectAllRows(selectableRows, false);
+                return;
+              }
+              onSelectAllRows(selectableRows, true);
+            }}
           />
         )}
       </div>
@@ -167,7 +222,9 @@ export default function ForecastCardsSection({
                       }
                       actionsDisabled={deletePending}
                       selected={selectedIds.has(row.txn.id)}
-                      onSelectedChange={onToggleSelected}
+                      onSelectedChange={(id, checked, shiftKey) =>
+                        handleRowSelect(data, checked, Boolean(shiftKey))
+                      }
                     />
                   );
                 }
@@ -201,6 +258,12 @@ export default function ForecastCardsSection({
                       isCredit,
                     });
 
+                const pendingKey = projectionSelectionKey(data);
+                const isSelected =
+                  data.transactionId != null
+                    ? selectedIds.has(data.transactionId)
+                    : pendingKey != null && pendingSelectionKeys.has(pendingKey);
+
                 return (
                   <TransactionRow
                     key={rowKey}
@@ -214,10 +277,13 @@ export default function ForecastCardsSection({
                     onSkip={editable ? () => onSkipRow(row.row) : undefined}
                     onDelete={editable ? () => onDeleteRow(row.row) : undefined}
                     actionsDisabled={deletePending}
-                    selected={
-                      data.transactionId != null ? selectedIds.has(data.transactionId) : false
+                    selected={isSelected}
+                    onSelectedChange={(id, checked, shiftKey) =>
+                      handleRowSelect(data, checked, Boolean(shiftKey))
                     }
-                    onSelectedChange={onToggleSelected}
+                    onSelectUnresolved={(r, checked, shiftKey) =>
+                      handleRowSelect(r, checked, Boolean(shiftKey))
+                    }
                   />
                 );
               })}
