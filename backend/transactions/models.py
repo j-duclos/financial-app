@@ -243,6 +243,18 @@ class Transaction(models.Model):
     interest_cycle_end_date = models.DateField(null=True, blank=True)
     # Plaid transaction_id; unique for dedupe and sync remove/modify.
     plaid_transaction_id = models.CharField(max_length=128, null=True, blank=True, unique=True, db_index=True)
+    # Prior pending Plaid transaction_id when a posted txn replaces a pending one.
+    pending_transaction_id = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Plaid pending_transaction_id linking a posted import to its prior pending row.",
+    )
+    is_pending = models.BooleanField(
+        default=False,
+        help_text="True while the bank/Plaid transaction is still pending (not yet posted).",
+    )
     transfer_group = models.ForeignKey(
         TransferGroup,
         on_delete=models.SET_NULL,
@@ -308,6 +320,11 @@ class Transaction(models.Model):
             models.Index(
                 fields=["account", "source", "import_match_status"],
                 name="txn_acct_src_match_idx",
+            ),
+            # Manual↔Plaid candidate lookup: same account + amount + nearby date.
+            models.Index(
+                fields=["account", "amount", "date"],
+                name="txn_acct_amt_date_idx",
             ),
         ]
 

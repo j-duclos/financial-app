@@ -8,6 +8,17 @@ alwaysApply: false
 
 Bank imports (`Transaction.source=PLAID`) are the user's real money. Treat them as sacred.
 
+## Manual ACTUAL absorb (exception)
+
+When a hand-entered ACTUAL/ONE_TIME row matches a Plaid import (same account, amount,
+direction, date ±2 days, fuzzy merchant — see `import_matching.py`):
+
+- **MERGE onto the manual row** (attach `plaid_transaction_id`, preserve category/tags/memo)
+- **Mark the Plaid twin DUPLICATE** (hidden from ledger; never `.delete()` source=PLAID)
+- Do **not** leave both rows balance-affecting
+
+Rule-backed matches still use `TransactionMatch`: show Plaid, hide the planned twin.
+
 ## Ledger visibility (`ledger_visible_transactions`)
 
 When a Plaid row is matched to a planned/manual/rule row via `TransactionMatch`:
@@ -15,19 +26,7 @@ When a Plaid row is matched to a planned/manual/rule row via `TransactionMatch`:
 - **SHOW** the Plaid import (`imported_transaction`)
 - **HIDE** the planned twin (`planned_transaction`) to avoid double-counting balance
 - **NEVER** hide matched Plaid imports — inverting this broke production repeatedly
-
-```python
-# ✅ CORRECT — hide planned twin only; IGNORED is the only hidden Plaid status
-matched_planned_pks = TransactionMatch.objects.values("planned_transaction_id")
-hide = Q(pk__in=Subquery(matched_planned_pks)) | ignored_plaid_only
-
-# ❌ FORBIDDEN — never hide matched imports
-matched_plaid_import_pks = TransactionMatch.objects.filter(...).values("imported_transaction_id")
-hide = Q(pk__in=Subquery(matched_plaid_import_pks))
-
-# ❌ FORBIDDEN — never hide DUPLICATE Plaid (many were wrongly auto-suppressed)
-import_match_status__in=[IGNORED, DUPLICATE]
-```
+- DUPLICATE/IGNORED hide only *extra* Plaid rows (re-sync junk or absorbed manuals' twins)
 
 ## Deletes
 
@@ -43,5 +42,6 @@ import_match_status__in=[IGNORED, DUPLICATE]
 ## Before changing matching or ledger code
 
 1. Read the module docstring in `transactions/services/matching.py`
-2. Run `pytest transactions/tests/test_plaid_manual_merge.py`
-3. Confirm matched imports stay visible in tests
+2. Read `transactions/services/import_matching.py` for manual↔Plaid merge
+3. Run `pytest transactions/tests/test_plaid_manual_merge.py transactions/tests/test_import_matching.py`
+4. Confirm only one row affects balances after a manual↔Plaid merge

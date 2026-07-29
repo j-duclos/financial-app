@@ -36,6 +36,11 @@ from .services.matching import (
     mark_import_duplicate,
     unmatch_transaction,
 )
+from .services.import_matching import (
+    keep_both_manual_and_import,
+    merge_manual_transaction_with_import,
+    reject_manual_import_suggestion,
+)
 from .pagination import TransactionPagination
 
 
@@ -646,6 +651,7 @@ class TransactionViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="match-manual")
     def match_manual(self, request: Request, pk=None):
+        """Match these — link this Plaid import to a planned/manual row (merges manuals in place)."""
         imp = self.get_object()
         raw = request.data.get("planned_transaction_id")
         if raw is None:
@@ -653,15 +659,59 @@ class TransactionViewSet(ModelViewSet):
                 {"detail": "planned_transaction_id is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        planned_id = int(raw)
+        planned = Transaction.objects.filter(pk=planned_id).first()
+        if planned is None:
+            return Response({"detail": "planned_transaction_id not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
+            # Manual ACTUAL/ONE_TIME: merge onto the manual row (same backend as auto-match).
+            if (
+                planned.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME)
+                and planned.rule_id is None
+                and planned.transfer_group_id is None
+            ):
+                merged = merge_manual_transaction_with_import(
+                    planned, imp, confidence="MANUAL"
+                )
+                return Response(
+                    {
+                        "merged_transaction_id": merged.pk,
+                        "plaid_transaction_id": merged.plaid_transaction_id,
+                    },
+                    status=status.HTTP_200_OK,
+                )
             m = manual_match_transactions(
-                planned_id=int(raw),
+                planned_id=planned_id,
                 imported_id=imp.pk,
                 user=request.user,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if m is None:
+            return Response({"detail": "Matched."}, status=status.HTTP_200_OK)
         return Response({"match_id": m.pk}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="keep-both")
+    def keep_both(self, request: Request, pk=None):
+        """Keep both — dismiss match suggestions; leave import and manual as separate rows."""
+        imp = self.get_object()
+        raw = request.data.get("planned_transaction_id")
+        planned_id = int(raw) if raw is not None else None
+        keep_both_manual_and_import(imported_id=imp.pk, planned_id=planned_id)
+        return Response({"detail": "Kept both."})
+
+    @action(detail=True, methods=["post"], url_path="not-a-match")
+    def not_a_match(self, request: Request, pk=None):
+        """Not a match — dismiss one suggested manual↔import pair."""
+        imp = self.get_object()
+        raw = request.data.get("planned_transaction_id")
+        if raw is None:
+            return Response(
+                {"detail": "planned_transaction_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        reject_manual_import_suggestion(imported_id=imp.pk, planned_id=int(raw))
+        return Response({"detail": "Suggestion dismissed."})
 
     @action(detail=True, methods=["post"], url_path="unmatch")
     def unmatch(self, request: Request, pk=None):

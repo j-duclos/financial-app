@@ -8,6 +8,13 @@ from .expected_lifecycle import (
     move_scheduled_date,
     skip_scheduled_transaction,
 )
+from .import_matching import (
+    find_manual_match_for_import,
+    keep_both_manual_and_import,
+    merge_manual_transaction_with_import,
+    reject_manual_import_suggestion,
+    score_manual_import_match,
+)
 from .matching import (
     AUTO_MATCH_THRESHOLD,
     SUGGEST_MATCH_THRESHOLD,
@@ -58,10 +65,15 @@ __all__ = [
     "eligible_manual_transactions_queryset",
     "confirm_expected_transaction",
     "find_import_candidates_for_planned",
+    "find_manual_match_for_import",
     "is_expected_eligible",
     "is_planned_scheduled_eligible",
+    "keep_both_manual_and_import",
     "match_expected_to_import",
+    "merge_manual_transaction_with_import",
     "move_scheduled_date",
+    "reject_manual_import_suggestion",
+    "score_manual_import_match",
     "skip_scheduled_transaction",
     "find_candidate_matches",
     "ignore_imported_transaction",

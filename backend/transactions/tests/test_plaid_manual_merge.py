@@ -40,14 +40,14 @@ class TestPlaidMatching(TestCase):
         )
 
     def test_auto_match_manual_same_account(self):
-        d_user = date(2026, 4, 25)
+        d_user = date(2026, 4, 26)
         d_bank = date(2026, 4, 28)
         amt = Decimal("-42.50")
         manual = Transaction.objects.create(
             account=self.acc,
             date=d_user,
-            payee="Coffee",
-            memo="",
+            payee="POS DEBIT STARBUCKS STORE 123 PHOENIX AZ",
+            memo="morning coffee",
             amount=amt,
             source=Transaction.Source.ACTUAL,
             status=Transaction.Status.CLEARED,
@@ -55,21 +55,29 @@ class TestPlaidMatching(TestCase):
         imp = Transaction.objects.create(
             account=self.acc,
             date=d_bank,
-            payee="STARBUCKS STORE 123",
+            payee="Starbucks",
             amount=amt,
             source=Transaction.Source.PLAID,
             plaid_transaction_id="plaid-1",
-            imported_description="STARBUCKS",
+            imported_description="STARBUCKS STORE 123",
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = match_imported_transaction(imp)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.planned_transaction_id, manual.pk)
+        # Manual ACTUAL absorbs onto the manual row (TransactionMatch is deleted after merge).
+        self.assertFalse(TransactionMatch.objects.filter(imported_transaction=imp).exists())
         imp.refresh_from_db()
         manual.refresh_from_db()
-        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(manual.plaid_transaction_id, "plaid-1")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
         self.assertEqual(manual.date, d_bank)
-        self.assertEqual(manual.payee, "STARBUCKS STORE 123")
+        self.assertEqual(manual.memo, "morning coffee")
+        visible = set(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc)).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertIn(manual.pk, visible)
+        self.assertNotIn(imp.pk, visible)
 
     def test_manual_entered_after_plaid_import_links_and_hides_planned(self):
         d = date(2026, 6, 10)
@@ -93,15 +101,15 @@ class TestPlaidMatching(TestCase):
         )
         imp.refresh_from_db()
         manual.refresh_from_db()
-        self.assertEqual(manual.import_match_status, Transaction.ImportMatchStatus.MATCHED)
-        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(manual.plaid_transaction_id, "pl-chewy-jun10")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
         visible = set(
             ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
                 "pk", flat=True
             )
         )
-        self.assertIn(imp.pk, visible)
-        self.assertNotIn(manual.pk, visible)
+        self.assertIn(manual.pk, visible)
+        self.assertNotIn(imp.pk, visible)
 
     def test_post_transaction_accepts_iso_date_string_with_pending_plaid(self):
         """Regression: JSON date strings must not break auto-match after create."""
@@ -150,8 +158,10 @@ class TestPlaidMatching(TestCase):
         self.assertEqual(rematch_unmatched_manual_actuals(account_id=self.acc.id), 1)
         imp.refresh_from_db()
         manual.refresh_from_db()
-        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=imp).exists())
-        self.assertEqual(manual.payee, "Fry's Food and Drug")
+        self.assertEqual(manual.plaid_transaction_id, "pl-frys-jun10")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertFalse(TransactionMatch.objects.filter(planned_transaction=manual).exists())
+        self.assertTrue("FRY" in manual.payee.upper() or "Fry" in manual.payee)
 
     def test_collapse_materialized_actual_duplicate_does_not_merge(self):
         """Each unique plaid_transaction_id keeps its own row — no fuzzy collapse onto manual twins."""
@@ -210,15 +220,15 @@ class TestPlaidMatching(TestCase):
         materialize_unmatched_plaid_imports(account_id=self.acc.id)
         imp.refresh_from_db()
         manual.refresh_from_db()
-        self.assertEqual(imp.source, Transaction.Source.PLAID)
-        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
-        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=imp).exists())
+        self.assertEqual(manual.plaid_transaction_id, "pl-frys-skip-mat")
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(manual.source, Transaction.Source.ACTUAL)
         visible = set(
             ledger_visible_transactions(Transaction.objects.filter(account=self.acc, date=d)).values_list(
                 "pk", flat=True
             )
         )
-        self.assertEqual(visible, {imp.pk})
+        self.assertEqual(visible, {manual.pk})
 
     def test_merchant_token_overlap_scores_long_manual_payee(self):
         d = date(2026, 6, 10)
@@ -960,9 +970,12 @@ class TestPlaidMatching(TestCase):
             import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
         )
         m = manual_match_transactions(planned_id=in_leg.pk, imported_id=imp.pk, user=self.user)
-        self.assertIsNotNone(m)
-        out = Transaction.objects.get(pk=m.planned_transaction_id, account=self.acc)
-        self.assertEqual(out.amount, Decimal("-25.00"))
+        # Transfer-leg merge returns None; the checking out-leg holds the Plaid id.
+        self.assertIsNone(m)
+        out = Transaction.objects.filter(
+            account=self.acc, amount=Decimal("-25.00"), date=date(2026, 3, 27)
+        ).exclude(import_match_status=Transaction.ImportMatchStatus.DUPLICATE).get()
+        self.assertEqual(out.plaid_transaction_id, "plaid-man-x")
         in_leg.refresh_from_db()
         self.assertEqual(in_leg.transfer_group_id, out.transfer_group_id)
 
@@ -998,20 +1011,24 @@ class TestPlaidMatching(TestCase):
 
         for imp in imports[:3]:
             imp.refresh_from_db()
-            self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+            self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
         imports[3].refresh_from_db()
         self.assertEqual(imports[3].import_match_status, Transaction.ImportMatchStatus.UNMATCHED)
+
+        for manual in manuals:
+            manual.refresh_from_db()
+            self.assertTrue((manual.plaid_transaction_id or "").startswith("plaid-humane-"))
 
         visible = ledger_visible_transactions(
             Transaction.objects.filter(account=self.acc, amount=amt, date__gte=d_manual)
         )
         visible_pks = set(visible.values_list("pk", flat=True))
         self.assertEqual(len(visible_pks), 4)
-        for imp in imports[:3]:
-            self.assertIn(imp.pk, visible_pks)
+        for manual in manuals:
+            self.assertIn(manual.pk, visible_pks)
         self.assertIn(imports[3].pk, visible_pks)
-        self.assertEqual(TransactionMatch.objects.filter(imported_transaction__in=imports).count(), 3)
+        self.assertEqual(TransactionMatch.objects.filter(imported_transaction__in=imports).count(), 0)
 
     def test_orphan_plaid_import_materialized_when_no_manual_row(self):
         """Fourth bank charge with no manual entry must still appear in the ledger."""
@@ -1370,7 +1387,9 @@ class TestPlaidMatching(TestCase):
         )
         match_imported_transaction(first)
         planned.refresh_from_db()
-        self.assertEqual(planned.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        first.refresh_from_db()
+        self.assertEqual(planned.plaid_transaction_id, "pl-lowes-1")
+        self.assertEqual(first.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
         resync = Transaction.objects.create(
             account=self.acc,
@@ -1390,9 +1409,9 @@ class TestPlaidMatching(TestCase):
         )
         self.assertEqual(visible.count(), 2)
         visible_pks = set(visible.values_list("pk", flat=True))
-        self.assertIn(first.pk, visible_pks)
+        self.assertIn(planned.pk, visible_pks)
         self.assertIn(resync.pk, visible_pks)
-        self.assertNotIn(planned.pk, visible_pks)
+        self.assertNotIn(first.pk, visible_pks)
 
     def test_resync_import_not_matched_to_orphan_when_transfer_already_matched(self):
         """Re-sync must not latch onto a ghost ACTUAL row when the transfer leg is already matched."""
@@ -1559,7 +1578,9 @@ class TestPlaidImportDeduplicationRules(TestCase):
         john.refresh_from_db()
         mike.refresh_from_db()
         sarah.refresh_from_db()
-        self.assertTrue(TransactionMatch.objects.filter(planned_transaction=manual, imported_transaction=john).exists())
+        manual.refresh_from_db()
+        self.assertEqual(manual.plaid_transaction_id, "pl-cash-john")
+        self.assertEqual(john.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
         self.assertFalse(TransactionMatch.objects.filter(imported_transaction=mike).exists())
         self.assertFalse(TransactionMatch.objects.filter(imported_transaction=sarah).exists())
         self.assertNotEqual(mike.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)

@@ -210,11 +210,23 @@ def _create_plaid_sync_transaction(
     defaults: dict[str, Any],
 ) -> Transaction | None:
     """
-    Insert a new Plaid row from /transactions/sync.
+    Insert a new Plaid row from /transactions/sync — or merge onto a manual twin.
 
     Hard rule: never import on or before the account's last reconciled period end.
     Returns None when the date is locked (caller must not count it as added).
+
+    Before creating a second ledger row, try high-confidence manual actual matching
+    (same account/amount/direction, date ±2 days, fuzzy merchant). A unique hit updates
+    the existing manual row in place; ambiguous candidates still create the import and
+    attach MatchSuggestion rows for review.
     """
+    from transactions.services.import_matching import (
+        find_manual_match_for_import,
+        merge_manual_transaction_with_import,
+        suggest_manual_matches_for_new_import,
+        try_merge_incoming_plaid_into_manual,
+    )
+
     account = Account.objects.filter(pk=account_pk).first()
     txn_date = defaults["date"]
     if account and is_import_date_locked(account, txn_date):
@@ -226,6 +238,13 @@ def _create_plaid_sync_transaction(
             import_locked_through_date(account),
         )
         return None
+
+    merged = try_merge_incoming_plaid_into_manual(
+        account_pk=account_pk, pid=pid, defaults=defaults
+    )
+    if merged is not None:
+        return merged
+
     if bank_movement_already_on_ledger(
         account_id=account_pk,
         txn_date=defaults["date"],
@@ -236,7 +255,15 @@ def _create_plaid_sync_transaction(
         defaults = {**defaults, "import_match_status": Transaction.ImportMatchStatus.DUPLICATE}
     created = Transaction.objects.create(plaid_transaction_id=pid, **defaults)
     if created.import_match_status != Transaction.ImportMatchStatus.DUPLICATE:
-        _safe_match_imported_transaction(created)
+        # Ambiguous manual candidates → suggestions; otherwise rule/transfer matching.
+        decision = find_manual_match_for_import(created)
+        if decision.action == "suggest":
+            suggest_manual_matches_for_new_import(created)
+        elif decision.action == "merge" and decision.manual is not None:
+            # Race: unique candidate appeared after the pre-create check.
+            return merge_manual_transaction_with_import(decision.manual, created)
+        else:
+            _safe_match_imported_transaction(created)
     return created
 
 
@@ -295,10 +322,33 @@ def _apply_plaid_defaults_to_existing(existing: Transaction, defaults: dict[str,
     If this import is already linked to a planned row (TransactionMatch), do not reset
     ``import_match_status`` to UNMATCHED — Plaid sends ``modified`` often and defaults would
     otherwise clear MATCHED metadata on every sync.
+
+    When the surviving row is a manual that absorbed a Plaid id, preserve user category,
+    tags, memo, and source — only refresh bank identity / description fields.
     """
     to_apply = dict(defaults)
     if TransactionMatch.objects.filter(imported_transaction_id=existing.pk).exists():
         to_apply.pop("import_match_status", None)
+    if existing.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME):
+        # Manual absorbed import — never flip source back to PLAID or wipe user metadata.
+        for key in (
+            "source",
+            "category_id",
+            "category",
+            "tags",
+            "memo",
+            "reconciled",
+            "reconciled_at",
+            "reconciliation_id",
+            "reconciliation",
+            "status",
+            "import_match_status",
+        ):
+            to_apply.pop(key, None)
+        # Keep intentionally short user payee; still refresh imported_description / dates.
+        user_payee = (existing.payee or "").strip()
+        if user_payee and len(user_payee) < 28 and "POS DEBIT" not in user_payee.upper():
+            to_apply.pop("payee", None)
     for key, val in to_apply.items():
         setattr(existing, key, val)
 
@@ -572,8 +622,6 @@ def exchange_public_token(
 
 
 def _plaid_txn_to_defaults(txn: dict[str, Any], account_pk: int) -> dict[str, Any] | None:
-    if txn.get("pending"):
-        return None
     plaid_id = txn.get("transaction_id")
     if not plaid_id:
         return None
@@ -583,6 +631,7 @@ def _plaid_txn_to_defaults(txn: dict[str, Any], account_pk: int) -> dict[str, An
     our_amount = -Decimal(str(raw_amt))
     if our_amount == 0:
         return None
+    is_pending = bool(txn.get("pending"))
     payee = (txn.get("merchant_name") or txn.get("name") or "").strip() or "Unknown"
     memo = ""
     if isinstance(txn.get("original_description"), str):
@@ -601,21 +650,27 @@ def _plaid_txn_to_defaults(txn: dict[str, Any], account_pk: int) -> dict[str, An
         d = date(int(parts[0]), int(parts[1]), int(parts[2]))
     raw_name = (txn.get("name") or "").strip()
     np = normalize_description(f"{payee} {raw_name}")
+    pending_link = txn.get("pending_transaction_id")
+    pending_transaction_id = str(pending_link).strip() if pending_link else ""
     defaults = {
         "plaid_transaction_id": str(plaid_id),
         "account_id": account_pk,
         "date": d,
-        "posted_date": d,
+        "posted_date": None if is_pending else d,
         "payee": payee[:255],
         "memo": (memo or "")[:2000],
         "imported_description": (raw_name or memo or "")[:2000],
         "normalized_payee": np[:512],
         "amount": our_amount,
         "source": Transaction.Source.PLAID,
-        "cleared": True,
-        "status": Transaction.Status.CLEARED,
+        "cleared": not is_pending,
+        "status": (
+            Transaction.Status.PLANNED if is_pending else Transaction.Status.CLEARED
+        ),
         "import_match_status": Transaction.ImportMatchStatus.UNMATCHED,
         "transaction_type": Transaction.TransactionType.OTHER,
+        "is_pending": is_pending,
+        "pending_transaction_id": pending_transaction_id[:128] if pending_transaction_id else None,
     }
     acct = Account.objects.filter(pk=account_pk).first()
     if acct and acct.is_credit_card():
@@ -737,6 +792,24 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
                     continue
                 pid = defaults.pop("plaid_transaction_id")
                 account = account_by_pk.get(account_pk)
+                pending_link = (defaults.get("pending_transaction_id") or "").strip()
+
+                # Posted txn that replaces a prior pending import — update in place.
+                if pending_link and not defaults.get("is_pending"):
+                    from transactions.services.import_matching import resolve_pending_to_posted
+
+                    converted = resolve_pending_to_posted(
+                        account_pk=account_pk,
+                        posted_pid=pid,
+                        pending_pid=pending_link,
+                        defaults=defaults,
+                    )
+                    if converted is not None:
+                        modified += 1
+                        if converted.source == Transaction.Source.PLAID:
+                            _safe_match_imported_transaction(converted)
+                        continue
+
                 existing = Transaction.objects.filter(plaid_transaction_id=pid).first()
                 if existing:
                     if account and is_import_date_locked(account, defaults["date"]):

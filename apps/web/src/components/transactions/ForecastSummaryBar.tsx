@@ -66,28 +66,26 @@ export default function ForecastSummaryBar({
 
   if (!expanded) {
     return (
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium shadow-sm transition-colors ${
-            hasRisk
-              ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-          }`}
-          aria-expanded={false}
-        >
-          <span aria-hidden className="text-[10px] leading-none">
-            ▸
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors self-end ${
+          hasRisk
+            ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+        }`}
+        aria-expanded={false}
+      >
+        <span aria-hidden className="text-[10px] leading-none">
+          ▸
+        </span>
+        Forecast summary
+        {warningCount > 0 ? (
+          <span className="rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+            {warningCount}
           </span>
-          Forecast summary
-          {warningCount > 0 ? (
-            <span className="rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
-              {warningCount}
-            </span>
-          ) : null}
-        </button>
-      </div>
+        ) : null}
+      </button>
     );
   }
 

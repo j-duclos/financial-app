@@ -2120,8 +2120,10 @@ export default function Transactions() {
       ) : null}
 
       <div className="flex flex-col gap-3 mb-3 flex-shrink-0">
-        <div className="flex flex-col gap-2 min-w-0 w-full">
-          {account && ledgerSections.today?.type === "today_balance" && ledgerCurrentBalance != null && (
+        {account &&
+          ledgerSections.today?.type === "today_balance" &&
+          ledgerCurrentBalance != null &&
+          forecastSummaryExpanded && (
             <ForecastSummaryBar
               account={account}
               currentBalance={ledgerCurrentBalance}
@@ -2130,71 +2132,12 @@ export default function Transactions() {
               nextRiskDate={ledgerFirstNegative?.date ?? null}
               firstNegativeAmount={ledgerFirstNegative?.balance ?? null}
               householdWarnings={householdWarnings}
-              expanded={forecastSummaryExpanded}
+              expanded
               onToggle={() => setForecastSummaryExpanded((v) => !v)}
               ledgerLowestProjected={ledgerLowestProjected?.balance ?? null}
               ledgerLowestProjectedDate={ledgerLowestProjected?.date ?? null}
             />
           )}
-
-          {accountId && isCreditAccount && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <span className="text-xs font-medium text-slate-600">Payoff:</span>
-              <span className="text-slate-400 text-xs">$</span>
-              <input
-                type="number"
-                step="1"
-                min="1"
-                placeholder="e.g. 150"
-                value={payoffPayment}
-                onChange={(e) => {
-                  setPayoffPayment(e.target.value);
-                  setPayoffResult(null);
-                  setPayoffError(null);
-                }}
-                className="w-16 rounded border border-slate-300 px-1.5 py-1 text-xs"
-              />
-              <span className="text-slate-500 text-xs">/mo</span>
-              <button
-                type="button"
-                onClick={async () => {
-                  const val = payoffPayment.trim();
-                  if (!val || Number(val) <= 0) {
-                    setPayoffError("Enter a positive amount.");
-                    return;
-                  }
-                  setPayoffLoading(true);
-                  setPayoffError(null);
-                  setPayoffResult(null);
-                  try {
-                    const res = await getAccountPayoff(accountId as number, {
-                      monthly_payment: val,
-                    });
-                    setPayoffResult(res);
-                  } catch (err: unknown) {
-                    setPayoffError(err instanceof Error ? err.message : "Failed to load payoff.");
-                  } finally {
-                    setPayoffLoading(false);
-                  }
-                }}
-                disabled={payoffLoading || !payoffPayment.trim()}
-                className="px-1.5 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {payoffLoading ? "…" : "Calc"}
-              </button>
-              {payoffError && <span className="text-xs text-red-600">{payoffError}</span>}
-              {payoffResult != null && payoffResult.months_to_payoff > 0 && (
-                <span className="text-xs text-slate-700">
-                  → {payoffResult.months_to_payoff} pmts
-                  {payoffResult.payoff_date && <> by {formatDateDisplay(payoffResult.payoff_date)}</>}
-                </span>
-              )}
-              {payoffResult != null && payoffResult.months_to_payoff === 0 && (
-                <span className="text-xs text-green-700">Paid off</span>
-              )}
-            </div>
-          )}
-        </div>
 
         <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-wrap sm:items-end">
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
@@ -2263,6 +2206,81 @@ export default function Transactions() {
               setAmountMaxInput("");
             }}
           />
+          {accountId && isCreditAccount && (
+            <div className="flex flex-wrap items-end gap-x-2 gap-y-1 self-end pb-0.5">
+              <span className="text-xs font-medium text-slate-600 pb-1.5">Payoff:</span>
+              <span className="text-slate-400 text-xs pb-1.5">$</span>
+              <input
+                type="number"
+                step="1"
+                min="1"
+                placeholder="e.g. 150"
+                value={payoffPayment}
+                onChange={(e) => {
+                  setPayoffPayment(e.target.value);
+                  setPayoffResult(null);
+                  setPayoffError(null);
+                }}
+                className="w-16 rounded border border-slate-300 px-1.5 py-1.5 text-xs"
+              />
+              <span className="text-slate-500 text-xs pb-1.5">/mo</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const val = payoffPayment.trim();
+                  if (!val || Number(val) <= 0) {
+                    setPayoffError("Enter a positive amount.");
+                    return;
+                  }
+                  setPayoffLoading(true);
+                  setPayoffError(null);
+                  setPayoffResult(null);
+                  try {
+                    const res = await getAccountPayoff(accountId as number, {
+                      monthly_payment: val,
+                    });
+                    setPayoffResult(res);
+                  } catch (err: unknown) {
+                    setPayoffError(err instanceof Error ? err.message : "Failed to load payoff.");
+                  } finally {
+                    setPayoffLoading(false);
+                  }
+                }}
+                disabled={payoffLoading || !payoffPayment.trim()}
+                className="px-1.5 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {payoffLoading ? "…" : "Calc"}
+              </button>
+              {payoffError && <span className="text-xs text-red-600 pb-1.5">{payoffError}</span>}
+              {payoffResult != null && payoffResult.months_to_payoff > 0 && (
+                <span className="text-xs text-slate-700 pb-1.5">
+                  → {payoffResult.months_to_payoff} pmts
+                  {payoffResult.payoff_date && <> by {formatDateDisplay(payoffResult.payoff_date)}</>}
+                </span>
+              )}
+              {payoffResult != null && payoffResult.months_to_payoff === 0 && (
+                <span className="text-xs text-green-700 pb-1.5">Paid off</span>
+              )}
+            </div>
+          )}
+          {account &&
+            ledgerSections.today?.type === "today_balance" &&
+            ledgerCurrentBalance != null &&
+            !forecastSummaryExpanded && (
+              <ForecastSummaryBar
+                account={account}
+                currentBalance={ledgerCurrentBalance}
+                isCredit={isCredit}
+                currency={currency}
+                nextRiskDate={ledgerFirstNegative?.date ?? null}
+                firstNegativeAmount={ledgerFirstNegative?.balance ?? null}
+                householdWarnings={householdWarnings}
+                expanded={false}
+                onToggle={() => setForecastSummaryExpanded((v) => !v)}
+                ledgerLowestProjected={ledgerLowestProjected?.balance ?? null}
+                ledgerLowestProjectedDate={ledgerLowestProjected?.date ?? null}
+              />
+            )}
         </div>
       </div>
 

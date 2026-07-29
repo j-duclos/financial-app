@@ -344,7 +344,10 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
     Auto-match only when bank text clearly describes the same charge as the planned row.
 
     Blocks Andrew / Elijah / Joseph Cash App $10 sends from collapsing onto one row.
+    Allows hyphenated merchants (WAL-MART ↔ Walmart) and verbose POS ↔ short Plaid names.
     """
+    from transactions.services.import_matching import normalize_merchant_text, _merchant_compact
+
     if not _plaid_ids_compatible_for_match(imported, planned):
         return False
     if planned.transfer_group_id:
@@ -367,6 +370,7 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
         )
         if rule and (rule.name or "").strip():
             labels.append(rule.name)
+    import_compact = _merchant_compact(imported.imported_description or imported.payee or "")
     for label in labels:
         nl = normalize_description(label)
         if not nl:
@@ -378,6 +382,15 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
             and planned.rule_id
             and nl in pi
         ):
+            return True
+        label_compact = _merchant_compact(label)
+        if import_compact and label_compact and (
+            import_compact in label_compact or label_compact in import_compact
+        ):
+            return True
+        nm = normalize_merchant_text(label)
+        ni = normalize_merchant_text(imported.imported_description or imported.payee or "")
+        if nm and ni and (ni in nm or nm in ni):
             return True
     ref_i = _bank_reference_tokens(imported)
     ref_p = _bank_reference_tokens(planned)
@@ -402,12 +415,20 @@ def _auto_link_description_compatible(imported: Transaction, planned: Transactio
 def _merchant_token_overlap_score(imported: Transaction, planned: Transaction) -> int:
     """
     Boost when a merchant token from the cleaner import label appears in a long manual payee
-    (e.g. import "Chewy" vs manual "POS DEBIT PAYPAL *CHEWY INC …").
+    (e.g. import "Chewy" vs manual "POS DEBIT PAYPAL *CHEWY INC …",
+    or "Walmart" vs "POS DEBIT WAL-MART #4430 …").
     """
-    np = normalize_description(planned.payee or "")
-    ni = normalize_description(imported.imported_description or imported.payee or "")
+    from transactions.services.import_matching import normalize_merchant_text, _merchant_compact
+
+    np = normalize_merchant_text(planned.payee or "")
+    ni = normalize_merchant_text(imported.imported_description or imported.payee or "")
     if not np or not ni:
         return 0
+    compact_p, compact_i = _merchant_compact(planned.payee or ""), _merchant_compact(
+        imported.imported_description or imported.payee or ""
+    )
+    if compact_i and compact_p and (compact_i in compact_p or compact_p in compact_i):
+        return 20
     short, long = (ni, np) if len(ni.split()) <= len(np.split()) else (np, ni)
     tokens = [
         w
@@ -416,7 +437,8 @@ def _merchant_token_overlap_score(imported: Transaction, planned: Transaction) -
     ]
     if not tokens:
         return 0
-    hits = sum(1 for token in tokens if token in long)
+    long_compact = long.replace(" ", "")
+    hits = sum(1 for token in tokens if token in long or token in long_compact)
     if hits == 0:
         return 0
     if len(tokens) == 1:
@@ -701,10 +723,6 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
     score += rel_boost
     parts.update(rel_parts)
 
-    if score >= AUTO_MATCH_THRESHOLD and not _auto_link_description_compatible(imported, planned):
-        parts["reject"] = "description_mismatch_for_auto_match"
-        return SUGGEST_MATCH_THRESHOLD - 1, parts
-
     import_text = ni
     planned_labels = [np]
     if planned.source == Transaction.Source.RULE and planned.rule_id:
@@ -731,6 +749,10 @@ def score_candidate(imported: Transaction, planned: Transaction) -> tuple[int, d
         planned_families.update(_merchant_families(label))
     if import_families and planned_families and import_families.isdisjoint(planned_families):
         return 0, {"reject": "merchant_family_mismatch"}
+
+    if score >= AUTO_MATCH_THRESHOLD and not _auto_link_description_compatible(imported, planned):
+        parts["reject"] = "description_mismatch_for_auto_match"
+        return SUGGEST_MATCH_THRESHOLD - 1, parts
 
     if (
         _is_rule_backed_planned_row(planned)
@@ -1810,6 +1832,9 @@ def _should_absorb_planned_into_import(planned: Transaction, imported: Transacti
     """
     True when ``planned`` is a shadow of the same bank post as ``imported`` (excluding transfer legs).
 
+    Manual ACTUAL/ONE_TIME shadows are merged onto the manual row (not onto the Plaid row) —
+    see :func:`transactions.services.import_matching.merge_manual_transaction_with_import`.
+
     Transfer/payment legs merge the import onto the leg instead — see
     :func:`merge_import_into_transfer_payment_leg`.
     """
@@ -1837,43 +1862,23 @@ def _absorb_planned_duplicate_into_import(
     imported: Transaction,
     match: TransactionMatch,
 ) -> None:
-    """Merge metadata onto the Plaid row, rewire transfer legs, delete the ACTUAL shadow and match."""
-    from transactions.services.posting import _delete_transaction_cascade
+    """
+    Merge a manual ACTUAL twin with its Plaid import onto the manual row.
 
-    update_fields: list[str] = []
-    if planned.category_id and not imported.category_id:
-        imported.category_id = planned.category_id
-        update_fields.append("category_id")
-    if planned.tags and (not imported.tags or imported.tags == []):
-        imported.tags = list(planned.tags) if isinstance(planned.tags, list) else planned.tags
-        update_fields.append("tags")
-    if (planned.memo or "").strip() and not (imported.memo or "").strip():
-        imported.memo = planned.memo
-        update_fields.append("memo")
-    if planned.transfer_group_id and not imported.transfer_group_id:
-        imported.transfer_group_id = planned.transfer_group_id
-        update_fields.append("transfer_group_id")
-    if planned.reconciled:
-        imported.reconciled = True
-        imported.cleared = True
-        imported.status = Transaction.Status.RECONCILED
-        update_fields.extend(["reconciled", "cleared", "status"])
-    imported.import_match_status = Transaction.ImportMatchStatus.NONE
-    update_fields.append("import_match_status")
-    if update_fields:
-        imported.save(update_fields=[*update_fields, "updated_at"])
-    _rewire_transfer_from_leg(old_from=planned, new_from=imported)
-    if imported.transfer_group_id:
-        tg = TransferGroup.objects.filter(pk=imported.transfer_group_id).first()
-        if tg:
-            _refresh_transfer_group_status(tg)
+    Preferred direction: keep the user's category/tags/memo/reconciliation on the
+    manual transaction, attach ``plaid_transaction_id``, and hide the Plaid duplicate.
+    """
+    from transactions.services.import_matching import merge_manual_transaction_with_import
+
+    # Match row is replaced by a single surviving manual with plaid identity.
     match.delete()
-    _delete_transaction_cascade(planned)
+    merge_manual_transaction_with_import(planned, imported, confidence="AUTO")
 
 
 def collapse_matched_actual_planned_duplicates(*, account_id: int | None = None) -> int:
     """
-    One bank post must be one row. Remove ACTUAL shadows already linked to a Plaid import match.
+    One bank post must be one row. Merge ACTUAL shadows already linked to a Plaid import
+    onto the manual row (attach plaid_transaction_id; hide the Plaid duplicate).
     """
     qs = TransactionMatch.objects.filter(
         imported_transaction__source=Transaction.Source.PLAID,
@@ -1956,7 +1961,12 @@ def _create_match_record(
                 _refresh_transfer_group_status(tg)
         if _should_absorb_planned_into_import(planned, imported):
             _absorb_planned_duplicate_into_import(planned, imported, tm)
-            mark_redundant_plaid_imports_after_match(imported)
+            planned.refresh_from_db()
+            mark_redundant_plaid_imports_after_match(planned)
+            # Return a sentinel-less success: callers treat truthy match records as linked.
+            # After merge there is no TransactionMatch row — synthesize a lightweight stand-in
+            # only when needed. Prefer returning the deleted match object still held in memory
+            # so `if match:` remains true for rematch counters.
             return tm
         purge_shadow_rule_occurrences_after_match(planned)
         mark_redundant_plaid_imports_after_match(imported)
@@ -2372,6 +2382,7 @@ def rematch_unmatched_manual_actuals(*, account_id: int | None = None) -> int:
             rule__isnull=True,
             scenario__isnull=True,
         )
+        .filter(Q(plaid_transaction_id__isnull=True) | Q(plaid_transaction_id=""))
         .filter(transfer_out__isnull=True, transfer_in__isnull=True, transfer_group__isnull=True)
         .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
     )
@@ -2425,6 +2436,30 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
         return None
 
     if best_score >= AUTO_MATCH_THRESHOLD:
+        high_manuals = [
+            (p, sc)
+            for p, sc, _ in ranked
+            if sc >= AUTO_MATCH_THRESHOLD
+            and p.source in (Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME)
+            and not p.rule_id
+            and not p.transfer_group_id
+        ]
+        if len(high_manuals) > 1:
+            from transactions.services.import_matching import _merchant_compact
+
+            compacts = {_merchant_compact(p.payee or p.memo or "") for p, _ in high_manuals}
+            if len(compacts) > 1:
+                imported.import_match_status = Transaction.ImportMatchStatus.SUGGESTED
+                imported.save(update_fields=["import_match_status", "updated_at"])
+                for planned, sc in high_manuals:
+                    MatchSuggestion.objects.update_or_create(
+                        imported_transaction=imported,
+                        planned_transaction=planned,
+                        defaults={"score": sc},
+                    )
+                return None
+            high_manuals.sort(key=lambda x: (x[0].date, x[0].pk))
+            best_planned, best_score = high_manuals[0]
         return _create_match_record(
             planned=best_planned,
             imported=imported,
@@ -2960,11 +2995,20 @@ def materialize_unmatched_plaid_imports(*, account_id: int | None = None) -> int
         imp.refresh_from_db()
         if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
             continue
+        # Manual ACTUAL absorb clears plaid_transaction_id and marks DUPLICATE — do not materialize.
+        if imp.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+            continue
+        if not (imp.plaid_transaction_id or "").strip():
+            continue
         if _best_manual_twin_for_import(imp) is not None:
             rematch_unmatched_manual_actuals(account_id=imp.account_id)
             match_imported_transaction(imp)
             imp.refresh_from_db()
             if TransactionMatch.objects.filter(imported_transaction_id=imp.pk).exists():
+                continue
+            if imp.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+                continue
+            if not (imp.plaid_transaction_id or "").strip():
                 continue
             continue
         imp.source = Transaction.Source.ACTUAL
