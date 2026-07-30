@@ -1182,6 +1182,66 @@ def _should_skip_card_payment_occurrence(
     )
 
 
+def _should_skip_scheduled_transfer_group(
+    transfer_group_id: int,
+    payment_date: date,
+    rows: list[dict],
+    *,
+    category_name: Optional[str] = None,
+    households=None,
+) -> bool:
+    """
+    Skip decision for a scheduled transfer pair that no RecurringRule owns — credit-card autopay
+    or a hand-entered future transfer — when the debt it pays owes nothing on that date.
+
+    These rows cannot be re-projected from a rule, so callers must only hide them, never purge
+    them like ``_purge_skipped_rule_occurrence`` does. Anything that suggests the payment is
+    already real keeps the whole group visible: a cleared or reconciled leg, a Plaid id, a
+    matched bank import, or a leg owned by a rule (the rule path decides those).
+    """
+    legs = list(
+        Transaction.objects.filter(transfer_group_id=transfer_group_id).select_related(
+            "account", "category"
+        )
+    )
+    if len(legs) < 2:
+        return False
+    for leg in legs:
+        if leg.rule_id is not None or leg.date != payment_date:
+            return False
+        if leg.status != Transaction.Status.PLANNED or leg.reconciled:
+            return False
+        if leg.plaid_transaction_id:
+            return False
+    if TransactionMatch.objects.filter(
+        planned_transaction__transfer_group_id=transfer_group_id,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).exists():
+        return False
+    dest_leg = next((leg for leg in legs if leg.amount is not None and leg.amount > 0), None)
+    fund_leg = next((leg for leg in legs if leg.amount is not None and leg.amount < 0), None)
+    if dest_leg is None or fund_leg is None or dest_leg.account is None:
+        return False
+    cat_nm = (
+        category_name
+        or (fund_leg.category.name if fund_leg.category else None)
+        or (dest_leg.category.name if dest_leg.category else None)
+    )
+    funded_from_bank = bool(
+        fund_leg.account and fund_leg.account.account_type != Account.AccountType.CREDIT
+    )
+    return _should_skip_card_payment_occurrence(
+        dest_leg.account,
+        payment_date,
+        rows,
+        funded_from_bank=funded_from_bank,
+        exclude_ids=tuple(leg.pk for leg in legs),
+        category_name=cat_nm,
+        households=households,
+        payment_amount=dest_leg.amount,
+    )
+
+
 def _rule_allows_materialization(rule: RecurringRule, d: date) -> bool:
     if not rule.active:
         return False
@@ -2601,6 +2661,7 @@ def _build_timeline_impl(
         ids_in_rows: set[int] = set()
         seen_rule_actual_key: set[tuple] = set()
         purged_rule_dates: set[tuple[int, date]] = set()
+        purged_transfer_groups: set[int] = set()
         scenario_projection_only = projection_only or scenario is not None
         _phase_load = phase_start(timer, "load_transactions")
         for t in actual:
@@ -2618,6 +2679,9 @@ def _build_timeline_impl(
             amt = t.amount
             sign = 1 if (amt is not None and amt >= 0) else -1
             if t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
+                ids_in_rows.add(t.id)
+                continue
+            if t.transfer_group_id is not None and t.transfer_group_id in purged_transfer_groups:
                 ids_in_rows.add(t.id)
                 continue
             if (
@@ -2733,6 +2797,30 @@ def _build_timeline_impl(
                     purged_rule_dates.add((t.rule_id, t.date))
                     ids_in_rows.add(t.id)
                     continue
+            # Autopay and hand-entered future transfers have no rule to re-project, so hide the
+            # whole group (never delete it) when the card it pays owes nothing that day.
+            if (
+                t.rule_id is None
+                and t.transfer_group_id is not None
+                and t.date >= today
+                and amt is not None
+                and t.status == Transaction.Status.PLANNED
+                and not t.reconciled
+                and (
+                    (amt > 0 and t.account_id in credit_account_ids)
+                    or (amt < 0 and _category_name_allows_rule_transfer_destination(cat_nm))
+                )
+                and _should_skip_scheduled_transfer_group(
+                    t.transfer_group_id,
+                    t.date,
+                    rows,
+                    category_name=cat_nm,
+                    households=households,
+                )
+            ):
+                purged_transfer_groups.add(t.transfer_group_id)
+                ids_in_rows.add(t.id)
+                continue
             desc = t.payee or ""
             try:
                 mpl = t.match_as_planned
