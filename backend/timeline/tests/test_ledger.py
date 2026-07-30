@@ -9,12 +9,13 @@ from core.models import Household, HouseholdMembership
 from accounts.models import Account
 from categories.models import Category
 from timeline.models import RecurringRule, Scenario, ScenarioRuleOverride
-from transactions.models import Transaction
+from transactions.models import Transaction, TransactionMatch, TransferGroup
 
 from timeline.services.ledger import (
     generate_rule_occurrences,
     apply_scenario_overrides,
     build_timeline,
+    _purge_skipped_rule_occurrence,
 )
 
 User = get_user_model()
@@ -1176,6 +1177,414 @@ class TestBuildTimeline:
         rows = build_timeline(user, start, end, account_id=bank.id)
         leaked = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
         assert len(leaked) == 0, f"expected no projected min on bank when card clear; got {leaked}"
+
+    def test_multi_card_zero_balance_purges_materialized_transfer_pairs(
+        self, user, household, db
+    ):
+        """Several paid-off cards: materialized min pairs disappear and TransferGroups are deleted."""
+        from datetime import timedelta
+
+        today = date.today()
+        start = today
+        end = today + timedelta(days=90)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        dom = min(max(today.day, 1), 28)
+        cards = []
+        rules = []
+        groups = []
+        for name, amt in (("Savor", "25.00"), ("Venture", "25.00"), ("CareCredit", "393.79")):
+            card = Account.objects.create(
+                household=household,
+                account_type=Account.AccountType.CREDIT,
+                name=name,
+                currency="USD",
+                starting_balance=Decimal("0"),
+            )
+            cards.append(card)
+            rule = RecurringRule.objects.create(
+                household=household,
+                name=f"{name} C/C Payment",
+                account=bank,
+                transfer_to_account=card,
+                category=cat,
+                direction=RecurringRule.Direction.EXPENSE,
+                amount=Decimal(amt),
+                currency="USD",
+                frequency=RecurringRule.Frequency.MONTHLY_DAY,
+                interval=1,
+                day_of_month=dom,
+                start_date=today,
+                active=True,
+            )
+            rules.append(rule)
+            occ = list(generate_rule_occurrences(rule, start, end))
+            assert occ
+            pay_date = occ[0]
+            tg = TransferGroup.objects.create(
+                household=household,
+                from_account=bank,
+                to_account=card,
+                amount=Decimal(amt),
+                scheduled_date=pay_date,
+                status=TransferGroup.Status.PLANNED,
+            )
+            groups.append(tg)
+            Transaction.objects.create(
+                account=bank,
+                date=pay_date,
+                payee=rule.name,
+                amount=-Decimal(amt),
+                category=cat,
+                status=Transaction.Status.PLANNED,
+                source=Transaction.Source.RULE,
+                rule=rule,
+                transfer_group=tg,
+            )
+            Transaction.objects.create(
+                account=card,
+                date=pay_date,
+                payee=rule.name,
+                amount=Decimal(amt),
+                status=Transaction.Status.PLANNED,
+                source=Transaction.Source.RULE,
+                rule=rule,
+                transfer_group=tg,
+            )
+
+        rows = build_timeline(user, start, end, account_id=bank.id)
+        for rule in rules:
+            leaked = [r for r in rows if r.get("rule_id") == rule.id]
+            assert len(leaked) == 0, f"expected no rows for {rule.name}; got {leaked}"
+            assert not Transaction.objects.filter(rule=rule, source=Transaction.Source.RULE).exists()
+        for tg in groups:
+            assert not TransferGroup.objects.filter(pk=tg.pk).exists()
+
+    def test_card_with_debt_keeps_materialized_minimum(self, user, household, db):
+        """Regression: a card that still owes keeps its planned minimum transfer pair."""
+        from datetime import timedelta
+
+        today = date.today()
+        start = today
+        end = today + timedelta(days=90)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("-200.00"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        dom = min(max(today.day, 1), 28)
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Savor C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=dom,
+            start_date=today,
+            active=True,
+        )
+        occ = list(generate_rule_occurrences(rule, start, end))
+        pay_date = occ[0]
+        tg = TransferGroup.objects.create(
+            household=household,
+            from_account=bank,
+            to_account=card,
+            amount=Decimal("25.00"),
+            scheduled_date=pay_date,
+            status=TransferGroup.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("-25.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+        )
+        Transaction.objects.create(
+            account=card,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("25.00"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+        )
+        rows = build_timeline(user, start, end, account_id=bank.id)
+        kept = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
+        assert len(kept) >= 1
+        assert TransferGroup.objects.filter(pk=tg.pk).exists()
+
+    def test_zero_balance_keeps_payment_when_charge_within_45_day_window(
+        self, user, household, db
+    ):
+        """Prefunding: card clear today but a charge within 45 days keeps the minimum."""
+        from datetime import timedelta
+
+        today = date.today()
+        start = today
+        end = today + timedelta(days=120)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        shop = Category.objects.get_or_create(
+            household=household,
+            name="Shopping",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 10},
+        )[0]
+        dom = min(max(today.day, 1), 28)
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Savor C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=dom,
+            start_date=today,
+            active=True,
+        )
+        # Recurring card spend after the payment date (within 45 days).
+        charge_dom = (dom % 28) + 1
+        RecurringRule.objects.create(
+            household=household,
+            name="Amazon on Savor",
+            account=card,
+            category=shop,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("80.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=charge_dom,
+            start_date=today,
+            active=True,
+        )
+        rows = build_timeline(user, start, end, account_id=bank.id)
+        kept = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
+        assert len(kept) >= 1, "expected min payment kept when charge is within 45-day window"
+
+    def test_past_cleared_reconciled_rule_payments_never_purged(self, user, household, db):
+        """Safety: only future PLANNED forecast rows are purged."""
+        from datetime import timedelta
+
+        today = date.today()
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Savor C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=1,
+            start_date=today - timedelta(days=90),
+            active=True,
+        )
+        past = today - timedelta(days=10)
+        past_bank = Transaction.objects.create(
+            account=bank,
+            date=past,
+            payee=rule.name,
+            amount=Decimal("-25.00"),
+            category=cat,
+            status=Transaction.Status.CLEARED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            cleared=True,
+        )
+        past_card = Transaction.objects.create(
+            account=card,
+            date=past,
+            payee=rule.name,
+            amount=Decimal("25.00"),
+            status=Transaction.Status.CLEARED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            cleared=True,
+        )
+        _purge_skipped_rule_occurrence(rule.id, past, today)
+        assert Transaction.objects.filter(pk=past_bank.pk).exists()
+        assert Transaction.objects.filter(pk=past_card.pk).exists()
+
+        future = today + timedelta(days=5)
+        recon_bank = Transaction.objects.create(
+            account=bank,
+            date=future,
+            payee=rule.name,
+            amount=Decimal("-25.00"),
+            category=cat,
+            status=Transaction.Status.RECONCILED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            reconciled=True,
+            cleared=True,
+        )
+        _purge_skipped_rule_occurrence(rule.id, future, today)
+        assert Transaction.objects.filter(pk=recon_bank.pk).exists()
+
+    def test_plaid_matched_occurrence_never_purged(self, user, household, db):
+        """An occurrence linked to a Plaid import must survive purge."""
+        from datetime import timedelta
+
+        today = date.today()
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Savor",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Savor C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=min(max(today.day, 1), 28),
+            start_date=today,
+            active=True,
+        )
+        pay_date = today + timedelta(days=2)
+        planned = Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("-25.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            import_match_status=Transaction.ImportMatchStatus.MATCHED,
+        )
+        Transaction.objects.create(
+            account=card,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("25.00"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        imported = Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee="CAPITAL ONE AUTOPAY",
+            amount=Decimal("-25.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-savor-min-1",
+            import_match_status=Transaction.ImportMatchStatus.MATCHED,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        TransactionMatch.objects.create(
+            planned_transaction=planned,
+            imported_transaction=imported,
+            match_type=TransactionMatch.MatchType.SAME_ACCOUNT,
+            score=90,
+            confidence=TransactionMatch.Confidence.AUTO,
+        )
+        _purge_skipped_rule_occurrence(rule.id, pay_date, today)
+        assert Transaction.objects.filter(pk=planned.pk).exists()
+        assert Transaction.objects.filter(rule=rule, date=pay_date).count() == 2
 
     def test_each_monthly_occurrence_skips_when_destination_balance_zero_that_month(
         self, user, household, db

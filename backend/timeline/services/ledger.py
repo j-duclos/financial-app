@@ -67,7 +67,14 @@ from timeline.models import (
     ScenarioAddedRecurring,
     ScenarioRuleOverride,
 )
-from transactions.models import Reconciliation, ReconciliationEntry, Transaction, TransactionMatch, TransferGroup
+from transactions.models import (
+    Reconciliation,
+    ReconciliationEntry,
+    Transaction,
+    TransactionMatch,
+    Transfer,
+    TransferGroup,
+)
 from transactions.services.matching import (
     ledger_visible_transactions,
     shadowed_rule_occurrence_ids,
@@ -929,6 +936,9 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     respawn. Old rows were often status=CLEARED (model default) before we forced PLANNED, so
     filtering only PLANNED left ghosts in the DB.
 
+    Also deletes now-empty TransferGroup / Transfer wiring left behind by paired card-payment
+    legs. Occurrences re-materialize automatically if the projected card balance later changes.
+
     PLAID INVARIANT: only deletes source=RULE. Never delete source=PLAID.
     Never purge when a Plaid import is matched to this occurrence — the bank row must stay
     linked and visible even if the forecast row is skipped.
@@ -949,8 +959,27 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     ).exists()
     if matched_import_on_occurrence:
         return
+    # Never purge cleared/reconciled rule legs — only future planned forecast rows.
+    if deleted.exclude(status=Transaction.Status.PLANNED).exists():
+        return
+    if deleted.filter(reconciled=True).exists():
+        return
     account_ids = list(deleted.values_list("account_id", flat=True).distinct())
+    transfer_group_ids = [
+        tg_id
+        for tg_id in deleted.values_list("transfer_group_id", flat=True).distinct()
+        if tg_id is not None
+    ]
+    leg_pks = list(deleted.values_list("pk", flat=True))
+    # Transfer rows CASCADE when legs delete; remove any orphan Transfer first for clarity.
+    if leg_pks:
+        Transfer.objects.filter(
+            Q(from_transaction_id__in=leg_pks) | Q(to_transaction_id__in=leg_pks)
+        ).delete()
     deleted.delete()
+    for tg_id in transfer_group_ids:
+        if not Transaction.objects.filter(transfer_group_id=tg_id).exists():
+            TransferGroup.objects.filter(pk=tg_id).delete()
     cache = get_active_balance_cache()
     if cache is not None:
         for aid in account_ids:
@@ -1096,6 +1125,61 @@ def _skip_payment_to_debt_destination(
             exclude_transaction_ids=exclude_transaction_ids,
         )
     return balance >= 0
+
+
+def _should_skip_card_payment_occurrence(
+    dest_account: Account,
+    payment_date: date,
+    rows: list[dict],
+    *,
+    funded_from_bank: bool,
+    exclude_ids: Optional[Collection[int]] = None,
+    category_name: Optional[str] = None,
+    households=None,
+    payment_amount: Optional[Decimal] = None,
+) -> bool:
+    """
+    Shared skip decision for materialized and projected card-payment occurrences.
+
+    When funded from a bank account onto a credit card, also look ahead 45 days for known
+    charges so a zero balance today does not suppress a payment that is about to be needed.
+    """
+    if not _account_is_debt_payment_destination(dest_account, category_name):
+        return False
+    if (
+        funded_from_bank
+        and dest_account.account_type == Account.AccountType.CREDIT
+        and households is not None
+    ):
+        lookahead_end = payment_date + timedelta(days=45)
+        bal = _credit_card_balance_through_date(
+            dest_account.id,
+            payment_date,
+            rows,
+            include_row_leg_without_txn=True,
+            include_db_postings_on_as_of_date=True,
+            exclude_transaction_ids=exclude_ids,
+        )
+        extra_scheduled = _future_recurring_expense_impact_on_card(
+            dest_account.id,
+            payment_date,
+            lookahead_end,
+            households,
+        )
+        extra_db = _db_card_postings_in_exclusive_range(
+            dest_account.id,
+            payment_date,
+            lookahead_end,
+        )
+        return bal + extra_scheduled + extra_db >= 0
+    return _skip_payment_to_debt_destination(
+        dest_account,
+        payment_date,
+        rows,
+        payment_amount,
+        exclude_transaction_ids=exclude_ids,
+        category_name=category_name,
+    )
 
 
 def _rule_allows_materialization(rule: RecurringRule, d: date) -> bool:
@@ -2554,29 +2638,50 @@ def _build_timeline_impl(
                 ids_in_rows.add(t.id)
                 continue
             # Per-occurrence: skip (and purge) debt payments when destination owes nothing that day.
-            # Never hide paired transfer legs — both sides must stay visible in the ledger.
+            # Includes materialized transfer pairs (checking outflow + card inflow) — both legs are
+            # decided once per (rule_id, date) via purged_rule_dates / _purge_skipped_rule_occurrence.
             cat_nm = (t.category.name if getattr(t, "category", None) and t.category else None) or ""
             if (
                 t.rule_id is not None
                 and t.date >= today
                 and amt is not None
-                and not t.transfer_group_id
-                and not _has_paired_rule_transfer_leg(t)
+                and t.status == Transaction.Status.PLANNED
+                and not t.reconciled
+                and (t.rule_id, t.date) not in purged_rule_dates
             ):
                 hide_paid_off = False
+                # Exclude every leg of this occurrence so the payment never counts itself.
+                exclude_ids = list(
+                    Transaction.objects.filter(
+                        rule_id=t.rule_id,
+                        date=t.date,
+                        source=Transaction.Source.RULE,
+                    ).values_list("pk", flat=True)
+                )
+                dest_account: Optional[Account] = None
+                payment_amt: Optional[Decimal] = None
+                funded_from_bank = False
                 if t.account_id in credit_account_ids and amt > 0 and t.account:
-                    hide_paid_off = _skip_payment_to_debt_destination(
-                        t.account,
-                        t.date,
-                        rows,
-                        amt,
-                        exclude_transaction_ids=(t.id,),
-                        category_name=cat_nm,
+                    dest_account = t.account
+                    payment_amt = amt
+                    # Card inflow: funding side is the negative RULE leg on a non-credit account.
+                    fund_leg = (
+                        Transaction.objects.filter(
+                            rule_id=t.rule_id,
+                            date=t.date,
+                            source=Transaction.Source.RULE,
+                            amount__lt=0,
+                        )
+                        .exclude(account_id=t.account_id)
+                        .select_related("account")
+                        .first()
+                    )
+                    funded_from_bank = bool(
+                        fund_leg
+                        and fund_leg.account
+                        and fund_leg.account.account_type != Account.AccountType.CREDIT
                     )
                 elif amt < 0:
-                    dest_account: Optional[Account] = None
-                    payment_amt: Optional[Decimal] = None
-                    exclude_ids: list[int] = []
                     for cand in (
                         Transaction.objects.filter(
                             rule_id=t.rule_id,
@@ -2590,7 +2695,6 @@ def _build_timeline_impl(
                         if acc_c and _account_is_debt_payment_destination(acc_c, cat_nm):
                             dest_account = acc_c
                             payment_amt = cand.amount
-                            exclude_ids.append(cand.id)
                             break
                     if dest_account is None:
                         rule_obj = getattr(t, "rule", None)
@@ -2609,22 +2713,20 @@ def _build_timeline_impl(
                                 payment_amt = abs(Decimal(str(amt)))
                             except (TypeError, ValueError):
                                 payment_amt = None
-                            exclude_ids.extend(
-                                Transaction.objects.filter(
-                                    rule_id=t.rule_id,
-                                    date=t.date,
-                                    account_id=tac.id,
-                                ).values_list("pk", flat=True)
-                            )
-                    if dest_account is not None and payment_amt is not None:
-                        hide_paid_off = _skip_payment_to_debt_destination(
-                            dest_account,
-                            t.date,
-                            rows,
-                            payment_amt,
-                            exclude_transaction_ids=tuple(exclude_ids) if exclude_ids else None,
-                            category_name=cat_nm,
-                        )
+                    funded_from_bank = bool(
+                        t.account and t.account.account_type != Account.AccountType.CREDIT
+                    )
+                if dest_account is not None and payment_amt is not None:
+                    hide_paid_off = _should_skip_card_payment_occurrence(
+                        dest_account,
+                        t.date,
+                        rows,
+                        funded_from_bank=funded_from_bank,
+                        exclude_ids=tuple(exclude_ids) if exclude_ids else None,
+                        category_name=cat_nm,
+                        households=households,
+                        payment_amount=payment_amt,
+                    )
                 if hide_paid_off:
                     if not scenario_projection_only:
                         _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
@@ -2727,14 +2829,25 @@ def _build_timeline_impl(
         occurrence_events: list[tuple[date, Decimal, int, str, tuple]] = []
 
         def _rule_account_forecastable(rule_obj: RecurringRule, eff: dict) -> bool:
-            """Include rules whose source or transfer destination account is in scope."""
+            """
+            Include rules whose source or transfer destination account is in scope.
+
+            Debt-destination transfers (Credit Card Payment / Bank Transfer onto a card) are
+            always forecastable household-wide: a payoff funded from another bank must still
+            update the card balance so this view's minimum can be suppressed. Out-of-scope legs
+            are dropped by the final account_id row filter.
+            """
             acc_id = eff.get("account_id") or rule_obj.account_id
             if acc_id in forecastable_account_ids:
                 return True
             to_id = rule_obj.transfer_to_account_id
+            cat_nm = rule_obj.category.name if getattr(rule_obj, "category", None) else None
             if to_id and to_id in forecastable_account_ids:
-                cat_nm = rule_obj.category.name if getattr(rule_obj, "category", None) else None
                 if _category_name_allows_rule_transfer_destination(cat_nm):
+                    return True
+            if to_id and _category_name_allows_rule_transfer_destination(cat_nm):
+                to_acc = getattr(rule_obj, "transfer_to_account", None) or _lookup_account(to_id, accs)
+                if to_acc and _account_is_debt_payment_destination(to_acc, cat_nm):
                     return True
             return False
 
@@ -2880,10 +2993,14 @@ def _build_timeline_impl(
                 if is_debt_dest and to_acc_for_skip:
                     if occurrence_store is not None:
                         dest_leg_ids = occurrence_store.get_leg_pks(rule.id, d, to_acc_id)
+                        from_leg_ids = occurrence_store.get_leg_pks(rule.id, d, from_acc_id)
+                        exclude_leg_ids = tuple(dict.fromkeys([*dest_leg_ids, *from_leg_ids]))
                     else:
-                        dest_leg_ids = tuple(
+                        exclude_leg_ids = tuple(
                             Transaction.objects.filter(
-                                rule_id=rule.id, date=d, account_id=to_acc_id
+                                rule_id=rule.id,
+                                date=d,
+                                source=Transaction.Source.RULE,
                             ).values_list("pk", flat=True)
                         )
                     from_acc_obj = _lookup_account(from_acc_id, accs)
@@ -2891,39 +3008,16 @@ def _build_timeline_impl(
                         from_acc_obj is not None
                         and from_acc_obj.account_type != Account.AccountType.CREDIT
                     )
-                    lookahead_end = d + timedelta(days=45)
-                    skip_payment = False
-                    if fund_from_bank:
-                        bal = _credit_card_balance_through_date(
-                            to_acc_for_skip.id,
-                            d,
-                            rows,
-                            include_row_leg_without_txn=True,
-                            include_db_postings_on_as_of_date=True,
-                            exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
-                        )
-                        extra_scheduled = _future_recurring_expense_impact_on_card(
-                            to_acc_for_skip.id,
-                            d,
-                            lookahead_end,
-                            households,
-                        )
-                        extra_db = _db_card_postings_in_exclusive_range(
-                            to_acc_for_skip.id,
-                            d,
-                            lookahead_end,
-                        )
-                        skip_payment = bal + extra_scheduled + extra_db >= 0
-                    else:
-                        skip_payment = _skip_payment_to_debt_destination(
-                            to_acc_for_skip,
-                            d,
-                            rows,
-                            in_amount,
-                            exclude_transaction_ids=dest_leg_ids if dest_leg_ids else None,
-                            category_name=cat_name,
-                        )
-                    if skip_payment:
+                    if _should_skip_card_payment_occurrence(
+                        to_acc_for_skip,
+                        d,
+                        rows,
+                        funded_from_bank=fund_from_bank,
+                        exclude_ids=exclude_leg_ids if exclude_leg_ids else None,
+                        category_name=cat_name,
+                        households=households,
+                        payment_amount=in_amount,
+                    ):
                         if materialization_active():
                             record_materialization_skipped()
                         if not scenario_projection_only:
