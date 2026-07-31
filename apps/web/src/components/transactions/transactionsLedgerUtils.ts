@@ -1012,9 +1012,10 @@ export function creditCardSignedBalanceAtDate(
   openingSignedBalance?: number | null
 ): number | null {
   const aid = Number(cardAccountId);
+  // Include projected interest through as-of — the Savor ledger shows those rows in the
+  // running balance, so a payoff hint that skips them understates debt and leaves a residual.
   const rows = timeline
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
-    .filter((r) => !isProjectedInterestRow(r))
     .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
     .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);

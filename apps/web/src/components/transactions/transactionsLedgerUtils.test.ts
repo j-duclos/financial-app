@@ -1239,6 +1239,60 @@ describe("creditOwedAsOfDateFromTimeline", () => {
     expect(signed).toBeCloseTo(-500, 2);
     expect(creditOwedAsOfDateFromTimeline(timeline, 5, payDate, exclude)).toBeCloseTo(500, 2);
   });
+
+  it("includes projected interest through the payment date so payoff matches the ledger", () => {
+    const timeline: TimelineRow[] = [
+      {
+        date: "2026-08-01",
+        description: "United Healthcare",
+        account_id: 5,
+        account_name: "Savor",
+        category_id: null,
+        category_name: null,
+        amount: "-630.81",
+        type: "OUTFLOW",
+        status: "CLEARED",
+        source: "actual",
+        rule_id: null,
+        transaction_id: 9,
+        running_balance: "-630.81",
+      },
+      {
+        date: "2026-08-02",
+        description: "Projected Interest",
+        account_id: 5,
+        account_name: "Savor",
+        category_id: null,
+        category_name: "Interest",
+        amount: "-43.09",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "interest",
+        rule_id: null,
+        transaction_id: null,
+        running_balance: "-673.90",
+      },
+      {
+        date: "2026-08-26",
+        description: "Credit card pmt",
+        account_id: 5,
+        account_name: "Savor",
+        category_id: 1,
+        category_name: "Credit Card Payment",
+        amount: "630.81",
+        type: "INFLOW",
+        status: "PLANNED",
+        source: "actual",
+        rule_id: null,
+        transaction_id: 11,
+        running_balance: "-43.09",
+      },
+    ];
+    // Without interest this would be $630.81; with interest it matches the ledger ($673.90).
+    expect(
+      creditOwedAsOfDateFromTimeline(timeline, 5, "2026-08-26", new Set([11]))
+    ).toBeCloseTo(673.9, 2);
+  });
 });
 
 describe("buildLedgerRows fallback", () => {

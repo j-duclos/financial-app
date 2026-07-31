@@ -2668,8 +2668,8 @@ export default function Transactions() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-500 mt-1">
-                    From your timeline: scheduled charges and payments on or before this date. This transfer is excluded
-                    so the amount reflects what you still owe besides this payment.
+                    From your timeline: scheduled charges, payments, and projected interest on or before this date. This
+                    transfer is excluded so the amount reflects what you still owe besides this payment.
                   </p>
                 </div>
               )}
