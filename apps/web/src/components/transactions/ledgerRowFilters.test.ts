@@ -5,9 +5,6 @@ import {
   filterLedgerPastRows,
   hasActiveLedgerRowFilters,
   ledgerRowAbsAmount,
-  ledgerRowIsReconcilableTransaction,
-  ledgerRowKind,
-  ledgerRowReconciled,
   matchesLedgerRowFilters,
   parseAmountFilterInput,
 } from "./ledgerRowFilters";
@@ -45,18 +42,14 @@ describe("ledgerRowFilters", () => {
     expect(parseAmountFilterInput("abc")).toBeNull();
   });
 
-  it("resolves kind and absolute amount from ledger rows", () => {
-    expect(ledgerRowKind(txnRow(expenseTxn))).toBe("Expense");
-    expect(ledgerRowKind(txnRow(incomeTxn))).toBe("Income");
+  it("resolves absolute amount from ledger rows", () => {
     expect(ledgerRowAbsAmount(txnRow(expenseTxn))).toBe(20);
     expect(ledgerRowAbsAmount(txnRow(incomeTxn))).toBe(200);
   });
 
-  it("filters by kind and amount range", () => {
+  it("filters by amount range", () => {
     const rows = [txnRow(expenseTxn), txnRow(incomeTxn)];
     const filters = {
-      kind: "Expense" as const,
-      reconciled: "" as const,
       amountMin: 10,
       amountMax: 30,
     };
@@ -66,49 +59,19 @@ describe("ledgerRowFilters", () => {
     expect(matchesLedgerRowFilters(txnRow(incomeTxn), filters)).toBe(false);
     expect(
       matchesLedgerRowFilters(txnRow(expenseTxn), {
-        kind: "",
-        reconciled: "",
         amountMin: 25,
         amountMax: null,
       })
     ).toBe(false);
   });
 
-  it("filters by reconciled status", () => {
-    const reconciledTxn = { ...expenseTxn, id: 3, reconciled: true };
-    const plannedTxn = { ...expenseTxn, id: 4, status: "PLANNED", source: "rule" };
-    const rows = [txnRow(expenseTxn), txnRow(reconciledTxn), txnRow(plannedTxn)];
-
-    expect(
-      filterLedgerPastRows(rows, {
-        kind: "",
-        reconciled: "reconciled",
-        amountMin: null,
-        amountMax: null,
-      })
-    ).toEqual([txnRow(reconciledTxn)]);
-
-    expect(
-      filterLedgerPastRows(rows, {
-        kind: "",
-        reconciled: "unreconciled",
-        amountMin: null,
-        amountMax: null,
-      })
-    ).toEqual([txnRow(expenseTxn)]);
-
-    expect(ledgerRowIsReconcilableTransaction(txnRow(plannedTxn))).toBe(false);
-    expect(ledgerRowReconciled(txnRow(plannedTxn))).toBeNull();
-  });
-
-  it("applies amount filters without blocking reconciled-only filters", () => {
+  it("passes through when no amount filters are set", () => {
     expect(
       matchesLedgerRowFilters(txnRow(expenseTxn), {
-        kind: "",
-        reconciled: "unreconciled",
         amountMin: null,
         amountMax: null,
       })
     ).toBe(true);
+    expect(hasActiveLedgerRowFilters({ amountMin: null, amountMax: null })).toBe(false);
   });
 });

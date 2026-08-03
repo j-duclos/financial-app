@@ -46,7 +46,6 @@ import {
   hasActiveLedgerRowFilters,
   parseAmountFilterInput,
 } from "../components/transactions/ledgerRowFilters";
-import type { TransactionKind } from "../components/transactions/transactionKindUtils";
 import {
   todayStr,
   formatDateDisplay,
@@ -97,13 +96,9 @@ import {
   saveStoredTransactionsTimeFilter,
   loadStoredTransactionsForecastRange,
   saveStoredTransactionsForecastRange,
-  loadStoredTransactionsKindFilter,
-  saveStoredTransactionsKindFilter,
   loadStoredTransactionsAmountMin,
   loadStoredTransactionsAmountMax,
   saveStoredTransactionsAmountRange,
-  loadStoredTransactionsReconciledFilter,
-  saveStoredTransactionsReconciledFilter,
 } from "../lib/transactionsPageState";
 import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
@@ -128,8 +123,6 @@ export default function Transactions() {
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const [forecastRange, setForecastRange] = useState<ForecastRange>(() => loadStoredTransactionsForecastRange());
-  const [kindFilter, setKindFilter] = useState<TransactionKind | "">(() => loadStoredTransactionsKindFilter());
-  const [reconciledFilter, setReconciledFilter] = useState(() => loadStoredTransactionsReconciledFilter());
   /** Always default true on load — unreconciled-only queries; user may uncheck for this session. */
   const [hideReconciledPast, setHideReconciledPast] = useState(true);
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
@@ -391,14 +384,6 @@ export default function Transactions() {
   useEffect(() => {
     saveStoredTransactionsForecastRange(forecastRange);
   }, [forecastRange]);
-
-  useEffect(() => {
-    saveStoredTransactionsKindFilter(kindFilter);
-  }, [kindFilter]);
-
-  useEffect(() => {
-    saveStoredTransactionsReconciledFilter(reconciledFilter);
-  }, [reconciledFilter]);
 
   useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
@@ -1213,12 +1198,10 @@ export default function Transactions() {
 
   const pastRowFilters = useMemo(
     () => ({
-      kind: kindFilter,
-      reconciled: reconciledFilter,
       amountMin: parseAmountFilterInput(debouncedAmountMinInput),
       amountMax: parseAmountFilterInput(debouncedAmountMaxInput),
     }),
-    [kindFilter, reconciledFilter, debouncedAmountMinInput, debouncedAmountMaxInput]
+    [debouncedAmountMinInput, debouncedAmountMaxInput]
   );
 
   const filteredPastRows = useMemo(
@@ -2190,18 +2173,12 @@ export default function Transactions() {
             onHideReconciledPastChange={setHideReconciledPast}
           />
           <TransactionColumnFilters
-            kindFilter={kindFilter}
-            onKindFilterChange={setKindFilter}
-            reconciledFilter={reconciledFilter}
-            onReconciledFilterChange={setReconciledFilter}
             amountMin={amountMinInput}
             amountMax={amountMaxInput}
             onAmountMinChange={setAmountMinInput}
             onAmountMaxChange={setAmountMaxInput}
             showClear={pastFiltersActive}
             onClear={() => {
-              setKindFilter("");
-              setReconciledFilter("");
               setAmountMinInput("");
               setAmountMaxInput("");
             }}

@@ -1,6 +1,3 @@
-import type { TransactionKind } from "./transactionKindUtils";
-import { TRANSACTION_KIND_OPTIONS, type ReconciledFilter } from "./ledgerRowFilters";
-
 type HideReconciledProps = {
   hideReconciledPast: boolean;
   onHideReconciledPastChange: (hide: boolean) => void;
@@ -26,10 +23,6 @@ export function HideReconciledFilter({
 }
 
 type ColumnFiltersProps = {
-  kindFilter: TransactionKind | "";
-  onKindFilterChange: (kind: TransactionKind | "") => void;
-  reconciledFilter: ReconciledFilter;
-  onReconciledFilterChange: (value: ReconciledFilter) => void;
   amountMin: string;
   amountMax: string;
   onAmountMinChange: (value: string) => void;
@@ -39,10 +32,6 @@ type ColumnFiltersProps = {
 };
 
 export function TransactionColumnFilters({
-  kindFilter,
-  onKindFilterChange,
-  reconciledFilter,
-  onReconciledFilterChange,
   amountMin,
   amountMax,
   onAmountMinChange,
@@ -52,33 +41,6 @@ export function TransactionColumnFilters({
 }: ColumnFiltersProps) {
   return (
     <div className="flex flex-wrap items-end gap-3 w-full sm:w-auto">
-      <div className="min-w-[7rem] flex-1 sm:flex-none">
-        <label className="block text-xs font-medium text-gray-500 mb-0.5">Reconciled</label>
-        <select
-          value={reconciledFilter}
-          onChange={(e) => onReconciledFilterChange(e.target.value as ReconciledFilter)}
-          className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-        >
-          <option value="">All</option>
-          <option value="unreconciled">Unreconciled</option>
-          <option value="reconciled">Reconciled</option>
-        </select>
-      </div>
-      <div className="min-w-[7rem] flex-1 sm:flex-none">
-        <label className="block text-xs font-medium text-gray-500 mb-0.5">Type</label>
-        <select
-          value={kindFilter}
-          onChange={(e) => onKindFilterChange(e.target.value as TransactionKind | "")}
-          className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-        >
-          <option value="">All types</option>
-          {TRANSACTION_KIND_OPTIONS.map((kind) => (
-            <option key={kind} value={kind}>
-              {kind}
-            </option>
-          ))}
-        </select>
-      </div>
       <div className="min-w-[10rem] flex-1 sm:flex-none">
         <label className="block text-xs font-medium text-gray-500 mb-0.5">Amount</label>
         <div className="flex items-center gap-1">

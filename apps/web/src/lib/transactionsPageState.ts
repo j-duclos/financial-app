@@ -1,17 +1,10 @@
 import type { TimeFilter, ForecastRange } from "../components/transactions/transactionsLedgerUtils";
-import type { TransactionKind } from "../components/transactions/transactionKindUtils";
 
 const ACCOUNT_ID_KEY = "budget-app:transactions:accountId";
 const TIME_FILTER_KEY = "budget-app:transactions:timeFilter";
 const FORECAST_RANGE_KEY = "budget-app:transactions:forecastRange";
-const KIND_FILTER_KEY = "budget-app:transactions:kindFilter";
 const AMOUNT_MIN_KEY = "budget-app:transactions:amountMin";
 const AMOUNT_MAX_KEY = "budget-app:transactions:amountMax";
-const RECONCILED_FILTER_KEY = "budget-app:transactions:reconciledFilter";
-
-const KIND_FILTERS: TransactionKind[] = ["Expense", "Income", "Transfer", "Card Payment"];
-const RECONCILED_FILTERS = ["", "reconciled", "unreconciled"] as const;
-export type StoredReconciledFilter = (typeof RECONCILED_FILTERS)[number];
 
 const TIME_FILTERS: TimeFilter[] = ["14d", "1m", "3m", "6m", "12m", "18m", "24m", "36m"];
 const FORECAST_RANGES: ForecastRange[] = ["30d", "3m", "6m", "12m"];
@@ -85,32 +78,6 @@ export function saveStoredTransactionsForecastRange(forecastRange: ForecastRange
   }
 }
 
-export function loadStoredTransactionsKindFilter(): TransactionKind | "" {
-  if (typeof window === "undefined") return "";
-  try {
-    const raw = sessionStorage.getItem(KIND_FILTER_KEY);
-    if (raw && KIND_FILTERS.includes(raw as TransactionKind)) {
-      return raw as TransactionKind;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "";
-}
-
-export function saveStoredTransactionsKindFilter(kind: TransactionKind | ""): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (kind) {
-      sessionStorage.setItem(KIND_FILTER_KEY, kind);
-    } else {
-      sessionStorage.removeItem(KIND_FILTER_KEY);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
 export function loadStoredTransactionsAmountMin(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -126,33 +93,6 @@ export function loadStoredTransactionsAmountMax(): string {
     return sessionStorage.getItem(AMOUNT_MAX_KEY) ?? "";
   } catch {
     return "";
-  }
-}
-
-export function loadStoredTransactionsReconciledFilter(): StoredReconciledFilter {
-  if (typeof window === "undefined") return "";
-  try {
-    const raw = sessionStorage.getItem(RECONCILED_FILTER_KEY);
-    if (raw === "") return "";
-    if (raw && RECONCILED_FILTERS.includes(raw as StoredReconciledFilter)) {
-      return raw as StoredReconciledFilter;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "";
-}
-
-export function saveStoredTransactionsReconciledFilter(filter: StoredReconciledFilter): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (filter) {
-      sessionStorage.setItem(RECONCILED_FILTER_KEY, filter);
-    } else {
-      sessionStorage.removeItem(RECONCILED_FILTER_KEY);
-    }
-  } catch {
-    /* ignore */
   }
 }
 
