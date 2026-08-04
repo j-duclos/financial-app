@@ -13,6 +13,8 @@ import {
   isSupersededPlannedTimelineRow,
   shouldHighlightUnmatchedScheduledRow,
   creditOwedAsOfDateFromTimeline,
+  creditOwedFromSignedBalance,
+  accountTimelineRunningBalanceAsOfDate,
   creditCardSignedBalanceAtDate,
   creditSignedOpeningBalance,
   applyTimelineAmountToBalance,
@@ -1138,6 +1140,46 @@ describe("creditSignedOpeningBalance", () => {
     expect(creditSignedOpeningBalance("110.01")).toBeCloseTo(-110.01, 2);
     expect(creditSignedOpeningBalance("0")).toBe(0);
     expect(creditSignedOpeningBalance(null)).toBe(0);
+  });
+});
+
+describe("accountTimelineRunningBalanceAsOfDate", () => {
+  it("reads the Balance-column running_balance for the last row on/before as-of", () => {
+    const timeline: TimelineRow[] = [
+      {
+        date: "2026-09-04",
+        description: "Cursor",
+        account_id: 5,
+        account_name: "Venture",
+        category_id: null,
+        category_name: null,
+        amount: "-65.52",
+        type: "OUTFLOW",
+        status: "PLANNED",
+        source: "rule",
+        rule_id: 1,
+        transaction_id: 10,
+        running_balance: "-1959.38",
+      },
+      {
+        date: "2026-09-10",
+        description: "Credit Card Pmt (Venture)",
+        account_id: 5,
+        account_name: "Venture",
+        category_id: 1,
+        category_name: "Credit Card Payment",
+        amount: "650",
+        type: "INFLOW",
+        status: "PLANNED",
+        source: "rule",
+        rule_id: 2,
+        transaction_id: 11,
+        running_balance: "-1309.38",
+      },
+    ];
+    expect(accountTimelineRunningBalanceAsOfDate(timeline, 5, "2026-09-10")).toBeCloseTo(-1309.38, 2);
+    expect(creditOwedFromSignedBalance(-1309.38)).toBeCloseTo(1309.38, 2);
+    expect(creditOwedAsOfDateFromTimeline(timeline, 5, "2026-09-10")).toBeCloseTo(1309.38, 2);
   });
 });
 

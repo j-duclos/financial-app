@@ -8,6 +8,7 @@ export type TransactionsPageLoadPlan = {
   hideReconciledPast: boolean;
   householdTimelineEnabled: boolean;
   duplicateAccountCallsRemoved: boolean;
+  forecastSummaryDeferred: boolean;
 };
 
 let loggedKey: string | null = null;
@@ -15,7 +16,7 @@ let loggedKey: string | null = null;
 /** One log line per account/load plan in development. */
 export function logTransactionsPageLoadPlan(plan: TransactionsPageLoadPlan): void {
   if (!isPerfLoggingEnabled() || plan.accountId === "") return;
-  const key = `${plan.accountId}:${plan.pastRange.start}:${plan.pastRange.end}:${plan.upcomingRange.end}:${plan.forecastRange}:${plan.hideReconciledPast}:${plan.householdTimelineEnabled}`;
+  const key = `${plan.accountId}:${plan.pastRange.start}:${plan.pastRange.end}:${plan.upcomingRange.end}:${plan.forecastRange}:${plan.hideReconciledPast}:${plan.householdTimelineEnabled}:${plan.forecastSummaryDeferred}`;
   if (loggedKey === key) return;
   loggedKey = key;
 
@@ -25,7 +26,9 @@ export function logTransactionsPageLoadPlan(plan: TransactionsPageLoadPlan): voi
       `account=${plan.accountId}`,
       `listTransactions=${plan.pastRange.start}..${plan.pastRange.end}`,
       `getTimeline(upcoming)=${plan.upcomingRange.start}..${plan.upcomingRange.end} (${plan.forecastRange})`,
-      `getAccount=1 (balance+forecast_summary+health+days=90)`,
+      plan.forecastSummaryDeferred
+        ? "getAccount=light (balance) then deferred forecast_summary+health after ledger"
+        : "getAccount=1 (balance+forecast_summary+health+days=90)",
       `listAccounts=cached`,
       `listCategories=cached`,
       `householdTimeline=${plan.householdTimelineEnabled ? "enabled (transfer/edit)" : "skipped"}`,

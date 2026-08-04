@@ -17,6 +17,8 @@ type Props = {
   /** When set, use forecast ledger rows (matches the table below the header). */
   ledgerLowestProjected?: number | null;
   ledgerLowestProjectedDate?: string | null;
+  /** True while deferred forecast/health request is in flight. */
+  loading?: boolean;
 };
 
 export default function ForecastSummaryBar({
@@ -31,6 +33,7 @@ export default function ForecastSummaryBar({
   onToggle,
   ledgerLowestProjected,
   ledgerLowestProjectedDate,
+  loading = false,
 }: Props) {
   const showForecastMetrics = showSafeToSpendForRole(account.role, account.account_type ?? "");
   const lowestProjected =
@@ -80,7 +83,9 @@ export default function ForecastSummaryBar({
           ▸
         </span>
         Forecast summary
-        {warningCount > 0 ? (
+        {loading ? (
+          <span className="text-[10px] text-slate-500 tabular-nums">…</span>
+        ) : warningCount > 0 ? (
           <span className="rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
             {warningCount}
           </span>

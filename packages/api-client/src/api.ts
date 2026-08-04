@@ -255,7 +255,11 @@ export async function getAccount(
   if (options?.relationships) params.relationships = "true";
   if (options?.days != null) params.days = String(options.days);
   if (Object.keys(params).length > 0) params._ = String(Date.now());
-  return requestRequired(`/api/accounts/${id}/`, { params: Object.keys(params).length > 0 ? params : undefined });
+  const heavy = Boolean(options?.forecast_summary || options?.health);
+  return requestRequired(`/api/accounts/${id}/`, {
+    params: Object.keys(params).length > 0 ? params : undefined,
+    timeoutMs: heavy ? 180_000 : undefined,
+  });
 }
 
 export async function listAccountRelationships(params?: {

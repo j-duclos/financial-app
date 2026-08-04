@@ -267,13 +267,8 @@ export default function Transactions() {
     placeholderData: keepPreviousData,
   });
   const { data: accountData, isFetching: accountFetching } = useQuery({
-    queryKey: ["account", accountId, "transactions-page"],
-    queryFn: () =>
-      getAccount(accountId as number, true, {
-        forecast_summary: true,
-        health: true,
-        days: 90,
-      }),
+    queryKey: ["account", accountId, "transactions-page", "light"],
+    queryFn: () => getAccount(accountId as number, true),
     enabled: !!accountId,
     staleTime: 120_000,
     refetchOnWindowFocus: false,
@@ -323,6 +318,20 @@ export default function Transactions() {
     !ledgerTimelineFetching &&
     (ledgerTimelineData != null || ledgerTimelineError);
 
+  /** Heavy forecast/health — only after the ledger is on screen (first load + account swaps). */
+  const { data: accountForecastData, isPending: accountForecastPending } = useQuery({
+    queryKey: ["account", accountId, "transactions-page", "forecast-summary"],
+    queryFn: () =>
+      getAccount(accountId as number, true, {
+        forecast_summary: true,
+        health: true,
+        days: 90,
+      }),
+    enabled: ledgerReady,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+  });
+
   usePerfPageLoad("transactions", ledgerReady, {
     account_id: accountId || "",
     past_start: pastRangeStart,
@@ -331,11 +340,24 @@ export default function Transactions() {
   });
 
   const transactions = txnsData?.results ?? [];
-  const account = accountData;
+  const account = useMemo(() => {
+    if (!accountData) return undefined;
+    if (
+      !accountForecastData ||
+      Number(accountForecastData.id) !== Number(accountData.id)
+    ) {
+      return accountData;
+    }
+    return { ...accountData, ...accountForecastData };
+  }, [accountData, accountForecastData]);
   const accountMatchesSelection =
     typeof accountId === "number" &&
     account != null &&
     Number(account.id) === Number(accountId);
+  const forecastSummaryReady =
+    !accountForecastPending &&
+    accountForecastData != null &&
+    Number(accountForecastData.id) === Number(accountId);
 
   const householdId =
     account && typeof account.household === "object" && account.household != null && "id" in account.household
@@ -357,6 +379,7 @@ export default function Transactions() {
       hideReconciledPast,
       householdTimelineEnabled: needsTransferHints && householdId != null,
       duplicateAccountCallsRemoved: true,
+      forecastSummaryDeferred: true,
     });
   }, [
     accountId,
@@ -511,63 +534,55 @@ export default function Transactions() {
     [debouncedInlineDate]
   );
 
-  const inlineCardHintInLedgerRange =
-    inlinePayToCardAccountId != null &&
-    inlineRow.date !== "" &&
-    hintDateWithinLedgerRange(inlineRow.date, ledgerRange) &&
-    householdTimelineData != null;
+  /** Same timeline the card’s Transactions page uses. */
+  const inlineCardTimelineFromLedger = useMemo(() => {
+    if (
+      inlinePayToCardAccountId == null ||
+      typeof accountId !== "number" ||
+      Number(accountId) !== Number(inlinePayToCardAccountId) ||
+      ledgerTimelineData?.timeline == null
+    ) {
+      return null;
+    }
+    return ledgerTimelineData.timeline.filter(
+      (r) => Number(r.account_id) === Number(inlinePayToCardAccountId)
+    );
+  }, [inlinePayToCardAccountId, accountId, ledgerTimelineData?.timeline]);
 
   const inlineCardNeedsDedicatedTimeline =
-    inlinePayToCardAccountId != null &&
-    inlineProjectionRange != null &&
-    !inlineCardHintInLedgerRange;
+    inlinePayToCardAccountId != null && inlineCardTimelineFromLedger == null;
 
   const { data: inlineCardTimelineData, isFetching: inlineCardTimelineLoading } = useQuery({
     queryKey: [
       "timeline",
-      "card-projection",
+      "card-balance-hint",
       inlinePayToCardAccountId,
-      inlineProjectionRange?.start,
-      inlineProjectionRange?.end,
-      inlineProjectionRange?.as_of,
+      pastRangeStart,
+      upcomingRange.end,
+      hideReconciledPast,
+      todayStr(),
     ],
-    queryFn: () => {
-      const range = inlineProjectionRange!;
-      return getTimeline({
-        start: range.start,
-        end: range.end,
-        as_of: range.as_of,
+    queryFn: () =>
+      getTimeline({
+        start: pastRangeStart,
+        end: upcomingRange.end,
+        as_of: todayStr(),
         account_id: inlinePayToCardAccountId!,
-      });
-    },
+        exclude_reconciled_past: hideReconciledPast,
+      }),
     enabled: inlineCardNeedsDedicatedTimeline,
-    staleTime: 300_000,
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
 
-  const inlineCardTimelineForHint = useMemo(
-    () =>
-      pickAccountTimelineForHint(
-        inlinePayToCardAccountId ?? 0,
-        inlineRow.date,
-        ledgerRange,
-        householdTimelineData?.timeline,
-        inlineCardTimelineData?.timeline
-      ),
-    [
-      inlinePayToCardAccountId,
-      inlineRow.date,
-      ledgerRange,
-      householdTimelineData?.timeline,
-      inlineCardTimelineData?.timeline,
-    ]
-  );
+  const inlineCardTimelineForHint =
+    inlineCardTimelineFromLedger ?? inlineCardTimelineData?.timeline ?? [];
 
   const inlineCardTimelineLoadingResolved =
-    inlineCardHintInLedgerRange && householdTimelineFetching
-      ? true
-      : inlineCardNeedsDedicatedTimeline && inlineCardTimelineLoading;
+    inlineCardNeedsDedicatedTimeline &&
+    inlineCardTimelineLoading &&
+    inlineCardTimelineFromLedger == null;
 
   const inlineOwedAsOfPaymentDate = useMemo(() => {
     if (inlinePayToCardAccountId == null || !inlineRow.date) return null;
@@ -807,63 +822,52 @@ export default function Transactions() {
     [debouncedEditDate]
   );
 
-  const editCardHintInLedgerRange =
-    editPayToCardId != null &&
-    editForm.date !== "" &&
-    hintDateWithinLedgerRange(editForm.date, ledgerRange) &&
-    householdTimelineData != null;
+  /** Same timeline the card’s Transactions page uses — never the household upcoming-only feed. */
+  const editCardTimelineFromLedger = useMemo(() => {
+    if (
+      editPayToCardId == null ||
+      typeof accountId !== "number" ||
+      Number(accountId) !== Number(editPayToCardId) ||
+      ledgerTimelineData?.timeline == null
+    ) {
+      return null;
+    }
+    return ledgerTimelineData.timeline.filter((r) => Number(r.account_id) === Number(editPayToCardId));
+  }, [editPayToCardId, accountId, ledgerTimelineData?.timeline]);
 
   const editCardNeedsDedicatedTimeline =
-    editPayToCardId != null && editProjectionRange != null && !editCardHintInLedgerRange;
+    editPayToCardId != null && editCardTimelineFromLedger == null;
 
   const { data: editCardTimelineData, isFetching: editCardTimelineLoading } = useQuery({
     queryKey: [
       "timeline",
-      "card-projection",
+      "card-balance-hint",
       editPayToCardId,
-      editProjectionRange?.start,
-      editProjectionRange?.end,
-      editProjectionRange?.as_of,
-      editing?.id,
+      pastRangeStart,
+      upcomingRange.end,
+      hideReconciledPast,
+      todayStr(),
     ],
-    queryFn: () => {
-      const range = editProjectionRange!;
-      return getTimeline({
-        start: range.start,
-        end: range.end,
-        as_of: range.as_of,
+    queryFn: () =>
+      getTimeline({
+        start: pastRangeStart,
+        end: upcomingRange.end,
+        as_of: todayStr(),
         account_id: editPayToCardId!,
-      });
-    },
+        exclude_reconciled_past: hideReconciledPast,
+      }),
     enabled: editCardNeedsDedicatedTimeline,
-    staleTime: 300_000,
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
 
-  const editCardTimelineForHint = useMemo(
-    () =>
-      pickAccountTimelineForHint(
-        editPayToCardId ?? 0,
-        editForm.date,
-        ledgerRange,
-        householdTimelineData?.timeline,
-        editCardTimelineData?.timeline
-      ),
-    [
-      editPayToCardId,
-      editForm.date,
-      ledgerRange,
-      householdTimelineData?.timeline,
-      editCardTimelineData?.timeline,
-    ]
-  );
+  const editCardTimelineForHint = editCardTimelineFromLedger ?? editCardTimelineData?.timeline ?? [];
 
   const editCardTimelineLoadingResolved =
-    editCardHintInLedgerRange && householdTimelineFetching
-      ? true
-      : editCardNeedsDedicatedTimeline && editCardTimelineLoading;
+    editCardNeedsDedicatedTimeline && editCardTimelineLoading && editCardTimelineFromLedger == null;
 
+  /** Debt on the card as of the payment date, excluding this transfer (what you still owe besides it). */
   const editOwedAsOfPaymentDate = useMemo(() => {
     if (editPayToCardId == null || !editForm.date) return null;
     const cardAccount = accounts.find((a) => a.id === editPayToCardId);
@@ -2119,6 +2123,7 @@ export default function Transactions() {
               onToggle={() => setForecastSummaryExpanded((v) => !v)}
               ledgerLowestProjected={ledgerLowestProjected?.balance ?? null}
               ledgerLowestProjectedDate={ledgerLowestProjected?.date ?? null}
+              loading={!forecastSummaryReady}
             />
           )}
 
@@ -2256,6 +2261,7 @@ export default function Transactions() {
                 onToggle={() => setForecastSummaryExpanded((v) => !v)}
                 ledgerLowestProjected={ledgerLowestProjected?.balance ?? null}
                 ledgerLowestProjectedDate={ledgerLowestProjected?.date ?? null}
+                loading={!forecastSummaryReady}
               />
             )}
         </div>
@@ -2645,8 +2651,8 @@ export default function Transactions() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-500 mt-1">
-                    From your timeline: scheduled charges, payments, and projected interest on or before this date. This
-                    transfer is excluded so the amount reflects what you still owe besides this payment.
+                    From the card’s timeline on or before this date. This transfer is excluded so the amount
+                    reflects what you still owe besides this payment.
                   </p>
                 </div>
               )}

@@ -1000,8 +1000,35 @@ export function projectedBalanceFromLedgerSections(
 }
 
 /**
- * Signed ledger balance for a credit card at end of `asOfDate` (matches backend timeline math).
- * Negative = debt owed. Recomputes from visible rows so excluded / superseded rows are not counted.
+ * Signed Balance-column figure for an account on/before `asOfDate`.
+ * Reads `running_balance` from the last timeline row — same number the Transactions ledger shows.
+ * Does not re-sum amounts.
+ */
+export function accountTimelineRunningBalanceAsOfDate(
+  timeline: TimelineRow[],
+  accountId: number,
+  asOfDate: string
+): number | null {
+  const aid = Number(accountId);
+  const rows = timeline
+    .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
+    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
+    .sort(compareTimelineRows);
+  if (rows.length === 0) return null;
+  const rb = parseFloat(rows[rows.length - 1].running_balance);
+  return Number.isNaN(rb) ? null : rb;
+}
+
+/** Credit debt owed from a signed running balance (negative ledger → positive dollars owed). */
+export function creditOwedFromSignedBalance(signed: number | null): number | null {
+  if (signed == null) return null;
+  return signed < 0 ? Math.abs(signed) : 0;
+}
+
+/**
+ * Signed ledger balance for a credit card at end of `asOfDate`.
+ * Prefer {@link accountTimelineRunningBalanceAsOfDate} when not excluding rows.
+ * When `excludeTransactionIds` is non-empty, recomputes so removed payment legs are not counted.
  */
 export function creditCardSignedBalanceAtDate(
   timeline: TimelineRow[],
@@ -1012,7 +1039,13 @@ export function creditCardSignedBalanceAtDate(
   openingSignedBalance?: number | null
 ): number | null {
   const aid = Number(cardAccountId);
-  // Include projected interest through as-of — the Savor ledger shows those rows in the
+  if (excludeTransactionIds.size === 0) {
+    const fromRb = accountTimelineRunningBalanceAsOfDate(timeline, aid, asOfDate);
+    if (fromRb != null) return fromRb;
+    return openingSignedBalance ?? null;
+  }
+
+  // Include projected interest through as-of — the card ledger shows those rows in the
   // running balance, so a payoff hint that skips them understates debt and leaves a residual.
   const rows = timeline
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
@@ -1037,7 +1070,7 @@ export function creditOwedAsOfDateFromTimeline(
   timeline: TimelineRow[],
   cardAccountId: number,
   paymentDate: string,
-  excludeTransactionIds: Set<number>,
+  excludeTransactionIds: Set<number> = new Set(),
   openingSignedBalance?: number | null
 ): number | null {
   const signed = creditCardSignedBalanceAtDate(
@@ -1047,8 +1080,7 @@ export function creditOwedAsOfDateFromTimeline(
     excludeTransactionIds,
     openingSignedBalance
   );
-  if (signed == null) return null;
-  return signed < 0 ? Math.abs(signed) : 0;
+  return creditOwedFromSignedBalance(signed);
 }
 
 export function assetBalanceAsOfDateFromTimeline(
