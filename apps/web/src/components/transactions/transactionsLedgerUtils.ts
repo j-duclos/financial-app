@@ -1028,7 +1028,7 @@ export function creditOwedFromSignedBalance(signed: number | null): number | nul
 /**
  * Signed ledger balance for a credit card at end of `asOfDate`.
  * Prefer {@link accountTimelineRunningBalanceAsOfDate} when not excluding rows.
- * When `excludeTransactionIds` is non-empty, recomputes so removed payment legs are not counted.
+ * When exclusions are set, recomputes so removed payment legs (DB or projected) are not counted.
  */
 export function creditCardSignedBalanceAtDate(
   timeline: TimelineRow[],
@@ -1036,20 +1036,42 @@ export function creditCardSignedBalanceAtDate(
   asOfDate: string,
   excludeTransactionIds: Set<number>,
   /** When the card has no timeline rows (starting balance only), use signed opening. */
-  openingSignedBalance?: number | null
+  openingSignedBalance?: number | null,
+  /** Exclude this rule's card-side row on the payment date (projected peers have no transaction_id). */
+  excludeRuleOccurrence?: { ruleId: number; date: string } | null
 ): number | null {
   const aid = Number(cardAccountId);
-  if (excludeTransactionIds.size === 0) {
+  const hasExclusions =
+    excludeTransactionIds.size > 0 ||
+    (excludeRuleOccurrence != null &&
+      Number.isFinite(excludeRuleOccurrence.ruleId) &&
+      Boolean(excludeRuleOccurrence.date));
+
+  if (!hasExclusions) {
     const fromRb = accountTimelineRunningBalanceAsOfDate(timeline, aid, asOfDate);
     if (fromRb != null) return fromRb;
     return openingSignedBalance ?? null;
   }
 
+  const excludeRuleId = excludeRuleOccurrence?.ruleId ?? null;
+  const excludeRuleDate = excludeRuleOccurrence?.date ?? null;
+
   // Include projected interest through as-of — the card ledger shows those rows in the
   // running balance, so a payoff hint that skips them understates debt and leaves a residual.
   const rows = timeline
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
-    .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
+    .filter((r) => {
+      if (r.transaction_id != null && excludeTransactionIds.has(r.transaction_id)) return false;
+      if (
+        excludeRuleId != null &&
+        excludeRuleDate != null &&
+        r.rule_id === excludeRuleId &&
+        r.date === excludeRuleDate
+      ) {
+        return false;
+      }
+      return true;
+    })
     .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) {
@@ -1071,14 +1093,16 @@ export function creditOwedAsOfDateFromTimeline(
   cardAccountId: number,
   paymentDate: string,
   excludeTransactionIds: Set<number> = new Set(),
-  openingSignedBalance?: number | null
+  openingSignedBalance?: number | null,
+  excludeRuleOccurrence?: { ruleId: number; date: string } | null
 ): number | null {
   const signed = creditCardSignedBalanceAtDate(
     timeline,
     cardAccountId,
     paymentDate,
     excludeTransactionIds,
-    openingSignedBalance
+    openingSignedBalance,
+    excludeRuleOccurrence
   );
   return creditOwedFromSignedBalance(signed);
 }

@@ -874,14 +874,16 @@ export default function Transactions() {
     const openingSigned = cardAccount
       ? creditSignedOpeningBalance(cardAccount.starting_balance)
       : null;
+    const ruleId = (editing as { rule_id?: number | null } | null)?.rule_id ?? null;
     return creditOwedAsOfDateFromTimeline(
       editCardTimelineForHint,
       editPayToCardId,
       editForm.date,
       editExcludeTxnIds,
-      openingSigned
+      openingSigned,
+      ruleId != null ? { ruleId, date: editForm.date } : null
     );
-  }, [editPayToCardId, editForm.date, editCardTimelineForHint, editExcludeTxnIds, accounts]);
+  }, [editPayToCardId, editForm.date, editCardTimelineForHint, editExcludeTxnIds, accounts, editing]);
 
   const editBankHintInLedgerRange =
     editBankTransferDestId != null &&

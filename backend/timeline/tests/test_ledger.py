@@ -1586,6 +1586,71 @@ class TestBuildTimeline:
         assert Transaction.objects.filter(pk=planned.pk).exists()
         assert Transaction.objects.filter(rule=rule, date=pay_date).count() == 2
 
+    def test_purge_refuses_user_edited_occurrence_amount(self, user, household, db):
+        """Edited $100 occurrence must not be deleted when rule amount is still $25."""
+        from datetime import timedelta
+
+        today = date.today()
+        pay_date = today + timedelta(days=5)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            currency="USD",
+            starting_balance=Decimal("-3000.00"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Venture C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=min(max(pay_date.day, 1), 28),
+            start_date=today,
+            active=True,
+        )
+        bank_leg = Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("-100.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        card_leg = Transaction.objects.create(
+            account=card,
+            date=pay_date,
+            payee=rule.name,
+            amount=Decimal("100.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+        )
+        _purge_skipped_rule_occurrence(rule.id, pay_date, today)
+        assert Transaction.objects.filter(pk=bank_leg.pk).exists()
+        assert Transaction.objects.filter(pk=card_leg.pk).exists()
+
     def test_each_monthly_occurrence_skips_when_destination_balance_zero_that_month(
         self, user, household, db
     ):
@@ -1646,6 +1711,77 @@ class TestBuildTimeline:
         leaked = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
         assert len(leaked) == 0, (
             f"expected no min rows Jan–Jun when card stays at zero; got {leaked}"
+        )
+
+    def test_later_projected_minimums_skip_after_earlier_projected_payoff(
+        self, user, household, db
+    ):
+        """
+        Amazon-style bug: first projected $40 clears the card; later months must not keep
+        projecting $40 just because prior projected payments were invisible to the skip check.
+        """
+        fixed_today = date(2026, 8, 10)
+        start = fixed_today
+        end = date(2027, 1, 31)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Amazon",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        Transaction.objects.create(
+            account=card,
+            date=date(2026, 8, 5),
+            payee="Charge",
+            amount=Decimal("-34.13"),
+            source=Transaction.Source.ACTUAL,
+            status=Transaction.Status.CLEARED,
+        )
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Amazon C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("40.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=21,
+            start_date=date(2026, 8, 21),
+            active=True,
+        )
+        rows = build_timeline(
+            user,
+            start,
+            end,
+            account_id=card.id,
+            as_of_date=fixed_today,
+            projection_only=True,
+        )
+        pay_rows = [
+            r
+            for r in rows
+            if r.get("rule_id") == rule.id and r.get("account_id") == card.id
+        ]
+        dates = sorted({r["date"] for r in pay_rows})
+        assert dates == [date(2026, 8, 21)], (
+            f"only Aug 21 should clear the -$34.13 debt; later $40s must be skipped; got {dates}"
         )
 
     def test_orphan_bank_rule_leg_still_skips_when_transfer_to_card_has_no_balance(

@@ -285,7 +285,9 @@ class TimelineBalanceCache:
                         continue
                     if isinstance(rd, str):
                         rd = date.fromisoformat(rd[:10]) if rd else None
-                    if rd != as_of_date or r.get("transaction_id") is not None:
+                    # Prior projected payments must count — same-day-only missed month-N payoffs
+                    # when skipping month N+1 minimums.
+                    if rd is None or rd > as_of_date or r.get("transaction_id") is not None:
                         continue
                     balance += Decimal(str(r.get("amount") or 0))
             self._through_balance_cache[cache_key] = balance

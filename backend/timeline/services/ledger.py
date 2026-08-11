@@ -930,6 +930,41 @@ def _future_recurring_expense_impact_on_card(
     return total
 
 
+def _rule_occurrence_is_user_preserved(rule_id: int, occurrence_date: date) -> bool:
+    """
+    True when this occurrence must not be auto-hidden/purged: amount was edited away from the
+    rule, or a transfer-group peer is not RULE-sourced (ACTUAL/PLAID).
+    """
+    legs = Transaction.objects.filter(
+        rule_id=rule_id,
+        date=occurrence_date,
+        source=Transaction.Source.RULE,
+    )
+    if not legs.exists():
+        # Card/bank peer may still be ACTUAL with the same transfer group / date.
+        return False
+    rule = RecurringRule.objects.filter(pk=rule_id).only("amount").first()
+    if rule is not None and rule.amount is not None:
+        rule_amt = abs(Decimal(str(rule.amount)))
+        for leg_amt in legs.values_list("amount", flat=True):
+            if leg_amt is None:
+                continue
+            if abs(abs(Decimal(str(leg_amt))) - rule_amt) > Decimal("0.009"):
+                return True
+    transfer_group_ids = [
+        tg_id
+        for tg_id in legs.values_list("transfer_group_id", flat=True).distinct()
+        if tg_id is not None
+    ]
+    if transfer_group_ids and (
+        Transaction.objects.filter(transfer_group_id__in=transfer_group_ids)
+        .exclude(source=Transaction.Source.RULE)
+        .exists()
+    ):
+        return True
+    return False
+
+
 def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_today: date) -> None:
     """
     Remove all RULE-sourced rows for this occurrence (any status) so skipped payments do not
@@ -942,6 +977,9 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     PLAID INVARIANT: only deletes source=RULE. Never delete source=PLAID.
     Never purge when a Plaid import is matched to this occurrence — the bank row must stay
     linked and visible even if the forecast row is skipped.
+
+    Never purge user-edited occurrences: amount differs from the rule, or a transfer-group
+    peer is not RULE-sourced (e.g. ACTUAL card leg). Those must stay on both accounts.
     """
     if occurrence_date < as_of_today:
         return
@@ -964,6 +1002,9 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
         return
     if deleted.filter(reconciled=True).exists():
         return
+    if _rule_occurrence_is_user_preserved(rule_id, occurrence_date):
+        return
+
     account_ids = list(deleted.values_list("account_id", flat=True).distinct())
     transfer_group_ids = [
         tg_id
@@ -1041,7 +1082,9 @@ def _liability_balance_through_date(
                     continue
                 if isinstance(rd, str):
                     rd = date.fromisoformat(rd[:10]) if rd else None
-                if rd != as_of_date or r.get("transaction_id") is not None:
+                # Include earlier projected legs too — not only same-day. Otherwise a projected
+                # payoff in month N is invisible when deciding whether to skip month N+1.
+                if rd is None or rd > as_of_date or r.get("transaction_id") is not None:
                     continue
                 amt = r.get("amount")
                 try:
@@ -2037,7 +2080,9 @@ def _credit_card_balance_through_date(
                     continue
                 if isinstance(rd, str):
                     rd = date.fromisoformat(rd[:10]) if rd else None
-                if rd != as_of_date or r.get("transaction_id") is not None:
+                # Include earlier projected legs too — not only same-day. Otherwise a projected
+                # payoff in month N is invisible when deciding whether to skip month N+1.
+                if rd is None or rd > as_of_date or r.get("transaction_id") is not None:
                     continue
                 amt = r.get("amount")
                 try:
@@ -2717,22 +2762,31 @@ def _build_timeline_impl(
                         t.account and t.account.account_type != Account.AccountType.CREDIT
                     )
                 if dest_account is not None and payment_amt is not None:
-                    hide_paid_off = _should_skip_card_payment_occurrence(
-                        dest_account,
-                        t.date,
-                        rows,
-                        funded_from_bank=funded_from_bank,
-                        exclude_ids=tuple(exclude_ids) if exclude_ids else None,
-                        category_name=cat_nm,
-                        households=households,
-                        payment_amount=payment_amt,
-                    )
+                    if _rule_occurrence_is_user_preserved(t.rule_id, t.date):
+                        hide_paid_off = False
+                    else:
+                        hide_paid_off = _should_skip_card_payment_occurrence(
+                            dest_account,
+                            t.date,
+                            rows,
+                            funded_from_bank=funded_from_bank,
+                            exclude_ids=tuple(exclude_ids) if exclude_ids else None,
+                            category_name=cat_nm,
+                            households=households,
+                            payment_amount=payment_amt,
+                        )
                 if hide_paid_off:
                     if not scenario_projection_only:
                         _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
-                    purged_rule_dates.add((t.rule_id, t.date))
-                    ids_in_rows.add(t.id)
-                    continue
+                    # If purge refused (user-edited), keep showing the row.
+                    if Transaction.objects.filter(pk=t.id).exists() and _rule_occurrence_is_user_preserved(
+                        t.rule_id, t.date
+                    ):
+                        pass
+                    else:
+                        purged_rule_dates.add((t.rule_id, t.date))
+                        ids_in_rows.add(t.id)
+                        continue
             desc = t.payee or ""
             try:
                 mpl = t.match_as_planned
@@ -3071,8 +3125,8 @@ def _build_timeline_impl(
                         d=d,
                         account_id=to_acc_id,
                         account_name=to_name,
-                        category_id=None,
-                        category_name=None,
+                        category_id=cat_id,
+                        category_name=cat_name,
                         amount_decimal=in_amount,
                         row_type="INFLOW",
                         description=desc_with_card,
@@ -3088,8 +3142,8 @@ def _build_timeline_impl(
                                 description=desc_with_card,
                                 account_id=to_acc_id,
                                 account_name=to_name,
-                                category_id=None,
-                                category_name=None,
+                                category_id=cat_id,
+                                category_name=cat_name,
                                 amount=in_amount,
                                 row_type="INFLOW",
                                 rule_id=rule.id,

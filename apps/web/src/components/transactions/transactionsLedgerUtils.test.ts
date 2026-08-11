@@ -1335,6 +1335,46 @@ describe("creditOwedAsOfDateFromTimeline", () => {
       creditOwedAsOfDateFromTimeline(timeline, 5, "2026-08-26", new Set([11]))
     ).toBeCloseTo(673.9, 2);
   });
+  it("excludes projected same-rule card payment with no transaction_id", () => {
+    const timeline: TimelineRow[] = [
+      {
+        date: "2026-07-31",
+        description: "Amazon",
+        account_id: 11,
+        account_name: "Amazon",
+        category_id: null,
+        category_name: null,
+        amount: "-7.28",
+        type: "OUTFLOW",
+        status: "CLEARED",
+        source: "actual",
+        rule_id: null,
+        transaction_id: 1,
+        running_balance: "-356.73",
+      },
+      {
+        date: "2026-08-21",
+        description: "Amazon C/C Payment (Amazon)",
+        account_id: 11,
+        account_name: "Amazon",
+        category_id: 55,
+        category_name: "Credit Card Payment",
+        amount: "40",
+        type: "INFLOW",
+        status: "PLANNED",
+        source: "rule",
+        rule_id: 29,
+        transaction_id: null,
+        running_balance: "-316.73",
+      },
+    ];
+    expect(
+      creditOwedAsOfDateFromTimeline(timeline, 11, "2026-08-21", new Set(), null, {
+        ruleId: 29,
+        date: "2026-08-21",
+      })
+    ).toBeCloseTo(356.73, 2);
+  });
 });
 
 describe("buildLedgerRows fallback", () => {
