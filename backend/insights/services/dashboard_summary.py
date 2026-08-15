@@ -5,7 +5,6 @@ Reuses account forecast, health, and timeline services.
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -16,7 +15,6 @@ from django.db.models.functions import Coalesce
 
 from common.services.cache import (
     DASHBOARD_SUMMARY_CACHE_SECONDS,
-    get_dashboard_shared_context_cache_key,
     get_dashboard_summary_cache_key,
     get_dashboard_summary_details_cache_key,
     get_dashboard_summary_fast_cache_key,
@@ -65,10 +63,15 @@ from accounts.services.available_to_spend import (
     normalize_forecast_days,
 )
 from accounts.services.lowest_projected_cash import (
-    get_lowest_projected_cash,
     get_lowest_projected_cash_from_forecasts,
 )
 from core.utils import get_households_for_user
+from insights.services.dashboard_context import (
+    DashboardRequestContext,
+    build_dashboard_request_context,
+    load_dashboard_shared_context,
+    store_dashboard_shared_context,
+)
 from insights.services.dashboard_upcoming import (
     CREDIT_CARD_PAYMENT_CATEGORY,
     UPCOMING_DAYS,
@@ -76,7 +79,6 @@ from insights.services.dashboard_upcoming import (
     build_upcoming_groups,
     load_transfer_rule_context,
 )
-from timeline.models import RecurringRule
 from timeline.services.ledger import build_timeline
 from transactions.models import Transaction
 
@@ -203,8 +205,15 @@ def _short_attention_reason(
     return text
 
 
-def _credit_pay_to_target(account: Account, details: dict[str, Any], today: date) -> Decimal | None:
-    owed = ledger_owed_balance(account, today)
+def _credit_pay_to_target(
+    account: Account,
+    details: dict[str, Any],
+    today: date,
+    *,
+    owed: Decimal | None = None,
+) -> Decimal | None:
+    if owed is None:
+        owed = ledger_owed_balance(account, today)
     limit = _decimal(account.credit_limit or 0)
     if limit <= 0 or owed <= 0:
         return None
@@ -224,11 +233,12 @@ def _attention_amount(
     account: Account | None = None,
     *,
     today: date | None = None,
+    owed: Decimal | None = None,
 ) -> Decimal | None:
     details = health.get("details") or {}
     util = details.get("utilization_percent")
     if util is not None and account is not None:
-        pay = _credit_pay_to_target(account, details, today or date.today())
+        pay = _credit_pay_to_target(account, details, today or date.today(), owed=owed)
         if pay and pay > 0:
             return pay
         past_due = details.get("past_due_amount")
@@ -444,6 +454,7 @@ def build_attention_items(
     *,
     limit: int = ATTENTION_TOP_LIMIT,
     today: date | None = None,
+    signed_balances: dict[int, Decimal] | None = None,
 ) -> list[dict[str, Any]]:
     today = today or date.today()
     ranked: list[tuple[tuple, dict[str, Any]]] = []
@@ -456,7 +467,14 @@ def build_attention_items(
             continue
         forecast = forecasts.get(aid)
         details = health.get("details") or {}
-        amount = _attention_amount(health, forecast, account, today=today)
+        owed = None
+        if signed_balances is not None:
+            owed = credit_owed_from_signed_balance(
+                signed_balances.get(aid, Decimal("0"))
+            )
+        amount = _attention_amount(
+            health, forecast, account, today=today, owed=owed
+        )
         risk_date = health.get("risk_date")
         if isinstance(risk_date, date):
             risk_date = risk_date.isoformat()
@@ -1156,6 +1174,7 @@ def build_upcoming_events(
     today: date | None = None,
     timeline_rows: list[dict] | None = None,
     upcoming_days: int | None = None,
+    households=None,
 ) -> list[dict[str, Any]]:
     today = today or date.today()
     horizon = upcoming_days if upcoming_days is not None else UPCOMING_DAYS
@@ -1171,7 +1190,8 @@ def build_upcoming_events(
             caller="dashboard_upcoming",
         )
 
-    households = get_households_for_user(user)
+    if households is None:
+        households = get_households_for_user(user)
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(households)
 
     events: list[dict[str, Any]] = []
@@ -1460,6 +1480,7 @@ def _build_dashboard_upcoming_payload(
         today=today,
         timeline_rows=timeline_rows,
         upcoming_days=upcoming_horizon,
+        households=core["households"],
     )
 
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
@@ -1496,21 +1517,38 @@ def _build_dashboard_goals_payload(
 ) -> dict[str, Any]:
     """Goals preview tiles — lightweight lazy section for the dashboard."""
     from goals.bucket_services import (
-        calculate_aggregate_bucket_summary,
-        dashboard_buckets_for_user,
+        PRIORITY_ORDER,
+        calculate_aggregate_bucket_summary_from_results,
+        calculate_goal_bucket_results,
     )
     from goals.models import GoalBucket
 
     _phase_goals = phase_start(timer, "goals")
     phases.append("goals")
-    dashboard_goals = dashboard_buckets_for_user(user, limit=3, today=today)
     active_buckets = list(
         GoalBucket.objects.filter(
             household__in=core["households"],
             status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
-        ).select_related("linked_account")
+        )
+        .select_related("linked_account")
+        .prefetch_related("rule_allocations__rule")
     )
-    goals_aggregate = calculate_aggregate_bucket_summary(active_buckets, today=today)
+    goal_results = calculate_goal_bucket_results(
+        active_buckets,
+        user=user,
+        today=today,
+        signed_balances=core.get("signed_balances"),
+    )
+    goals_aggregate = calculate_aggregate_bucket_summary_from_results(goal_results)
+
+    sorted_buckets = sorted(
+        active_buckets,
+        key=lambda b: (PRIORITY_ORDER.get(b.priority, 9), -b.created_at.timestamp()),
+    )
+    results_by_id = {row["id"]: row for row in goal_results}
+    dashboard_goals = [
+        results_by_id[b.id] for b in sorted_buckets[:3] if b.id in results_by_id
+    ]
     phase_end(timer, _phase_goals)
 
     return {
@@ -1520,9 +1558,28 @@ def _build_dashboard_goals_payload(
     }
 
 
-def _dashboard_scope_cache_params(user, *, days: int, as_of_date: date) -> tuple[list[int], dict[str, Any]]:
-    households = get_households_for_user(user)
-    household_ids = list(households.values_list("id", flat=True))
+def _household_ids_from_core(core: dict[str, Any]) -> list[int]:
+    ids = core.get("household_ids")
+    if ids:
+        return list(ids)
+    households = core.get("households")
+    if households is None:
+        return []
+    if hasattr(households, "values_list"):
+        return list(households.values_list("id", flat=True))
+    return [getattr(h, "id") for h in households]
+
+
+def _dashboard_scope_cache_params(
+    user,
+    *,
+    days: int,
+    as_of_date: date,
+    household_ids: list[int] | None = None,
+) -> tuple[list[int], dict[str, Any]]:
+    if household_ids is None:
+        households = get_households_for_user(user)
+        household_ids = list(households.values_list("id", flat=True))
     params = {
         "user_id": user.pk,
         "household_ids": household_ids,
@@ -1533,14 +1590,11 @@ def _dashboard_scope_cache_params(user, *, days: int, as_of_date: date) -> tuple
 
 
 def _store_dashboard_shared_context(scope: dict[str, Any], context: dict[str, Any]) -> None:
-    cache_key = get_dashboard_shared_context_cache_key(**scope)
-    cache.set(cache_key, context, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
+    store_dashboard_shared_context(scope, context)
 
 
 def _load_dashboard_shared_context(scope: dict[str, Any]) -> dict[str, Any] | None:
-    cache_key = get_dashboard_shared_context_cache_key(**scope)
-    cached = cache.get(cache_key)
-    return cached if isinstance(cached, dict) else None
+    return load_dashboard_shared_context(scope)
 
 
 def _build_minimal_dashboard_debt_summary(
@@ -1606,6 +1660,7 @@ def _load_dashboard_balance_maps(
     *,
     today: date,
     include_prior: bool = False,
+    today_map: dict[int, Decimal] | None = None,
 ) -> tuple[dict[int, Decimal], dict[int, Decimal] | None]:
     """Bulk-load signed ledger balances once (optional prior month-end for comparisons)."""
     from django.conf import settings
@@ -1615,7 +1670,12 @@ def _load_dashboard_balance_maps(
     query_count_before = len(connection.queries) if getattr(settings, "DEBUG", False) else None
     map_start = time.perf_counter() if perf_enabled() else None
 
-    today_map = bulk_signed_ledger_balances(account_list, today)
+    if today_map is None:
+        today_map = bulk_signed_ledger_balances(account_list, today)
+    else:
+        missing = [acc for acc in account_list if acc.pk not in today_map]
+        if missing:
+            today_map = {**today_map, **bulk_signed_ledger_balances(missing, today)}
 
     prior_map: dict[int, Decimal] | None = None
     if include_prior:
@@ -1691,19 +1751,24 @@ def _compute_dashboard_core(
     today: date,
     timer: PerfTimer | None,
     shared_context: dict[str, Any] | None = None,
+    request_context: DashboardRequestContext | None = None,
 ) -> dict[str, Any]:
     """Timeline, forecast, health, safe-to-spend, and attention — shared by fast and full."""
     forecast_end = today + timedelta(days=days)
     phases: list[str] = []
 
-    households = get_households_for_user(user)
-    accounts = list(
-        Account.objects.non_deleted()
-        .filter(household__in=households, is_hidden=False)
-        .select_related("household")
-    )
-    accounts_by_id = {a.id: a for a in accounts}
+    if request_context is None:
+        request_context = build_dashboard_request_context(
+            user,
+            today=today,
+            days=days,
+            include_health_support=shared_context is None,
+        )
+    households = request_context.households
+    accounts = request_context.accounts
+    accounts_by_id = request_context.accounts_by_id
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
+    signed_balances = request_context.signed_balances
 
     if shared_context is not None:
         phases.append("shared_context")
@@ -1749,6 +1814,8 @@ def _compute_dashboard_core(
             as_of_date=today,
             days=days,
             timeline_rows=timeline_rows,
+            forecast_summaries=forecasts,
+            context=request_context.health_support(),
         )
         phase_end(timer, _phase_health)
         if perf_enabled() and health_start is not None:
@@ -1765,7 +1832,12 @@ def _compute_dashboard_core(
             forecasts,
         )
         attention_all = build_attention_items(
-            health_by_id, accounts_by_id, forecasts, limit=999, today=today
+            health_by_id,
+            accounts_by_id,
+            forecasts,
+            limit=999,
+            today=today,
+            signed_balances=signed_balances,
         )
         phase_end(timer, _phase_lpc)
         if perf_enabled() and lpc_start is not None:
@@ -1783,6 +1855,7 @@ def _compute_dashboard_core(
     return {
         "phases": phases,
         "households": households,
+        "household_ids": request_context.household_ids,
         "accounts": accounts,
         "accounts_by_id": accounts_by_id,
         "forecast_accounts": forecast_accounts,
@@ -1794,6 +1867,7 @@ def _compute_dashboard_core(
         "attention_all": attention_all,
         "attention": attention,
         "forecast_risk": forecast_risk,
+        "signed_balances": signed_balances,
         "shared_context": {
             "timeline_rows": timeline_rows,
             "forecasts": forecasts,
@@ -1812,6 +1886,7 @@ def _build_dashboard_summary(
     mode: str = "full",
     shared_context: dict[str, Any] | None = None,
     cache_scope: dict[str, Any] | None = None,
+    request_context: DashboardRequestContext | None = None,
 ) -> dict[str, Any]:
     """Uncached dashboard aggregation (forecast, health, upcoming, bills, recommendations)."""
     timer = PerfTimer() if perf_enabled() else None
@@ -1839,6 +1914,7 @@ def _build_dashboard_summary(
         today=today,
         timer=timer,
         shared_context=shared_context,
+        request_context=request_context,
     )
     phases = list(core["phases"])
     accounts = core["accounts"]
@@ -1882,6 +1958,7 @@ def _build_dashboard_summary(
             balance_accounts,
             today=today,
             include_prior=False,
+            today_map=core.get("signed_balances") or None,
         )
         debt_metrics = calculate_dashboard_debt_metrics(
             debt_accounts,
@@ -1904,7 +1981,7 @@ def _build_dashboard_summary(
 
         payoff_projection = get_cached_debt_payoff_projection(
             user.pk,
-            list(core["households"].values_list("id", flat=True)),
+            _household_ids_from_core(core),
             credit_cards,
             balance_by_account=balance_by_account,
             as_of=today,
@@ -1997,21 +2074,35 @@ def _build_dashboard_summary(
     mtd = _compute_month_to_date(user, today)
 
     from goals.bucket_services import (
-        calculate_aggregate_bucket_summary,
-        calculate_bucket_progress,
-        dashboard_buckets_for_user,
-        enrich_bucket,
+        PRIORITY_ORDER,
+        calculate_aggregate_bucket_summary_from_results,
+        calculate_goal_bucket_results,
     )
     from goals.models import GoalBucket
 
-    dashboard_goals = dashboard_buckets_for_user(user, limit=3, today=today)
     active_buckets = list(
         GoalBucket.objects.filter(
             household__in=core["households"],
             status__in=(GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED),
-        ).select_related("linked_account")
+        )
+        .select_related("linked_account")
+        .prefetch_related("rule_allocations__rule")
     )
-    goals_aggregate = calculate_aggregate_bucket_summary(active_buckets, today=today)
+    goal_results = calculate_goal_bucket_results(
+        active_buckets,
+        user=user,
+        today=today,
+        signed_balances=core.get("signed_balances"),
+    )
+    goals_aggregate = calculate_aggregate_bucket_summary_from_results(goal_results)
+    sorted_buckets = sorted(
+        active_buckets,
+        key=lambda b: (PRIORITY_ORDER.get(b.priority, 9), -b.created_at.timestamp()),
+    )
+    results_by_id = {row["id"]: row for row in goal_results}
+    dashboard_goals = [
+        results_by_id[b.id] for b in sorted_buckets[:3] if b.id in results_by_id
+    ]
     goals_active_count = goals_aggregate.get("goals_active_count", 0)
     goal_warnings = goals_aggregate.get("warnings", [])
 
@@ -2032,6 +2123,7 @@ def _build_dashboard_summary(
         balance_accounts,
         today=today,
         include_prior=True,
+        today_map=core.get("signed_balances") or None,
     )
     debt_metrics = calculate_dashboard_debt_metrics(
         debt_accounts,
@@ -2043,7 +2135,7 @@ def _build_dashboard_summary(
         as_of=today,
         balance_by_account=balance_by_account,
         user_id=user.pk,
-        household_ids=list(core["households"].values_list("id", flat=True)),
+        household_ids=_household_ids_from_core(core),
         debt_metrics=debt_metrics,
     )
     phase_end(timer, _phase_widgets)
@@ -2097,6 +2189,9 @@ def _build_dashboard_summary(
         debt_summary=debt_summary,
         goals_aggregate=goals_aggregate,
         dashboard_goals=dashboard_goals,
+        signed_balances=core.get("signed_balances"),
+        households=core.get("households"),
+        household_ids=_household_ids_from_core(core),
     )
     recommendations = build_dashboard_recommendation_list(
         rec_ctx,
@@ -2110,14 +2205,12 @@ def _build_dashboard_summary(
     phases.append("snapshot")
     snapshot_goal_rows = [
         {
-            "id": b.id,
-            "name": b.name,
-            "goal_type": b.type,
-            "progress_percent": enrich_bucket(
-                b, calculate_bucket_progress(b, today=today), today=today
-            )["progress_percent"],
+            "id": row["id"],
+            "name": row["name"],
+            "goal_type": row.get("goal_type") or row.get("type"),
+            "progress_percent": row["progress_percent"],
         }
-        for b in active_buckets
+        for row in goal_results
     ]
     snapshot = _compute_snapshot(
         snapshot_accounts,
@@ -2189,8 +2282,8 @@ def build_dashboard_summary(
     """
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    households = get_households_for_user(user)
-    household_ids = list(households.values_list("id", flat=True))
+    households = list(get_households_for_user(user))
+    household_ids = [h.id for h in households]
     cache_key = get_dashboard_summary_cache_key(
         user_id=user.pk,
         household_ids=household_ids,
@@ -2209,7 +2302,16 @@ def build_dashboard_summary(
         return cached
 
     wall_start = time.perf_counter()
-    result = _build_dashboard_summary(user, days=days, as_of_date=today)
+    request_context = build_dashboard_request_context(
+        user,
+        today=today,
+        days=days,
+        households=households,
+        household_ids=household_ids,
+    )
+    result = _build_dashboard_summary(
+        user, days=days, as_of_date=today, request_context=request_context
+    )
     log_perf(
         "dashboard_summary",
         cache="MISS",
@@ -2231,8 +2333,8 @@ def build_dashboard_summary_fast(
     """Above-the-fold dashboard payload for fast first paint."""
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    households = get_households_for_user(user)
-    household_ids = list(households.values_list("id", flat=True))
+    households = list(get_households_for_user(user))
+    household_ids = [h.id for h in households]
 
     full_key = get_dashboard_summary_cache_key(
         user_id=user.pk,
@@ -2269,13 +2371,23 @@ def build_dashboard_summary_fast(
         return cached
 
     wall_start = time.perf_counter()
-    _, scope = _dashboard_scope_cache_params(user, days=days, as_of_date=today)
+    _, scope = _dashboard_scope_cache_params(
+        user, days=days, as_of_date=today, household_ids=household_ids
+    )
+    request_context = build_dashboard_request_context(
+        user,
+        today=today,
+        days=days,
+        households=households,
+        household_ids=household_ids,
+    )
     result = _build_dashboard_summary(
         user,
         days=days,
         as_of_date=today,
         mode="fast",
         cache_scope=scope,
+        request_context=request_context,
     )
     log_perf(
         "dashboard_summary_fast",
@@ -2299,8 +2411,8 @@ def build_dashboard_summary_details(
     """Lazy-loaded dashboard sections (upcoming, snapshot, goals, bills)."""
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
-    households = get_households_for_user(user)
-    household_ids = list(households.values_list("id", flat=True))
+    households = list(get_households_for_user(user))
+    household_ids = [h.id for h in households]
 
     full_key = get_dashboard_summary_cache_key(
         user_id=user.pk,
@@ -2337,14 +2449,25 @@ def build_dashboard_summary_details(
         return cached
 
     wall_start = time.perf_counter()
-    _, scope = _dashboard_scope_cache_params(user, days=days, as_of_date=today)
+    _, scope = _dashboard_scope_cache_params(
+        user, days=days, as_of_date=today, household_ids=household_ids
+    )
     shared_context = _load_dashboard_shared_context(scope)
+    request_context = build_dashboard_request_context(
+        user,
+        today=today,
+        days=days,
+        households=households,
+        household_ids=household_ids,
+        include_health_support=shared_context is None,
+    )
     details_result = _build_dashboard_summary(
         user,
         days=days,
         as_of_date=today,
         mode="details",
         shared_context=shared_context,
+        request_context=request_context,
     )
     log_perf(
         "dashboard_summary_details",

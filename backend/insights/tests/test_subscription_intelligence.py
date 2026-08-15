@@ -15,10 +15,11 @@ from transactions.models import Transaction
 
 @pytest.mark.django_db
 def test_rule_is_subscription_by_category(household, account):
-    streaming = Category.objects.create(
+    streaming, _ = Category.objects.get_or_create(
         household=household,
         name="Streaming",
         category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 180},
     )
     rule = RecurringRule.objects.create(
         household=household,
@@ -65,10 +66,11 @@ def test_monthly_amount_weekly():
 
 @pytest.mark.django_db
 def test_build_subscription_intelligence_totals(user, household, account):
-    streaming = Category.objects.create(
+    streaming, _ = Category.objects.get_or_create(
         household=household,
         name="Streaming",
         category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 180},
     )
     RecurringRule.objects.create(
         household=household,
@@ -121,10 +123,11 @@ def test_detects_recurring_plaid_charges(user, household, account):
 
 @pytest.mark.django_db
 def test_subscription_intelligence_api(authenticated_client, user, household, account):
-    streaming = Category.objects.create(
+    streaming, _ = Category.objects.get_or_create(
         household=household,
         name="Streaming",
         category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 180},
     )
     RecurringRule.objects.create(
         household=household,

@@ -124,4 +124,45 @@ describe("ruleCashFlow", () => {
     expect(getRuleSection(transfer)).toBe("transfers");
     expect(ruleCountsTowardMonthlyCashFlow(transfer)).toBe(false);
   });
+
+  it("normalizes weekly and yearly cadences instead of weekly times four", () => {
+    const weekly = baseRule({ name: "Paycheck", direction: "INCOME", amount: "500", frequency: "WEEKLY" });
+    const yearly = baseRule({ name: "Bonus", direction: "INCOME", amount: "1200", frequency: "YEARLY" });
+    expect(ruleMonthlyAmount(weekly)).toBeCloseTo((52 / 12) * 500, 2);
+    expect(ruleMonthlyAmount(yearly)).toBeCloseTo(100, 2);
+  });
+
+  it("includes subscriptions and loan payments, excludes paused rules", () => {
+    const sub = baseRule({
+      id: 1,
+      name: "Netflix",
+      amount: "15.49",
+      category: { id: 4, name: "Streaming" } as RecurringRule["category"],
+    });
+    const loan = baseRule({
+      id: 2,
+      name: "Student loan",
+      amount: "250",
+      category: { id: 5, name: "Student Loan" } as RecurringRule["category"],
+    });
+    const paused = baseRule({ id: 3, name: "Gym", amount: "40", active: false });
+    expect(getRuleSection(sub)).toBe("subscriptions");
+    expect(getRuleSection(loan)).toBe("card_loan_payments");
+    expect(estimatedMonthlyCashFlow([sub, loan, paused], isRunning)).toBeCloseTo(-(15.49 + 250), 2);
+  });
+
+  it("keeps global cash flow on the full rule set when a search subset is shown", () => {
+    const netflix = baseRule({
+      id: 1,
+      name: "Netflix",
+      amount: "15",
+      category: { id: 4, name: "Streaming" } as RecurringRule["category"],
+    });
+    const rent = baseRule({ id: 2, name: "Rent", amount: "2000" });
+    const allRules = [netflix, rent];
+    const matching = allRules.filter((r) => r.name.toLowerCase().includes("netflix"));
+    expect(estimatedMonthlyCashFlow(allRules, isRunning)).toBeCloseTo(-2015, 2);
+    expect(estimatedMonthlyCashFlow(matching, isRunning)).toBeCloseTo(-15, 2);
+    expect(sectionMonthlySubtotal(matching, isRunning)).toBeCloseTo(-15, 2);
+  });
 });

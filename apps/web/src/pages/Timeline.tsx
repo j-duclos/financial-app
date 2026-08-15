@@ -1,13 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import {
-  getTimeline,
   getTimelineCalendar,
-  getDashboardSummary,
   listScenarios,
   getProfile,
   listHouseholds,
@@ -15,7 +13,6 @@ import {
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import TimelineCalendar from "../components/timeline/TimelineCalendar";
 import TimelineDayPanel from "../components/timeline/TimelineDayPanel";
-import TimelineListView from "../components/timeline/TimelineListView";
 import UpcomingMoneyFlowSection from "../components/dashboard/UpcomingMoneyFlowSection";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "../components/dashboard/metricTileLayout";
@@ -24,9 +21,9 @@ import QuickTransactionModal, {
 } from "../components/quickActions/QuickTransactionModal";
 import {
   DEFAULT_TIMELINE_VIEW,
-  filterTimelineFromDate,
   hasProjectedActivity,
   isIsoDateString,
+  parseTimelineViewParam,
   pickHorizonForFocusDate,
   timelineDayForDate,
   computeSafeUntilNextIncome,
@@ -36,8 +33,7 @@ import {
 } from "../lib/timelineCalendarUtils";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import { CALENDAR_SUMMARY } from "../lib/timelineTerminology";
-import { UPCOMING_PAGE_TITLE } from "../lib/upcomingDisplay";
-import { DEFAULT_PASSIVE_FORECAST_DAYS } from "../lib/safeToSpendLabels";
+import { UPCOMING_PAGE_TITLE, buildUpcomingMoneyFlowFromCalendarDays } from "../lib/upcomingDisplay";
 
 type Horizon = TimelineHorizon;
 
@@ -51,22 +47,32 @@ function ViewToggle({
   return (
     <div
       className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5"
-      role="group"
-      aria-label="Timeline view"
+      role="tablist"
+      aria-label="Calendar views"
     >
-      {(["calendar", "list"] as const).map((mode) => (
-        <button
-          key={mode}
-          type="button"
-          onClick={() => onChange(mode)}
-          className={`px-3 py-1 text-sm font-medium rounded-md capitalize transition-colors ${
-            viewMode === mode ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"
-          }`}
-          aria-pressed={viewMode === mode}
-        >
-          {mode}
-        </button>
-      ))}
+      {(
+        [
+          { id: "timeline", label: "Timeline" },
+          { id: "calendar", label: "Calendar" },
+        ] as const
+      ).map((mode) => {
+        const selected = viewMode === mode.id;
+        return (
+          <button
+            key={mode.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(mode.id)}
+            className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+              selected ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            {mode.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -95,10 +101,11 @@ function CalendarSkeleton() {
 }
 
 export default function Timeline() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlScenario = searchParams.get("scenario_id");
   const urlHorizon = searchParams.get("horizon");
   const urlFocusDate = searchParams.get("date");
+  const urlView = parseTimelineViewParam(searchParams.get("view"));
 
   const [horizon, setHorizon] = useState<Horizon>(() => {
     if (urlHorizon === "14d" || urlHorizon === "3m" || urlHorizon === "6m" || urlHorizon === "12m" || urlHorizon === "24m") {
@@ -126,9 +133,9 @@ export default function Timeline() {
       setHorizon(pickHorizonForFocusDate(urlFocusDate));
     }
   }, [urlScenario, urlHorizon, urlFocusDate]);
-  const [viewMode, setViewMode] = useState<TimelineViewMode>(() =>
-    isIsoDateString(urlFocusDate) ? "calendar" : DEFAULT_TIMELINE_VIEW
-  );
+  const viewMode: TimelineViewMode = isIsoDateString(urlFocusDate)
+    ? "calendar"
+    : (urlView ?? DEFAULT_TIMELINE_VIEW);
   const [selectedDay, setSelectedDay] = useState<TimelineCalendarDay | null>(null);
   const [initialBillTxn, setInitialBillTxn] = useState<TimelineCalendarTransaction | null>(null);
   const [transferPreset, setTransferPreset] = useState<QuickTransactionPreset | null>(null);
@@ -137,7 +144,6 @@ export default function Timeline() {
   const focusCalendarDay = useCallback((dateIso: string, days: TimelineCalendarDay[]) => {
     if (focusedDateRef.current === dateIso) return;
     focusedDateRef.current = dateIso;
-    setViewMode("calendar");
     setSelectedDay(timelineDayForDate(days, dateIso));
     requestAnimationFrame(() => {
       document
@@ -146,21 +152,7 @@ export default function Timeline() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!isIsoDateString(urlFocusDate)) {
-      focusedDateRef.current = null;
-      return;
-    }
-    focusedDateRef.current = null;
-    setViewMode("calendar");
-  }, [urlFocusDate]);
-
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
-  const { data: dashboardSummary, isLoading: upcomingLoading } = useQuery({
-    queryKey: ["dashboard-summary", "calendar-upcoming", DEFAULT_PASSIVE_FORECAST_DAYS],
-    queryFn: () => getDashboardSummary({ forecast_days: DEFAULT_PASSIVE_FORECAST_DAYS }),
-    staleTime: 60_000,
-  });
   const { data: accountsData } = useOperationalAccounts();
   const { data: scenariosData } = useQuery({ queryKey: ["scenarios"], queryFn: () => listScenarios() });
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
@@ -185,56 +177,64 @@ export default function Timeline() {
     refetchOnWindowFocus: false,
   });
 
-  const listQuery = useQuery({
-    queryKey: ["timeline", horizon, lookbackMonths, accountId, scenarioId, resolvedHousehold],
-    queryFn: () =>
-      getTimeline({
-        horizon,
-        lookback_months: lookbackMonths,
-        account_id: accountId || undefined,
-        scenario_id: scenarioId || undefined,
-        household_id: resolvedHousehold || undefined,
-      }),
-    enabled: viewMode === "list",
-    staleTime: 60_000,
-    placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
-  });
-
   const calendarData = calendarQuery.data;
-  const timeline = listQuery.data?.timeline ?? [];
+  const upcomingMoneyFlow = useMemo(
+    () =>
+      viewMode === "timeline" && calendarData?.days
+        ? buildUpcomingMoneyFlowFromCalendarDays(calendarData.days)
+        : null,
+    [calendarData, viewMode]
+  );
+  const safeUntil = useMemo(
+    () => (calendarData ? computeSafeUntilNextIncome(calendarData.days) : null),
+    [calendarData]
+  );
+
+  const onSelectDay = useCallback((day: TimelineCalendarDay) => {
+    setSelectedDay(day);
+    setInitialBillTxn(null);
+  }, []);
+  const onSelectTransaction = useCallback(
+    (day: TimelineCalendarDay, txn: TimelineCalendarTransaction) => {
+      setSelectedDay(day);
+      setInitialBillTxn(txn);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!isIsoDateString(urlFocusDate) || !calendarData?.days) return;
     focusCalendarDay(urlFocusDate, calendarData.days);
   }, [urlFocusDate, calendarData, focusCalendarDay]);
-  const isLoading =
-    viewMode === "calendar"
-      ? calendarQuery.isLoading
-      : listQuery.isLoading || calendarQuery.isLoading;
-  const error = viewMode === "calendar" ? calendarQuery.error : listQuery.error;
+  const isLoading = calendarQuery.isLoading;
+  const error = calendarQuery.error;
   const summary = calendarData?.summary;
-  const safeUntil = calendarData ? computeSafeUntilNextIncome(calendarData.days) : null;
   const riskyAccounts = summary?.risky_accounts ?? [];
+
+  const changeView = useCallback(
+    (mode: TimelineViewMode) => {
+      if (mode === "timeline") {
+        setSelectedDay(null);
+        setInitialBillTxn(null);
+        focusedDateRef.current = null;
+      }
+      const next = new URLSearchParams(searchParams);
+      next.set("view", mode);
+      if (mode === "timeline") next.delete("date");
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
 
   return (
     <div className={`${PAGE_SHELL} py-4`}>
-      <h1 className="text-lg font-semibold text-gray-900 mb-4">{UPCOMING_PAGE_TITLE}</h1>
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold text-gray-900">{UPCOMING_PAGE_TITLE}</h1>
+        <p className="text-sm text-gray-600 mt-1">
+          What is going to happen — projected cash flow from balances plus planned and recurring activity.
+        </p>
+      </div>
 
-      {upcomingLoading && (
-        <div className="mb-6 h-32 rounded-lg bg-white shadow animate-pulse" aria-hidden />
-      )}
-      {dashboardSummary && !upcomingLoading && (
-        <UpcomingMoneyFlowSection
-          groups={dashboardSummary.upcoming_groups ?? []}
-          days={dashboardSummary.upcoming_days}
-          truncated={dashboardSummary.upcoming_truncated}
-        />
-      )}
-
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">
-        Calendar view
-      </h2>
       <div className="flex flex-wrap gap-4 mb-4 items-end">
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">Date Range</label>
@@ -295,7 +295,7 @@ export default function Timeline() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">View</label>
-          <ViewToggle viewMode={viewMode} onChange={setViewMode} />
+          <ViewToggle viewMode={viewMode} onChange={changeView} />
         </div>
       </div>
 
@@ -403,40 +403,39 @@ export default function Timeline() {
 
       {error && <p className="text-red-600 text-sm mb-2">{(error as Error).message}</p>}
 
-      {isLoading ? (
-        viewMode === "calendar" ? (
-          <div>
-            <p className="text-sm text-gray-500 mb-3">Building your financial calendar…</p>
-            <CalendarSkeleton />
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">Loading timeline…</p>
-        )
+      {viewMode === "timeline" && isLoading && (
+        <div className="mb-6 h-32 rounded-lg bg-white shadow animate-pulse" aria-hidden />
+      )}
+      {viewMode === "timeline" && upcomingMoneyFlow && !isLoading && (
+        <UpcomingMoneyFlowSection
+          groups={upcomingMoneyFlow.groups}
+          days={upcomingMoneyFlow.days}
+          truncated={upcomingMoneyFlow.truncated}
+        />
+      )}
+
+      {isLoading && viewMode === "calendar" ? (
+        <div>
+          <p className="text-sm text-gray-500 mb-3">Building your financial calendar…</p>
+          <CalendarSkeleton />
+        </div>
       ) : viewMode === "calendar" && calendarData ? (
         hasProjectedActivity(calendarData.days) ? (
           <TimelineCalendar
             data={calendarData}
             selectedDate={selectedDay?.date ?? null}
-            onSelectDay={(day) => {
-              setSelectedDay(day);
-              setInitialBillTxn(null);
-            }}
-            onSelectTransaction={(day, txn) => {
-              setSelectedDay(day);
-              setInitialBillTxn(txn);
-            }}
+            onSelectDay={onSelectDay}
+            onSelectTransaction={onSelectTransaction}
           />
         ) : (
           <p className="text-center text-gray-500 py-12 bg-white border border-gray-200 rounded-lg">
             No projected activity in this horizon.
           </p>
         )
-      ) : viewMode === "list" && calendarData ? (
-        <TimelineListView
-          timeline={filterTimelineFromDate(timeline, calendarData.start_date)}
-          calendarDays={calendarData.days}
-          singleAccountView={accountId !== ""}
-        />
+      ) : viewMode === "timeline" && calendarData && !upcomingMoneyFlow ? (
+        <p className="text-center text-gray-500 py-12 bg-white border border-gray-200 rounded-lg">
+          No projected activity in this horizon.
+        </p>
       ) : null}
 
       {selectedDay && (

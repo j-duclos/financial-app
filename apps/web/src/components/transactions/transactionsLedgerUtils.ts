@@ -175,6 +175,17 @@ export function upcomingTimelineRange(
   return { start: asOf, end };
 }
 
+/**
+ * Selected-account projection for the Transactions ledger.
+ * History Range must not widen this window — posted history comes from /transactions/.
+ */
+export function ledgerProjectionRange(
+  asOf: string = todayStr(),
+  forecastRange: ForecastRange = DEFAULT_FORECAST_RANGE
+): { start: string; end: string } {
+  return upcomingTimelineRange(asOf, forecastRange);
+}
+
 /** Combined range for transfer-hint date checks (history filter + upcoming forecast). */
 export function ledgerHintDateRange(
   filter: TimeFilter,
@@ -184,6 +195,22 @@ export function ledgerHintDateRange(
   const past = pastTransactionsRange(filter);
   const upcoming = upcomingTimelineRange(asOf, forecastRange);
   return { start: past.start, end: upcoming.end };
+}
+
+/** Group timeline rows by account once — avoid repeated full-array scans. */
+export function indexTimelineRowsByAccount(
+  timeline: TimelineRow[] | undefined | null
+): Map<number, TimelineRow[]> {
+  const byAccount = new Map<number, TimelineRow[]>();
+  if (!Array.isArray(timeline) || timeline.length === 0) return byAccount;
+  for (const row of timeline) {
+    const aid = Number(row.account_id);
+    if (!Number.isFinite(aid)) continue;
+    const bucket = byAccount.get(aid);
+    if (bucket) bucket.push(row);
+    else byAccount.set(aid, [row]);
+  }
+  return byAccount;
 }
 
 /** Narrow window for transfer/CC payoff hints — avoids building years of timeline on every date change. */

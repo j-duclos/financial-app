@@ -544,11 +544,18 @@ def test_reconcile_setup_clamps_stale_period_before_floor(auth_client, account, 
     )
     assert r.status_code == 200, r.data
     body = r.json()
-    assert body["min_start_date"] == "2026-02-10"
-    assert body["period_start_date"] == "2026-02-10"
-    assert body["period_end_date"] == "2026-02-10"
-    assert len(body["unreconciled_transactions"]) == 1
-    assert body["unreconciled_transactions"][0]["id"] == t2.pk
+    assert body["min_start_date"] == "2026-02-03"
+    assert body["period_start_date"] == "2026-02-03"
+    assert body["period_end_date"] == "2026-02-03"
+    assert body["unreconciled_transactions"] == []
+
+    r2 = auth_client.get(
+        "/api/reconcile/setup/",
+        {"account_id": account.pk, "start": "2026-02-03", "end": "2026-02-10"},
+    )
+    assert r2.status_code == 200, r2.data
+    ids = [row["id"] for row in r2.json()["unreconciled_transactions"]]
+    assert ids == [t2.pk]
 
 
 def test_reconcile_setup_clamps_period_end_after_today(auth_client, account, user):
@@ -1201,4 +1208,226 @@ class TestReconciliationSeal:
         leftover.refresh_from_db()
         assert leftover.reconciled is False
         assert leftover.reconciliation_id is None
+
+
+def test_reconcile_setup_isolates_other_users_account(auth_client, account, household):
+    other = User.objects.create_user(username="other_reconcile", password="pass1234")
+    other_hh = Household.objects.create(name="Other HH")
+    HouseholdMembership.objects.create(
+        household=other_hh, user=other, role=HouseholdMembership.Role.OWNER
+    )
+    other_acct = Account.objects.create(
+        household=other_hh,
+        account_type=Account.AccountType.CHECKING,
+        name="Other checking",
+        currency="USD",
+        starting_balance=Decimal("50.00"),
+    )
+    r = auth_client.get("/api/reconcile/setup/", {"account_id": other_acct.pk})
+    assert r.status_code == 404
+    r = auth_client.post(
+        "/api/reconcile/complete/",
+        {
+            "account_id": other_acct.pk,
+            "bank_current_balance": "50.00",
+            "checked_transaction_ids": [],
+            "period_start_date": date.today().isoformat(),
+            "period_end_date": date.today().isoformat(),
+        },
+        format="json",
+    )
+    assert r.status_code == 404
+    r = auth_client.get("/api/reconcile/sessions/", {"account_id": other_acct.pk})
+    assert r.status_code == 404
+    assert account.household_id == household.pk
+
+
+def test_reconcile_setup_filters_by_account_and_date_and_unreconciled(auth_client, account, household, user):
+    other_acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.SAVINGS,
+        name="Savings",
+        currency="USD",
+        starting_balance=Decimal("200.00"),
+    )
+    in_range = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 6, 10),
+        payee="In range",
+        amount=Decimal("-10.00"),
+    )
+    post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 7, 10),
+        payee="After range",
+        amount=Decimal("-3.00"),
+    )
+    post_transaction(
+        user=user,
+        account_id=other_acct.pk,
+        date=date(2026, 6, 10),
+        payee="Other account",
+        amount=Decimal("-8.00"),
+    )
+    already = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date(2026, 6, 5),
+        payee="Already done",
+        amount=Decimal("-2.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("998.00"),
+        checked_transaction_ids=[already.pk],
+        period_start=date(2026, 6, 5),
+        period_end=date(2026, 6, 5),
+    )
+    r = auth_client.get(
+        "/api/reconcile/setup/",
+        {
+            "account_id": account.pk,
+            "start": "2026-06-06",
+            "end": "2026-06-30",
+        },
+    )
+    assert r.status_code == 200, r.data
+    ids = [row["id"] for row in r.json()["unreconciled_transactions"]]
+    assert ids == [in_range.pk]
+
+
+def test_reconcile_setup_uses_imported_description_when_memo_empty(auth_client, account, user):
+    txn = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="AfterPay",
+        amount=Decimal("-12.00"),
+    )
+    Transaction.objects.filter(pk=txn.pk).update(
+        imported_description="AFTERPAY 185-52896014 CA 07/28"
+    )
+    r = auth_client.get(
+        "/api/reconcile/setup/",
+        {
+            "account_id": account.pk,
+            "start": date.today().isoformat(),
+            "end": date.today().isoformat(),
+        },
+    )
+    assert r.status_code == 200
+    row = r.json()["unreconciled_transactions"][0]
+    assert row["payee"] == "AfterPay"
+    assert row["memo"] == "AFTERPAY 185-52896014 CA 07/28"
+
+
+def test_complete_uses_decimal_cents_not_float(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="A",
+        amount=Decimal("0.10"),
+    )
+    t2 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="B",
+        amount=Decimal("0.20"),
+    )
+    rec = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1000.30"),
+        checked_transaction_ids=[t1.pk, t2.pk],
+        period_start=date.today(),
+        period_end=date.today(),
+    )
+    assert rec.final_reconciled_balance == Decimal("1000.30")
+    assert rec.difference == Decimal("0")
+
+
+def test_complete_rolls_back_when_integrity_sync_fails(account, user, monkeypatch):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="Atomic",
+        amount=Decimal("5.00"),
+    )
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("sync failed")
+
+    monkeypatch.setattr(
+        "transactions.services.reconciliation.sync_reconciled_ledger_integrity",
+        boom,
+    )
+    with pytest.raises(RuntimeError, match="sync failed"):
+        complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=Decimal("1005.00"),
+            checked_transaction_ids=[t1.pk],
+            period_start=date.today(),
+            period_end=date.today(),
+        )
+    assert Reconciliation.objects.count() == 0
+    t1.refresh_from_db()
+    assert t1.reconciled is False
+    assert t1.reconciliation_id is None
+
+
+def test_reconciled_transaction_cannot_be_edited(account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="Locked",
+        amount=Decimal("-1.00"),
+    )
+    complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("999.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date.today(),
+        period_end=date.today(),
+    )
+    from rest_framework.exceptions import ValidationError
+    from transactions.services.immutability import reject_if_reconciled
+
+    t1.refresh_from_db()
+    with pytest.raises(ValidationError, match="cannot be edited"):
+        reject_if_reconciled(t1, action="edited")
+
+
+def test_session_history_stores_calculated_ending_balance(auth_client, account, user):
+    t1 = post_transaction(
+        user=user,
+        account_id=account.pk,
+        date=date.today(),
+        payee="History",
+        amount=Decimal("25.00"),
+    )
+    rec = complete_reconciliation(
+        account=account,
+        user=user,
+        bank_current_balance=Decimal("1025.00"),
+        checked_transaction_ids=[t1.pk],
+        period_start=date.today(),
+        period_end=date.today(),
+    )
+    r = auth_client.get(f"/api/reconcile/sessions/{rec.pk}/")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opening_balance"] == "1000.00"
+    assert body["calculated_ending_balance"] == "1025.00"
+    assert body["bank_balance"] == "1025.00"
+    assert body["difference"] == "0.00"
+    assert body["transactions"][0]["id"] == t1.pk
 

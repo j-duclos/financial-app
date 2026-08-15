@@ -74,15 +74,9 @@ class AccountSerializer(serializers.ModelSerializer):
     utilization_percent = serializers.DecimalField(
         max_digits=6, decimal_places=2, read_only=True, allow_null=True, required=False
     )
-    payoff_to_avoid_interest = serializers.DecimalField(
-        max_digits=12, decimal_places=2, read_only=True, required=False
-    )
-    estimated_monthly_interest = serializers.DecimalField(
-        max_digits=12, decimal_places=2, read_only=True, required=False
-    )
-    projected_interest_if_unpaid = serializers.DecimalField(
-        max_digits=12, decimal_places=2, read_only=True, required=False
-    )
+    payoff_to_avoid_interest = serializers.SerializerMethodField()
+    estimated_monthly_interest = serializers.SerializerMethodField()
+    projected_interest_if_unpaid = serializers.SerializerMethodField()
     is_payment_due_soon = serializers.BooleanField(read_only=True, required=False)
     days_until_due = serializers.IntegerField(read_only=True, allow_null=True, required=False)
     available_to_spend = serializers.DecimalField(
@@ -111,12 +105,8 @@ class AccountSerializer(serializers.ModelSerializer):
     health_recommended_action = serializers.CharField(
         read_only=True, required=False, allow_null=True
     )
-    outgoing_relationships = AccountRelationshipSummarySerializer(
-        many=True, read_only=True, required=False,
-    )
-    incoming_relationships = AccountRelationshipSummarySerializer(
-        many=True, read_only=True, required=False,
-    )
+    outgoing_relationships = serializers.SerializerMethodField()
+    incoming_relationships = serializers.SerializerMethodField()
     display_name = serializers.CharField(max_length=100, allow_blank=True, required=False)
     purpose = serializers.CharField(max_length=255, allow_blank=True, required=False)
     notes = serializers.CharField(allow_blank=True, required=False)
@@ -177,20 +167,89 @@ class AccountSerializer(serializers.ModelSerializer):
             return None
         return val.isoformat() if hasattr(val, "isoformat") else val
 
+    def get_outgoing_relationships(self, instance):
+        return self._relationships_for(instance, "outgoing")
+
+    def get_incoming_relationships(self, instance):
+        return self._relationships_for(instance, "incoming")
+
+    def _relationships_for(self, instance, direction: str):
+        rels_by_account = self.context.get("relationships_by_account_id") or {}
+        rel_bundle = rels_by_account.get(instance.pk)
+        if rel_bundle:
+            return rel_bundle.get(direction, [])
+        if not self.context.get("include_relationships"):
+            return []
+        lookup = (
+            {"source_account_id": instance.pk}
+            if direction == "outgoing"
+            else {"destination_account_id": instance.pk}
+        )
+        qs = AccountRelationship.objects.filter(**lookup).select_related(
+            "source_account", "destination_account"
+        )
+        return AccountRelationshipSummarySerializer(qs, many=True).data
+
+    def get_payoff_to_avoid_interest(self, instance):
+        fields = self._credit_interest_fields(instance)
+        return fields["payoff_to_avoid_interest"] if fields else None
+
+    def get_estimated_monthly_interest(self, instance):
+        fields = self._credit_interest_fields(instance)
+        return fields["estimated_monthly_interest"] if fields else None
+
+    def get_projected_interest_if_unpaid(self, instance):
+        fields = self._credit_interest_fields(instance)
+        return fields["projected_interest_if_unpaid"] if fields else None
+
+    def _credit_interest_fields(self, instance) -> dict | None:
+        if not instance.is_credit_card():
+            return None
+        cache = getattr(instance, "_credit_interest_fields_cache", None)
+        if cache is not None:
+            return cache
+        payments_map = self.context.get("payments_since_statement_by_id")
+        if payments_map is not None:
+            paid = payments_map.get(instance.pk, Decimal("0"))
+            stmt = Decimal(str(instance.statement_balance or 0))
+            payoff = max(Decimal("0"), stmt - paid)
+        else:
+            payoff = instance.payoff_to_avoid_interest
+        apr_val = Decimal(str(instance.apr or 0))
+        unpaid = payoff
+        if unpaid <= 0:
+            unpaid = Decimal(str(instance.statement_balance or 0))
+        if apr_val > 0 and unpaid > 0:
+            interest = (unpaid * apr_val / Decimal("100") / Decimal("12")).quantize(
+                Decimal("0.01")
+            )
+        else:
+            interest = Decimal("0")
+        cache = {
+            "payoff_to_avoid_interest": str(payoff),
+            "estimated_monthly_interest": str(interest),
+            "projected_interest_if_unpaid": str(interest),
+        }
+        instance._credit_interest_fields_cache = cache
+        return cache
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
-        if request and request.user.is_authenticated:
-            self.fields["household"].queryset = get_households_for_user(request.user)
-            hh_ids = list(self.fields["household"].queryset.values_list("pk", flat=True))
-            self.fields["autopay_account"].queryset = Account.objects.filter(
-                household_id__in=hh_ids,
-                account_type__in=[
-                    Account.AccountType.CHECKING,
-                    Account.AccountType.SAVINGS,
-                    Account.AccountType.CASH,
-                ],
-            )
+        if not request or not getattr(request.user, "is_authenticated", False):
+            return
+        if getattr(request, "method", "GET") in ("GET", "HEAD", "OPTIONS"):
+            return
+        self.fields["household"].queryset = get_households_for_user(request.user)
+        hh_ids = list(self.fields["household"].queryset.values_list("pk", flat=True))
+        self.fields["autopay_account"].queryset = Account.objects.filter(
+            household_id__in=hh_ids,
+            account_type__in=[
+                Account.AccountType.CHECKING,
+                Account.AccountType.SAVINGS,
+                Account.AccountType.CASH,
+            ],
+        )
 
     def validate_last_four(self, value):
         if value is None or value == "":
@@ -338,42 +397,56 @@ class AccountSerializer(serializers.ModelSerializer):
         data["minimum_buffer"] = str(minimum_buffer) if minimum_buffer is not None else "0"
 
         request = self.context.get("request")
-        if request and request.query_params.get("balance") == "true":
-            from timeline.services.ledger import _balance_at_end_of_date
+        want_balance = bool(request and request.query_params.get("balance") == "true")
+        signed_balances = self.context.get("signed_balances_by_id")
+        signed = None
+        if want_balance:
+            if signed_balances is not None and instance.pk in signed_balances:
+                signed = signed_balances[instance.pk]
+            else:
+                annotated = getattr(instance, "balance", None)
+                if annotated is not None and not instance.is_credit_card():
+                    signed = Decimal(str(annotated))
+                else:
+                    from timeline.services.ledger import _balance_at_end_of_date
 
-            data["balance"] = str(_balance_at_end_of_date(instance.pk, date.today()))
+                    signed = _balance_at_end_of_date(instance.pk, date.today())
+            data["balance"] = str(signed)
 
         if instance.is_credit_card():
-            if "balance" in data and data["balance"] is not None:
-                from accounts.services.credit_card import sync_current_balance_from_ledger
+            from accounts.services.balances import credit_owed_from_signed_balance
 
-                sync_current_balance_from_ledger(instance, date.today())
-            owed = Decimal(str(instance.current_balance or 0))
-            if "balance" in data and data["balance"] is not None:
-                ledger_bal = Decimal(str(data["balance"]))
-                if ledger_bal > 0:
-                    ledger_bal = -ledger_bal
-                owed = abs(ledger_bal) if ledger_bal < 0 else Decimal("0")
+            if signed is None and "balance" in data and data["balance"] is not None:
+                signed = Decimal(str(data["balance"]))
+            if signed is not None:
+                owed = credit_owed_from_signed_balance(signed)
+            else:
+                owed = Decimal(str(instance.current_balance or 0))
             data["balance_owed"] = str(owed)
             data["balance"] = str(-owed)
             cl = getattr(instance, "credit_limit", None)
             if cl is not None:
-                limit = Decimal(str(cl))
-                available = max(Decimal("0"), limit - owed)
-                data["available_balance"] = str(available)
-                data["available_credit"] = str(available)
-                if limit > 0:
-                    util = (owed / limit * Decimal("100")).quantize(Decimal("0.01"))
-                    data["utilization_percent"] = str(util)
-                else:
-                    data["utilization_percent"] = None
+                from accounts.services.balances import calculate_credit_metrics
+
+                metrics = calculate_credit_metrics(
+                    instance, signed if signed is not None else -owed
+                )
+                data["available_balance"] = str(metrics["available"])
+                data["available_credit"] = str(metrics["available"])
+                util = metrics["utilization_percent"]
+                data["utilization_percent"] = str(util) if util is not None else None
             else:
                 data["available_balance"] = None
                 data["available_credit"] = None
                 data["utilization_percent"] = None
-            data["payoff_to_avoid_interest"] = str(instance.payoff_to_avoid_interest)
-            data["estimated_monthly_interest"] = str(instance.estimated_monthly_interest)
-            data["projected_interest_if_unpaid"] = str(instance.projected_interest_if_unpaid)
+            interest_fields = self._credit_interest_fields(instance) or {}
+            data["payoff_to_avoid_interest"] = interest_fields.get("payoff_to_avoid_interest")
+            data["estimated_monthly_interest"] = interest_fields.get(
+                "estimated_monthly_interest"
+            )
+            data["projected_interest_if_unpaid"] = interest_fields.get(
+                "projected_interest_if_unpaid"
+            )
             data["is_payment_due_soon"] = instance.is_payment_due_soon
             data["days_until_due"] = instance.days_until_due
             data["current_balance"] = str(owed)
@@ -418,24 +491,5 @@ class AccountSerializer(serializers.ModelSerializer):
         payoff_est = payoff_by_id.get(instance.pk)
         if payoff_est is not None:
             data["payoff_estimate"] = payoff_est
-
-        rels_by_account = self.context.get("relationships_by_account_id") or {}
-        rel_bundle = rels_by_account.get(instance.pk)
-        if rel_bundle:
-            data["outgoing_relationships"] = rel_bundle.get("outgoing", [])
-            data["incoming_relationships"] = rel_bundle.get("incoming", [])
-        elif self.context.get("include_relationships"):
-            outgoing = AccountRelationship.objects.filter(
-                source_account_id=instance.pk,
-            ).select_related("source_account", "destination_account")
-            incoming = AccountRelationship.objects.filter(
-                destination_account_id=instance.pk,
-            ).select_related("source_account", "destination_account")
-            data["outgoing_relationships"] = AccountRelationshipSummarySerializer(
-                outgoing, many=True,
-            ).data
-            data["incoming_relationships"] = AccountRelationshipSummarySerializer(
-                incoming, many=True,
-            ).data
 
         return data

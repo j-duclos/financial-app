@@ -62,6 +62,7 @@ def detect_likely_forgotten(
     today: date,
     has_payment: bool,
     base_status: str,
+    paid_year_months: Optional[set[tuple[int, int]]] = None,
 ) -> bool:
     if has_payment or not rule_id or base_status in (
         BillOccurrence.Status.PAID,
@@ -72,7 +73,10 @@ def detect_likely_forgotten(
     paid_months = 0
     for i in range(1, FORGOTTEN_LOOKBACK_MONTHS + 1):
         py, pm = _prior_month(y, m, i)
-        if _rule_paid_in_month(rule_id, py, pm):
+        if paid_year_months is not None:
+            if (py, pm) in paid_year_months:
+                paid_months += 1
+        elif _rule_paid_in_month(rule_id, py, pm):
             paid_months += 1
     if paid_months < 2:
         return False
@@ -157,13 +161,45 @@ def _match_score_for_txn(
     return score
 
 
+def _autopay_result_from_streak(
+    *,
+    plaid_streak: int,
+    total: int,
+    latest_current_month_occurrence: Optional[BillOccurrence],
+    today: date,
+) -> dict[str, Any]:
+    if plaid_streak >= AUTOPAY_MIN_PLAID_MONTHS:
+        return {
+            "autopay_mode": "autopay",
+            "autopay_confidence": "medium",
+            "autopay_label": "Likely on autopay",
+            "autopay_risk": False,
+        }
+
+    risk = False
+    if total >= 2 and plaid_streak >= 2:
+        occ = latest_current_month_occurrence
+        if occ and occ.due_date <= today + timedelta(days=2) and not occ.transaction_id:
+            risk = True
+
+    return {
+        "autopay_mode": "unknown",
+        "autopay_confidence": "low",
+        "autopay_label": "Autopay failed risk" if risk else None,
+        "autopay_risk": risk,
+    }
+
+
 def detect_autopay(
     rule: Optional[RecurringRule],
     *,
     household_id: int,
     rule_id: Optional[int],
     occurrence: Optional[BillOccurrence] = None,
+    visible_outflows: Optional[list[Transaction]] = None,
+    latest_current_month_occurrence: Optional[BillOccurrence] = None,
 ) -> dict[str, Any]:
+    del household_id  # reserved for future account-scoped autopay evidence
     if occurrence and occurrence.autopay_override:
         mode = occurrence.autopay_override
         return {
@@ -184,6 +220,28 @@ def detect_autopay(
     today = date.today()
     plaid_streak = 0
     total = 0
+    if visible_outflows is not None:
+        for i in range(1, 5):
+            y, m = _prior_month(today.year, today.month, i)
+            start = date(y, m, 1)
+            end = date(y, m, monthrange(y, m)[1])
+            month_txns = [t for t in visible_outflows if start <= t.date <= end]
+            if not month_txns:
+                continue
+            month_txns.sort(key=lambda t: (t.date, t.id), reverse=True)
+            total += 1
+            if month_txns[0].source == Transaction.Source.PLAID:
+                plaid_streak += 1
+        latest_occ = latest_current_month_occurrence
+        if latest_occ is None:
+            latest_occ = occurrence if occurrence and occurrence.month == f"{today.year:04d}-{today.month:02d}" else None
+        return _autopay_result_from_streak(
+            plaid_streak=plaid_streak,
+            total=total,
+            latest_current_month_occurrence=latest_occ,
+            today=today,
+        )
+
     for i in range(1, 5):
         y, m = _prior_month(today.year, today.month, i)
         start = date(y, m, 1)
@@ -201,30 +259,19 @@ def detect_autopay(
             if txn.source == Transaction.Source.PLAID:
                 plaid_streak += 1
 
-    if plaid_streak >= AUTOPAY_MIN_PLAID_MONTHS:
-        return {
-            "autopay_mode": "autopay",
-            "autopay_confidence": "medium",
-            "autopay_label": "Likely on autopay",
-            "autopay_risk": False,
-        }
-
-    risk = False
-    if total >= 2 and plaid_streak >= 2:
-        occ = (
+    latest_occ = latest_current_month_occurrence
+    if latest_occ is None and total >= 2 and plaid_streak >= 2:
+        latest_occ = (
             BillOccurrence.objects.filter(rule_id=rule_id, month=f"{today.year:04d}-{today.month:02d}")
             .order_by("-due_date")
             .first()
         )
-        if occ and occ.due_date <= today + timedelta(days=2) and not occ.transaction_id:
-            risk = True
-
-    return {
-        "autopay_mode": "unknown",
-        "autopay_confidence": "low",
-        "autopay_label": "Autopay failed risk" if risk else None,
-        "autopay_risk": risk,
-    }
+    return _autopay_result_from_streak(
+        plaid_streak=plaid_streak,
+        total=total,
+        latest_current_month_occurrence=latest_occ,
+        today=today,
+    )
 
 
 def bill_amount_history(rule_id: int, months: int = 6) -> list[dict[str, Any]]:
@@ -380,6 +427,43 @@ def build_checklist_warnings(
             },
         )
     return out[:12]
+
+
+def average_paid_amount_from_outflows(
+    outflows: list[Transaction],
+    *,
+    today: Optional[date] = None,
+    months: int = 6,
+) -> Optional[Decimal]:
+    """Median of the earliest ledger-visible outflow in each of the last `months` prior months."""
+    today = today or date.today()
+    amounts: list[Decimal] = []
+    for i in range(1, months + 1):
+        y, m = _prior_month(today.year, today.month, i)
+        start = date(y, m, 1)
+        end = date(y, m, monthrange(y, m)[1])
+        month_txns = [t for t in outflows if start <= t.date <= end]
+        if not month_txns:
+            continue
+        month_txns.sort(key=lambda t: (t.date, t.id))
+        amounts.append(_decimal(abs(month_txns[0].amount)))
+    if not amounts:
+        return None
+    return _quantize_median(amounts)
+
+
+def bulk_average_paid_amounts(
+    outflows_by_rule_id: dict[int, list[Transaction]],
+    *,
+    today: Optional[date] = None,
+    months: int = 6,
+) -> dict[int, Decimal]:
+    today = today or date.today()
+    return {
+        rule_id: avg
+        for rule_id, txns in outflows_by_rule_id.items()
+        if (avg := average_paid_amount_from_outflows(txns, today=today, months=months)) is not None
+    }
 
 
 def average_paid_amount(rule_id: int, months: int = 6) -> Optional[Decimal]:

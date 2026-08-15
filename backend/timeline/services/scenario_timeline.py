@@ -128,15 +128,23 @@ def build_scenario_timeline_from_base(
     today: date,
     end_date: date,
     forecastable_account_ids: set[int],
+    accounts_by_id: dict[int, Account] | None = None,
+    overrides: list | None = None,
+    one_time_events: list | None = None,
+    added_recurring: list | None = None,
+    category_shocks: list | None = None,
 ) -> list[dict]:
     """Apply scenario overrides/events to a copy of the base forecast timeline."""
     rows: list[dict] = [copy.deepcopy(r) for r in base_rows]
     rows = dedupe_future_rule_occurrence_rows(rows, today)
     rows = [r for r in rows if r.get("source") not in ("scenario_event", "scenario_added_recurring")]
 
-    overrides = ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
-        "rule", "rule__account", "rule__category"
-    )
+    if overrides is None:
+        overrides = list(
+            ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
+                "rule", "rule__account", "rule__category", "override_account"
+            )
+        )
 
     for ov in overrides:
         rule = ov.rule
@@ -176,7 +184,13 @@ def build_scenario_timeline_from_base(
 
         if ov.override_account_id is not None:
             new_aid = eff.get("account_id") or rule.account_id
-            new_name = Account.objects.filter(pk=new_aid).values_list("name", flat=True).first()
+            new_name = None
+            if accounts_by_id and new_aid in accounts_by_id:
+                new_name = accounts_by_id[new_aid].name
+            elif getattr(ov, "override_account", None) is not None:
+                new_name = ov.override_account.name
+            else:
+                new_name = Account.objects.filter(pk=new_aid).values_list("name", flat=True).first()
             if not new_name and rule.account:
                 new_name = rule.account.name
             for r in rows:
@@ -190,7 +204,9 @@ def build_scenario_timeline_from_base(
                 rows, rule, eff, today, end_date, forecastable_account_ids
             )
 
-    _append_scenario_projection_rows(rows, scenario, today, end_date)
+    _append_scenario_projection_rows(
+        rows, scenario, today, end_date, one_time_events=one_time_events
+    )
     seen_added: set[tuple] = set()
     append_scenario_added_recurring_projections(
         scenario=scenario,
@@ -199,8 +215,9 @@ def build_scenario_timeline_from_base(
         end_date=end_date,
         forecastable_account_ids=forecastable_account_ids,
         seen_keys=seen_added,
+        added_recurring=added_recurring,
     )
-    _apply_scenario_category_shocks(rows, scenario)
+    _apply_scenario_category_shocks(rows, scenario, category_shocks=category_shocks)
 
     account_ids = {r.get("account_id") for r in rows if r.get("account_id") is not None}
 

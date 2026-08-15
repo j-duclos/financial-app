@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { DashboardUpcomingGroup, DashboardUpcomingTransaction } from "@budget-app/shared";
+import type {
+  DashboardUpcomingGroup,
+  DashboardUpcomingTransaction,
+  TimelineCalendarDay,
+  TimelineCalendarTransaction,
+} from "@budget-app/shared";
 import {
   UPCOMING_SECTION_TITLE,
   dailyNetFromTotals,
@@ -25,7 +30,10 @@ import {
   upcomingListUsesStickyScroll,
   UPCOMING_PREVIEW_DAYS,
   UPCOMING_PREVIEW_MAX_ITEMS,
+  UPCOMING_CALENDAR_WINDOW_DAYS,
+  UPCOMING_MAX_VISIBLE_TRANSACTIONS,
   buildUpcomingDashboardPreview,
+  buildUpcomingMoneyFlowFromCalendarDays,
   filterUpcomingGroupsForPreview,
   upcomingDisplayTransactionCount,
 } from "./upcomingDisplay";
@@ -387,5 +395,159 @@ describe("upcomingDisplay", () => {
       "Main first falls below zero today"
     );
     expect(preview.days[1]!.firstNegativeWarning).toBeNull();
+  });
+});
+
+function calendarTxn(
+  overrides: Partial<TimelineCalendarTransaction> = {}
+): TimelineCalendarTransaction {
+  return {
+    id: "1",
+    date: "2025-06-01",
+    account_id: 1,
+    description: "Payroll",
+    account_name: "Main",
+    amount: "100.00",
+    category: null,
+    kind: "income",
+    source: "rule",
+    status: "PLANNED",
+    balance_after: "1100.00",
+    is_transfer: false,
+    is_internal_transfer: false,
+    is_credit_card_payment: false,
+    risk_flag: false,
+    ...overrides,
+  };
+}
+
+function calendarDay(overrides: Partial<TimelineCalendarDay> = {}): TimelineCalendarDay {
+  return {
+    date: "2025-06-01",
+    income_total: "100.00",
+    expense_total: "40.00",
+    transfer_total: "0.00",
+    net_total: "60.00",
+    ending_balance: "1060.00",
+    lowest_balance: "1000.00",
+    risk_level: "none",
+    risk_reason: null,
+    has_risk: false,
+    heat_level: "healthy",
+    heat_label: "Healthy",
+    transactions: [calendarTxn()],
+    ...overrides,
+  };
+}
+
+describe("buildUpcomingMoneyFlowFromCalendarDays", () => {
+  it("starts from today and keeps the 14-day / 25-transaction window", () => {
+    const days = [
+      calendarDay({ date: "2025-05-31", transactions: [calendarTxn({ id: "past", date: "2025-05-31" })] }),
+      calendarDay({
+        date: "2025-06-01",
+        income_total: "2200.00",
+        expense_total: "0.00",
+        net_total: "2200.00",
+        ending_balance: "3200.00",
+        transactions: [calendarTxn({ id: "pay", date: "2025-06-01", amount: "2200.00" })],
+      }),
+      calendarDay({
+        date: "2025-06-02",
+        income_total: "0.00",
+        expense_total: "1800.00",
+        net_total: "-1800.00",
+        ending_balance: "1400.00",
+        has_risk: true,
+        risk_reason: "Projected balance drops below zero on 2025-06-02.",
+        is_negative: true,
+        show_lowest_balance_marker: true,
+        lowest_projected_balance: "-50.00",
+        lowest_projected_balance_account_name: "Main",
+        transactions: [
+          calendarTxn({
+            id: "rent",
+            date: "2025-06-02",
+            description: "Rent",
+            amount: "-1800.00",
+            kind: "bill",
+            source: "actual",
+            risk_flag: true,
+            balance_after: "-50.00",
+          }),
+        ],
+      }),
+      calendarDay({
+        date: "2025-06-16",
+        transactions: [calendarTxn({ id: "outside", date: "2025-06-16" })],
+      }),
+    ];
+    const result = buildUpcomingMoneyFlowFromCalendarDays(days, { today: "2025-06-01" });
+    expect(result.days).toBe(UPCOMING_CALENDAR_WINDOW_DAYS);
+    expect(result.truncated).toBe(false);
+    expect(result.groups.map((g) => g.date)).toEqual(["2025-06-01", "2025-06-02"]);
+    expect(result.groups[0]!.label).toBe("Jun 1");
+    expect(result.groups[0]!.income_total).toBe("2200.00");
+    expect(result.groups[0]!.transactions[0]!.balance_after).toBe("1100.00");
+    expect(result.groups[1]!.expense_total).toBe("1800.00");
+    expect(result.groups[1]!.has_risk).toBe(true);
+    expect(result.groups[1]!.transactions[0]!.risk_flag).toBe(true);
+    expect(upcomingKindLabel(result.groups[0]!.transactions[0]!)).toBe("Income");
+    expect(upcomingKindLabel(result.groups[1]!.transactions[0]!)).toBe("Expense");
+  });
+
+  it("preserves transfer labels and excluded-from-net totals", () => {
+    const result = buildUpcomingMoneyFlowFromCalendarDays(
+      [
+        calendarDay({
+          date: "2025-06-01",
+          income_total: "0.00",
+          expense_total: "0.00",
+          transfer_total: "300.00",
+          net_total: "0.00",
+          transactions: [
+            calendarTxn({
+              id: "out",
+              description: "To savings",
+              amount: "-300.00",
+              kind: "transfer",
+              is_transfer: true,
+              is_internal_transfer: true,
+              transfer_from_account_name: "Checking",
+              transfer_to_account_name: "Savings",
+            }),
+            calendarTxn({
+              id: "in",
+              description: "To savings",
+              account_name: "Savings",
+              amount: "300.00",
+              kind: "transfer",
+              is_transfer: true,
+              is_internal_transfer: true,
+              transfer_from_account_name: "Checking",
+              transfer_to_account_name: "Savings",
+            }),
+          ],
+        }),
+      ],
+      { today: "2025-06-01" }
+    );
+    expect(result.groups[0]!.transfers_excluded).toBe(true);
+    expect(result.groups[0]!.net_total).toBe("0.00");
+    expect(upcomingKindLabel(result.groups[0]!.transactions[0]!)).toBe("Transfer");
+  });
+
+  it("caps preview transactions at 25 and preserves order", () => {
+    const txns = Array.from({ length: 30 }, (_, i) =>
+      calendarTxn({ id: String(i + 1), description: `Txn ${i + 1}`, amount: "-1.00", kind: "bill" })
+    );
+    const result = buildUpcomingMoneyFlowFromCalendarDays(
+      [calendarDay({ date: "2025-06-01", transactions: txns })],
+      { today: "2025-06-01" }
+    );
+    expect(result.truncated).toBe(true);
+    expect(result.groups[0]!.transactions).toHaveLength(UPCOMING_MAX_VISIBLE_TRANSACTIONS);
+    expect(result.groups[0]!.transactions[0]!.description).toBe("Txn 1");
+    expect(result.groups[0]!.transactions[24]!.description).toBe("Txn 25");
   });
 });

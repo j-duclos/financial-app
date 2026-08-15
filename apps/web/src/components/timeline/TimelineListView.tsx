@@ -13,7 +13,7 @@ import {
 } from "../../lib/forecastSeverity";
 import { formatDateDisplay } from "../../lib/dateDisplay";
 import { TIMELINE_LIST_MONTH_STICKY_TOP } from "../../lib/monthGroupDisplay";
-import { isSupersededPlannedTimelineRow } from "../transactions/transactionsLedgerUtils";
+import { formatNetDisplay, netColorClass } from "../../lib/upcomingDisplay";
 import {
   dayMap,
   formatCompactNet,
@@ -36,9 +36,9 @@ export default function TimelineListView({
   calendarDays,
   singleAccountView = false,
 }: Props) {
-  const dayGroups = groupTimelineRowsByDate(timeline);
-  const monthGroups = groupTimelineDayGroupsByMonth(dayGroups);
-  const byDate = dayMap(calendarDays);
+  const dayGroups = useMemo(() => groupTimelineRowsByDate(timeline), [timeline]);
+  const monthGroups = useMemo(() => groupTimelineDayGroupsByMonth(dayGroups), [dayGroups]);
+  const byDate = useMemo(() => dayMap(calendarDays), [calendarDays]);
   const useScroll = dayGroups.length > 14 || monthGroups.length > 1;
 
   const defaultExpanded = useMemo(() => {
@@ -93,10 +93,7 @@ export default function TimelineListView({
               <StickyMonthHeader monthKey={monthKey} label={monthLabel} sticky={false} />
             </div>
 
-            {daysInMonth.map(({ date, rows: dayRows }) => {
-              const rows = dayRows.filter(
-                (row) => !isSupersededPlannedTimelineRow(row, timeline)
-              );
+            {daysInMonth.map(({ date, rows }) => {
               const { calendarDay, netTotal, endingBalance } = resolveListDayMetrics(
                 date,
                 rows,

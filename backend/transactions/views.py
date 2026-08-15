@@ -2,7 +2,7 @@ from typing import Optional
 
 from decimal import Decimal
 
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
@@ -344,9 +344,26 @@ class TransactionViewSet(ModelViewSet):
         qs = ledger_visible_transactions(
             Transaction.objects.filter(account__household__in=households)
         ).select_related(
-            "account", "category", "account__household"
-        ).select_related(
-            "transfer_out", "transfer_out__to_transaction", "transfer_out__to_transaction__account"
+            "account",
+            "category",
+            "account__household",
+            "transfer_out",
+            "transfer_out__to_transaction",
+            "transfer_out__to_transaction__account",
+            "transfer_in",
+            "transfer_in__from_transaction",
+            "transfer_in__from_transaction__account",
+            "rule",
+            "rule__account",
+            "rule__transfer_to_account",
+            "transfer_group",
+            "transfer_group__from_account",
+            "transfer_group__to_account",
+        ).prefetch_related(
+            Prefetch(
+                "transfer_group__transactions",
+                queryset=Transaction.objects.select_related("account"),
+            ),
         )
         date_after = self.request.query_params.get("date_after")
         date_before = self.request.query_params.get("date_before")

@@ -1,5 +1,6 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { SpendingTarget, SpendingTargetMetrics } from "@budget-app/shared";
+import { Link } from "react-router-dom";
 import { formatDateDisplay } from "../../lib/dateDisplay";
 import {
   spendingTargetProgressPercent,
@@ -102,6 +103,14 @@ export default function SpendingTargetCard({
             >
               Delete
             </button>
+          )}
+          {metrics.category_id != null && (
+            <Link
+              to={`/transactions?category=${metrics.category_id}`}
+              className="text-xs text-blue-600 hover:underline ml-auto"
+            >
+              View transactions
+            </Link>
           )}
         </div>
       )}

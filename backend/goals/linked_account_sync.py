@@ -35,7 +35,17 @@ def linked_account_in_use(
 
 
 def clear_goal_contribution_for_transaction(txn) -> None:
+    contribs = list(
+        GoalContribution.objects.filter(transaction_id=txn.pk).select_related("bucket")
+    )
+    bucket_ids = {c.bucket_id for c in contribs if c.bucket_id}
     GoalContribution.objects.filter(transaction_id=txn.pk).delete()
+    if not bucket_ids:
+        return
+    from goals.bucket_services import sync_bucket_allocated_amount
+
+    for bucket in GoalBucket.objects.filter(pk__in=bucket_ids):
+        sync_bucket_allocated_amount(bucket)
 
 
 def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | None:
@@ -64,6 +74,9 @@ def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | Non
         contrib.save(
             update_fields=["bucket", "account_id", "amount", "date", "source"]
         )
+    from goals.bucket_services import sync_bucket_allocated_amount
+
+    sync_bucket_allocated_amount(bucket)
     return contrib
 
 
@@ -80,3 +93,6 @@ def sync_all_transactions_for_linked_bucket(bucket: GoalBucket) -> None:
     GoalContribution.objects.filter(bucket=bucket).exclude(
         transaction_id__in=txns.values_list("pk", flat=True)
     ).delete()
+    from goals.bucket_services import sync_bucket_allocated_amount
+
+    sync_bucket_allocated_amount(bucket)

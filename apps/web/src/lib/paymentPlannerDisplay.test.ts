@@ -4,6 +4,7 @@ import {
   defaultPaymentAmountForStrategy,
   drawerPaymentAmountDisplay,
   DRAWER_PAYOFF_STRATEGY_OPTIONS,
+  countPlanRequestsForTypedValue,
   normalizePaymentActionLabel,
   paymentToReachUtilization,
   PAYMENT_PLANNER_LABEL,
@@ -11,6 +12,7 @@ import {
   payoffSummaryLine,
   strategyRequiresAmountInput,
   targetUtilizationPlanHint,
+  WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "./paymentPlannerDisplay";
 
 function mockPlanCard(overrides: Partial<DebtPayoffCardSummary> = {}): DebtPayoffCardSummary {
@@ -138,5 +140,12 @@ describe("paymentPlannerDisplay", () => {
       "minimum_payment",
       "custom_amount",
     ]);
+  });
+
+  it("debounces typing 1500 into Extra Monthly to one plan request", () => {
+    const before = countPlanRequestsForTypedValue("1500", 0, 50);
+    const after = countPlanRequestsForTypedValue("1500", WHAT_IF_NUMERIC_DEBOUNCE_MS, 50);
+    expect(before).toBe(4);
+    expect(after).toBe(1);
   });
 });

@@ -15,7 +15,7 @@ class CategoryViewSet(ModelViewSet):
     permission_classes = [IsHouseholdMember]
     pagination_class = CategoryPagination
     filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ["household", "category_type", "parent", "is_archived"]
+    filterset_fields = ["household", "category_type", "parent", "is_archived", "is_system"]
     ordering_fields = ["category_type", "sort_order", "name", "created_at"]
     ordering = ["category_type", "name"]
 

@@ -4,9 +4,13 @@ Computed account health indicators from forecast, safe-to-spend, and credit card
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Collection, Iterable
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Optional
+
+from django.db.models import Count
 
 from accounts.models import Account
 from accounts.relationship_models import AccountRelationship
@@ -36,9 +40,14 @@ from accounts.services.available_to_spend import (
     cash_account_risk_shortfall,
     normalize_forecast_days,
 )
-from accounts.services.credit_card import ledger_owed_balance, sync_current_balance_from_ledger
+from accounts.services.balances import (
+    bulk_signed_ledger_balances,
+    credit_owed_from_signed_balance,
+)
+from accounts.services.credit_card import ledger_owed_balance
 from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 from transactions.models import Transaction
+from transactions.services.matching import ledger_visible_transactions
 
 CASH_ROLES = frozenset(
     {
@@ -54,6 +63,153 @@ SAVINGS_ROLES = frozenset(
         Account.AccountRole.EMERGENCY_FUND,
     }
 )
+
+PAYMENT_LINK_RELATIONSHIP_TYPES = (
+    AccountRelationship.RelationshipType.CREDIT_CARD_PAYMENT,
+    AccountRelationship.RelationshipType.AUTOPAY,
+    AccountRelationship.RelationshipType.DEBT_PAYMENT,
+)
+
+
+@dataclass(frozen=True)
+class AccountHealthSupportData:
+    """Bulk-loaded inputs so per-account health calculation can stay SQL-free."""
+
+    signed_balances: dict[int, Decimal] = field(default_factory=dict)
+    unmatched_import_counts: dict[int, int] = field(default_factory=dict)
+    payment_link_account_ids: set[int] = field(default_factory=set)
+    planned_loan_payment_account_ids: set[int] = field(default_factory=set)
+    payments_since_statement: dict[int, Decimal] = field(default_factory=dict)
+
+
+def bulk_unmatched_import_counts(account_ids: Collection[int]) -> dict[int, int]:
+    ids = [int(pk) for pk in account_ids]
+    if not ids:
+        return {}
+    rows = (
+        Transaction.objects.filter(
+            account_id__in=ids,
+            source=Transaction.Source.PLAID,
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        .values("account_id")
+        .annotate(count=Count("id"))
+    )
+    return {row["account_id"]: int(row["count"]) for row in rows}
+
+
+def bulk_payment_link_account_ids(credit_card_ids: Collection[int]) -> set[int]:
+    ids = [int(pk) for pk in credit_card_ids]
+    if not ids:
+        return set()
+    return set(
+        AccountRelationship.objects.filter(
+            destination_account_id__in=ids,
+            is_active=True,
+            relationship_type__in=PAYMENT_LINK_RELATIONSHIP_TYPES,
+        ).values_list("destination_account_id", flat=True)
+    )
+
+
+def bulk_planned_loan_payment_account_ids(
+    accounts: Iterable[Account],
+    today: date,
+) -> set[int]:
+    loans = [
+        acc
+        for acc in accounts
+        if acc.role == Account.AccountRole.LOAN and acc.next_payment_due_date
+    ]
+    if not loans:
+        return set()
+    max_due = max(acc.next_payment_due_date for acc in loans)
+    due_by_id = {acc.pk: acc.next_payment_due_date for acc in loans}
+    rows = Transaction.objects.filter(
+        account_id__in=due_by_id,
+        date__gte=today,
+        date__lte=max_due,
+        status=Transaction.Status.PLANNED,
+        amount__lt=0,
+    ).values_list("account_id", "date")
+    matched: set[int] = set()
+    for account_id, txn_date in rows:
+        due = due_by_id.get(account_id)
+        if due is not None and txn_date <= due:
+            matched.add(account_id)
+    return matched
+
+
+def bulk_payments_since_statement(accounts: Iterable[Account]) -> dict[int, Decimal]:
+    cards = [
+        acc
+        for acc in accounts
+        if acc.is_credit_card() and acc.last_statement_date is not None
+    ]
+    if not cards:
+        return {}
+    min_statement = min(acc.last_statement_date for acc in cards)
+    statement_by_id = {acc.pk: acc.last_statement_date for acc in cards}
+    qs = ledger_visible_transactions(
+        Transaction.objects.filter(
+            account_id__in=statement_by_id,
+            date__gt=min_statement,
+            amount__gt=0,
+        )
+    )
+    paid: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    for txn in qs:
+        cutoff = statement_by_id.get(txn.account_id)
+        if cutoff is not None and txn.date > cutoff:
+            paid[txn.account_id] += Decimal(str(txn.amount))
+    return dict(paid)
+
+
+def build_account_health_context(
+    accounts: list[Account],
+    *,
+    today: date,
+    signed_balances: dict[int, Decimal] | None = None,
+) -> AccountHealthSupportData:
+    """Load shared account-health support data in a handful of grouped queries."""
+    account_ids = [acc.pk for acc in accounts]
+    credit_card_ids = [acc.pk for acc in accounts if acc.is_credit_card()]
+    balances = (
+        signed_balances
+        if signed_balances is not None
+        else bulk_signed_ledger_balances(accounts, today)
+    )
+    return AccountHealthSupportData(
+        signed_balances=balances,
+        unmatched_import_counts=bulk_unmatched_import_counts(account_ids),
+        payment_link_account_ids=bulk_payment_link_account_ids(credit_card_ids),
+        planned_loan_payment_account_ids=bulk_planned_loan_payment_account_ids(
+            accounts, today
+        ),
+        payments_since_statement=bulk_payments_since_statement(accounts),
+    )
+
+
+def _payoff_to_avoid_interest(
+    account: Account,
+    *,
+    payments_since_statement: Decimal | None = None,
+) -> Decimal:
+    if payments_since_statement is None:
+        return account.payoff_to_avoid_interest
+    stmt = Decimal(str(account.statement_balance or 0))
+    return max(Decimal("0"), stmt - payments_since_statement)
+
+
+def _projected_interest_from_payoff(account: Account, payoff: Decimal) -> Decimal:
+    apr_val = _decimal(account.apr or 0)
+    if apr_val <= 0:
+        return Decimal("0")
+    unpaid = payoff
+    if unpaid <= 0:
+        unpaid = _decimal(account.statement_balance or 0)
+    if unpaid <= 0:
+        return Decimal("0")
+    return (unpaid * apr_val / Decimal("100") / Decimal("12")).quantize(Decimal("0.01"))
 
 
 def _worst_status(*statuses: str) -> str:
@@ -107,7 +263,13 @@ def _credit_utilization_percent(owed: Decimal, limit: Decimal) -> Decimal | None
     return (owed / limit * Decimal("100")).quantize(Decimal("0.01"))
 
 
-def _count_unmatched_imports(account: Account) -> int:
+def _count_unmatched_imports(
+    account: Account,
+    *,
+    unmatched_import_count: int | None = None,
+) -> int:
+    if unmatched_import_count is not None:
+        return unmatched_import_count
     return Transaction.objects.filter(
         account_id=account.pk,
         source=Transaction.Source.PLAID,
@@ -154,6 +316,8 @@ def _cash_health(
     forecast: dict[str, Any] | None,
     today: date,
     timeline_rows: list[dict] | None,
+    *,
+    unmatched_import_count: int | None = None,
 ) -> tuple[str, str | None, date | None, dict[str, Any]]:
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
@@ -162,7 +326,9 @@ def _cash_health(
         "utilization_percent": None,
         "days_until_due": None,
         "past_due_amount": None,
-        "unmatched_import_count": _count_unmatched_imports(account),
+        "unmatched_import_count": _count_unmatched_imports(
+            account, unmatched_import_count=unmatched_import_count
+        ),
         "actual_balance_negative": False,
         "spending_cushion_negative": False,
     }
@@ -270,13 +436,23 @@ def _cash_health(
     return status, reason, risk_date, details
 
 
-def _credit_card_health(account: Account, today: date) -> tuple[str, str | None, date | None, dict[str, Any]]:
-    owed = ledger_owed_balance(account, today)
+def _credit_card_health(
+    account: Account,
+    today: date,
+    *,
+    owed_balance: Decimal | None = None,
+    unmatched_import_count: int | None = None,
+    has_payment_link: bool | None = None,
+    payments_since_statement: Decimal | None = None,
+) -> tuple[str, str | None, date | None, dict[str, Any]]:
+    owed = ledger_owed_balance(account, today) if owed_balance is None else owed_balance
     limit = _decimal(account.credit_limit or 0)
     util_dec = _credit_utilization_percent(owed, limit)
     due = account.next_payment_due_date
     days_until = (due - today).days if due else None
-    payoff = account.payoff_to_avoid_interest
+    payoff = _payoff_to_avoid_interest(
+        account, payments_since_statement=payments_since_statement
+    )
 
     past_due_amount = Decimal("0")
     if days_until is not None and days_until < 0 and (payoff > 0 or owed > 0):
@@ -293,7 +469,9 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
         "target_utilization_percent": _serialize_decimal(target_util),
         "days_until_due": days_until,
         "past_due_amount": _serialize_decimal(past_due_amount) if past_due_amount > 0 else None,
-        "unmatched_import_count": _count_unmatched_imports(account),
+        "unmatched_import_count": _count_unmatched_imports(
+            account, unmatched_import_count=unmatched_import_count
+        ),
     }
 
     statuses: list[str] = []
@@ -335,7 +513,7 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
         if not any("Utilization" in r for r in reasons):
             reasons.append(_utilization_reason(util_dec, target_util))
 
-    projected_interest = account.projected_interest_if_unpaid
+    projected_interest = _projected_interest_from_payoff(account, payoff)
     if (
         payoff > 0
         and projected_interest > 0
@@ -354,7 +532,9 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
     if owed > 0 and min_pay > 0 and _decimal(account.apr or 0) > 0:
         from credit_cards.services.payoff import IMPOSSIBLE_MESSAGE, project_credit_card_payoff
 
-        min_proj = project_credit_card_payoff(account, "minimum_payment")
+        min_proj = project_credit_card_payoff(
+            account, "minimum_payment", start_date=today, starting_balance=owed
+        )
         if not min_proj.get("payoff_possible"):
             statuses.append(HEALTH_STATUS_CRITICAL)
             reasons.append(min_proj.get("message") or IMPOSSIBLE_MESSAGE)
@@ -366,15 +546,12 @@ def _credit_card_health(account: Account, today: date) -> tuple[str, str | None,
         if not any("interest" in r.lower() or "APR" in r for r in reasons):
             reasons.append("High APR with carried balance")
 
-    has_payment_link = account.autopay_enabled or AccountRelationship.objects.filter(
-        destination_account_id=account.pk,
-        is_active=True,
-        relationship_type__in=(
-            AccountRelationship.RelationshipType.CREDIT_CARD_PAYMENT,
-            AccountRelationship.RelationshipType.AUTOPAY,
-            AccountRelationship.RelationshipType.DEBT_PAYMENT,
-        ),
-    ).exists()
+    if has_payment_link is None:
+        has_payment_link = account.autopay_enabled or AccountRelationship.objects.filter(
+            destination_account_id=account.pk,
+            is_active=True,
+            relationship_type__in=PAYMENT_LINK_RELATIONSHIP_TYPES,
+        ).exists()
     if owed > 0 and not has_payment_link:
         statuses.append(HEALTH_STATUS_WATCH)
         reasons.append("No payment account linked.")
@@ -406,6 +583,9 @@ def _savings_health(
     account: Account,
     forecast: dict[str, Any] | None,
     today: date,
+    *,
+    unmatched_import_count: int | None = None,
+    signed_balance: Decimal | None = None,
 ) -> tuple[str, str | None, date | None, dict[str, Any]]:
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
@@ -414,7 +594,9 @@ def _savings_health(
         "utilization_percent": None,
         "days_until_due": None,
         "past_due_amount": None,
-        "unmatched_import_count": _count_unmatched_imports(account),
+        "unmatched_import_count": _count_unmatched_imports(
+            account, unmatched_import_count=unmatched_import_count
+        ),
     }
 
     if forecast and forecast.get("supports_available_to_spend"):
@@ -450,7 +632,11 @@ def _savings_health(
             )
         return HEALTH_STATUS_HEALTHY, None, None, details
 
-    balance = _balance_at_end_of_date(account.pk, today)
+    balance = (
+        signed_balance
+        if signed_balance is not None
+        else _balance_at_end_of_date(account.pk, today)
+    )
     minimum_buffer = _decimal(account.minimum_buffer or 0)
     details["lowest_projected_balance"] = str(balance)
     if balance < minimum_buffer:
@@ -458,7 +644,13 @@ def _savings_health(
     return HEALTH_STATUS_HEALTHY, None, None, details
 
 
-def _loan_health(account: Account, today: date) -> tuple[str, str | None, date | None, dict[str, Any]]:
+def _loan_health(
+    account: Account,
+    today: date,
+    *,
+    unmatched_import_count: int | None = None,
+    has_planned_payment: bool | None = None,
+) -> tuple[str, str | None, date | None, dict[str, Any]]:
     due = account.next_payment_due_date
     days_until = (due - today).days if due else None
     details: dict[str, Any] = {
@@ -468,7 +660,9 @@ def _loan_health(account: Account, today: date) -> tuple[str, str | None, date |
         "utilization_percent": None,
         "days_until_due": days_until,
         "past_due_amount": None,
-        "unmatched_import_count": _count_unmatched_imports(account),
+        "unmatched_import_count": _count_unmatched_imports(
+            account, unmatched_import_count=unmatched_import_count
+        ),
     }
     if not due:
         return HEALTH_STATUS_HEALTHY, None, None, details
@@ -476,13 +670,16 @@ def _loan_health(account: Account, today: date) -> tuple[str, str | None, date |
     if days_until is not None and days_until < 0:
         return HEALTH_STATUS_CRITICAL, "Payment is past due", due, details
 
-    has_planned = Transaction.objects.filter(
-        account_id=account.pk,
-        date__gte=today,
-        date__lte=due,
-        status=Transaction.Status.PLANNED,
-        amount__lt=0,
-    ).exists()
+    if has_planned_payment is None:
+        has_planned = Transaction.objects.filter(
+            account_id=account.pk,
+            date__gte=today,
+            date__lte=due,
+            status=Transaction.Status.PLANNED,
+            amount__lt=0,
+        ).exists()
+    else:
+        has_planned = has_planned_payment
 
     if 0 <= days_until <= PAYMENT_DUE_RISK_DAYS and not has_planned and not account.autopay_enabled:
         return (
@@ -573,6 +770,11 @@ def calculate_account_health(
     days: int = DEFAULT_FORECAST_DAYS,
     forecast_summary: Optional[dict[str, Any]] = None,
     timeline_rows: Optional[list[dict]] = None,
+    signed_balance: Decimal | None = None,
+    unmatched_import_count: int | None = None,
+    has_payment_link: bool | None = None,
+    has_planned_loan_payment: bool | None = None,
+    payments_since_statement: Decimal | None = None,
 ) -> dict[str, Any]:
     """Compute health for a single account."""
     days = normalize_forecast_days(days)
@@ -611,17 +813,44 @@ def calculate_account_health(
         )
 
     if account.is_credit_card() or account.role == Account.AccountRole.CREDIT_CARD:
-        status, reason, risk_date, details = _credit_card_health(account, today)
+        owed = (
+            credit_owed_from_signed_balance(signed_balance)
+            if signed_balance is not None
+            else None
+        )
+        status, reason, risk_date, details = _credit_card_health(
+            account,
+            today,
+            owed_balance=owed,
+            unmatched_import_count=unmatched_import_count,
+            has_payment_link=has_payment_link,
+            payments_since_statement=payments_since_statement,
+        )
         forecast = None
     elif account.role == Account.AccountRole.LOAN:
-        status, reason, risk_date, details = _loan_health(account, today)
+        status, reason, risk_date, details = _loan_health(
+            account,
+            today,
+            unmatched_import_count=unmatched_import_count,
+            has_planned_payment=has_planned_loan_payment,
+        )
         forecast = forecast_summary
     elif account.role in SAVINGS_ROLES or account.account_type == Account.AccountType.SAVINGS:
-        status, reason, risk_date, details = _savings_health(account, forecast_summary, today)
+        status, reason, risk_date, details = _savings_health(
+            account,
+            forecast_summary,
+            today,
+            unmatched_import_count=unmatched_import_count,
+            signed_balance=signed_balance,
+        )
         forecast = forecast_summary
     elif account_supports_available_to_spend(account):
         status, reason, risk_date, details = _cash_health(
-            account, forecast_summary, today, timeline_rows
+            account,
+            forecast_summary,
+            today,
+            timeline_rows,
+            unmatched_import_count=unmatched_import_count,
         )
         forecast = forecast_summary
     else:
@@ -636,7 +865,9 @@ def calculate_account_health(
                 "utilization_percent": None,
                 "days_until_due": None,
                 "past_due_amount": None,
-                "unmatched_import_count": _count_unmatched_imports(account),
+                "unmatched_import_count": _count_unmatched_imports(
+                    account, unmatched_import_count=unmatched_import_count
+                ),
             },
         )
         forecast = forecast_summary
@@ -668,23 +899,28 @@ def calculate_account_health_for_accounts(
     as_of_date: Optional[date] = None,
     days: int = DEFAULT_FORECAST_DAYS,
     timeline_rows: list[dict] | None = None,
+    forecast_summaries: dict[int, dict[str, Any]] | None = None,
+    context: AccountHealthSupportData | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Batch health calculation with shared forecast timeline where possible."""
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
 
-    forecasts, shared_timeline = calculate_forecast_summaries_for_accounts_with_timeline(
-        user,
-        accounts,
-        as_of_date=today,
-        days=days,
-        timeline_rows=timeline_rows,
-    )
-    effective_timeline = timeline_rows if timeline_rows is not None else shared_timeline
+    if forecast_summaries is None:
+        forecasts, shared_timeline = calculate_forecast_summaries_for_accounts_with_timeline(
+            user,
+            accounts,
+            as_of_date=today,
+            days=days,
+            timeline_rows=timeline_rows,
+        )
+        effective_timeline = timeline_rows if timeline_rows is not None else shared_timeline
+    else:
+        forecasts = forecast_summaries
+        effective_timeline = timeline_rows
 
-    for account in accounts:
-        if account.is_credit_card():
-            sync_current_balance_from_ledger(account, today)
+    if context is None:
+        context = build_account_health_context(accounts, today=today)
 
     result: dict[int, dict[str, Any]] = {}
     for account in accounts:
@@ -695,6 +931,15 @@ def calculate_account_health_for_accounts(
             days=days,
             forecast_summary=forecasts.get(account.id),
             timeline_rows=effective_timeline,
+            signed_balance=context.signed_balances.get(account.id),
+            unmatched_import_count=context.unmatched_import_counts.get(account.id, 0),
+            has_payment_link=(
+                account.autopay_enabled or account.id in context.payment_link_account_ids
+            ),
+            has_planned_loan_payment=account.id in context.planned_loan_payment_account_ids,
+            payments_since_statement=context.payments_since_statement.get(account.id, Decimal("0"))
+            if account.last_statement_date is not None
+            else Decimal("0"),
         )
     return result
 

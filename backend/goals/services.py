@@ -66,8 +66,9 @@ def last_day_of_month(year: int, month: int) -> date:
 
 def parse_report_month(month: str) -> date:
     """Last calendar day of YYYY-MM (for month-scoped goal reports)."""
-    year, month_int = map(int, month.split("-"))
-    return last_day_of_month(year, month_int)
+    from insights.services.report_dates import report_period
+
+    return report_period(month).end
 
 
 def _actual_balance_at_end_of_date(account_id: int, as_of: date) -> Decimal:
@@ -116,6 +117,13 @@ def _timeline_balance_at_end_of_date(user, account_id: int, as_of: date) -> Deci
     return last
 
 
+def _apply_linked_savings_buffer(account: Account, balance: Decimal) -> Decimal:
+    buffer = _decimal(account.minimum_buffer or 0)
+    if account.role in CASH_ROLES_FOR_BUFFER and buffer > 0:
+        return max(Decimal("0"), balance - buffer)
+    return max(Decimal("0"), balance)
+
+
 def _linked_savings_balance(
     account: Account,
     as_of: date,
@@ -138,10 +146,62 @@ def _linked_savings_balance(
     else:
         balance = _actual_balance_at_end_of_date(account.pk, as_of)
 
-    buffer = _decimal(account.minimum_buffer or 0)
-    if account.role in CASH_ROLES_FOR_BUFFER and buffer > 0:
-        return max(Decimal("0"), balance - buffer)
-    return max(Decimal("0"), balance)
+    return _apply_linked_savings_buffer(account, balance)
+
+
+def bulk_linked_savings_balances(
+    accounts,
+    as_of: date,
+    *,
+    user=None,
+) -> dict[int, Decimal]:
+    """Posted (ACTUAL/PLAID) linked-account balances for many savings goals.
+
+    Matches ``_linked_savings_balance``. Future ``as_of`` with a user still uses
+    the per-account timeline projection (reports only).
+    """
+    from collections import defaultdict
+
+    from timeline.services.ledger import is_superseded_planned_row
+    from transactions.models import Transaction
+    from transactions.services.matching import ledger_visible_transactions
+
+    account_list = [acc for acc in accounts if acc is not None]
+    if not account_list:
+        return {}
+
+    today = date.today()
+    if as_of > today:
+        return {
+            acc.pk: _linked_savings_balance(acc, as_of, user=user) for acc in account_list
+        }
+
+    account_ids = [acc.pk for acc in account_list]
+    qs = Transaction.objects.filter(
+        account_id__in=account_ids,
+        date__lt=as_of + timedelta(days=1),
+        source__in=(Transaction.Source.ACTUAL, Transaction.Source.PLAID),
+    ).exclude(source=Transaction.Source.INTEREST)
+    visible = ledger_visible_transactions(qs.order_by("account_id", "date", "id"))
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    for row in visible.values("account_id", "date", "amount", "status", "rule_id"):
+        rows_by_account[row["account_id"]].append(row)
+
+    sums: dict[int, Decimal] = {}
+    for account_id, rows in rows_by_account.items():
+        total = Decimal("0")
+        for row in rows:
+            if is_superseded_planned_row(row, rows):
+                continue
+            total += Decimal(str(row["amount"]))
+        sums[account_id] = total
+
+    result: dict[int, Decimal] = {}
+    for acc in account_list:
+        opening = Decimal(str(acc.starting_balance or 0))
+        balance = opening + sums.get(acc.pk, Decimal("0"))
+        result[acc.pk] = _apply_linked_savings_buffer(acc, balance)
+    return result
 
 
 def _monthly_from_rule(rule: RecurringRule | None) -> Decimal:

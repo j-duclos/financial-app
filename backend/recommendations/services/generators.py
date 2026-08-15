@@ -175,7 +175,7 @@ def _gen_reduce_spending(det: Detection, ctx: RecommendationContext, score: int)
         priority_score=score,
         impact_label="Monthly reduction",
         impact_value=format_money(amount),
-        primary_action_label="View spending limits",
+        primary_action_label="View budget",
         primary_action_url="/spending-goals",
         primary_action_type="navigate",
     )

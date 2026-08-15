@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
@@ -60,6 +61,8 @@ import {
 } from "../lib/scenarioDebtPayment";
 import PayDownDebtModal from "../components/scenarios/PayDownDebtModal";
 import AddRecurringDebtPaymentModal from "../components/scenarios/AddRecurringDebtPaymentModal";
+import PlanningSubnav from "../components/PlanningSubnav";
+import { parsePositiveIntParam } from "../lib/whatIfContext";
 
 type ForecastHorizon = "3m" | "6m" | "12m" | "24m";
 type EventPreset = "income" | "expense" | "transfer";
@@ -69,6 +72,9 @@ type ExpenseChangeKind = "one_time" | "current" | "new_recurring";
 type NewRecurringDirection = "INCOME" | "EXPENSE";
 
 export default function Scenarios() {
+  const [searchParams] = useSearchParams();
+  const contextGoalId = parsePositiveIntParam(searchParams.get("goal"));
+  const contextDebtId = parsePositiveIntParam(searchParams.get("debt"));
   const [modalOpen, setModalOpen] = useState(false);
   const [overrideModal, setOverrideModal] = useState<"add" | ScenarioRuleOverride | null>(null);
   const [eventModal, setEventModal] = useState<EventPreset | null>(null);
@@ -98,15 +104,30 @@ export default function Scenarios() {
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
   const { data: scenariosData } = useQuery({ queryKey: ["scenarios"], queryFn: () => listScenarios() });
-  const { data: rulesData } = useQuery({ queryKey: ["rules"], queryFn: () => listRules() });
   const { data: accountsData } = useOperationalAccounts();
   const scenarios = scenariosData?.results ?? [];
-  const rules = rulesData?.results ?? [];
   const accounts = accountsData?.results ?? [];
   const defaultHousehold = profile?.default_household ?? households?.[0]?.id;
   const resolvedHousehold = formHouseholdId || defaultHousehold;
 
   const selectedScenario = scenarios.find((s: Scenario) => s.id === selectedScenarioId);
+
+  const modalNeedsRules = !!overrideModal || debtModalOpen;
+  const modalNeedsCategories =
+    !!overrideModal ||
+    !!eventModal ||
+    shockModal ||
+    !!editingShock ||
+    !!editingEvent ||
+    debtModalOpen ||
+    !!newRecurringOpen;
+
+  const { data: rulesData } = useQuery({
+    queryKey: ["rules"],
+    queryFn: () => listRules(),
+    enabled: modalNeedsRules,
+  });
+  const rules = rulesData?.results ?? [];
 
   const {
     data: comparison,
@@ -167,13 +188,12 @@ export default function Scenarios() {
   const { data: categoriesData } = useQuery({
     queryKey: ["categories", defaultHousehold],
     queryFn: () => listCategories({ household: defaultHousehold as number }),
-    enabled: !!defaultHousehold,
+    enabled: !!defaultHousehold && modalNeedsCategories,
   });
   const categories = categoriesData?.results ?? categoriesData ?? [];
 
   const invalidateScenario = () => {
     queryClient.invalidateQueries({ queryKey: ["scenarios"] });
-    queryClient.invalidateQueries({ queryKey: ["rules"] });
     queryClient.invalidateQueries({ queryKey: ["scenario-overrides", selectedScenarioId] });
     queryClient.invalidateQueries({ queryKey: ["scenario-events", selectedScenarioId] });
     queryClient.invalidateQueries({ queryKey: ["scenario-compare", selectedScenarioId] });
@@ -280,6 +300,39 @@ export default function Scenarios() {
 
   return (
     <div className={PAGE_SHELL_PY}>
+      <div className="mb-4 space-y-2">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">What-If</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            What happens if I change something? Changes stay in this plan until you apply them.
+          </p>
+        </div>
+        <PlanningSubnav />
+        {(contextGoalId || contextDebtId) && (
+          <div className="text-sm text-indigo-900 bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2 space-y-2">
+            <p>
+              {contextGoalId
+                ? "Opened from Goals. Model a change here — nothing is saved to your real plan just by opening What-If."
+                : "Opened from Payment Planner. Model a payoff change here — nothing is saved until you add it to a plan."}
+            </p>
+            {contextDebtId && selectedScenarioId ? (
+              <button
+                type="button"
+                className="text-sm font-medium text-indigo-800 hover:underline"
+                onClick={() => {
+                  setEditingEvent(null);
+                  setEditingDebtOverride(null);
+                  setDebtModalOpen(true);
+                }}
+              >
+                Model payoff change
+              </button>
+            ) : contextDebtId ? (
+              <p className="text-xs text-indigo-800">Select or create a what-if plan to model this debt.</p>
+            ) : null}
+          </div>
+        )}
+      </div>
       {scenarios.length === 0 ? (
         <EmptyState onPickTemplate={openCreateWithTemplate} onCreate={() => setModalOpen(true)} />
       ) : (
@@ -544,6 +597,7 @@ export default function Scenarios() {
           rules={rules as RecurringRule[]}
           existingEvent={editingEvent}
           existingOverride={editingDebtOverride}
+          initialDebtAccountId={contextDebtId}
           onClose={() => {
             setDebtModalOpen(false);
             setEditingEvent(null);

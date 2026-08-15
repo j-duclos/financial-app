@@ -1406,11 +1406,15 @@ def append_scenario_added_recurring_projections(
     end_date: date,
     forecastable_account_ids: set[int],
     seen_keys: set[tuple],
+    added_recurring: list | None = None,
 ) -> None:
     """Project what-if-only recurring items — never persisted as RecurringRule or Transaction."""
-    added_qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
-        "account", "transfer_to_account", "category"
-    )
+    if added_recurring is None:
+        added_qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
+            "account", "transfer_to_account", "category"
+        )
+    else:
+        added_qs = added_recurring
     for added in added_qs:
         occ_dates = _occurrence_dates_for_added_recurring(added, start_date, end_date)
         if not occ_dates:
@@ -2278,12 +2282,17 @@ def _append_scenario_projection_rows(
     start_date: date,
     end_date: date,
     ephemeral_events: Optional[list] = None,
+    one_time_events: Optional[list] = None,
 ) -> None:
     """Append scenario-only synthetic rows (never materialized as Transaction)."""
     from timeline.models import ScenarioOneTimeEvent
 
     events = []
-    if scenario:
+    if one_time_events is not None:
+        events.extend(
+            ev for ev in one_time_events if start_date <= ev.date <= end_date
+        )
+    elif scenario:
         events.extend(
             ScenarioOneTimeEvent.objects.filter(
                 scenario=scenario,
@@ -2364,14 +2373,19 @@ def _append_scenario_projection_rows(
 def _apply_scenario_category_shocks(
     rows: list[dict],
     scenario: Optional["Scenario"],
+    *,
+    category_shocks: Optional[list] = None,
 ) -> None:
-    if not scenario:
-        return
-    from timeline.models import ScenarioCategoryShock
+    if category_shocks is not None:
+        shocks = list(category_shocks)
+    else:
+        if not scenario:
+            return
+        from timeline.models import ScenarioCategoryShock
 
-    shocks = list(
-        ScenarioCategoryShock.objects.filter(scenario=scenario).select_related("category")
-    )
+        shocks = list(
+            ScenarioCategoryShock.objects.filter(scenario=scenario).select_related("category")
+        )
     if not shocks:
         return
     for row in rows:
@@ -2440,6 +2454,41 @@ def build_timeline(
         exit_build_timeline_context()
 
 
+def _planned_scheduled_q() -> Q:
+    """Unconfirmed rule / one-time planned rows (matches frontend isPlannedScheduledTransaction)."""
+    return Q(status=Transaction.Status.PLANNED) & ~Q(
+        source=Transaction.Source.INTEREST
+    ) & (
+        Q(source=Transaction.Source.RULE)
+        | Q(rule_id__isnull=False)
+        | Q(source=Transaction.Source.ONE_TIME)
+    )
+
+
+def _transaction_is_planned_scheduled(txn: Transaction) -> bool:
+    if (txn.status or "").upper() != Transaction.Status.PLANNED:
+        return False
+    if txn.source == Transaction.Source.INTEREST:
+        return False
+    if txn.source == Transaction.Source.RULE or txn.rule_id is not None:
+        return True
+    return txn.source == Transaction.Source.ONE_TIME
+
+
+def _projection_includes_overdue_pending(start_date: date, today: date) -> bool:
+    """Forward projections starting today must still surface overdue unmatched planned rows."""
+    return start_date >= today
+
+
+def _sum_ledger_amounts_by_account(qs) -> dict[int, Decimal]:
+    rows = qs.values("account_id").annotate(total=Coalesce(Sum("amount"), Decimal("0")))
+    return {
+        int(row["account_id"]): row["total"]
+        for row in rows
+        if row["account_id"] is not None
+    }
+
+
 def _build_timeline_impl(
     user,
     start_date: date,
@@ -2474,7 +2523,10 @@ def _build_timeline_impl(
         return []
 
     if not projection_only:
-        promote_due_schedules(as_of_date=as_of_date)
+        promote_due_schedules(
+            as_of_date=as_of_date,
+            household_ids=list(households.values_list("pk", flat=True)),
+        )
 
     if account_id:
         accounts = Account.all_objects.for_historical_reporting().filter(
@@ -2490,6 +2542,11 @@ def _build_timeline_impl(
     }
     if not account_ids:
         return []
+
+    today = as_of_date or timezone.localdate()
+    include_overdue_pending = projection_only and _projection_includes_overdue_pending(
+        start_date, today
+    )
 
     if not projection_only:
         repair_unlinked_rule_transfer_pairs(account_ids)
@@ -2517,16 +2574,27 @@ def _build_timeline_impl(
         if scenario_id:
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
-        # 1) Actual transactions: fetch with date <= end_date so nothing is ever hidden in opening balance.
+        # 1) Actual transactions in the requested window.
+        #    Projection-only reads do not replay ordinary posted history before start_date;
+        #    opening balances come from the canonical ledger aggregate instead.
+        #    When the window starts today, also load overdue unmatched planned rows.
         #    PLAID INVARIANT: Matched Plaid imports stay visible; hide the matched planned/manual twin
         #    via ledger_visible_transactions (see matching.py). Do NOT re-hide imports here.
         #    When exclude_reconciled_past, omit reconciled rows at the database (ledger UI default).
-        actual_qs = ledger_visible_transactions(
-            Transaction.objects.filter(
-                account_id__in=account_ids,
-                date__lte=end_date,
+        if projection_only:
+            actual_window = Q(date__gte=start_date, date__lte=end_date)
+            if include_overdue_pending:
+                actual_window |= Q(date__lt=start_date) & _planned_scheduled_q()
+            actual_qs = ledger_visible_transactions(
+                Transaction.objects.filter(account_id__in=account_ids).filter(actual_window)
             )
-        )
+        else:
+            actual_qs = ledger_visible_transactions(
+                Transaction.objects.filter(
+                    account_id__in=account_ids,
+                    date__lte=end_date,
+                )
+            )
         if exclude_reconciled_past:
             actual_qs = actual_qs.filter(reconciled=False)
         actual = list(
@@ -2608,7 +2676,6 @@ def _build_timeline_impl(
                     if to_txn.transfer_group_id and to_txn.account_id:
                         tg_to_account_name[to_txn.transfer_group_id] = getattr(to_txn.account, "name", "") or ""
 
-        today = as_of_date or timezone.localdate()
         accs = {
             aid: balance_cache.get_account(aid)
             for aid in account_ids
@@ -2633,6 +2700,32 @@ def _build_timeline_impl(
                 if acc.account_type == Account.AccountType.CREDIT and sb > 0:
                     sb = -sb
                 opening[aid] = sb
+            if projection_only:
+                # Fold unreconciled activity before start into opening so we do not replay it as rows.
+                before_start = ledger_visible_transactions(
+                    Transaction.objects.filter(
+                        account_id__in=account_ids,
+                        date__lt=start_date,
+                        reconciled=False,
+                    )
+                ).exclude(source=Transaction.Source.INTEREST)
+                if include_overdue_pending:
+                    before_start = before_start.exclude(_planned_scheduled_q())
+                for aid, total in _sum_ledger_amounts_by_account(before_start).items():
+                    opening[aid] = opening.get(aid, Decimal("0")) + total
+        elif projection_only:
+            opening_as_of = start_date - timedelta(days=1)
+            for aid in account_ids:
+                opening[aid] = balance_cache.balance_at_end_of_date(aid, opening_as_of)
+            if include_overdue_pending:
+                overdue_planned = ledger_visible_transactions(
+                    Transaction.objects.filter(
+                        account_id__in=account_ids,
+                        date__lt=start_date,
+                    ).filter(_planned_scheduled_q())
+                )
+                for aid, total in _sum_ledger_amounts_by_account(overdue_planned).items():
+                    opening[aid] = opening.get(aid, Decimal("0")) - total
         else:
             for aid in account_ids:
                 acc = accs.get(aid)
@@ -2649,6 +2742,15 @@ def _build_timeline_impl(
         scenario_projection_only = projection_only or scenario is not None
         _phase_load = phase_start(timer, "load_transactions")
         for t in actual:
+            # Projection-only: posted history before start is in the opening aggregate, not rows.
+            # Overdue unmatched planned rows are kept so Pending Transactions still render.
+            if (
+                projection_only
+                and t.date < start_date
+                and not _transaction_is_planned_scheduled(t)
+            ):
+                ids_in_rows.add(t.id)
+                continue
             # Scenario timelines re-project future rule occurrences with overrides; skip DB rows.
             # Projection-only reads also skip materialized rule rows — the occurrence loop re-adds
             # them via _materialized_rule_timeline_row_if_exists (preserves edited amounts without

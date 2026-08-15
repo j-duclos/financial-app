@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { getAccountPayoff, getDebtPayoffPlan, listAccounts } from "@budget-app/api-client";
 import type {
   DebtPayoffMode,
@@ -14,6 +14,8 @@ import DebtStrategyDrawer from "../components/paymentPlanner/DebtStrategyDrawer"
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_4 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
+import PlanningSubnav from "../components/PlanningSubnav";
+import { whatIfDebtPath } from "../lib/whatIfContext";
 import {
   DEBT_MODE_OPTIONS,
   DEBT_STRATEGY_OPTIONS,
@@ -28,7 +30,9 @@ import {
   buildDrawerPayoffParams,
   drawerStrategyRequiresAmountInput,
   isCreditCardAccount,
+  WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "../lib/paymentPlannerDisplay";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 
 export default function CreditCards() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -41,6 +45,8 @@ export default function CreditCards() {
   const [extraMonthly, setExtraMonthly] = useState("150");
   const [whatIfLump, setWhatIfLump] = useState("");
   const [whatIfLumpAccount, setWhatIfLumpAccount] = useState("");
+  const debouncedExtraMonthly = useDebouncedValue(extraMonthly, WHAT_IF_NUMERIC_DEBOUNCE_MS);
+  const debouncedWhatIfLump = useDebouncedValue(whatIfLump, WHAT_IF_NUMERIC_DEBOUNCE_MS);
 
   const [cardStrategy, setCardStrategy] = useState<PayoffStrategy>("minimum_payment");
   const [amountInput, setAmountInput] = useState(amountFromUrl);
@@ -74,23 +80,33 @@ export default function CreditCards() {
         active_only: true,
         page_size: 500,
         balance: "true",
-        health: "true",
       }),
   });
   const accounts = accountsData?.results ?? [];
   const creditCards = useMemo(() => accounts.filter(isCreditCardAccount), [accounts]);
 
   const planQuery = useQuery({
-    queryKey: ["debt-plan", strategy, mode, extraMonthly, whatIfLump, whatIfLumpAccount],
-    queryFn: () =>
-      getDebtPayoffPlan({
-        strategy,
-        mode,
-        extra_monthly: extraMonthly || "0",
-        lump_sum: whatIfLump || undefined,
-        lump_sum_account: whatIfLumpAccount ? Number(whatIfLumpAccount) : undefined,
-      }),
+    queryKey: [
+      "debt-plan",
+      strategy,
+      mode,
+      debouncedExtraMonthly,
+      debouncedWhatIfLump,
+      whatIfLumpAccount,
+    ],
+    queryFn: ({ signal }) =>
+      getDebtPayoffPlan(
+        {
+          strategy,
+          mode,
+          extra_monthly: debouncedExtraMonthly || "0",
+          lump_sum: debouncedWhatIfLump || undefined,
+          lump_sum_account: whatIfLumpAccount ? Number(whatIfLumpAccount) : undefined,
+        },
+        { signal }
+      ),
     enabled: creditCards.length > 0,
+    placeholderData: keepPreviousData,
   });
   const plan = planQuery.data;
 
@@ -113,7 +129,7 @@ export default function CreditCards() {
 
   const projectionQuery = useQuery({
     queryKey: ["account-payoff", selectedId, cardStrategy, amountInput],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!selectedAccount || !selectedPlanCard) throw new Error("No account selected.");
       if (drawerStrategyRequiresAmountInput(cardStrategy)) {
         const val = amountInput.trim();
@@ -121,7 +137,8 @@ export default function CreditCards() {
       }
       return getAccountPayoff(
         selectedAccount.id,
-        buildDrawerPayoffParams(selectedAccount, selectedPlanCard, cardStrategy, amountInput)
+        buildDrawerPayoffParams(selectedAccount, selectedPlanCard, cardStrategy, amountInput),
+        { signal }
       );
     },
     enabled: projectionEnabled,
@@ -147,6 +164,11 @@ export default function CreditCards() {
   if (creditCards.length === 0) {
     return (
       <div className={PAGE_SHELL_PY}>
+        <div className="mb-4 space-y-2">
+          <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
+          <p className="text-sm text-gray-600">How should I eliminate debt?</p>
+          <PlanningSubnav />
+        </div>
         <p className="text-gray-600 mb-3 text-sm">No credit cards yet.</p>
         <Link to="/accounts" className="text-blue-600 hover:underline">
           Add a credit card
@@ -174,6 +196,21 @@ export default function CreditCards() {
 
   return (
     <div className={`${PAGE_SHELL_PY} space-y-4`}>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
+            <p className="text-sm text-gray-600 mt-1">How should I eliminate debt?</p>
+          </div>
+          <Link
+            to={selectedId ? whatIfDebtPath(selectedId) : "/scenarios"}
+            className="shrink-0 text-sm font-medium text-blue-700 hover:underline"
+          >
+            Try in What-If
+          </Link>
+        </div>
+        <PlanningSubnav />
+      </div>
       {plan && (
         <section className="rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-3 space-y-2">
           <div className={METRIC_TILE_GRID_4}>

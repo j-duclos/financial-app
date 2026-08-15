@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DashboardRecommendation } from "@budget-app/shared";
-import { getDashboardSummary, listAccounts } from "@budget-app/api-client";
+import { getRecommendations, listAccounts } from "@budget-app/api-client";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import RecommendationsList from "../components/dashboard/RecommendationsList";
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
@@ -31,9 +31,9 @@ export default function ActionCenter() {
   const [toast, setToast] = useState<string | null>(null);
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
 
-  const { data: summary, isLoading, isError } = useQuery({
-    queryKey: ["dashboard-summary", "action-center", DEFAULT_PASSIVE_FORECAST_DAYS],
-    queryFn: () => getDashboardSummary({ forecast_days: DEFAULT_PASSIVE_FORECAST_DAYS }),
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["recommendations", "action-center", DEFAULT_PASSIVE_FORECAST_DAYS],
+    queryFn: () => getRecommendations({ days: DEFAULT_PASSIVE_FORECAST_DAYS }),
     staleTime: 60_000,
   });
 
@@ -45,14 +45,14 @@ export default function ActionCenter() {
 
   const entries = useMemo(() => {
     void refresh;
-    if (!summary) return [];
+    if (!data) return [];
     return recommendationsForActionCenter(
-      summary.recommendations,
-      summary.insights,
+      data.recommendations,
+      undefined,
       loadDismissedRecommendationIds(),
       loadSnoozedRecommendationIds()
     );
-  }, [summary, refresh]);
+  }, [data, refresh]);
 
   const activeCount = entries.filter((e) => e.displayState === "active").length;
   const snoozedCount = entries.filter((e) => e.displayState === "snoozed").length;
@@ -64,12 +64,19 @@ export default function ActionCenter() {
     setRefresh((n) => n + 1);
   }
 
+  async function invalidateFinancialQueries() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["recommendations"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] }),
+    ]);
+  }
+
   return (
     <div className={`${PAGE_SHELL} py-4 space-y-4`}>
       <div>
         <h1 className="text-lg font-semibold text-gray-900">{ACTION_CENTER_PAGE_TITLE}</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Review forecast-driven actions by urgency — critical and at-risk items first.
+          What requires my attention? Forecast-driven actions, grouped by urgency.
         </p>
       </div>
 
@@ -87,7 +94,7 @@ export default function ActionCenter() {
         </div>
       )}
 
-      {summary && !isLoading && (
+      {data && !isLoading && (
         <>
           <div className="flex flex-wrap gap-3 text-xs text-gray-600">
             <span>
@@ -149,7 +156,7 @@ export default function ActionCenter() {
             setResolveRiskAccountId(null);
           }}
           onSnoozed={() => {
-            void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+            void invalidateFinancialQueries();
             bumpRefresh();
           }}
         />
@@ -163,7 +170,7 @@ export default function ActionCenter() {
         onClose={() => setTxnPreset(null)}
         onSuccess={async (message) => {
           setToast(message);
-          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+          await invalidateFinancialQueries();
           bumpRefresh();
         }}
       />

@@ -81,7 +81,7 @@ async function requestInner<T>(
   options: ApiRequestOptions,
   didRefresh: boolean
 ): Promise<T | undefined> {
-  const { params, timeoutMs: timeoutOverride, ...init } = options;
+  const { params, timeoutMs: timeoutOverride, signal: callerSignal, ...init } = options;
   let url = baseUrl + path;
   if (params && Object.keys(params).length > 0) {
     const search = new URLSearchParams(params).toString();
@@ -98,6 +98,13 @@ async function requestInner<T>(
   const getOpts = (init.method ?? "GET") === "GET" ? { cache: "no-store" as RequestCache } : {};
   const timeoutMs = timeoutOverride ?? 90_000;
   const controller = new AbortController();
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort();
+    } else {
+      callerSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const method = (init.method ?? "GET").toUpperCase();
   const perfOn = isPerfLoggingEnabled();
@@ -114,6 +121,7 @@ async function requestInner<T>(
     res = await fetch(url, { ...init, ...getOpts, headers, signal: controller.signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
+      if (callerSignal?.aborted) throw err;
       throw new ApiError(
         504,
         `Request timed out after ${Math.round(timeoutMs / 1000)}s — the server may be overloaded. Try again or narrow the date range.`

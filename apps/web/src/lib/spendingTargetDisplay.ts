@@ -6,11 +6,17 @@ import type {
 
 export const SPENDING_GOALS_PATH = "/spending-goals";
 
-/** CTA on recommendation cards that link to the spending limits page. */
-export const VIEW_SPENDING_LIMITS_LABEL = "View spending limits";
+/** User-facing name for category spending limits. */
+export const BUDGET_NAV_LABEL = "Budget";
 
-/** @deprecated use VIEW_SPENDING_LIMITS_LABEL */
-export const VIEW_SPENDING_GOALS_LABEL = VIEW_SPENDING_LIMITS_LABEL;
+/** CTA on recommendation cards that link to the Budget page. */
+export const VIEW_BUDGET_LABEL = "View budget";
+
+/** @deprecated use VIEW_BUDGET_LABEL */
+export const VIEW_SPENDING_LIMITS_LABEL = VIEW_BUDGET_LABEL;
+
+/** @deprecated use VIEW_BUDGET_LABEL */
+export const VIEW_SPENDING_GOALS_LABEL = VIEW_BUDGET_LABEL;
 
 /** @deprecated use SPENDING_GOALS_PATH */
 export const SPENDING_TARGETS_PATH = SPENDING_GOALS_PATH;
@@ -57,6 +63,21 @@ export function spendingTargetProgressPercent(metrics: SpendingTargetMetrics): n
     return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
   }
   return Math.min(100, Math.max(0, (committed / target) * 100));
+}
+
+/** Remaining category budget from already-fetched summary totals (not a new forecast). */
+export function spendingTargetsRemainingFromSummary(summary: {
+  total_monthly_targets: string;
+  spent_so_far_total: string;
+  scheduled_in_period_total?: string;
+}): number {
+  const budget = parseFloat(summary.total_monthly_targets);
+  const spent = parseFloat(summary.spent_so_far_total);
+  const scheduled = parseFloat(summary.scheduled_in_period_total ?? "0");
+  const safeBudget = Number.isFinite(budget) ? budget : 0;
+  const safeSpent = Number.isFinite(spent) ? spent : 0;
+  const safeScheduled = Number.isFinite(scheduled) ? scheduled : 0;
+  return safeBudget - safeSpent - safeScheduled;
 }
 
 export function spendingTargetPeriodLabel(period: string): string {

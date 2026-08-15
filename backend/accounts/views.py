@@ -37,6 +37,7 @@ from .models import Account
 from .relationship_models import AccountRelationship
 from .relationship_serializers import AccountRelationshipSummarySerializer
 from .serializers import AccountSerializer
+from .services.credit_card import ledger_owed_balance
 from .services.lifecycle import (
     archive_account,
     close_account,
@@ -45,11 +46,13 @@ from .services.lifecycle import (
     soft_delete_account,
 )
 from .services.account_health import (
+    build_account_health_context,
     calculate_account_health,
     calculate_account_health_for_accounts,
     dashboard_account_health_aggregate,
     serialize_account_health,
 )
+from .services.balances import bulk_signed_ledger_balances
 from .services.projected_statement import calculate_projected_statements_for_accounts
 from .services.available_to_spend import (
     ALLOWED_FORECAST_DAYS,
@@ -172,80 +175,144 @@ class AccountViewSet(ModelViewSet):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        want_forecast = self.request.query_params.get("forecast_summary") == "true"
-        want_health = self.request.query_params.get("health") == "true"
-        want_relationships = self.request.query_params.get("relationships") == "true"
-        if want_relationships or self.action in ("retrieve", "list"):
-            qs = self.filter_queryset(self.get_queryset())
-            account_ids = list(qs.values_list("pk", flat=True))
-            if self.action == "retrieve" and self.kwargs.get("pk"):
-                account_ids = [int(self.kwargs["pk"])]
-            if account_ids:
-                ctx["relationships_by_account_id"] = _relationships_by_account_id(account_ids)
+        accounts = getattr(self, "_serializer_accounts", None)
+        if accounts is None:
+            accounts = self._resolve_accounts_for_serializer_context()
+            self._serializer_accounts = accounts
+        ctx.update(self._account_enrichment_context(accounts))
+        return ctx
+
+    def _resolve_accounts_for_serializer_context(self) -> list[Account]:
+        """Load the accounts that will be serialized, once per request."""
+        pk = self.kwargs.get(self.lookup_field or "pk") or self.kwargs.get("pk")
+        if pk and self.action != "list":
+            households = get_households_for_user(self.request.user)
+            obj = (
+                Account.all_objects.filter(household__in=households, pk=pk)
+                .select_related("household")
+                .first()
+            )
+            return [obj] if obj is not None else []
+        return list(self.filter_queryset(self.get_queryset()))
+
+    def _account_enrichment_context(self, accounts: list[Account]) -> dict:
+        ctx: dict = {}
+        if not accounts:
+            return ctx
+        params = self.request.query_params
+        want_forecast = params.get("forecast_summary") == "true"
+        want_health = params.get("health") == "true"
+        want_relationships = params.get("relationships") == "true"
+        want_balance = params.get("balance") == "true"
+
+        if want_relationships or self.action == "retrieve":
+            ctx["relationships_by_account_id"] = _relationships_by_account_id(
+                [account.id for account in accounts]
+            )
+
+        today = date.today()
+        signed_balances = None
+        health_context = None
+        if want_balance or want_health:
+            signed_balances = bulk_signed_ledger_balances(accounts, today)
+            ctx["signed_balances_by_id"] = signed_balances
+        if want_health:
+            health_context = build_account_health_context(
+                accounts, today=today, signed_balances=signed_balances
+            )
+            ctx["payments_since_statement_by_id"] = health_context.payments_since_statement
+        elif want_balance:
+            from accounts.services.account_health import bulk_payments_since_statement
+
+            ctx["payments_since_statement_by_id"] = bulk_payments_since_statement(accounts)
+
         if want_forecast or want_health:
             days = DEFAULT_FORECAST_DAYS
             try:
                 days = _parse_forecast_days_param(self.request)
             except ValueError:
                 pass
-            qs = self.filter_queryset(self.get_queryset())
-            accounts = list(qs)
-            if accounts:
-                today = date.today()
-                window_end = today + timedelta(days=days)
-                credit_cards = [a for a in accounts if a.is_credit_card()]
-                if credit_cards:
-                    from accounts.services.credit_card import calculate_next_statement_date
+            window_end = today + timedelta(days=days)
+            credit_cards = [account for account in accounts if account.is_credit_card()]
+            if credit_cards:
+                from accounts.services.credit_card import calculate_next_statement_date
 
-                    for account in credit_cards:
-                        closing = account.get_statement_closing_day()
-                        if closing is None:
-                            continue
-                        cycle_end = calculate_next_statement_date(closing, today)
-                        if cycle_end > window_end:
-                            window_end = cycle_end
+                for account in credit_cards:
+                    closing = account.get_statement_closing_day()
+                    if closing is None:
+                        continue
+                    cycle_end = calculate_next_statement_date(closing, today)
+                    if cycle_end > window_end:
+                        window_end = cycle_end
 
-                from timeline.services.ledger import build_timeline
+            from timeline.services.ledger import build_timeline
 
-                shared_timeline = build_timeline(
+            shared_timeline = build_timeline(
+                self.request.user,
+                start_date=today,
+                end_date=window_end,
+                as_of_date=today,
+                projection_only=True,
+                caller="accounts_list",
+            )
+            forecast_summaries = None
+            if want_forecast:
+                forecast_summaries = calculate_forecast_summaries_for_accounts(
                     self.request.user,
-                    start_date=today,
-                    end_date=window_end,
+                    accounts,
                     as_of_date=today,
-                    projection_only=True,
-                    caller="accounts_list",
+                    days=days,
+                    timeline_rows=shared_timeline,
                 )
-                if want_forecast:
-                    ctx["forecast_summaries_by_id"] = calculate_forecast_summaries_for_accounts(
-                        self.request.user,
-                        accounts,
-                        as_of_date=today,
-                        days=days,
-                        timeline_rows=shared_timeline,
+                ctx["forecast_summaries_by_id"] = forecast_summaries
+            if want_health:
+                if health_context is None:
+                    health_context = build_account_health_context(
+                        accounts, today=today, signed_balances=signed_balances
                     )
-                if want_health:
-                    ctx["health_by_id"] = calculate_account_health_for_accounts(
-                        self.request.user,
-                        accounts,
-                        as_of_date=today,
-                        days=days,
-                        timeline_rows=shared_timeline,
-                    )
-                if credit_cards:
-                    ctx["projected_statement_by_id"] = calculate_projected_statements_for_accounts(
-                        self.request.user,
-                        accounts,
-                        as_of_date=today,
-                        timeline_rows=shared_timeline,
-                    )
-        if self.request.query_params.get("balance") == "true":
-            qs = self.filter_queryset(self.get_queryset())
-            credit_cards = [a for a in qs if a.is_credit_card()]
+                ctx["health_by_id"] = calculate_account_health_for_accounts(
+                    self.request.user,
+                    accounts,
+                    as_of_date=today,
+                    days=days,
+                    timeline_rows=shared_timeline,
+                    forecast_summaries=forecast_summaries,
+                    context=health_context,
+                )
+            if credit_cards:
+                ctx["projected_statement_by_id"] = calculate_projected_statements_for_accounts(
+                    self.request.user,
+                    accounts,
+                    as_of_date=today,
+                    timeline_rows=shared_timeline,
+                )
+
+        if want_balance:
+            credit_cards = [account for account in accounts if account.is_credit_card()]
             if credit_cards:
                 from credit_cards.services.payoff import payoff_estimates_for_accounts
 
-                ctx["payoff_estimates_by_id"] = payoff_estimates_for_accounts(credit_cards)
+                ctx["payoff_estimates_by_id"] = payoff_estimates_for_accounts(
+                    credit_cards, signed_balances=signed_balances
+                )
         return ctx
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            self._serializer_accounts = list(page)
+            serializer = self.get_serializer(self._serializer_accounts, many=True)
+            return self.get_paginated_response(serializer.data)
+        self._serializer_accounts = list(queryset)
+        serializer = self.get_serializer(self._serializer_accounts, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._serializer_accounts = [instance]
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
@@ -614,11 +681,13 @@ class AccountViewSet(ModelViewSet):
                 {"detail": "fixed_amount and custom_amount must be numbers."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        owed = ledger_owed_balance(account)
         return Response(
             compare_payment_strategies(
                 account,
                 fixed_amount=fixed_amount,
                 custom_amount=custom_amount,
+                starting_balance=owed,
             )
         )
 
@@ -688,10 +757,12 @@ class AccountViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        owed = ledger_owed_balance(account)
         result = project_credit_card_payoff(
             account,
             strategy,
             custom_amount=custom_amount,
+            starting_balance=owed,
         )
         return Response(result)
 
@@ -769,7 +840,7 @@ class AccountViewSet(ModelViewSet):
             forecast_summaries=summaries,
         )
         health_by_id = calculate_account_health_for_accounts(
-            request.user, accounts, days=days
+            request.user, accounts, days=days, forecast_summaries=summaries
         )
         health_aggregate = dashboard_account_health_aggregate(
             health_by_id,

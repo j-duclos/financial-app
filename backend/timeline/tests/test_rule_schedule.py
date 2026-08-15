@@ -45,11 +45,11 @@ def test_future_effective_change_keeps_amount_until_date(api_client, user, house
         currency="USD",
         include_in_forecast=True,
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Salary",
         category_type=Category.CategoryType.INCOME,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     start = today - timedelta(days=60)
@@ -125,11 +125,11 @@ def test_immediate_change_updates_rule_row(api_client, user, household):
         name="Pay",
         currency="USD",
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Salary",
         category_type=Category.CategoryType.INCOME,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     rule = RecurringRule.objects.create(
@@ -191,11 +191,11 @@ def test_second_immediate_update_same_day(api_client, user, household):
         name="Pay",
         currency="USD",
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Salary",
         category_type=Category.CategoryType.INCOME,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     rule = RecurringRule.objects.create(
@@ -250,11 +250,11 @@ def test_reschedule_future_change_same_effective_date(api_client, user, househol
         name="Pay",
         currency="USD",
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Salary",
         category_type=Category.CategoryType.INCOME,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     future = today + timedelta(days=30)
@@ -314,11 +314,11 @@ def test_reschedule_future_change_same_effective_date(api_client, user, househol
         name="Pay",
         currency="USD",
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Salary",
         category_type=Category.CategoryType.INCOME,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     future = today + timedelta(days=30)
@@ -370,3 +370,105 @@ def test_reschedule_future_change_same_effective_date(api_client, user, househol
     assert r.status_code == 200, r.content
     assert not RecurringRuleSchedule.objects.filter(rule=rule, effective_from__gt=today).exists()
     assert resolve_rule_params(rule, future).amount == Decimal("2000.00")
+
+
+def _expense_rule(household, account, **kwargs):
+    defaults = dict(
+        household=household,
+        name="Bill",
+        account=account,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("10.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=date(2024, 1, 1),
+        active=True,
+    )
+    defaults.update(kwargs)
+    return RecurringRule.objects.create(**defaults)
+
+
+@pytest.mark.django_db
+def test_monthly_occurrence_dates_include_month_boundaries(household):
+    acct = Account.objects.create(
+        household=household, account_type=Account.AccountType.CHECKING, name="Pay", currency="USD"
+    )
+    rule = _expense_rule(household, acct, day_of_month=1)
+    dates = generate_rule_occurrence_dates(rule, date(2026, 6, 1), date(2026, 6, 30))
+    assert dates == [date(2026, 6, 1)]
+    rule.day_of_month = 31
+    rule.save(update_fields=["day_of_month"])
+    dates = generate_rule_occurrence_dates(rule, date(2026, 6, 1), date(2026, 6, 30))
+    assert dates == [date(2026, 6, 30)]
+
+
+@pytest.mark.django_db
+def test_weekly_and_every_n_weeks_occurrence_dates(household):
+    acct = Account.objects.create(
+        household=household, account_type=Account.AccountType.CHECKING, name="Pay", currency="USD"
+    )
+    weekly = _expense_rule(
+        household,
+        acct,
+        name="Weekly",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        day_of_week=4,
+        day_of_month=None,
+        start_date=date(2026, 5, 1),
+    )
+    weekly_dates = generate_rule_occurrence_dates(weekly, date(2026, 6, 1), date(2026, 6, 30))
+    assert weekly_dates
+    assert all(d.weekday() == 4 for d in weekly_dates)
+    assert weekly_dates == sorted(weekly_dates)
+
+    every3 = _expense_rule(
+        household,
+        acct,
+        name="Every3",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=3,
+        day_of_week=4,
+        day_of_month=None,
+        start_date=date(2026, 5, 1),
+    )
+    every3_dates = generate_rule_occurrence_dates(every3, date(2026, 6, 1), date(2026, 6, 30))
+    assert every3_dates
+    assert all(d.weekday() == 4 for d in every3_dates)
+    if len(every3_dates) >= 2:
+        gaps = [(every3_dates[i] - every3_dates[i - 1]).days for i in range(1, len(every3_dates))]
+        assert all(g == 21 for g in gaps)
+
+
+@pytest.mark.django_db
+def test_paused_rule_has_no_occurrence_dates_after_pause(household):
+    acct = Account.objects.create(
+        household=household, account_type=Account.AccountType.CHECKING, name="Pay", currency="USD"
+    )
+    rule = _expense_rule(
+        household,
+        acct,
+        active=False,
+        paused_at=date(2026, 6, 10),
+        day_of_month=15,
+    )
+    assert generate_rule_occurrence_dates(rule, date(2026, 6, 1), date(2026, 6, 30)) == []
+    rule.active = True
+    rule.paused_at = date(2026, 6, 10)
+    rule.save(update_fields=["active", "paused_at"])
+    dates = generate_rule_occurrence_dates(rule, date(2026, 6, 1), date(2026, 6, 30))
+    assert all(d < date(2026, 6, 10) for d in dates)
+
+
+@pytest.mark.django_db
+def test_leap_year_february_day_clamps_or_exists(household):
+    acct = Account.objects.create(
+        household=household, account_type=Account.AccountType.CHECKING, name="Pay", currency="USD"
+    )
+    rule = _expense_rule(household, acct, day_of_month=29, start_date=date(2024, 1, 1))
+    leap = generate_rule_occurrence_dates(rule, date(2024, 2, 1), date(2024, 2, 29))
+    non_leap = generate_rule_occurrence_dates(rule, date(2025, 2, 1), date(2025, 2, 28))
+    assert leap == [date(2024, 2, 29)]
+    assert non_leap == [date(2025, 2, 28)]

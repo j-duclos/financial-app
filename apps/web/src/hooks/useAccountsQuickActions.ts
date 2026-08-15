@@ -147,7 +147,9 @@ export function useAccountsQuickActions(
           return;
         case "view_transactions":
         case "view_upcoming":
-          navigate("/transactions", { state: { accountId: account.id, focus: action.id } });
+          navigate(
+            `/transactions?account=${account.id}${action.id === "view_upcoming" ? "&focus=upcoming" : ""}`
+          );
           return;
         case "reconcile":
           navigate("/reconcile", { state: { accountId: account.id } });

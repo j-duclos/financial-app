@@ -72,6 +72,7 @@ class SpendingTargetSerializer(serializers.ModelSerializer):
             obj,
             anchor=anchor,
             include_scheduled=include_scheduled,
+            context=self.context.get("spending_target_calc_context"),
         )
 
 
@@ -96,7 +97,7 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
 
     def validate_category(self, category: Category) -> Category:
         if category.category_type != Category.CategoryType.EXPENSE:
-            raise serializers.ValidationError("Spending limits require an expense category.")
+            raise serializers.ValidationError("Budgets require an expense category.")
         household = self.initial_data.get("household") or (
             self.instance.household_id if self.instance else None
         )

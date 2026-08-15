@@ -84,6 +84,7 @@ type Props = {
   open: boolean;
   householdId: number;
   accounts: Account[];
+  accountsLoading?: boolean;
   existingGoals?: FinancialGoal[];
   incomeRules?: RecurringRule[];
   rulesLoading?: boolean;
@@ -98,6 +99,7 @@ export default function GoalFormModal({
   open,
   householdId,
   accounts,
+  accountsLoading,
   existingGoals = [],
   incomeRules = [],
   rulesLoading,
@@ -309,8 +311,11 @@ export default function GoalFormModal({
                   applyDebtAccountSelection(e.target.value ? Number(e.target.value) : "")
                 }
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                disabled={accountsLoading}
               >
-                <option value="">Select account</option>
+                <option value="">
+                  {accountsLoading ? "Loading accounts…" : "Select account"}
+                </option>
                 {debtAccounts.map((a) => {
                   const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
                   const owed = creditBalanceOwed(a);
@@ -392,8 +397,11 @@ export default function GoalFormModal({
                   }))
                 }
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                disabled={accountsLoading}
               >
-                <option value="">Select account</option>
+                <option value="">
+                  {accountsLoading ? "Loading accounts…" : "Select account"}
+                </option>
                 {savingsAccounts.map((a) => {
                   const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
                   return (

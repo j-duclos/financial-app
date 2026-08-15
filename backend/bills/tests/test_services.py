@@ -1,4 +1,5 @@
 """Tests for monthly bill checklist service."""
+from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 
@@ -61,7 +62,7 @@ def expense_category(db, household):
 
 @pytest.fixture
 def transfer_category(db, household):
-    return Category.objects.create(
+    return Category.objects.get(
         household=household,
         name="Bank Transfer",
         category_type=Category.CategoryType.EXPENSE,
@@ -70,7 +71,7 @@ def transfer_category(db, household):
 
 @pytest.fixture
 def cc_payment_category(db, household):
-    return Category.objects.create(
+    return Category.objects.get(
         household=household,
         name="Credit Card Payment",
         category_type=Category.CategoryType.EXPENSE,
@@ -404,3 +405,30 @@ def test_payment_history_splits_actual_and_planned(user, checking, expense_categ
     assert dates == ["2026-04-02", "2026-06-02", "2026-07-02"]
     assert detail["payment_history"][0]["status"] == Transaction.Status.CLEARED
     assert detail["payment_history"][1]["status"] == Transaction.Status.PLANNED
+
+
+def test_checklist_average_matches_single_rule_helper(user, checking, expense_category):
+    from bills.bill_insights import average_paid_amount, _prior_month
+
+    rule = _monthly_rule(checking.household, checking, expense_category, "AvgBill", 80, day=12)
+    today = date.today()
+    for i in range(1, 7):
+        y, m = _prior_month(today.year, today.month, i)
+        Transaction.objects.create(
+            account=checking,
+            date=date(y, m, min(12, monthrange(y, m)[1])),
+            payee="AvgBill",
+            amount=Decimal("-80.00") - Decimal(i),
+            category=expense_category,
+            status=Transaction.Status.CLEARED,
+            source=Transaction.Source.PLAID,
+            rule=rule,
+            cleared=True,
+        )
+    data = get_monthly_bill_checklist(
+        user, month=today.month, year=today.year, as_of_date=today
+    )
+    item = next(i for i in data["items"] if i["name"] == "AvgBill")
+    expected = average_paid_amount(rule.id)
+    assert expected is not None
+    assert item["average_amount"] == str(expected)

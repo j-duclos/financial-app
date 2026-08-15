@@ -22,10 +22,13 @@ const ICON_STYLES: Record<keyof typeof ICONS, string> = {
   transfer: "text-blue-600",
 };
 
-type Props = TransactionStatusInput & { className?: string };
+type Props = TransactionStatusInput & {
+  className?: string;
+  labelOverrides?: Partial<Record<keyof typeof ICONS, string>>;
+};
 
 export default function TransactionStatusIcons(props: Props) {
-  const { className, ...input } = props;
+  const { className, labelOverrides, ...input } = props;
   const icons = resolveTransactionStatusIcons(input);
   if (icons.length === 0) return null;
 
@@ -33,7 +36,7 @@ export default function TransactionStatusIcons(props: Props) {
     <span className={`inline-flex shrink-0 items-center gap-0.5 ${className ?? ""}`}>
       {icons.map((kind) => {
         const Icon = ICONS[kind];
-        const label = STATUS_ICON_LABELS[kind];
+        const label = labelOverrides?.[kind] ?? STATUS_ICON_LABELS[kind];
         return (
           <HoverTooltip key={kind} label={label}>
             <Icon className={`h-3.5 w-3.5 ${ICON_STYLES[kind]}`} aria-hidden />

@@ -542,6 +542,12 @@ def _calculate_forecast_summaries_for_accounts(
 
     result: dict[int, dict[str, Any]] = {}
     _phase_summaries = phase_start(timer, "account_summaries")
+    rows_by_account: dict[int, list[dict]] = defaultdict(list)
+    if timeline_rows:
+        for row in timeline_rows:
+            aid = row.get("account_id")
+            if aid is not None:
+                rows_by_account[int(aid)].append(row)
     for account in accounts:
         if account.id in supported_ids:
             result[account.id] = _calculate_account_forecast_summary(
@@ -549,7 +555,7 @@ def _calculate_forecast_summaries_for_accounts(
                 account,
                 as_of_date=today,
                 days=days,
-                timeline_rows=timeline_rows,
+                timeline_rows=rows_by_account.get(account.id, []),
                 bucket_reserve=bucket_reserve_by_account.get(account.id, Decimal("0")),
             )
         else:

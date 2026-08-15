@@ -1,4 +1,5 @@
 import type { ReconcileTransactionRow } from "@budget-app/shared";
+import { centsToAmount, parseMoneyToCents } from "./moneyCents";
 
 /** Balance after the last checked row — matches the running Balance column. */
 export function reconcileBalanceAfterChecks(
@@ -6,20 +7,38 @@ export function reconcileBalanceAfterChecks(
   checkedIds: Set<number>,
   periodOpeningBalance: number
 ): number {
-  if (checkedIds.size === 0) return periodOpeningBalance;
+  return centsToAmount(
+    reconcileBalanceAfterChecksCents(transactions, checkedIds, parseMoneyToCents(periodOpeningBalance))
+  );
+}
+
+export function reconcileBalanceAfterChecksCents(
+  transactions: ReconcileTransactionRow[],
+  checkedIds: Set<number>,
+  periodOpeningCents: number
+): number {
+  if (checkedIds.size === 0) return periodOpeningCents;
 
   const sortedChecked = transactions
     .filter((t) => checkedIds.has(t.id))
     .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
 
-  if (sortedChecked.length === 0) return periodOpeningBalance;
+  if (sortedChecked.length === 0) return periodOpeningCents;
 
-  // Use opening + sum of checked rows only. Running balances from the API walk every
-  // unreconciled row in the period, so they include unchecked siblings and block partial reconcile.
   let sum = 0;
   for (const t of sortedChecked) {
-    const amt = parseFloat(t.amount);
-    if (Number.isFinite(amt)) sum += amt;
+    sum += parseMoneyToCents(t.amount);
   }
-  return periodOpeningBalance + sum;
+  return periodOpeningCents + sum;
+}
+
+export function selectedActivityCents(
+  transactions: ReconcileTransactionRow[],
+  checkedIds: Set<number>
+): number {
+  let sum = 0;
+  for (const t of transactions) {
+    if (checkedIds.has(t.id)) sum += parseMoneyToCents(t.amount);
+  }
+  return sum;
 }

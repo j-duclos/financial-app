@@ -391,19 +391,20 @@ def test_contribute_preview_safe_to_spend(auth_client, household, savings, check
 
 
 def test_aggregate_summary_counts_on_track(user, household, savings):
+    today = date.today()
     FinancialGoal.objects.create(
         household=household,
         name="On track",
         goal_type=FinancialGoal.GoalType.SAVINGS,
         target_amount=Decimal("10000"),
         linked_account=savings,
-        target_date=AS_OF + timedelta(days=365),
+        target_date=today + timedelta(days=365),
         status=FinancialGoal.Status.ACTIVE,
         priority=1,
     )
     summary = calculate_aggregate_goal_summary(
         list(FinancialGoal.objects.filter(household=household)),
-        today=AS_OF,
+        today=today,
     )
     assert summary["goals_active_count"] == 1
     assert summary["goals_on_track"] >= 1

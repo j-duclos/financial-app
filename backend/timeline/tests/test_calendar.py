@@ -72,12 +72,13 @@ def expense_category(db, household):
 
 @pytest.fixture
 def transfer_category(db, household):
-    return Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Bank Transfer",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=3,
+        defaults={"sort_order": 3},
     )
+    return cat
 
 
 def _income_rule(household, account, category, amount, day):
@@ -167,6 +168,11 @@ def test_transfer_excluded_from_net(
     assert Decimal(day["transfer_total"]) == Decimal("300")
     assert Decimal(day["net_total"]) == Decimal("0")
     assert any(t["is_transfer"] for t in day["transactions"])
+    assert any(t.get("is_internal_transfer") for t in day["transactions"])
+    assert any(t.get("date") == day["date"] for t in day["transactions"])
+    amounts = [Decimal(t["amount"]) for t in day["transactions"] if t.get("amount") is not None]
+    assert any(a < 0 for a in amounts)
+    assert any(a > 0 for a in amounts)
 
 
 @pytest.mark.django_db

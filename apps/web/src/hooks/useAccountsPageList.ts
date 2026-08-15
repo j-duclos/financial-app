@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { listAccounts } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
@@ -13,6 +13,21 @@ function listScopeParams(filters: AccountOrganizationFilters) {
   };
 }
 
+export function mergeEnrichedAccounts(
+  base: Account[],
+  enriched: Account[] | undefined
+): Account[] {
+  if (!enriched?.length) return base;
+  if (!base.length) return enriched;
+  const byId = new Map(enriched.map((account) => [account.id, account]));
+  const merged = base.map((account) => byId.get(account.id) ?? account);
+  const seen = new Set(base.map((account) => account.id));
+  for (const extra of enriched) {
+    if (!seen.has(extra.id)) merged.push(extra);
+  }
+  return merged;
+}
+
 /**
  * Accounts page: show balances as soon as possible; load forecast/health in the background.
  * keepPreviousData prevents the list from flashing empty during refetch (Plaid sync, edits, etc.).
@@ -23,12 +38,6 @@ export function useAccountsPageList(
 ) {
   const scope = listScopeParams(filters);
   const lastNonEmpty = useRef<Account[]>([]);
-  const [enableEnrich, setEnableEnrich] = useState(false);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setEnableEnrich(true), 2000);
-    return () => window.clearTimeout(t);
-  }, []);
 
   const mainQuery = useQuery({
     queryKey: ["accounts", "main", scope],
@@ -55,7 +64,7 @@ export function useAccountsPageList(
         page_size: 500,
         ...scope,
       }),
-    enabled: mainQuery.isSuccess && enableEnrich,
+    enabled: mainQuery.isSuccess,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     retry: 1,
@@ -63,20 +72,12 @@ export function useAccountsPageList(
   });
 
   const accounts: Account[] = useMemo(() => {
-    const enriched =
-      enrichQuery.isSuccess && enrichQuery.data?.results?.length
-        ? enrichQuery.data.results
-        : null;
-    const main = mainQuery.data?.results;
-    const next = enriched ?? main ?? lastNonEmpty.current;
+    const main = mainQuery.data?.results ?? lastNonEmpty.current;
+    const enriched = enrichQuery.isSuccess ? enrichQuery.data?.results : undefined;
+    const next = mergeEnrichedAccounts(main, enriched);
     if (next.length > 0) lastNonEmpty.current = next;
     return next;
-  }, [
-    mainQuery.data,
-    mainQuery.isSuccess,
-    enrichQuery.data,
-    enrichQuery.isSuccess,
-  ]);
+  }, [mainQuery.data, enrichQuery.data, enrichQuery.isSuccess]);
 
   const isLoading = mainQuery.isPending && accounts.length === 0;
   const isError = accounts.length === 0 && mainQuery.isError;

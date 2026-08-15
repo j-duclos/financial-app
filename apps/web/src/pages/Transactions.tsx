@@ -43,6 +43,7 @@ import {
 } from "../components/transactions/TransactionsFilterBar";
 import {
   filterLedgerPastRows,
+  filterLedgerRows,
   hasActiveLedgerRowFilters,
   parseAmountFilterInput,
 } from "../components/transactions/ledgerRowFilters";
@@ -56,7 +57,7 @@ import {
   hintDateWithinLedgerRange,
   assetBalanceAsOfDateFromTimeline,
   buildLedgerRows,
-  buildLedgerRowsFromTimeline,
+  buildLedgerRowsFromPastAndUpcomingTimeline,
   hideReconciledOpeningBalance,
   splitLedgerSections,
   currentBalanceFromLedgerSections,
@@ -68,10 +69,9 @@ import {
   ledgerOpeningBalance,
   pastTransactionsRange,
   ledgerPastTransactionStart,
-  upcomingTimelineRange,
+  ledgerProjectionRange,
+  indexTimelineRowsByAccount,
   timelineRowFlowDirection,
-  signedTimelineLedgerAmount,
-  ledgerHintDateRange,
   projectionTimelineRangeForAsOf,
   forecastRangeLabel,
   type TimeFilter,
@@ -116,10 +116,16 @@ type TransactionsLocationState = {
 };
 
 export default function Transactions() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const navState = (location.state as TransactionsLocationState | null) ?? null;
   const isPlaidOAuthReturn = searchParams.has("oauth_state_id") || navState?.focusPlaid === true;
+  const urlAccountId = Number(searchParams.get("account"));
+  const urlCategoryId = Number(searchParams.get("category"));
+  const urlDate = searchParams.get("date");
+  const urlFocus = searchParams.get("focus");
+  const hasUrlAccount = Number.isInteger(urlAccountId) && urlAccountId > 0;
+  const hasUrlCategory = Number.isInteger(urlCategoryId) && urlCategoryId > 0;
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
   const [forecastRange, setForecastRange] = useState<ForecastRange>(() => loadStoredTransactionsForecastRange());
@@ -132,7 +138,12 @@ export default function Transactions() {
   const hasAppliedBillPrefill = useRef(false);
   const inlineAddInFlight = useRef(false);
 
-  const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
+  const { data: profile } = useQuery({
+    queryKey: ["profile"],
+    queryFn: getProfile,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
 
   const [inlineRow, setInlineRow] = useState({
     date: todayStr(),
@@ -202,13 +213,11 @@ export default function Transactions() {
     ]
   );
   const upcomingRange = useMemo(
-    () => upcomingTimelineRange(todayStr(), forecastRange),
+    () => ledgerProjectionRange(todayStr(), forecastRange),
     [forecastRange]
   );
-  const ledgerRange = useMemo(
-    () => ledgerHintDateRange(timeFilter, forecastRange),
-    [timeFilter, forecastRange]
-  );
+  /** Household / selected-account projection window — not History Range. */
+  const hintLedgerRange = upcomingRange;
 
   const { data: txnsData } = useQuery({
     queryKey: [
@@ -216,6 +225,7 @@ export default function Transactions() {
       {
         historyRange: timeFilter,
         account: accountId || undefined,
+        category: hasUrlCategory ? urlCategoryId : undefined,
         date_after: pastTransactionsDateAfter,
         date_before: pastRangeEnd,
         unreconciled_only: hideReconciledPast,
@@ -229,6 +239,7 @@ export default function Transactions() {
               date_after: pastTransactionsDateAfter,
               date_before: pastRangeEnd,
               page_size: 2000,
+              ...(hasUrlCategory ? { category: urlCategoryId } : {}),
               ...(hideReconciledPast ? { reconciled: false } : {}),
             }
           : {}),
@@ -245,7 +256,7 @@ export default function Transactions() {
     queryKey: [
       "timeline",
       "ledger",
-      pastRangeStart,
+      upcomingRange.start,
       upcomingRange.end,
       forecastRange,
       accountId,
@@ -254,7 +265,7 @@ export default function Transactions() {
     ],
     queryFn: () =>
       getTimeline({
-        start: pastRangeStart,
+        start: upcomingRange.start,
         end: upcomingRange.end,
         as_of: todayStr(),
         account_id: typeof accountId === "number" ? accountId : undefined,
@@ -336,6 +347,7 @@ export default function Transactions() {
     account_id: accountId || "",
     past_start: pastRangeStart,
     past_end: pastRangeEnd,
+    projection_start: upcomingRange.start,
     upcoming_end: upcomingRange.end,
   });
 
@@ -432,7 +444,19 @@ export default function Transactions() {
         setAccountId(navId);
         consumedNavAccountRef.current = true;
         hasSetInitialAccount.current = true;
-        if (navState.focus === "view_upcoming") {
+        if (navState.focus === "view_upcoming" || urlFocus === "upcoming") {
+          setForecastExpanded(true);
+          setPastExpanded(false);
+        }
+      }
+      return;
+    }
+    if (hasUrlAccount && !consumedNavAccountRef.current) {
+      if (accounts.some((a) => a.id === urlAccountId)) {
+        setAccountId(urlAccountId);
+        consumedNavAccountRef.current = true;
+        hasSetInitialAccount.current = true;
+        if (urlFocus === "upcoming") {
           setForecastExpanded(true);
           setPastExpanded(false);
         }
@@ -451,21 +475,22 @@ export default function Transactions() {
         : null;
     setAccountId(defaultActive ?? accounts[0].id);
     hasSetInitialAccount.current = true;
-  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts]);
+  }, [profile?.default_account, navState?.accountId, navState?.focus, accounts, hasUrlAccount, urlAccountId, urlFocus]);
 
   useEffect(() => {
     if (hasAppliedBillPrefill.current || accountId === "") return;
-    if (!navState?.prefillDate && !navState?.prefillPayee) return;
-    const amtRaw = navState.prefillAmount ? parseFloat(navState.prefillAmount) : NaN;
+    const urlAdd = searchParams.get("add") === "1";
+    if (!navState?.prefillDate && !navState?.prefillPayee && !(urlAdd && urlDate)) return;
+    const amtRaw = navState?.prefillAmount ? parseFloat(navState.prefillAmount) : NaN;
     const outflowAmt = Number.isFinite(amtRaw) ? String(-Math.abs(amtRaw)) : "";
     setInlineRow((row) => ({
       ...row,
-      date: navState.prefillDate ?? row.date,
-      payee: navState.prefillPayee ?? row.payee,
+      date: navState?.prefillDate ?? urlDate ?? row.date,
+      payee: navState?.prefillPayee ?? row.payee,
       amount: outflowAmt || row.amount,
       direction: "OUTFLOW",
     }));
-    const due = navState.prefillDate ?? todayStr();
+    const due = navState?.prefillDate ?? urlDate ?? todayStr();
     if (due > todayStr()) {
       setForecastExpanded(true);
       setPastExpanded(false);
@@ -473,7 +498,7 @@ export default function Transactions() {
       setPastExpanded(true);
     }
     hasAppliedBillPrefill.current = true;
-  }, [accountId, navState?.prefillDate, navState?.prefillPayee, navState?.prefillAmount]);
+  }, [accountId, navState?.prefillDate, navState?.prefillPayee, navState?.prefillAmount, urlDate, searchParams]);
 
   const categories = categoriesData?.results ?? [];
   const categoryDropdownOptions = useMemo(
@@ -549,35 +574,44 @@ export default function Transactions() {
     );
   }, [inlinePayToCardAccountId, accountId, ledgerTimelineData?.timeline]);
 
+  const inlineCardCanUseLedger =
+    inlineCardTimelineFromLedger != null &&
+    (inlineRow.date === "" || inlineRow.date >= upcomingRange.start);
+
   const inlineCardNeedsDedicatedTimeline =
-    inlinePayToCardAccountId != null && inlineCardTimelineFromLedger == null;
+    inlinePayToCardAccountId != null &&
+    inlineProjectionRange != null &&
+    !inlineCardCanUseLedger;
 
   const { data: inlineCardTimelineData, isFetching: inlineCardTimelineLoading } = useQuery({
     queryKey: [
       "timeline",
       "card-balance-hint",
       inlinePayToCardAccountId,
-      pastRangeStart,
-      upcomingRange.end,
+      inlineProjectionRange?.start,
+      inlineProjectionRange?.end,
+      inlineProjectionRange?.as_of,
       hideReconciledPast,
-      todayStr(),
     ],
-    queryFn: () =>
-      getTimeline({
-        start: pastRangeStart,
-        end: upcomingRange.end,
-        as_of: todayStr(),
+    queryFn: () => {
+      const range = inlineProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: inlinePayToCardAccountId!,
         exclude_reconciled_past: hideReconciledPast,
-      }),
+      });
+    },
     enabled: inlineCardNeedsDedicatedTimeline,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
 
-  const inlineCardTimelineForHint =
-    inlineCardTimelineFromLedger ?? inlineCardTimelineData?.timeline ?? [];
+  const inlineCardTimelineForHint = inlineCardCanUseLedger
+    ? inlineCardTimelineFromLedger ?? []
+    : inlineCardTimelineData?.timeline ?? [];
 
   const inlineCardTimelineLoadingResolved =
     inlineCardNeedsDedicatedTimeline &&
@@ -616,7 +650,7 @@ export default function Transactions() {
   const inlineBankHintInLedgerRange =
     inlineBankTransferDestId != null &&
     inlineRow.date !== "" &&
-    hintDateWithinLedgerRange(inlineRow.date, ledgerRange) &&
+    hintDateWithinLedgerRange(inlineRow.date, hintLedgerRange) &&
     householdTimelineData != null;
 
   const inlineBankNeedsDedicatedTimeline =
@@ -653,14 +687,14 @@ export default function Transactions() {
       pickAccountTimelineForHint(
         inlineBankTransferDestId ?? 0,
         inlineRow.date,
-        ledgerRange,
+        hintLedgerRange,
         householdTimelineData?.timeline,
         inlineBankDestTimelineData?.timeline
       ),
     [
       inlineBankTransferDestId,
       inlineRow.date,
-      ledgerRange,
+      hintLedgerRange,
       householdTimelineData?.timeline,
       inlineBankDestTimelineData?.timeline,
     ]
@@ -835,34 +869,42 @@ export default function Transactions() {
     return ledgerTimelineData.timeline.filter((r) => Number(r.account_id) === Number(editPayToCardId));
   }, [editPayToCardId, accountId, ledgerTimelineData?.timeline]);
 
+  const editCardCanUseLedger =
+    editCardTimelineFromLedger != null &&
+    (editForm.date === "" || editForm.date >= upcomingRange.start);
+
   const editCardNeedsDedicatedTimeline =
-    editPayToCardId != null && editCardTimelineFromLedger == null;
+    editPayToCardId != null && editProjectionRange != null && !editCardCanUseLedger;
 
   const { data: editCardTimelineData, isFetching: editCardTimelineLoading } = useQuery({
     queryKey: [
       "timeline",
       "card-balance-hint",
       editPayToCardId,
-      pastRangeStart,
-      upcomingRange.end,
+      editProjectionRange?.start,
+      editProjectionRange?.end,
+      editProjectionRange?.as_of,
       hideReconciledPast,
-      todayStr(),
     ],
-    queryFn: () =>
-      getTimeline({
-        start: pastRangeStart,
-        end: upcomingRange.end,
-        as_of: todayStr(),
+    queryFn: () => {
+      const range = editProjectionRange!;
+      return getTimeline({
+        start: range.start,
+        end: range.end,
+        as_of: range.as_of,
         account_id: editPayToCardId!,
         exclude_reconciled_past: hideReconciledPast,
-      }),
+      });
+    },
     enabled: editCardNeedsDedicatedTimeline,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
 
-  const editCardTimelineForHint = editCardTimelineFromLedger ?? editCardTimelineData?.timeline ?? [];
+  const editCardTimelineForHint = editCardCanUseLedger
+    ? editCardTimelineFromLedger ?? []
+    : editCardTimelineData?.timeline ?? [];
 
   const editCardTimelineLoadingResolved =
     editCardNeedsDedicatedTimeline && editCardTimelineLoading && editCardTimelineFromLedger == null;
@@ -888,7 +930,7 @@ export default function Transactions() {
   const editBankHintInLedgerRange =
     editBankTransferDestId != null &&
     editForm.date !== "" &&
-    hintDateWithinLedgerRange(editForm.date, ledgerRange) &&
+    hintDateWithinLedgerRange(editForm.date, hintLedgerRange) &&
     householdTimelineData != null;
 
   const editBankNeedsDedicatedTimeline =
@@ -924,14 +966,14 @@ export default function Transactions() {
       pickAccountTimelineForHint(
         editBankTransferDestId ?? 0,
         editForm.date,
-        ledgerRange,
+        hintLedgerRange,
         householdTimelineData?.timeline,
         editBankDestTimelineData?.timeline
       ),
     [
       editBankTransferDestId,
       editForm.date,
-      ledgerRange,
+      hintLedgerRange,
       householdTimelineData?.timeline,
       editBankDestTimelineData?.timeline,
     ]
@@ -1000,14 +1042,22 @@ export default function Transactions() {
   }, [accounts, householdId]);
 
   const today = todayStr();
+  const householdTimelineByAccount = useMemo(
+    () => indexTimelineRowsByAccount(householdTimelineData?.timeline),
+    [householdTimelineData?.timeline]
+  );
+  const ledgerTimelineByAccount = useMemo(
+    () => indexTimelineRowsByAccount(ledgerTimelineData?.timeline),
+    [ledgerTimelineData?.timeline]
+  );
+
   /** For each non-credit account: first date on or after today when balance goes negative (if any). */
   const negativeBalanceWarnings = useMemo(() => {
-    const timeline = householdTimelineData?.timeline ?? [];
     const nonCredit = accountsForHousehold.filter((a) => String((a.account_type ?? "").toUpperCase()) !== "CREDIT");
     const warnings: { accountName: string; date: string }[] = [];
     for (const acc of nonCredit) {
-      const futureRows = timeline
-        .filter((r) => Number(r.account_id) === Number(acc.id) && r.date >= today)
+      const futureRows = (householdTimelineByAccount.get(Number(acc.id)) ?? [])
+        .filter((r) => r.date >= today)
         .sort((a, b) => a.date.localeCompare(b.date));
       const firstNegative = futureRows.find((r) => parseFloat(r.running_balance) < 0);
       if (firstNegative) {
@@ -1018,11 +1068,10 @@ export default function Transactions() {
       }
     }
     return warnings.sort((a, b) => a.date.localeCompare(b.date));
-  }, [householdTimelineData?.timeline, accountsForHousehold, today]);
+  }, [householdTimelineByAccount, accountsForHousehold, today]);
 
   /** For each credit account with a limit: first date on or after today when balance goes over the credit limit (debt exceeds limit). */
   const creditLimitWarnings = useMemo(() => {
-    const timeline = householdTimelineData?.timeline ?? [];
     const creditAccounts = accountsForHousehold.filter(
       (a) =>
         String((a.account_type ?? "").toUpperCase()) === "CREDIT" &&
@@ -1033,8 +1082,8 @@ export default function Transactions() {
     for (const acc of creditAccounts) {
       const limit = parseFloat(String(acc.credit_limit));
       if (Number.isNaN(limit) || limit <= 0) continue;
-      const futureRows = timeline
-        .filter((r) => Number(r.account_id) === Number(acc.id) && r.date >= today)
+      const futureRows = (householdTimelineByAccount.get(Number(acc.id)) ?? [])
+        .filter((r) => r.date >= today)
         .sort((a, b) => a.date.localeCompare(b.date));
       const firstOverLimit = futureRows.find((r) => {
         const bal = parseFloat(r.running_balance);
@@ -1048,7 +1097,7 @@ export default function Transactions() {
       }
     }
     return warnings.sort((a, b) => a.date.localeCompare(b.date));
-  }, [householdTimelineData?.timeline, accountsForHousehold, today]);
+  }, [householdTimelineByAccount, accountsForHousehold, today]);
 
   const ledgerRows = useMemo(() => {
     if (!account || typeof accountId !== "number" || !accountMatchesSelection) return [];
@@ -1066,10 +1115,6 @@ export default function Transactions() {
     );
     const hasPastOpeningOverride =
       pastOpeningOverride != null && Number.isFinite(pastOpeningOverride);
-    const postReconcileAnchor =
-      !hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
-        ? parseFloat(reconcileSetupData.last_reconciled_balance)
-        : null;
     const apiBalance = accountLedgerDisplayBalance(account, isCreditAccount);
 
     if (hideReconciledPast && !hasPastOpeningOverride) {
@@ -1078,88 +1123,43 @@ export default function Transactions() {
       }
     }
 
-    if (!ledgerTimelineError && ledgerTimelineData?.timeline != null) {
-      const aid = Number(accountId);
-      const timelineForAccount = ledgerTimelineData.timeline.filter(
-        (r) => Number(r.account_id) === aid
-      );
-      const built = buildLedgerRowsFromTimeline(
-        timelineForAccount,
-        today,
-        openingBalance,
-        isCreditAccount,
-        hasPastOpeningOverride ? pastOpeningOverride : null,
-        postReconcileAnchor
-      );
-      // #region agent log
-      if (isCreditAccount) {
-        const augRows = timelineForAccount
-          .filter((r) => r.date >= "2026-08-15" && r.date <= "2026-09-05")
-          .map((r) => ({
-            date: r.date,
-            description: r.description,
-            amount: r.amount,
-            type: r.type,
-            signedAmount: signedTimelineLedgerAmount(r),
-            runningBalance: r.running_balance,
-          }));
-        const augFuture = splitLedgerSections(built).future
-          .filter(
-            (row) =>
-              (row.type === "recurring" || row.type === "transaction_from_timeline") &&
-              row.row.date >= "2026-08-15" &&
-              row.row.date <= "2026-09-05"
-          )
-          .map((row) => ({
-            date: row.row.date,
-            description: row.row.description,
-            balance: row.balance,
-            amount: row.row.amount,
-            type: row.row.type,
-          }));
-        if (augRows.length > 0 || augFuture.length > 0) {
-          fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "299140" },
-            body: JSON.stringify({
-              sessionId: "299140",
-              runId: "post-fix",
-              location: "Transactions.tsx:ledgerRows",
-              message: "credit card aug forecast chain",
-              data: {
-                isCreditAccount,
-                openingBalance,
-                pastOpeningOverride,
-                augRows,
-                augFuture,
-                todayBalance: splitLedgerSections(built).today?.balance,
-              },
-              timestamp: Date.now(),
-              hypothesisId: "B-forecast-chain",
-            }),
-          }).catch(() => {});
-        }
-      }
-      // #endregion
-      return built;
-    }
-
-    const fallbackTxns = hideReconciledPast
+    const pastTxns = hideReconciledPast
       ? transactions.filter((t) => !t.reconciled)
       : transactions;
-    const fallbackBuilt = buildLedgerRows(
-      fallbackTxns,
-      hasPastOpeningOverride ? pastOpeningOverride! : openingBalance,
-      account.currency,
+    const timelineForAccount = ledgerTimelineByAccount.get(Number(accountId)) ?? [];
+
+    if (ledgerTimelineError && pastTxns.length === 0) {
+      return buildLedgerRows(
+        pastTxns,
+        hasPastOpeningOverride ? pastOpeningOverride! : openingBalance,
+        account.currency,
+        isCreditAccount,
+        apiBalance
+      );
+    }
+
+    return buildLedgerRowsFromPastAndUpcomingTimeline(
+      pastTxns,
+      timelineForAccount,
+      today,
+      openingBalance,
       isCreditAccount,
-      apiBalance
+      {
+        pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
+        lastReconcilePeriodEnd: hideReconciledPast
+          ? reconcileSetupData?.last_reconcile_period_end ?? null
+          : null,
+        reconcileFloor: hideReconciledPast
+          ? reconcileSetupData?.min_start_date ?? null
+          : null,
+      }
     );
-    return fallbackBuilt;
   }, [
     account,
     accountId,
     accountMatchesSelection,
     transactions,
+    ledgerTimelineByAccount,
     ledgerTimelineData,
     ledgerTimelineData?.timeline,
     ledgerTimelineData?.past_opening_balance,
@@ -1167,15 +1167,16 @@ export default function Transactions() {
     isCreditAccount,
     hideReconciledPast,
     reconcileSetupData?.last_reconciled_balance,
+    reconcileSetupData?.last_reconcile_period_end,
+    reconcileSetupData?.min_start_date,
     reconcileSetupFetching,
     ledgerTimelineFetching,
   ]);
 
   const accountTimeline = useMemo(() => {
-    if (typeof accountId !== "number" || !ledgerTimelineData?.timeline) return [];
-    const aid = Number(accountId);
-    return ledgerTimelineData.timeline.filter((r) => Number(r.account_id) === aid);
-  }, [accountId, ledgerTimelineData?.timeline]);
+    if (typeof accountId !== "number") return [];
+    return ledgerTimelineByAccount.get(Number(accountId)) ?? [];
+  }, [accountId, ledgerTimelineByAccount]);
 
   /** Split into: start, past, pending expected, today, future. */
   const ledgerSections = useMemo(() => splitLedgerSections(ledgerRows), [ledgerRows]);
@@ -1213,6 +1214,14 @@ export default function Transactions() {
   const filteredPastRows = useMemo(
     () => filterLedgerPastRows(ledgerSections.past, pastRowFilters),
     [ledgerSections.past, pastRowFilters]
+  );
+  const filteredPendingRows = useMemo(
+    () => filterLedgerRows(ledgerSections.pending, pastRowFilters),
+    [ledgerSections.pending, pastRowFilters]
+  );
+  const filteredFutureRows = useMemo(
+    () => filterLedgerRows(ledgerSections.future, pastRowFilters),
+    [ledgerSections.future, pastRowFilters]
   );
 
   const pastFiltersActive = hasActiveLedgerRowFilters(pastRowFilters);
@@ -1332,26 +1341,6 @@ export default function Transactions() {
     },
     onSuccess: async (updatedTxn, variables) => {
       setDeleteError(null);
-      // #region agent log
-      fetch("http://127.0.0.1:7452/ingest/95528d82-8c08-453f-b30d-a47144a4bbc3", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "88e096" },
-        body: JSON.stringify({
-          sessionId: "88e096",
-          location: "Transactions.tsx:updateMu.onSuccess",
-          message: "update response",
-          data: {
-            txnId: variables.id,
-            sentAmount: variables.data.amount,
-            responseAmount: updatedTxn.amount,
-            responseDate: updatedTxn.date,
-            ruleId: (updatedTxn as { rule_id?: number | null }).rule_id ?? null,
-          },
-          timestamp: Date.now(),
-          hypothesisId: "H4",
-        }),
-      }).catch(() => {});
-      // #endregion
       const newAccountId = variables.data.account_id;
       const syncedToAccountId = (updatedTxn as { synced_to_account_id?: number }).synced_to_account_id;
       const affectsBalances =
@@ -2179,6 +2168,22 @@ export default function Transactions() {
             hideReconciledPast={hideReconciledPast}
             onHideReconciledPastChange={setHideReconciledPast}
           />
+          {hasUrlCategory && (
+            <p className="text-xs text-gray-600 self-end pb-1.5">
+              Posted history filtered to a category.{" "}
+              <button
+                type="button"
+                className="text-blue-700 hover:underline"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete("category");
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                Clear
+              </button>
+            </p>
+          )}
           <TransactionColumnFilters
             amountMin={amountMinInput}
             amountMax={amountMaxInput}
@@ -2388,9 +2393,9 @@ export default function Transactions() {
             onSetSelectedIds={setSelectedTransactionGroup}
           />
 
-          {ledgerSections.pending.length > 0 ? (
+          {filteredPendingRows.length > 0 ? (
             <PendingExpectedSection
-              pending={ledgerSections.pending}
+              pending={filteredPendingRows}
               accountTimeline={accountTimeline}
               currency={currency}
               isCredit={isCredit}
@@ -2436,7 +2441,7 @@ export default function Transactions() {
           </div>
 
           <ForecastCardsSection
-            future={ledgerSections.future}
+            future={filteredFutureRows}
             accountTimeline={accountTimeline}
             currency={currency}
             isCredit={isCredit}

@@ -5,11 +5,11 @@ import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import {
   listBudgets,
   listHouseholds,
-  listCategories,
   getCategoryBreakdown,
   createBudget,
   updateBudget,
 } from "@budget-app/api-client";
+import { useCategories } from "../hooks/useCategories";
 
 export default function Budget() {
   const [month, setMonth] = useState(currentMonthStr());
@@ -20,10 +20,7 @@ export default function Budget() {
     queryKey: ["budgets", month],
     queryFn: () => listBudgets({ year: y, month: m }),
   });
-  const { data: categoriesData } = useQuery({
-    queryKey: ["categories"],
-    queryFn: () => listCategories({ page_size: 500 }),
-  });
+  const { data: categoriesData } = useCategories();
   const { data: breakdownData } = useQuery({
     queryKey: ["category-breakdown", month],
     queryFn: () => getCategoryBreakdown(month),

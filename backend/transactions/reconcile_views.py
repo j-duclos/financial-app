@@ -27,13 +27,25 @@ def _parse_date_param(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _reconcile_row_memo(txn: Transaction) -> str:
+    """Friendly payee stays in `payee`; expose memo or raw import text underneath."""
+    payee = (txn.payee or "").strip()
+    memo = (txn.memo or "").strip()
+    raw = (txn.imported_description or "").strip()
+    if memo and memo != payee:
+        return memo
+    if raw and raw != payee:
+        return raw
+    return memo
+
+
 def _serialize_reconcile_txn(txn: Transaction, running_balance: str | None) -> dict:
     category_name = txn.category.name if txn.category_id else None
     return {
         "id": txn.pk,
         "date": txn.date.isoformat(),
         "payee": txn.payee,
-        "memo": txn.memo,
+        "memo": _reconcile_row_memo(txn),
         "amount": str(txn.amount),
         "direction": "INFLOW" if txn.amount >= 0 else "OUTFLOW",
         "category": category_name,

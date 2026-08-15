@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import NotificationsDropdown from "./NotificationsDropdown";
 import { PlaidAutoSync } from "./PlaidAutoSync";
-import { AUTOMATION_NAV_LABEL, AUTOMATION_PATH } from "../lib/automationDisplay";
+import AppNav from "./AppNav";
 
 export default function Layout() {
   const { auth, logout } = useAuth();
@@ -13,50 +13,12 @@ export default function Layout() {
     navigate("/login", { replace: true });
   }
 
-  const primaryNav = [
-    { to: "/", label: "Dashboard" },
-    { to: "/action-center", label: "Action Center" },
-    { to: "/timeline", label: "Calendar" },
-    { to: "/accounts", label: "Accounts" },
-    { to: "/transactions", label: "Transactions" },
-    { to: "/recurring", label: "Recurring" },
-    { to: "/spending-goals", label: "Spending Limits" },
-    { to: "/goals", label: "Goals" },
-    { to: "/credit-cards", label: "Payment Planner" },
-    { to: "/scenarios", label: "What-If" },
-    { to: "/reports", label: "Reports" },
-  ];
-
-  const secondaryNav = [
-    { to: AUTOMATION_PATH, label: AUTOMATION_NAV_LABEL },
-    { to: "/categories", label: "Categories" },
-    { to: "/reconcile", label: "Reconcile" },
-    { to: "/profile", label: "Profile" },
-  ];
-
-  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-2 py-2 rounded text-sm font-medium whitespace-nowrap ${
-      isActive ? "bg-gray-100 text-blue-600" : "text-gray-700 hover:bg-gray-50"
-    }`;
-
   return (
     <div className="min-h-screen flex flex-col">
       <PlaidAutoSync />
       <header className="flex-none sticky top-0 z-30 bg-white border-b border-gray-200">
-        <div className="px-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 min-h-14 py-2">
-          <nav className="flex flex-wrap items-center gap-x-1 gap-y-1 min-w-0 flex-1">
-            {primaryNav.map(({ to, label }) => (
-              <NavLink key={to} to={to} className={navLinkClass}>
-                {label}
-              </NavLink>
-            ))}
-            <span className="mx-1 h-6 w-px shrink-0 bg-gray-300" aria-hidden />
-            {secondaryNav.map(({ to, label }) => (
-              <NavLink key={to} to={to} className={navLinkClass}>
-                {label}
-              </NavLink>
-            ))}
-          </nav>
+        <div className="px-4 flex items-center justify-between gap-x-3 min-h-14 py-2">
+          <AppNav />
           <div className="flex items-center gap-2 shrink-0">
             <NotificationsDropdown />
             <NavLink
@@ -68,6 +30,7 @@ export default function Layout() {
               {auth.user?.username ?? "User"}
             </NavLink>
             <button
+              type="button"
               onClick={handleLogout}
               className="text-sm text-gray-500 hover:text-gray-700 whitespace-nowrap"
             >

@@ -1,22 +1,20 @@
 from datetime import date
-from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
-from django.db.models.functions import Coalesce
 
 from core.utils import get_households_for_user
 from accounts.models import Account
 from common.services.forecast_horizon import parse_forecast_days_param
 from accounts.services.balances import signed_ledger_balance
-from transactions.models import Transaction
 from .services.dashboard_summary import (
     build_dashboard_summary,
     build_dashboard_summary_details,
     build_dashboard_summary_fast,
 )
-from .services.reporting import exclude_internal_transfers
+from .services.monthly_reports import build_monthly_reports
+from .services.report_context import build_report_context
+from .services.reporting import build_category_breakdown, build_monthly_summary
 from .services.subscription_intelligence import build_subscription_intelligence
 
 
@@ -28,25 +26,10 @@ class MonthlySummaryView(APIView):
         if not month:
             return Response({"detail": "Query param 'month' (YYYY-MM) is required."}, status=400)
         try:
-            year, month_int = map(int, month.split("-"))
-        except (ValueError, TypeError):
-            return Response({"detail": "month must be YYYY-MM."}, status=400)
-        households = get_households_for_user(request.user)
-        account_ids = Account.objects.for_historical_reporting().filter(
-            household__in=households,
-        ).values_list("id", flat=True)
-        qs = exclude_internal_transfers(
-            Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
-        )
-        total_income = qs.filter(amount__gt=0).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"] or Decimal("0")
-        total_expenses = qs.filter(amount__lt=0).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"] or Decimal("0")
-        net = total_income + total_expenses  # expenses are negative
-        return Response({
-            "month": month,
-            "total_income": total_income,
-            "total_expenses": total_expenses,
-            "net": net,
-        })
+            ctx = build_report_context(request.user, month)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return Response(build_monthly_summary(ctx))
 
 
 class CategoryBreakdownView(APIView):
@@ -57,33 +40,45 @@ class CategoryBreakdownView(APIView):
         if not month:
             return Response({"detail": "Query param 'month' (YYYY-MM) is required."}, status=400)
         try:
-            year, month_int = map(int, month.split("-"))
-        except (ValueError, TypeError):
-            return Response({"detail": "month must be YYYY-MM."}, status=400)
-        households = get_households_for_user(request.user)
-        account_ids = Account.objects.for_historical_reporting().filter(
-            household__in=households,
-        ).values_list("id", flat=True)
-        from categories.models import Category
-        # Group by category (including null = uncategorized)
-        qs = (
-            exclude_internal_transfers(
-                Transaction.objects.filter(account_id__in=account_ids, date__year=year, date__month=month_int)
-            )
-            .values("category_id")
-            .annotate(total=Coalesce(Sum("amount"), Decimal("0")))
+            ctx = build_report_context(request.user, month)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return Response(build_category_breakdown(ctx, include_previous=True))
+
+
+class MonthlyReportsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        month = request.query_params.get("month")
+        if not month:
+            return Response({"detail": "Query param 'month' (YYYY-MM) is required."}, status=400)
+        months = request.query_params.get("months", "12")
+        try:
+            history_months = max(1, min(int(months), 36))
+        except (TypeError, ValueError):
+            return Response({"detail": "months must be an integer."}, status=400)
+        include_history = request.query_params.get("include_history", "").lower() in (
+            "1",
+            "true",
+            "yes",
         )
-        breakdown = []
-        for row in qs:
-            cat_id = row["category_id"]
-            total = row["total"]
-            if cat_id:
-                cat = Category.objects.filter(pk=cat_id).first()
-                label = cat.name if cat else f"Category #{cat_id}"
-            else:
-                label = "Uncategorized"
-            breakdown.append({"category_id": cat_id, "category_name": label, "total": total})
-        return Response({"month": month, "breakdown": breakdown})
+        household_id = request.query_params.get("household_id")
+        try:
+            household_id = int(household_id) if household_id else None
+        except (TypeError, ValueError):
+            return Response({"detail": "household_id must be an integer."}, status=400)
+        try:
+            payload = build_monthly_reports(
+                request.user,
+                month,
+                history_months=history_months,
+                household_id=household_id,
+                include_history=include_history,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return Response(payload)
 
 
 class AccountBalancesView(APIView):

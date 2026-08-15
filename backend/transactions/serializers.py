@@ -54,6 +54,17 @@ class TransactionSerializer(serializers.ModelSerializer):
     def get_direction(self, obj):
         return "INFLOW" if obj.amount and obj.amount >= 0 else "OUTFLOW"
 
+    def _transfer_group_sibling(self, obj):
+        group = getattr(obj, "transfer_group", None) if obj.transfer_group_id else None
+        if group is not None:
+            cache = getattr(group, "_prefetched_objects_cache", None)
+            if cache and "transactions" in cache:
+                for sibling in group.transactions.all():
+                    if sibling.pk != obj.pk:
+                        return sibling
+                return None
+        return get_transfer_group_sibling(obj)
+
     def get_transfer_to_account(self, obj):
         """Other account in a two-sided transfer: 'to' account when this row is the outgoing leg, 'from' account when this row is the incoming leg. For rule-created payments, return the paired transaction's account (may differ from rule default)."""
         try:
@@ -67,26 +78,31 @@ class TransactionSerializer(serializers.ModelSerializer):
         except Transfer.DoesNotExist:
             pass
         if obj.transfer_group_id:
-            sibling = get_transfer_group_sibling(obj)
+            sibling = self._transfer_group_sibling(obj)
             if sibling is not None:
                 return AccountSerializer(sibling.account).data
-            tg = (
-                TransferGroup.objects.filter(pk=obj.transfer_group_id)
-                .select_related("from_account", "to_account")
-                .first()
-            )
+            tg = getattr(obj, "transfer_group", None)
+            if tg is None:
+                tg = (
+                    TransferGroup.objects.filter(pk=obj.transfer_group_id)
+                    .select_related("from_account", "to_account")
+                    .first()
+                )
             if tg is not None:
                 if obj.account_id == tg.to_account_id:
                     return AccountSerializer(tg.from_account).data
                 if obj.account_id == tg.from_account_id:
                     return AccountSerializer(tg.to_account).data
         if obj.rule_id:
-            from timeline.models import RecurringRule
             from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
 
-            rule = RecurringRule.objects.filter(pk=obj.rule_id).select_related(
-                "account", "transfer_to_account"
-            ).first()
+            rule = getattr(obj, "rule", None)
+            if rule is None:
+                from timeline.models import RecurringRule
+
+                rule = RecurringRule.objects.filter(pk=obj.rule_id).select_related(
+                    "account", "transfer_to_account"
+                ).first()
             if rule and rule.transfer_to_account_id:
                 paired = find_rule_transfer_counterpart_txn(
                     rule_id=obj.rule_id,
@@ -118,7 +134,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         except Transfer.DoesNotExist:
             pass
         if obj.transfer_group_id:
-            sibling = get_transfer_group_sibling(obj)
+            sibling = self._transfer_group_sibling(obj)
             if sibling is not None:
                 return sibling.pk
         if obj.rule_id:
@@ -139,9 +155,11 @@ class TransactionSerializer(serializers.ModelSerializer):
         """Return the recurring rule name when this transaction is from a rule, so the UI can show it."""
         if not obj.rule_id:
             return None
+        rule = getattr(obj, "rule", None)
+        if rule is not None:
+            return rule.name
         from timeline.models import RecurringRule
-        rule = RecurringRule.objects.filter(pk=obj.rule_id).values_list("name", flat=True).first()
-        return rule
+        return RecurringRule.objects.filter(pk=obj.rule_id).values_list("name", flat=True).first()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

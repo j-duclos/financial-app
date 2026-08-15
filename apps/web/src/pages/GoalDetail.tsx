@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import { getBucketDetail, listScenarios } from "@budget-app/api-client";
@@ -11,6 +11,8 @@ import {
 } from "../lib/goalDisplay";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
+import { whatIfGoalPath } from "../lib/whatIfContext";
+import PlanningSubnav from "../components/PlanningSubnav";
 import {
   goalFundingLine,
   goalProjectionLine,
@@ -125,6 +127,7 @@ export default function GoalDetail() {
       >
         ← Back to goals
       </button>
+      <PlanningSubnav />
 
       {isLoading && <p className="text-sm text-gray-500">Loading goal…</p>}
       {isError && (
@@ -215,6 +218,12 @@ export default function GoalDetail() {
                 >
                   Edit goal
                 </button>
+                <Link
+                  to={whatIfGoalPath(goal.id)}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50"
+                >
+                  Try in What-If
+                </Link>
               </div>
             </header>
 

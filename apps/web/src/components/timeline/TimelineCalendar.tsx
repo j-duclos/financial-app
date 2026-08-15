@@ -1,3 +1,4 @@
+import { memo, useCallback, useMemo } from "react";
 import type { TimelineCalendarDay, TimelineCalendarResponse } from "@budget-app/shared";
 import {
   buildMonthGrid,
@@ -41,7 +42,7 @@ type Props = {
   onSelectTransaction?: (day: TimelineCalendarDay, txn: TimelineCalendarDay["transactions"][number]) => void;
 };
 
-function DayCell({
+const DayCell = memo(function DayCell({
   day,
   dateIso,
   isSelected,
@@ -53,7 +54,7 @@ function DayCell({
   dateIso: string;
   isSelected: boolean;
   isToday: boolean;
-  onSelect: () => void;
+  onSelect: (dateIso: string) => void;
   onSelectTransaction?: (day: TimelineCalendarDay, txn: TimelineCalendarDay["transactions"][number]) => void;
 }) {
   const d = new Date(`${dateIso}T12:00:00`);
@@ -71,7 +72,7 @@ function DayCell({
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(dateIso)}
       data-timeline-date={dateIso}
       className={`relative w-full aspect-square min-h-0 max-h-[5.75rem] sm:max-h-[6.25rem] lg:max-h-[5.5rem] p-0.5 sm:p-1 border rounded-md text-left flex flex-col gap-0 scroll-mt-24 overflow-hidden
         transition-all duration-150 ease-out
@@ -159,9 +160,9 @@ function DayCell({
       ) : null}
     </button>
   );
-}
+});
 
-function MonthCalendarSection({
+const MonthCalendarSection = memo(function MonthCalendarSection({
   year,
   month,
   byDate,
@@ -179,6 +180,26 @@ function MonthCalendarSection({
   const grid = buildMonthGrid(year, month);
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const today = todayIsoDate();
+  const handleSelect = useCallback(
+    (dateIso: string) => {
+      const day = byDate.get(dateIso) ?? {
+        date: dateIso,
+        income_total: "0",
+        expense_total: "0",
+        transfer_total: "0",
+        net_total: "0",
+        ending_balance: "0",
+        lowest_balance: "0",
+        risk_level: "none" as const,
+        risk_reason: null,
+        has_risk: false,
+        heat_level: "neutral",
+        transactions: [],
+      };
+      onSelectDay(day);
+    },
+    [byDate, onSelectDay]
+  );
 
   return (
     <section className="scroll-mt-4 min-w-0">
@@ -206,23 +227,7 @@ function MonthCalendarSection({
                 isToday={dateIso === today}
                 isSelected={selectedDate === dateIso}
                 onSelectTransaction={onSelectTransaction}
-                onSelect={() => {
-                  const day = byDate.get(dateIso) ?? {
-                    date: dateIso,
-                    income_total: "0",
-                    expense_total: "0",
-                    transfer_total: "0",
-                    net_total: "0",
-                    ending_balance: "0",
-                    lowest_balance: "0",
-                    risk_level: "none" as const,
-                    risk_reason: null,
-                    has_risk: false,
-                    heat_level: "neutral",
-                    transactions: [],
-                  };
-                  onSelectDay(day);
-                }}
+                onSelect={handleSelect}
               />
             </div>
           ) : (
@@ -236,11 +241,14 @@ function MonthCalendarSection({
       </div>
     </section>
   );
-}
+});
 
 export default function TimelineCalendar({ data, selectedDate, onSelectDay, onSelectTransaction }: Props) {
-  const byDate = dayMap(data.days);
-  const months = monthsInRange(data.start_date, data.end_date);
+  const byDate = useMemo(() => dayMap(data.days), [data.days]);
+  const months = useMemo(
+    () => monthsInRange(data.start_date, data.end_date),
+    [data.start_date, data.end_date]
+  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-8 lg:gap-x-8 xl:gap-x-10">

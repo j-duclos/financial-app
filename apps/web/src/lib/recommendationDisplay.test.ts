@@ -140,9 +140,10 @@ describe("recommendationDisplay", () => {
     expect(recommendationActionLabel("Make payment")).toBe("Payment Planner");
   });
 
-  it("maps spending limit CTAs to view spending limits", () => {
-    expect(recommendationActionLabel("View goals", "/spending-goals")).toBe("View spending limits");
-    expect(recommendationActionLabel("Spending goals", "/spending-goals")).toBe("View spending limits");
+  it("maps spending limit CTAs to view budget", () => {
+    expect(recommendationActionLabel("View goals", "/spending-goals")).toBe("View budget");
+    expect(recommendationActionLabel("Spending goals", "/spending-goals")).toBe("View budget");
+    expect(recommendationActionLabel("View spending limits", "/spending-goals")).toBe("View budget");
     expect(recommendationActionLabel("View goals", "/goals")).toBe("View goals");
   });
 

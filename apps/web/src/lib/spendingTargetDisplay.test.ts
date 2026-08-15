@@ -4,6 +4,7 @@ import {
   SPENDING_TARGET_STATUS_LABELS,
   spendingTargetCommittedAmount,
   spendingTargetProgressPercent,
+  spendingTargetsRemainingFromSummary,
   SPENDING_GOALS_PATH,
   SPENDING_TARGETS_PATH,
 } from "./spendingTargetDisplay";
@@ -35,7 +36,7 @@ const metrics: SpendingTargetMetrics = {
 };
 
 describe("spendingTargetDisplay", () => {
-  it("uses spending limits route", () => {
+  it("uses spending limits route labeled as Budget", () => {
     expect(SPENDING_GOALS_PATH).toBe("/spending-goals");
     expect(SPENDING_TARGETS_PATH).toBe("/spending-goals");
   });
@@ -52,5 +53,15 @@ describe("spendingTargetDisplay", () => {
   it("includes scheduled amounts in committed total", () => {
     const withScheduled = { ...metrics, scheduled_in_period: "620", spent_so_far: "520" };
     expect(spendingTargetCommittedAmount(withScheduled)).toBeCloseTo(1140, 2);
+  });
+
+  it("derives remaining category budget from summary totals", () => {
+    expect(
+      spendingTargetsRemainingFromSummary({
+        total_monthly_targets: "1000",
+        spent_so_far_total: "400",
+        scheduled_in_period_total: "150",
+      })
+    ).toBeCloseTo(450, 2);
   });
 });

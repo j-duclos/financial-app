@@ -7,6 +7,10 @@ const recurringSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "Recurring.tsx"),
   "utf8"
 );
+const detailSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../components/recurring/RecurringDetailPanel.tsx"),
+  "utf8"
+);
 
 describe("Recurring page", () => {
   it("exports Recurring component", async () => {
@@ -38,5 +42,11 @@ describe("Recurring page", () => {
   it("pairs day sections in two columns on large screens", () => {
     expect(recurringSource).toMatch(/grid-cols-1 lg:grid-cols-2/);
     expect(recurringSource).toMatch(/groupRecurringItemsByDay/);
+  });
+
+  it("explains recurring versus rules and automation", () => {
+    expect(recurringSource).toMatch(/RECURRING_PAGE_INTRO/);
+    expect(recurringSource).toMatch(/AUTOMATION_PATH/);
+    expect(detailSource).toMatch(/Manage automation/);
   });
 });

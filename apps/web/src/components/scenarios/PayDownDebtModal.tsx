@@ -33,6 +33,7 @@ type Props = {
   rules: RecurringRule[];
   existingEvent?: ScenarioOneTimeEvent | null;
   existingOverride?: ScenarioRuleOverride | null;
+  initialDebtAccountId?: number | null;
   onClose: () => void;
   onSaved: () => void;
 };
@@ -75,6 +76,7 @@ export default function PayDownDebtModal({
   rules,
   existingEvent,
   existingOverride,
+  initialDebtAccountId,
   onClose,
   onSaved,
 }: Props) {
@@ -102,6 +104,7 @@ export default function PayDownDebtModal({
       existingEvent?.transfer_to_account_id ??
       existingOverride?.rule?.transfer_to_account?.id ??
       existingOverride?.rule?.transfer_to_account_id ??
+      initialDebtAccountId ??
       ""
   );
   const [amount, setAmount] = useState(existingEvent?.amount ?? "");

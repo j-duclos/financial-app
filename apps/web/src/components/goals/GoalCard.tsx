@@ -1,5 +1,4 @@
 import { Link } from "react-router-dom";
-import { formatCurrency } from "@budget-app/shared";
 import type { FinancialGoal } from "@budget-app/shared";
 import {
   GOAL_TYPE_ICONS,
@@ -15,6 +14,7 @@ import {
   paceStatusLabel,
 } from "../../lib/goalInsights";
 import GoalActionMenu from "./GoalActionMenu";
+import { whatIfGoalPath } from "../../lib/whatIfContext";
 
 type Props = {
   goal: FinancialGoal;
@@ -133,6 +133,12 @@ export default function GoalCard({
           >
             Quick forecast
           </button>
+          <Link
+            to={whatIfGoalPath(goal.id)}
+            className="px-3 py-1.5 text-sm font-medium text-blue-700 hover:underline"
+          >
+            Try in What-If
+          </Link>
         </div>
       )}
     </article>

@@ -20,7 +20,7 @@ export type RecommendationListEntry = {
 };
 
 import { normalizePaymentActionLabel, PAYMENT_PLANNER_LABEL } from "./paymentPlannerDisplay";
-import { SPENDING_GOALS_PATH, VIEW_SPENDING_LIMITS_LABEL } from "./spendingTargetDisplay";
+import { SPENDING_GOALS_PATH, VIEW_BUDGET_LABEL } from "./spendingTargetDisplay";
 
 /** Consistent CTA copy for credit-card payment planner navigation. */
 export const OPEN_PAYOFF_PLANNER_LABEL = PAYMENT_PLANNER_LABEL;
@@ -243,8 +243,12 @@ export function recommendationActionLabel(
   if (!label) return null;
   const trimmed = label.trim();
   if (actionUrl?.includes(SPENDING_GOALS_PATH)) {
-    if (/^(view goals|spending goals|view spending goals|spending limits|view spending limits)$/i.test(trimmed)) {
-      return VIEW_SPENDING_LIMITS_LABEL;
+    if (
+      /^(view goals|spending goals|view spending goals|spending limits|view spending limits|view budget|budget)$/i.test(
+        trimmed
+      )
+    ) {
+      return VIEW_BUDGET_LABEL;
     }
   }
   if (/^timeline$/i.test(trimmed)) return "Open calendar";

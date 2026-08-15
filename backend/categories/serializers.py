@@ -19,6 +19,10 @@ class CategorySerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "is_system", "created_at", "updated_at"]
+        extra_kwargs = {
+            "parent": {"required": False, "allow_null": True},
+        }
+        validators = []
 
     def validate_name(self, value):
         name = (value or "").strip()

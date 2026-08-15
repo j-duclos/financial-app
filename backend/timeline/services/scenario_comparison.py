@@ -1,6 +1,7 @@
 """Base vs scenario comparison metrics for the what-if sandbox."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Optional
@@ -13,7 +14,12 @@ from accounts.services.available_to_spend import (
     calculate_forecast_summaries_for_accounts,
     dashboard_safe_to_spend_aggregate,
 )
-from accounts.services.balances import compute_net_worth
+from accounts.services.account_health import (
+    build_account_health_context,
+    calculate_account_health_for_accounts,
+)
+from accounts.services.balances import bulk_signed_ledger_balances, compute_net_worth
+from common.services.forecast_horizon import snap_span_to_forecast_days
 from core.utils import get_households_for_user
 from timeline.models import (
     RecurringRule,
@@ -59,6 +65,49 @@ def _decimal(val) -> Decimal:
     return Decimal(str(val))
 
 
+@dataclass
+class ScenarioComparisonContext:
+    """Precomputed What-If state. Downstream metrics must reuse these objects."""
+
+    user: Any
+    scenario: Scenario
+    as_of_date: date
+    horizon: str
+    horizon_days: int
+    sts_days: int
+    end_date: date
+    household_id: int | None
+    households: Any
+    household_ids: list[int]
+    accounts: list[Account]
+    account_by_id: dict[int, Account]
+    forecastable_ids: set[int]
+    cash_ids: set[int]
+    all_affected: set[int]
+    cash_affected: set[int]
+    credit_affected: set[int]
+    overrides: list
+    one_time_events: list
+    added_recurring: list
+    category_shocks: list
+    base_rows: list[dict]
+    scenario_rows: list[dict]
+    base_calendar: dict[str, Any]
+    scenario_calendar: dict[str, Any]
+    base_forecasts_by_account: dict[int, dict[str, Any]]
+    scenario_forecasts_by_account: dict[int, dict[str, Any]]
+    base_sts: dict[str, Any]
+    scenario_sts: dict[str, Any]
+    base_ending_balance_by_account: dict[int, Decimal]
+    scenario_ending_balance_by_account: dict[int, Decimal]
+    signed_balances: dict[int, Decimal]
+    net_worth_after_horizon: Decimal
+    base_health_by_account: dict[int, dict[str, Any]] = field(default_factory=dict)
+    scenario_health_by_account: dict[int, dict[str, Any]] = field(default_factory=dict)
+    recurring_rules: list = field(default_factory=list)
+    rules_by_id: dict[int, Any] = field(default_factory=dict)
+
+
 def _cash_account_ids(accounts: list[Account]) -> set[int]:
     return {
         a.id
@@ -67,11 +116,68 @@ def _cash_account_ids(accounts: list[Account]) -> set[int]:
     }
 
 
+def build_ending_balance_map(rows: list[dict]) -> dict[int, Decimal]:
+    """Last running_balance per account (one reverse pass)."""
+    result: dict[int, Decimal] = {}
+    for row in reversed(rows):
+        aid = row.get("account_id")
+        if aid is None or aid in result:
+            continue
+        result[int(aid)] = _decimal(row.get("running_balance"))
+    return result
+
+
+def _fill_ending_map_from_signed(
+    ending: dict[int, Decimal],
+    accounts: list[Account],
+    signed_balances: dict[int, Decimal],
+) -> dict[int, Decimal]:
+    """Accounts with no timeline rows keep today's ledger balance through the horizon."""
+    filled = dict(ending)
+    for acc in accounts:
+        if acc.id not in filled:
+            filled[acc.id] = signed_balances.get(acc.id, Decimal("0"))
+    return filled
+
+
+def _credit_owed_from_signed(balance: Decimal) -> Decimal:
+    return abs(min(balance, Decimal("0")))
+
+
+def _load_scenario_changes(scenario: Scenario) -> tuple[list, list, list, list]:
+    overrides = list(
+        ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
+            "rule", "rule__account", "rule__category", "override_account"
+        )
+    )
+    events = list(
+        ScenarioOneTimeEvent.objects.filter(scenario=scenario).select_related(
+            "account", "transfer_to_account", "category"
+        )
+    )
+    added = list(
+        ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
+            "account", "transfer_to_account", "category"
+        )
+    )
+    shocks = list(
+        ScenarioCategoryShock.objects.filter(scenario=scenario).select_related("category")
+    )
+    return overrides, events, added, shocks
+
+
 def _affected_accounts_from_scenario(
     scenario: Scenario,
     accounts_by_id: dict[int, Account],
+    *,
+    overrides: list | None = None,
+    events: list | None = None,
+    added: list | None = None,
+    shocks: list | None = None,
 ) -> tuple[set[int], set[int], set[int]]:
     """Return (all_affected, cash_affected, credit_affected) account ids."""
+    if overrides is None or events is None or added is None or shocks is None:
+        overrides, events, added, shocks = _load_scenario_changes(scenario)
     all_affected: set[int] = set()
     cash_affected: set[int] = set()
     credit_affected: set[int] = set()
@@ -88,32 +194,25 @@ def _affected_accounts_from_scenario(
         elif account_supports_available_to_spend(acc):
             cash_affected.add(aid)
 
-    for ov in ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
-        "rule", "rule__account", "override_account"
-    ):
+    for ov in overrides:
         rule = ov.rule
         _classify(ov.override_account_id or rule.account_id)
         if rule.transfer_to_account_id:
             _classify(rule.transfer_to_account_id)
-            # Transfer rules: the source account pays — only cash-affected if amount/active changed.
             if ov.override_amount is not None or ov.override_active is not None:
                 _classify(rule.account_id)
 
-    for ev in ScenarioOneTimeEvent.objects.filter(scenario=scenario).select_related(
-        "account", "transfer_to_account"
-    ):
+    for ev in events:
         _classify(ev.account_id)
         if ev.transfer_to_account_id:
             _classify(ev.transfer_to_account_id)
 
-    for added in ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
-        "account", "transfer_to_account"
-    ):
-        _classify(added.account_id)
-        if added.transfer_to_account_id:
-            _classify(added.transfer_to_account_id)
+    for rec in added:
+        _classify(rec.account_id)
+        if rec.transfer_to_account_id:
+            _classify(rec.transfer_to_account_id)
 
-    if ScenarioCategoryShock.objects.filter(scenario=scenario).exists():
+    if shocks:
         for aid, acc in accounts_by_id.items():
             if account_supports_available_to_spend(acc):
                 cash_affected.add(aid)
@@ -150,10 +249,8 @@ def _first_problem_date_from_calendar(
     return str(risk) if risk else None
 
 
-def _affected_rule_ids(scenario: Scenario) -> set[int]:
-    return set(
-        ScenarioRuleOverride.objects.filter(scenario=scenario).values_list("rule_id", flat=True)
-    )
+def _affected_rule_ids_from_overrides(overrides: list) -> set[int]:
+    return {ov.rule_id for ov in overrides if ov.rule_id is not None}
 
 
 def _compute_traceable_credit_charge_delta(
@@ -161,13 +258,17 @@ def _compute_traceable_credit_charge_delta(
     forecast_change_groups: list[dict[str, Any]],
     scenario: Scenario,
     credit_affected: set[int],
+    *,
+    overrides: list | None = None,
 ) -> dict[str, Any]:
     """
     Sum subscription/bill deltas on credit accounts from user-edited rules only.
     Excludes interest and aggregate ending-balance effects so the UI math matches
     (per-occurrence delta × occurrence count).
     """
-    affected_rules = _affected_rule_ids(scenario)
+    if overrides is None:
+        overrides = list(ScenarioRuleOverride.objects.filter(scenario=scenario).only("rule_id"))
+    affected_rules = _affected_rule_ids_from_overrides(overrides)
     total = Decimal("0")
     occurrence_count = 0
     per_occurrence = Decimal("0")
@@ -223,8 +324,8 @@ def _amount_str(val) -> str:
     return str(_decimal(val).quantize(Decimal("0.01")))
 
 
-def _ending_cash(
-    rows: list[dict],
+def _ending_cash_from_map(
+    ending_by_account: dict[int, Decimal],
     accounts: list[Account],
     scope_account_ids: set[int] | None = None,
 ) -> Decimal:
@@ -240,12 +341,15 @@ def _ending_cash(
     }
     if scope_account_ids:
         cash_ids &= scope_account_ids
-    last_by_account: dict[int, Decimal] = {}
-    for r in rows:
-        aid = r.get("account_id")
-        if aid in cash_ids:
-            last_by_account[aid] = _decimal(r.get("running_balance"))
-    return sum(last_by_account.values(), Decimal("0"))
+    return sum((ending_by_account.get(aid, Decimal("0")) for aid in cash_ids), Decimal("0"))
+
+
+def _ending_cash(
+    rows: list[dict],
+    accounts: list[Account],
+    scope_account_ids: set[int] | None = None,
+) -> Decimal:
+    return _ending_cash_from_map(build_ending_balance_map(rows), accounts, scope_account_ids)
 
 
 def _account_type_balance(rows: list[dict], account_type: str) -> Decimal:
@@ -258,32 +362,27 @@ def _account_type_balance(rows: list[dict], account_type: str) -> Decimal:
     return sum(last.values(), Decimal("0"))
 
 
-def _enrich_rows_with_account_type(rows: list[dict], accounts_by_id: dict[int, Account]) -> list[dict]:
-    out = []
-    for r in rows:
-        row = dict(r)
-        acc = accounts_by_id.get(row.get("account_id"))
-        if acc:
-            row["account_type"] = acc.account_type
-        out.append(row)
-    return out
-
-
 def _ending_credit_owed_on_account(rows: list[dict], account_id: int) -> Decimal | None:
     """Balance owed at end of projected rows (credit running_balance ≤ 0)."""
-    for r in reversed(rows):
-        if r.get("account_id") == account_id:
-            bal = _decimal(r.get("running_balance"))
-            return abs(min(bal, Decimal("0")))
-    return None
+    ending = build_ending_balance_map(rows)
+    if account_id not in ending:
+        return None
+    return _credit_owed_from_signed(ending[account_id])
 
 
 def _credit_utilization_at_horizon(
     base_rows: list[dict],
     scenario_rows: list[dict],
     accounts: list[Account],
+    *,
+    base_ending: dict[int, Decimal] | None = None,
+    scenario_ending: dict[int, Decimal] | None = None,
 ) -> list[dict[str, Any]]:
     """Per-card utilization at end of the comparison horizon (base vs scenario)."""
+    if base_ending is None:
+        base_ending = build_ending_balance_map(base_rows)
+    if scenario_ending is None:
+        scenario_ending = build_ending_balance_map(scenario_rows)
     out: list[dict[str, Any]] = []
     for acc in accounts:
         if acc.account_type != Account.AccountType.CREDIT:
@@ -291,8 +390,10 @@ def _credit_utilization_at_horizon(
         limit = _decimal(acc.credit_limit or 0)
         if limit <= 0:
             continue
-        base_owed = _ending_credit_owed_on_account(base_rows, acc.id) or Decimal("0")
-        scenario_owed = _ending_credit_owed_on_account(scenario_rows, acc.id) or Decimal("0")
+        if acc.id not in base_ending and acc.id not in scenario_ending:
+            continue
+        base_owed = _credit_owed_from_signed(base_ending.get(acc.id, Decimal("0")))
+        scenario_owed = _credit_owed_from_signed(scenario_ending.get(acc.id, Decimal("0")))
         if abs(base_owed - scenario_owed) < Decimal("0.01"):
             continue
         base_util = (base_owed / limit * Decimal("100")).quantize(Decimal("0.1"))
@@ -311,52 +412,51 @@ def _credit_utilization_at_horizon(
     return out
 
 
+def _credit_debt_from_ending_map(
+    ending_by_account: dict[int, Decimal],
+    accounts: list[Account],
+) -> Decimal:
+    total = Decimal("0")
+    for acc in accounts:
+        if acc.account_type != Account.AccountType.CREDIT or acc.id not in ending_by_account:
+            continue
+        total += _credit_owed_from_signed(ending_by_account[acc.id])
+    return total
+
+
+def _savings_from_ending_map(
+    ending_by_account: dict[int, Decimal],
+    accounts: list[Account],
+) -> Decimal:
+    total = Decimal("0")
+    for acc in accounts:
+        if acc.account_type != Account.AccountType.SAVINGS or acc.id not in ending_by_account:
+            continue
+        total += max(ending_by_account[acc.id], Decimal("0"))
+    return total
+
+
+def _net_worth_accounts(accounts: list[Account]) -> list[Account]:
+    statuses = {Account.Status.ACTIVE, Account.Status.ARCHIVED, Account.Status.CLOSED}
+    return [
+        acc
+        for acc in accounts
+        if acc.preserve_in_net_worth or acc.status in statuses
+    ]
+
+
 def _metrics_from_calendar(
     calendar: dict[str, Any],
-    rows: list[dict],
-    accounts: list[Account],
-    user,
+    *,
     today: date,
-    end_date: date,
+    ending_cash: Decimal,
+    credit_debt: Decimal,
+    savings: Decimal,
+    net_worth: Decimal,
+    sts: dict[str, Any],
 ) -> dict[str, Any]:
     summary = calendar.get("summary") or {}
-    accounts_by_id = {a.id: a for a in accounts}
-    enriched = _enrich_rows_with_account_type(rows, accounts_by_id)
-
-    forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
-    horizon_days = max((end_date - today).days, 7)
-    forecasts = calculate_forecast_summaries_for_accounts(
-        user, forecast_accounts, as_of_date=today, days=min(horizon_days, 90)
-    )
-    sts = dashboard_safe_to_spend_aggregate(
-        accounts_by_id,
-        user=user,
-        forecast_summaries=forecasts,
-    )
-
     risk_days, first_risk_date, last_risk_date = _risk_date_span(calendar, today)
-
-    credit_debt = Decimal("0")
-    savings = Decimal("0")
-    for a in accounts:
-        bal = None
-        for r in reversed(enriched):
-            if r.get("account_id") == a.id:
-                bal = _decimal(r.get("running_balance"))
-                break
-        if bal is None:
-            continue
-        if a.account_type == Account.AccountType.CREDIT:
-            credit_debt += abs(min(bal, Decimal("0")))
-        elif a.account_type == Account.AccountType.SAVINGS:
-            savings += max(bal, Decimal("0"))
-
-    net_worth_accounts = list(
-        Account.objects.for_net_worth().filter(
-            pk__in=[a.id for a in accounts], is_hidden=False
-        )
-    )
-    net_worth = compute_net_worth(net_worth_accounts, end_date)
 
     transfer_total = _decimal(summary.get("total_transfers") if "total_transfers" in summary else None)
     if transfer_total == 0:
@@ -366,7 +466,7 @@ def _metrics_from_calendar(
         )
 
     return {
-        "ending_cash": str(_ending_cash(enriched, accounts).quantize(Decimal("0.01"))),
+        "ending_cash": str(ending_cash.quantize(Decimal("0.01"))),
         "lowest_projected_balance": summary.get("lowest_balance"),
         "lowest_projected_balance_date": summary.get("lowest_balance_date"),
         "safe_to_spend": sts.get("total_safe_to_spend"),
@@ -490,6 +590,8 @@ def _compute_forecast_changes(
     scenario_rows: list[dict],
     accounts: list[Account],
     today: date,
+    *,
+    rules_by_id: dict[int, RecurringRule] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     accounts_by_id = {a.id: a for a in accounts}
     base_index = _index_rows_by_key(_future_forecast_rows(base_rows, today))
@@ -529,7 +631,15 @@ def _compute_forecast_changes(
     rule_ids = {c["rule_id"] for c in changes if c.get("rule_id") is not None}
     rule_meta: dict[int, RecurringRule] = {}
     if rule_ids:
-        rule_meta = {r.id: r for r in RecurringRule.objects.filter(pk__in=rule_ids)}
+        if rules_by_id is not None:
+            rule_meta = {rid: rules_by_id[rid] for rid in rule_ids if rid in rules_by_id}
+            missing = rule_ids - set(rule_meta)
+            if missing:
+                rule_meta.update(
+                    {r.id: r for r in RecurringRule.objects.filter(pk__in=missing)}
+                )
+        else:
+            rule_meta = {r.id: r for r in RecurringRule.objects.filter(pk__in=rule_ids)}
 
     groups_by_rule: dict[int, list[dict]] = {}
     standalone: list[dict] = []
@@ -637,10 +747,16 @@ def _compute_risk_explanation(
     accounts: list[Account],
     today: date,
     end_date: date,
+    *,
+    cash_affected: set[int] | None = None,
+    credit_affected: set[int] | None = None,
 ) -> dict[str, Any]:
     accounts_by_id = {a.id: a for a in accounts}
     cash_ids = _cash_account_ids(accounts)
-    _, cash_affected, credit_affected = _affected_accounts_from_scenario(scenario, accounts_by_id)
+    if cash_affected is None or credit_affected is None:
+        _, cash_affected, credit_affected = _affected_accounts_from_scenario(
+            scenario, accounts_by_id
+        )
 
     credit_only = bool(credit_affected) and not cash_affected
 
@@ -781,34 +897,68 @@ def _delta(base_val, scenario_val, key: str) -> Optional[str]:
     return str((s - b).quantize(Decimal("0.01")))
 
 
-def build_scenario_comparison(
+def build_scenario_comparison_context(
     user,
     scenario_id: int,
     *,
     horizon: str = "12m",
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
-) -> dict[str, Any]:
+) -> ScenarioComparisonContext:
+    """Load DB once, build one base timeline, derive one scenario timeline, reuse both."""
     today = as_of_date or timezone.localdate()
     end_date = _horizon_to_end(today, horizon)
-    households = get_households_for_user(user)
+    horizon_days = max((end_date - today).days, 7)
+    sts_days = snap_span_to_forecast_days(min(horizon_days, 90))
+
+    households_qs = get_households_for_user(user)
     if household_id:
-        households = households.filter(pk=household_id)
-    scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
+        households_qs = households_qs.filter(pk=household_id)
+    households = list(households_qs)
+    household_ids = [h.id for h in households]
+
+    scenario = Scenario.objects.filter(household_id__in=household_ids, pk=scenario_id).first()
     if not scenario:
         raise ValueError("Scenario not found")
 
     accounts = list(
-        Account.objects.filter(household_id=scenario.household_id, is_hidden=False).order_by("name")
+        Account.objects.filter(household_id=scenario.household_id, is_hidden=False)
+        .select_related("household")
+        .order_by("name")
     )
-    accounts_by_id = {a.id: a for a in accounts}
-    _, cash_affected, _ = _affected_accounts_from_scenario(scenario, accounts_by_id)
+    account_by_id = {a.id: a for a in accounts}
+    forecastable_ids = {a.id for a in accounts if a.participates_in_forecast()}
+    cash_ids = _cash_account_ids(accounts)
+    forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
+
+    overrides, one_time_events, added_recurring, category_shocks = _load_scenario_changes(scenario)
+    all_affected, cash_affected, credit_affected = _affected_accounts_from_scenario(
+        scenario,
+        account_by_id,
+        overrides=overrides,
+        events=one_time_events,
+        added=added_recurring,
+        shocks=category_shocks,
+    )
     # Scope calendar to the one cash account this plan touches (matches Transactions ledger view).
     calendar_account_id = next(iter(cash_affected)) if len(cash_affected) == 1 else None
 
-    forecastable_ids = {a.id for a in accounts if a.participates_in_forecast()}
+    signed_balances = bulk_signed_ledger_balances(accounts, today)
+    nw_accounts = _net_worth_accounts(accounts)
+    nw_balances = bulk_signed_ledger_balances(nw_accounts, end_date)
+    net_worth_after_horizon = compute_net_worth(
+        nw_accounts, end_date, balance_by_account=nw_balances
+    )
 
-    # Base = real forecast ledger (same as Transactions). Scenario = patch that ledger.
+    household_rules = list(
+        RecurringRule.objects.filter(household_id=scenario.household_id).select_related(
+            "account", "transfer_to_account", "category"
+        )
+    )
+    rules_by_id = {r.id: r for r in household_rules}
+    recurring_rules = [r for r in household_rules if r.active]
+
+    # projection_only: comparison GET must not materialize planned rows into Transactions.
     base_rows = build_timeline(
         user,
         start_date=today,
@@ -816,7 +966,8 @@ def build_scenario_comparison(
         scenario_id=None,
         household_id=household_id or scenario.household_id,
         as_of_date=today,
-        projection_only=False,
+        projection_only=True,
+        caller="scenario_comparison_base",
     )
     base_rows = dedupe_future_rule_occurrence_rows(base_rows, today)
 
@@ -826,43 +977,160 @@ def build_scenario_comparison(
         today=today,
         end_date=end_date,
         forecastable_account_ids=forecastable_ids,
+        accounts_by_id=account_by_id,
+        overrides=overrides,
+        one_time_events=one_time_events,
+        added_recurring=added_recurring,
+        category_shocks=category_shocks,
     )
 
-    base_calendar = build_timeline_calendar(
-        user,
+    calendar_kwargs = dict(
         start_date=today,
         end_date=end_date,
         scenario_id=None,
         account_id=calendar_account_id,
         household_id=household_id or scenario.household_id,
         as_of_date=today,
+    )
+    base_calendar = build_timeline_calendar(user, timeline_rows=base_rows, **calendar_kwargs)
+    scenario_calendar = build_timeline_calendar(
+        user, timeline_rows=scenario_rows, **calendar_kwargs
+    )
+
+    base_ending = _fill_ending_map_from_signed(
+        build_ending_balance_map(base_rows), accounts, signed_balances
+    )
+    scenario_ending = _fill_ending_map_from_signed(
+        build_ending_balance_map(scenario_rows), accounts, signed_balances
+    )
+
+    base_forecasts = calculate_forecast_summaries_for_accounts(
+        user,
+        forecast_accounts,
+        as_of_date=today,
+        days=sts_days,
         timeline_rows=base_rows,
     )
-    scenario_calendar = build_timeline_calendar(
+    scenario_forecasts = calculate_forecast_summaries_for_accounts(
         user,
-        start_date=today,
-        end_date=end_date,
-        scenario_id=None,
-        account_id=calendar_account_id,
-        household_id=household_id or scenario.household_id,
+        forecast_accounts,
         as_of_date=today,
+        days=sts_days,
         timeline_rows=scenario_rows,
     )
-
-    base_m = _metrics_from_calendar(base_calendar, base_rows, accounts, user, today, end_date)
-    scenario_m = _metrics_from_calendar(scenario_calendar, scenario_rows, accounts, user, today, end_date)
-
-    ending_scope = cash_affected if cash_affected else None
-    base_m["ending_cash"] = str(
-        _ending_cash(base_rows, accounts, ending_scope).quantize(Decimal("0.01"))
+    base_sts = dashboard_safe_to_spend_aggregate(
+        account_by_id,
+        user=user,
+        forecast_summaries=base_forecasts,
+        timeline_rows=base_rows,
+        as_of_date=today,
+        days=sts_days,
     )
-    scenario_m["ending_cash"] = str(
-        _ending_cash(scenario_rows, accounts, ending_scope).quantize(Decimal("0.01"))
+    scenario_sts = dashboard_safe_to_spend_aggregate(
+        account_by_id,
+        user=user,
+        forecast_summaries=scenario_forecasts,
+        timeline_rows=scenario_rows,
+        as_of_date=today,
+        days=sts_days,
     )
 
-    metric_keys = list(base_m.keys())
+    health_support = build_account_health_context(
+        accounts, today=today, signed_balances=signed_balances
+    )
+    base_health = calculate_account_health_for_accounts(
+        user,
+        accounts,
+        as_of_date=today,
+        days=sts_days,
+        timeline_rows=base_rows,
+        forecast_summaries=base_forecasts,
+        context=health_support,
+    )
+    scenario_health = calculate_account_health_for_accounts(
+        user,
+        accounts,
+        as_of_date=today,
+        days=sts_days,
+        timeline_rows=scenario_rows,
+        forecast_summaries=scenario_forecasts,
+        context=health_support,
+    )
+
+    return ScenarioComparisonContext(
+        user=user,
+        scenario=scenario,
+        as_of_date=today,
+        horizon=horizon,
+        horizon_days=horizon_days,
+        sts_days=sts_days,
+        end_date=end_date,
+        household_id=household_id or scenario.household_id,
+        households=households,
+        household_ids=household_ids,
+        accounts=accounts,
+        account_by_id=account_by_id,
+        forecastable_ids=forecastable_ids,
+        cash_ids=cash_ids,
+        all_affected=all_affected,
+        cash_affected=cash_affected,
+        credit_affected=credit_affected,
+        overrides=overrides,
+        one_time_events=one_time_events,
+        added_recurring=added_recurring,
+        category_shocks=category_shocks,
+        base_rows=base_rows,
+        scenario_rows=scenario_rows,
+        base_calendar=base_calendar,
+        scenario_calendar=scenario_calendar,
+        base_forecasts_by_account=base_forecasts,
+        scenario_forecasts_by_account=scenario_forecasts,
+        base_sts=base_sts,
+        scenario_sts=scenario_sts,
+        base_ending_balance_by_account=base_ending,
+        scenario_ending_balance_by_account=scenario_ending,
+        signed_balances=signed_balances,
+        net_worth_after_horizon=net_worth_after_horizon,
+        base_health_by_account=base_health,
+        scenario_health_by_account=scenario_health,
+        recurring_rules=recurring_rules,
+        rules_by_id=rules_by_id,
+    )
+
+
+def serialize_scenario_comparison(ctx: ScenarioComparisonContext) -> dict[str, Any]:
+    ending_scope = ctx.cash_affected if ctx.cash_affected else None
+    base_m = _metrics_from_calendar(
+        ctx.base_calendar,
+        today=ctx.as_of_date,
+        ending_cash=_ending_cash_from_map(
+            ctx.base_ending_balance_by_account, ctx.accounts, ending_scope
+        ),
+        credit_debt=_credit_debt_from_ending_map(
+            ctx.base_ending_balance_by_account, ctx.accounts
+        ),
+        savings=_savings_from_ending_map(ctx.base_ending_balance_by_account, ctx.accounts),
+        net_worth=ctx.net_worth_after_horizon,
+        sts=ctx.base_sts,
+    )
+    scenario_m = _metrics_from_calendar(
+        ctx.scenario_calendar,
+        today=ctx.as_of_date,
+        ending_cash=_ending_cash_from_map(
+            ctx.scenario_ending_balance_by_account, ctx.accounts, ending_scope
+        ),
+        credit_debt=_credit_debt_from_ending_map(
+            ctx.scenario_ending_balance_by_account, ctx.accounts
+        ),
+        savings=_savings_from_ending_map(
+            ctx.scenario_ending_balance_by_account, ctx.accounts
+        ),
+        net_worth=ctx.net_worth_after_horizon,
+        sts=ctx.scenario_sts,
+    )
+
     comparison: dict[str, Any] = {}
-    for key in metric_keys:
+    for key in base_m:
         comparison[key] = {
             "base": base_m[key],
             "scenario": scenario_m[key],
@@ -871,27 +1139,31 @@ def build_scenario_comparison(
 
     verdict = _build_verdict(comparison)
     forecast_changes, forecast_change_groups = _compute_forecast_changes(
-        base_rows, scenario_rows, accounts, today
+        ctx.base_rows,
+        ctx.scenario_rows,
+        ctx.accounts,
+        ctx.as_of_date,
+        rules_by_id=ctx.rules_by_id,
     )
     risk_explanation = _compute_risk_explanation(
-        base_calendar,
-        scenario_calendar,
-        base_rows,
-        scenario_rows,
-        scenario,
-        accounts,
-        today,
-        end_date,
-    )
-    _, _, credit_affected = _affected_accounts_from_scenario(
-        scenario, {a.id: a for a in accounts}
+        ctx.base_calendar,
+        ctx.scenario_calendar,
+        ctx.base_rows,
+        ctx.scenario_rows,
+        ctx.scenario,
+        ctx.accounts,
+        ctx.as_of_date,
+        ctx.end_date,
+        cash_affected=ctx.cash_affected,
+        credit_affected=ctx.credit_affected,
     )
     risk_explanation.update(
         _compute_traceable_credit_charge_delta(
             forecast_changes,
             forecast_change_groups,
-            scenario,
-            credit_affected,
+            ctx.scenario,
+            ctx.credit_affected,
+            overrides=ctx.overrides,
         )
     )
 
@@ -902,22 +1174,28 @@ def build_scenario_comparison(
             or 0
         )
         base_low_val = _decimal(
-            risk_explanation.get("base_lowest_balance") or base_m.get("lowest_projected_balance") or 0
+            risk_explanation.get("base_lowest_balance")
+            or base_m.get("lowest_projected_balance")
+            or 0
         )
         if scenario_low_val >= base_low_val - Decimal("0.01"):
             risk_explanation["is_risky"] = False
             risk_explanation["first_problem_date"] = None
 
     credit_utilization_at_horizon = _credit_utilization_at_horizon(
-        base_rows, scenario_rows, accounts
+        ctx.base_rows,
+        ctx.scenario_rows,
+        ctx.accounts,
+        base_ending=ctx.base_ending_balance_by_account,
+        scenario_ending=ctx.scenario_ending_balance_by_account,
     )
 
     return {
-        "scenario_id": scenario_id,
-        "scenario_name": scenario.name,
-        "horizon": horizon,
-        "start_date": today.isoformat(),
-        "end_date": end_date.isoformat(),
+        "scenario_id": ctx.scenario.id,
+        "scenario_name": ctx.scenario.name,
+        "horizon": ctx.horizon,
+        "start_date": ctx.as_of_date.isoformat(),
+        "end_date": ctx.end_date.isoformat(),
         "metrics": comparison,
         "summary": verdict,
         "forecast_changes": forecast_changes,
@@ -925,6 +1203,24 @@ def build_scenario_comparison(
         "risk_explanation": risk_explanation,
         "credit_utilization_at_horizon": credit_utilization_at_horizon,
     }
+
+
+def build_scenario_comparison(
+    user,
+    scenario_id: int,
+    *,
+    horizon: str = "12m",
+    household_id: Optional[int] = None,
+    as_of_date: Optional[date] = None,
+) -> dict[str, Any]:
+    ctx = build_scenario_comparison_context(
+        user,
+        scenario_id,
+        horizon=horizon,
+        household_id=household_id,
+        as_of_date=as_of_date,
+    )
+    return serialize_scenario_comparison(ctx)
 
 
 def _build_verdict(comparison: dict[str, Any]) -> dict[str, Any]:

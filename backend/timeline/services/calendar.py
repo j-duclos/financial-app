@@ -13,11 +13,14 @@ from typing import Any, Optional
 
 from accounts.models import Account
 from accounts.services.available_to_spend import (
+    ALLOWED_FORECAST_DAYS,
     RISK_STATUS_CRITICAL,
     RISK_STATUS_RISK,
     _decimal,
     account_supports_available_to_spend,
+    calculate_forecast_summaries_for_accounts,
 )
+from accounts.services.balances import bulk_signed_ledger_balances
 from core.utils import get_households_for_user
 from insights.services.dashboard_summary import _classify_timeline_kind
 from insights.services.dashboard_upcoming import (
@@ -45,7 +48,6 @@ from insights.services.day_lowest_balance import (
 )
 from insights.services.day_recovery import attach_recovery_to_days
 from timeline.services.ledger import (
-    _balance_at_end_of_date,
     build_timeline,
     is_superseded_planned_row,
     timeline_row_process_order,
@@ -113,8 +115,16 @@ def _timeline_row_to_event(
     }
 
 
-def _rows_for_account(rows: list[dict], account_id: int) -> list[dict]:
-    return [r for r in rows if r.get("account_id") == account_id]
+def _index_rows_by_account_date(rows: list[dict]) -> dict[tuple[int, date], list[dict]]:
+    """Group original timeline rows by account and calendar date (one pass)."""
+    indexed: dict[tuple[int, date], list[dict]] = defaultdict(list)
+    for row in rows:
+        account_id = row.get("account_id")
+        row_date = _parse_date(row.get("date"))
+        if account_id is None or row_date is None:
+            continue
+        indexed[(int(account_id), row_date)].append(row)
+    return indexed
 
 
 def _effective_buffer(account_id: int | None, accounts_by_id: dict[int, Account], cash_ids: list[int]) -> Decimal:
@@ -135,6 +145,14 @@ def _cash_account_ids(accounts: list[Account]) -> list[int]:
         for a in accounts
         if a.participates_in_forecast() and account_supports_available_to_spend(a)
     ]
+
+
+def _calendar_forecast_horizon_days(today: date, end_date: date) -> int:
+    """Clamp to the batch-forecast allow-list (same 7–90 window as before)."""
+    raw = min(max((end_date - today).days, 7), 90)
+    if raw in ALLOWED_FORECAST_DAYS:
+        return raw
+    return min(ALLOWED_FORECAST_DAYS, key=lambda d: (abs(d - raw), -d))
 
 
 def build_timeline_calendar(
@@ -170,13 +188,16 @@ def build_timeline_calendar(
     if account_id is not None:
         rows = [r for r in rows if r.get("account_id") == account_id]
 
-    households = get_households_for_user(user)
+    households = list(get_households_for_user(user))
+    household_ids = [h.id for h in households]
     if household_id:
-        accounts = list(
-            Account.objects.filter(household_id=household_id).order_by("name")
-        )
-    else:
-        accounts = list(Account.objects.filter(household__in=households).order_by("name"))
+        household_ids = [household_id] if household_id in household_ids else []
+        households = [h for h in households if h.id in household_ids]
+    accounts = list(
+        Account.objects.filter(household_id__in=household_ids)
+        .select_related("household")
+        .order_by("name")
+    )
     accounts_by_id = {a.id: a for a in accounts}
     cash_ids = _cash_account_ids(accounts)
     if account_id is not None:
@@ -185,11 +206,12 @@ def build_timeline_calendar(
         scope_ids = cash_ids
 
     transfer_rule_ids, transfer_rule_targets, transfer_rule_sources = load_transfer_rule_context(
-        households
+        households, household_ids=household_ids
     )
 
-    # Normalize row dates and filter superseded planned rows per account
-    by_date_account_rows: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    rows_by_account_date = _index_rows_by_account_date(rows)
+
+    # Normalize row dates and filter superseded planned rows using per-account/date indexes
     by_date_all: dict[str, list[dict]] = defaultdict(list)
 
     for row in rows:
@@ -197,25 +219,19 @@ def build_timeline_calendar(
         if rd is None or rd < start_date or rd > end_date:
             continue
         date_iso = rd.isoformat()
-        row = dict(row)
-        row["date"] = date_iso
         aid = row.get("account_id")
-        account_rows = _rows_for_account(rows, aid) if aid else []
+        account_rows = (
+            rows_by_account_date.get((int(aid), rd), []) if aid is not None else []
+        )
         if aid and is_superseded_planned_row(row, account_rows):
             continue
+        row = dict(row)
+        row["date"] = date_iso
         by_date_all[date_iso].append(row)
-        if aid:
-            by_date_account_rows[(date_iso, aid)].append(row)
 
-    # Opening balances at start of range (day before start for carry-forward)
-    opening: dict[int, Decimal] = {}
-    for aid in scope_ids:
-        try:
-            opening[aid] = _balance_at_end_of_date(aid, start_date - timedelta(days=1))
-        except Exception:
-            opening[aid] = _decimal(
-                accounts_by_id[aid].starting_balance if aid in accounts_by_id else 0
-            )
+    opening_as_of = start_date - timedelta(days=1)
+    scope_accounts = [accounts_by_id[aid] for aid in scope_ids if aid in accounts_by_id]
+    opening = bulk_signed_ledger_balances(scope_accounts, opening_as_of) if scope_accounts else {}
 
     buffer = _effective_buffer(account_id, accounts_by_id, cash_ids)
 
@@ -266,6 +282,7 @@ def build_timeline_calendar(
             events.append(
                 {
                     "id": txn.get("id"),
+                    "date": date_iso,
                     "account_id": aid,
                     "description": txn.get("description"),
                     "account_name": txn.get("account_name"),
@@ -280,6 +297,11 @@ def build_timeline_calendar(
                     "cleared": bool(row.get("cleared")),
                     "balance_after": txn.get("balance_after"),
                     "is_transfer": txn.get("is_transfer", False),
+                    "is_internal_transfer": bool(txn.get("is_internal_transfer")),
+                    "is_credit_card_payment": bool(txn.get("is_credit_card_payment")),
+                    "risk_flag": bool(txn.get("risk_flag")),
+                    "transfer_from_account_name": txn.get("transfer_from_account_name"),
+                    "transfer_to_account_name": txn.get("transfer_to_account_name"),
                 }
             )
 
@@ -476,22 +498,19 @@ def build_timeline_calendar(
 
     risky_accounts: list[dict[str, Any]] = []
     if account_id is None and cash_ids:
-        from accounts.services.available_to_spend import calculate_account_forecast_summary
-
-        horizon_days = (end_date - today).days
+        horizon_days = _calendar_forecast_horizon_days(today, end_date)
+        cash_accounts = [accounts_by_id[aid] for aid in cash_ids if aid in accounts_by_id]
+        forecasts = calculate_forecast_summaries_for_accounts(
+            user,
+            cash_accounts,
+            as_of_date=today,
+            days=horizon_days,
+            timeline_rows=rows,
+        )
         for aid in cash_ids:
             acc = accounts_by_id.get(aid)
-            if not acc:
-                continue
-            try:
-                summary = calculate_account_forecast_summary(
-                    user,
-                    acc,
-                    as_of_date=today,
-                    days=min(max(horizon_days, 7), 90),
-                    timeline_rows=rows,
-                )
-            except Exception:
+            summary = forecasts.get(aid)
+            if not acc or not summary:
                 continue
             status = summary.get("risk_status")
             if status in (RISK_STATUS_CRITICAL, RISK_STATUS_RISK):

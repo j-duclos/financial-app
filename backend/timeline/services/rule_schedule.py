@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from django.utils import timezone
 
+from common.services.cache import invalidate_financial_cache_for_household
 from timeline.models import RecurringRule, RecurringRuleSchedule
 
 
@@ -146,8 +147,22 @@ def schedule_params_to_dict(params: RuleScheduleParams) -> dict[str, Any]:
     }
 
 
+def _schedules_list(rule: RecurringRule) -> Optional[list[RecurringRuleSchedule]]:
+    cache = getattr(rule, "_prefetched_objects_cache", None)
+    if cache and "schedules" in cache:
+        return list(rule.schedules.all())
+    return None
+
+
 def resolve_rule_params(rule: RecurringRule, as_of_date: date) -> RuleScheduleParams:
     """Parameters for projections on as_of_date (latest schedule with effective_from <= date)."""
+    prefetched = _schedules_list(rule)
+    if prefetched is not None:
+        eligible = [s for s in prefetched if s.effective_from <= as_of_date]
+        if not eligible:
+            return params_from_rule(rule)
+        eligible.sort(key=lambda s: (s.effective_from, s.id), reverse=True)
+        return params_from_schedule(eligible[0])
     schedule = (
         rule.schedules.filter(effective_from__lte=as_of_date).order_by("-effective_from", "-id").first()
     )
@@ -224,36 +239,102 @@ def ensure_initial_schedule(rule: RecurringRule) -> RecurringRuleSchedule:
     return create_schedule_from_params(rule, effective_from=rule.start_date, params=params_from_rule(rule))
 
 
-def sync_rule_row_from_params(rule: RecurringRule, params: RuleScheduleParams) -> None:
-    """Keep RecurringRule row aligned with params shown in lists (today's segment)."""
-    rule.account_id = params.account_id
-    rule.transfer_to_account_id = params.transfer_to_account_id
-    rule.category_id = params.category_id
-    rule.direction = params.direction
-    rule.amount = params.amount
-    rule.currency = params.currency
-    rule.frequency = params.frequency
-    rule.interval = params.interval
-    rule.day_of_week = params.day_of_week
-    rule.day_of_month = params.day_of_month
-    rule.nth_week = params.nth_week
-    rule.start_date = params.start_date
-    rule.end_date = params.end_date
+_RULE_ROW_PARAM_FIELDS = (
+    "account_id",
+    "transfer_to_account_id",
+    "category_id",
+    "direction",
+    "amount",
+    "currency",
+    "frequency",
+    "interval",
+    "day_of_week",
+    "day_of_month",
+    "nth_week",
+    "start_date",
+    "end_date",
+)
 
 
-def promote_due_schedules(*, today: Optional[date] = None, as_of_date: Optional[date] = None) -> None:
-    """Apply schedule segments whose effective_from has arrived to the rule row (for list UI)."""
-    today = as_of_date or today or timezone.localdate()
-    rule_ids = (
-        RecurringRuleSchedule.objects.filter(effective_from__lte=today)
-        .values_list("rule_id", flat=True)
-        .distinct()
+def sync_rule_row_from_params(rule: RecurringRule, params: RuleScheduleParams) -> list[str]:
+    """Align RecurringRule row with params. Returns field names that actually changed."""
+    desired = {
+        "account_id": params.account_id,
+        "transfer_to_account_id": params.transfer_to_account_id,
+        "category_id": params.category_id,
+        "direction": params.direction,
+        "amount": params.amount,
+        "currency": params.currency,
+        "frequency": params.frequency,
+        "interval": params.interval,
+        "day_of_week": params.day_of_week,
+        "day_of_month": params.day_of_month,
+        "nth_week": params.nth_week,
+        "start_date": params.start_date,
+        "end_date": params.end_date,
+    }
+    changed: list[str] = []
+    for field in _RULE_ROW_PARAM_FIELDS:
+        new_value = desired[field]
+        current = getattr(rule, field)
+        if field == "amount":
+            differs = Decimal(str(current)) != Decimal(str(new_value))
+        elif field == "interval":
+            differs = (current or 1) != new_value
+        else:
+            differs = current != new_value
+        if differs:
+            setattr(rule, field, new_value)
+            changed.append(field)
+    return changed
+
+
+def rule_row_matches_params(rule: RecurringRule, params: RuleScheduleParams) -> bool:
+    return (
+        rule.account_id == params.account_id
+        and rule.transfer_to_account_id == params.transfer_to_account_id
+        and rule.category_id == params.category_id
+        and rule.direction == params.direction
+        and Decimal(str(rule.amount)) == Decimal(str(params.amount))
+        and rule.currency == params.currency
+        and rule.frequency == params.frequency
+        and (rule.interval or 1) == params.interval
+        and rule.day_of_week == params.day_of_week
+        and rule.day_of_month == params.day_of_month
+        and rule.nth_week == params.nth_week
+        and rule.start_date == params.start_date
+        and rule.end_date == params.end_date
     )
+
+
+def promote_due_schedules(
+    *,
+    today: Optional[date] = None,
+    as_of_date: Optional[date] = None,
+    household_ids: list[int],
+) -> None:
+    """Materialize due schedule segments onto rule rows for the given households only."""
+    today = as_of_date or today or timezone.localdate()
+    if not household_ids:
+        return
+    due_qs = RecurringRuleSchedule.objects.filter(
+        effective_from__lte=today,
+        rule__household_id__in=household_ids,
+    )
+    rule_ids = due_qs.values_list("rule_id", flat=True).distinct()
+    to_update: list[RecurringRule] = []
+    now = timezone.now()
     for rule in RecurringRule.objects.filter(pk__in=rule_ids).prefetch_related("schedules"):
         params = resolve_rule_params(rule, today)
-        sync_rule_row_from_params(rule, params)
-        rule.save(
-            update_fields=[
+        changed = sync_rule_row_from_params(rule, params)
+        if not changed:
+            continue
+        rule.updated_at = now
+        to_update.append(rule)
+    if to_update:
+        RecurringRule.objects.bulk_update(
+            to_update,
+            [
                 "account_id",
                 "transfer_to_account_id",
                 "category_id",
@@ -268,12 +349,19 @@ def promote_due_schedules(*, today: Optional[date] = None, as_of_date: Optional[
                 "start_date",
                 "end_date",
                 "updated_at",
-            ]
+            ],
         )
+        for hid in {rule.household_id for rule in to_update}:
+            invalidate_financial_cache_for_household(hid)
 
 
 def get_next_scheduled_change(rule: RecurringRule, *, today: Optional[date] = None) -> Optional[RecurringRuleSchedule]:
     today = today or timezone.localdate()
+    prefetched = _schedules_list(rule)
+    if prefetched is not None:
+        future = [s for s in prefetched if s.effective_from > today]
+        future.sort(key=lambda s: (s.effective_from, s.id))
+        return future[0] if future else None
     return rule.schedules.filter(effective_from__gt=today).order_by("effective_from", "id").first()
 
 
@@ -305,25 +393,14 @@ def apply_rule_schedule_change(
     create_schedule_from_params(rule, effective_from=effective_from, params=params)
 
     if effective_from <= today:
-        sync_rule_row_from_params(rule, params)
-        rule.save(
-            update_fields=[
-                "account_id",
-                "transfer_to_account_id",
-                "category_id",
-                "direction",
-                "amount",
-                "currency",
-                "frequency",
-                "interval",
-                "day_of_week",
-                "day_of_month",
-                "nth_week",
-                "start_date",
-                "end_date",
-                "updated_at",
-            ]
-        )
+        changed = sync_rule_row_from_params(rule, params)
+        if changed:
+            rule.save(
+                update_fields=[
+                    *changed,
+                    "updated_at",
+                ]
+            )
         return today
     return effective_from
 
@@ -360,7 +437,11 @@ def generate_rule_occurrence_dates(
     if range_start > range_end:
         return []
 
-    schedules = list(rule.schedules.order_by("effective_from"))
+    prefetched = _schedules_list(rule)
+    if prefetched is not None:
+        schedules = sorted(prefetched, key=lambda s: s.effective_from)
+    else:
+        schedules = list(rule.schedules.order_by("effective_from"))
     if not schedules:
         return generate_rule_occurrences(
             rule, start_date, end_date, effective_start=effective_start, effective_end=effective_end

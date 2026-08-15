@@ -221,7 +221,10 @@ def materialize_recurring_transactions_for_user(
         for rule in rules:
             delete_future_materialized_transactions_for_rule(rule.pk)
 
-    promote_due_schedules(as_of_date=today)
+    promote_due_schedules(
+        as_of_date=today,
+        household_ids=list(households.values_list("pk", flat=True)),
+    )
 
     mat_start = today
     if occurrence_date is not None and occurrence_date < today:

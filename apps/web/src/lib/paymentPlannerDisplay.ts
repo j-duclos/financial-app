@@ -306,3 +306,40 @@ export function utilizationPercent(account: Account): number | null {
   const n = parseFloat(String(raw));
   return Number.isFinite(n) ? n : null;
 }
+
+/** Pause after the last keystroke before refetching the household debt plan. */
+export const WHAT_IF_NUMERIC_DEBOUNCE_MS = 350;
+
+/**
+ * Count plan fetches while a numeric What-If value is typed character-by-character.
+ *
+ * Each keystroke resets the debounce timer. Strategy/mode clicks are not modeled
+ * here — those stay immediate in the page query key.
+ */
+export function countPlanRequestsForTypedValue(
+  text: string,
+  debounceMs: number,
+  keystrokeGapMs = 50
+): number {
+  if (!text) return 0;
+  const successive = text.split("").map((_, i) => text.slice(0, i + 1));
+  let requests = 0;
+  let timerFireAt: number | null = null;
+  for (let i = 0; i < successive.length; i++) {
+    const now = i * keystrokeGapMs;
+    if (timerFireAt != null && now >= timerFireAt) {
+      requests += 1;
+      timerFireAt = null;
+    }
+    if (debounceMs <= 0) {
+      requests += 1;
+      timerFireAt = null;
+    } else {
+      timerFireAt = now + debounceMs;
+    }
+  }
+  if (timerFireAt != null) {
+    requests += 1;
+  }
+  return requests;
+}

@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -130,7 +131,16 @@ class GoalBucketSerializer(serializers.ModelSerializer):
         return attrs
 
     def to_representation(self, instance):
-        progress = enrich_bucket(instance, calculate_bucket_progress(instance))
+        ctx = self.context.get("goal_calculation_context")
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        today = date.today()
+        progress = enrich_bucket(
+            instance,
+            calculate_bucket_progress(instance, today=today, user=user, context=ctx),
+            today=today,
+            context=ctx,
+        )
         data = bucket_to_api_dict(instance, progress)
         data["linked_credit_account"] = (
             instance.linked_account_id if instance.is_debt_bucket() else None

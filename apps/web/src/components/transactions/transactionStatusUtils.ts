@@ -65,8 +65,8 @@ export function resolveTransactionStatusIcons(
 
 export const STATUS_ICON_LABELS: Record<TransactionStatusIcon, string> = {
   reconciled: "Reconciled",
-  manual: "Manual Entry",
-  rule: "Rule Based Scheduled",
-  plaid: "Imported",
+  manual: "Manual transaction",
+  rule: "Scheduled automation",
+  plaid: "Imported transaction",
   transfer: "Transfer",
 };

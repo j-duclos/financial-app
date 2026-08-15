@@ -68,3 +68,14 @@ export function flushFinancialRefresh(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["account"] });
   void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
 }
+
+/** Recurring-rule mutations affect forecasts; mark dependents stale (active screens refetch). */
+export function invalidateRecurringRuleDependents(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ["rules"] });
+  void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+  void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+  void queryClient.invalidateQueries({ queryKey: ["timeline-calendar"] });
+  void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+  void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+}

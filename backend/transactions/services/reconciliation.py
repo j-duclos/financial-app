@@ -126,21 +126,7 @@ def _reconcile_floor_date(account: Account, as_of: Optional[date] = None) -> dat
         ).exists()
         if same_day_unreconciled:
             return prev_end
-        next_after_prev = prev_end + timedelta(days=1)
-        first_after = (
-            ledger_visible_transactions(
-                Transaction.objects.filter(
-                    account=account,
-                    reconciled=False,
-                    date__gt=prev_end,
-                    date__lte=as_of,
-                )
-            )
-            .order_by("date", "id")
-            .values_list("date", flat=True)
-            .first()
-        )
-        return first_after if first_after else next_after_prev
+        return prev_end + timedelta(days=1)
     first = (
         ledger_visible_transactions(
             Transaction.objects.filter(
@@ -470,7 +456,7 @@ def transaction_running_balances(
     for txn in filter_superseded_planned_transactions(walk_txns):
         running += txn.amount
         if txn.pk in unreconciled_ids:
-            result[txn.pk] = _normalize_credit_balance(account, running)
+            result[txn.pk] = _normalize_credit_balance(account, running).quantize(Decimal("0.01"))
     return result
 
 
@@ -498,8 +484,9 @@ def calculated_balance_for_checked(
     _ = (account, as_of)
     checked_list = list(checked_qs.order_by("date", "id"))
     if not checked_list:
-        return opening_bal
-    return calculating_balance(opening_bal, checked_qs)
+        return opening_bal.quantize(Decimal("0.01"))
+    total = opening_bal + sum((Decimal(str(t.amount)) for t in checked_list), Decimal("0"))
+    return total.quantize(Decimal("0.01"))
 
 
 def checked_transaction_running_balances(
@@ -511,7 +498,7 @@ def checked_transaction_running_balances(
     running = Decimal(str(opening_bal))
     for txn in sorted(checked_list, key=lambda t: (t.date, t.pk)):
         running += txn.amount
-        result[txn.pk] = running
+        result[txn.pk] = Decimal(str(running)).quantize(Decimal("0.01"))
     return result
 
 
@@ -901,6 +888,7 @@ def complete_reconciliation(
     as_of: Optional[date] = None,
 ) -> Reconciliation:
     as_of = _as_of_date(as_of)
+    account = Account.objects.select_for_update().get(pk=account.pk)
     period_start, period_end = resolve_period_dates(
         account, period_start, period_end, as_of, strict=True
     )
@@ -914,7 +902,9 @@ def complete_reconciliation(
         opening_bal = Decimal(str(prev.bank_current_balance))
     else:
         opening_bal = period_opening_balance(account, period_start)
-    app_bal = app_current_balance(account, period_end)
+    opening_bal = Decimal(str(opening_bal)).quantize(Decimal("0.01"))
+    app_bal = Decimal(str(app_current_balance(account, period_end))).quantize(Decimal("0.01"))
+    bank_current_balance = Decimal(str(bank_current_balance)).quantize(Decimal("0.01"))
 
     allowed_ids = {
         t.pk
@@ -927,11 +917,13 @@ def complete_reconciliation(
     if invalid:
         raise ValueError(f"Invalid or already reconciled transaction ids: {invalid}")
 
-    checked_qs = Transaction.objects.filter(pk__in=checked_ids, account=account)
-    checked_list = list(checked_qs.order_by("date", "id"))
-    final_bal = calculated_balance_for_checked(
-        account, opening_bal, checked_qs, period_end
+    checked_list = list(
+        Transaction.objects.select_for_update()
+        .filter(pk__in=checked_ids, account=account)
+        .order_by("date", "id")
     )
+    final_bal = opening_bal + sum((Decimal(str(txn.amount)) for txn in checked_list), Decimal("0"))
+    final_bal = final_bal.quantize(Decimal("0.01"))
     diff_remaining = difference_remaining(bank_current_balance, final_bal)
     if not balances_within_tolerance(diff_remaining):
         raise ValueError(
@@ -962,7 +954,7 @@ def complete_reconciliation(
     rec.save()
 
     if checked_ids:
-        Transaction.objects.filter(pk__in=checked_ids).update(
+        Transaction.objects.filter(pk__in=checked_ids, account=account).update(
             reconciled=True,
             reconciled_at=now,
             reconciliation=rec,
@@ -995,6 +987,7 @@ def serialize_session_summary(rec: Reconciliation) -> dict[str, Any]:
         "period_end_date": rec.period_end_date.isoformat() if rec.period_end_date else None,
         "opening_balance": str(rec.last_reconciled_balance),
         "app_balance": str(rec.app_current_balance),
+        "calculated_ending_balance": str(rec.final_reconciled_balance),
         "bank_balance": str(rec.bank_current_balance),
         "difference": str(rec.difference),
         "transaction_count": rec.transaction_count,

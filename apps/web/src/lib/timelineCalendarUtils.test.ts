@@ -3,6 +3,7 @@ import type { TimelineCalendarDay } from "@budget-app/shared";
 import {
   calendarCellTone,
   calendarCellToneClass,
+  calendarDaysToTimelineRows,
   computeSafeUntilNextIncome,
   dayHasActivity,
   DEFAULT_TIMELINE_VIEW,
@@ -13,6 +14,7 @@ import {
   groupTransactionsByKind,
   hasProjectedActivity,
   isIsoDateString,
+  parseTimelineViewParam,
   pickHorizonForFocusDate,
   resolveListDayMetrics,
   showRiskIcon,
@@ -40,6 +42,13 @@ function day(overrides: Partial<TimelineCalendarDay> = {}): TimelineCalendarDay 
 describe("timelineCalendarUtils", () => {
   it("defaults to calendar view mode", () => {
     expect(DEFAULT_TIMELINE_VIEW).toBe("calendar");
+  });
+
+  it("parses timeline view query params", () => {
+    expect(parseTimelineViewParam("calendar")).toBe("calendar");
+    expect(parseTimelineViewParam("timeline")).toBe("timeline");
+    expect(parseTimelineViewParam("list")).toBe("timeline");
+    expect(parseTimelineViewParam("other")).toBeNull();
   });
 
   it("maps risk levels to heatmap tones", () => {
@@ -298,5 +307,35 @@ describe("timelineCalendarUtils", () => {
     const summary = computeSafeUntilNextIncome(days, "2025-05-29");
     expect(summary?.currentBalance).toBe(5000);
     expect(summary?.nextIncomeDate).toBe("2025-06-05");
+  });
+
+  it("calendarDaysToTimelineRows maps calendar transactions for list view", () => {
+    const rows = calendarDaysToTimelineRows([
+      day({
+        date: "2025-06-02",
+        transactions: [
+          {
+            id: "r-1",
+            account_id: 4,
+            description: "Rent",
+            account_name: "Checking",
+            amount: "-1800.00",
+            category: "Rent",
+            kind: "bill",
+            source: "rule",
+            status: "PLANNED",
+            rule_id: 9,
+            transaction_id: null,
+            balance_after: "3200.00",
+            is_transfer: false,
+          },
+        ],
+      }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.date).toBe("2025-06-02");
+    expect(rows[0]!.source).toBe("rule");
+    expect(rows[0]!.category_name).toBe("Rent");
+    expect(rows[0]!.running_balance).toBe("3200.00");
   });
 });

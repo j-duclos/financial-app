@@ -108,14 +108,19 @@ def calculate_projected_statements_for_accounts(
             caller="projected_statement",
         )
 
+    from timeline.services.balance_cache import timeline_balance_cache_scope
+
     result: dict[int, dict[str, Any]] = {}
-    for account in credit_cards:
-        cycle_end = cycle_end_by_id[account.id]
-        signed = _signed_balance_at_cycle_end(account, cycle_end, timeline_rows)
-        result[account.id] = {
-            "projected_statement_balance": str(_owed_from_signed(signed)),
-            "billing_cycle_end_date": cycle_end.isoformat(),
-        }
+    with timeline_balance_cache_scope() as cache:
+        cache.preload_accounts(credit_cards)
+        cache.preload_transactions([card.pk for card in credit_cards], max_end)
+        for account in credit_cards:
+            cycle_end = cycle_end_by_id[account.id]
+            signed = _signed_balance_at_cycle_end(account, cycle_end, timeline_rows)
+            result[account.id] = {
+                "projected_statement_balance": str(_owed_from_signed(signed)),
+                "billing_cycle_end_date": cycle_end.isoformat(),
+            }
     return result
 
 

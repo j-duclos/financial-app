@@ -27,6 +27,8 @@ import {
   todayStr,
   timelineRangeForFilter,
   upcomingTimelineRange,
+  ledgerProjectionRange,
+  indexTimelineRowsByAccount,
   UPCOMING_FORECAST_DAYS,
   forecastRangeToDays,
   DEFAULT_FORECAST_RANGE,
@@ -76,6 +78,35 @@ describe("upcomingTimelineRange", () => {
     expect(forecastRangeToDays(DEFAULT_FORECAST_RANGE)).toBe(UPCOMING_FORECAST_DAYS);
     expect(forecastRangeToDays("6m")).toBe(180);
     expect(forecastRangeToDays("12m")).toBe(365);
+  });
+});
+
+describe("ledgerProjectionRange", () => {
+  it("does not widen when History Range grows", () => {
+    const today = todayStr();
+    const oneMonthHistory = pastTransactionsRange("1m");
+    const twelveMonthHistory = pastTransactionsRange("12m");
+    expect(twelveMonthHistory.start < oneMonthHistory.start).toBe(true);
+
+    const projection1m = ledgerProjectionRange(today, "6m");
+    const projection12m = ledgerProjectionRange(today, "6m");
+    expect(projection1m).toEqual(projection12m);
+    expect(projection1m.start).toBe(today);
+    expect(projection1m.end).toBe(addMonthsToIsoDate(today, 6));
+  });
+});
+
+describe("indexTimelineRowsByAccount", () => {
+  it("groups rows once so callers do not rescan the full timeline", () => {
+    const rows = [
+      { date: "2026-08-01", account_id: 1, amount: "-1", running_balance: "1" },
+      { date: "2026-08-02", account_id: 2, amount: "-2", running_balance: "2" },
+      { date: "2026-08-03", account_id: 1, amount: "-3", running_balance: "3" },
+    ] as TimelineRow[];
+    const byAccount = indexTimelineRowsByAccount(rows);
+    expect(byAccount.get(1)).toHaveLength(2);
+    expect(byAccount.get(2)).toHaveLength(1);
+    expect(byAccount.get(99)).toBeUndefined();
   });
 });
 
@@ -244,6 +275,118 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       expect(sections.pending[0].row.description).toBe("Chewy");
     }
     expect(sections.pending[0].balance).toBeCloseTo(995 - 79.46, 2);
+  });
+
+  it("keeps overdue planned bills in Pending, not Recent", () => {
+    const today = todayStr();
+    const overdue = addDaysToIsoDate(today, -12);
+    const plannedBill = {
+      id: 44,
+      date: overdue,
+      payee: "Overdue electric",
+      amount: "-85.00",
+      status: "PLANNED",
+      source: "RULE",
+      rule_id: 8,
+    } as never;
+    const posted = {
+      id: 45,
+      date: today,
+      payee: "Coffee",
+      amount: "-4.00",
+      status: "CLEARED",
+      source: "PLAID",
+    } as never;
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [plannedBill, posted],
+      [
+        {
+          date: overdue,
+          description: "Overdue electric",
+          account_id: 1,
+          amount: "-85.00",
+          type: "OUTFLOW",
+          status: "PLANNED",
+          source: "actual",
+          txn_source: "rule",
+          rule_id: 8,
+          transaction_id: 44,
+          running_balance: "900",
+        } as TimelineRow,
+        {
+          date: addDaysToIsoDate(today, 10),
+          description: "Future rent",
+          account_id: 1,
+          amount: "-1200.00",
+          type: "OUTFLOW",
+          status: "planned",
+          source: "rule",
+          rule_id: 9,
+          transaction_id: null,
+          running_balance: "0",
+        } as TimelineRow,
+      ],
+      today,
+      1000,
+      false
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    if (sections.past[0].type === "transaction") {
+      expect(sections.past[0].txn.payee).toBe("Coffee");
+    }
+    expect(sections.pending).toHaveLength(1);
+    if (sections.pending[0].type === "transaction_from_timeline") {
+      expect(sections.pending[0].row.description).toBe("Overdue electric");
+    }
+    expect(sections.future).toHaveLength(1);
+    expect(sections.today?.balance).toBeCloseTo(996, 2);
+    expect(sections.pending[0].balance).toBeCloseTo(996 - 85, 2);
+    expect(sections.future[0].balance).toBeCloseTo(996 - 85 - 1200, 2);
+  });
+
+  it("posted transfer legs stay in Recent; projected transfer legs stay in Upcoming", () => {
+    const today = todayStr();
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 70,
+          date: today,
+          payee: "Move to savings",
+          amount: "-200.00",
+          status: "CLEARED",
+          source: "ACTUAL",
+          transfer_group_id: 3,
+          linked_transaction_id: 71,
+        } as never,
+      ],
+      [
+        {
+          date: addDaysToIsoDate(today, 14),
+          description: "Move to credit card (Savor)",
+          account_id: 1,
+          amount: "-150.00",
+          type: "TRANSFER",
+          status: "planned",
+          source: "rule",
+          rule_id: 22,
+          transaction_id: null,
+          running_balance: "650",
+        } as TimelineRow,
+      ],
+      today,
+      1000,
+      false
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    if (sections.past[0].type === "transaction") {
+      expect(sections.past[0].txn.payee).toBe("Move to savings");
+      expect(sections.past[0].balance).toBeCloseTo(800, 2);
+    }
+    expect(sections.pending).toHaveLength(0);
+    expect(sections.future).toHaveLength(1);
+    expect(sections.future[0].balance).toBeCloseTo(650, 2);
   });
 
   it("uses credit-card balance math for past transactions (charges increase debt)", () => {

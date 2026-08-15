@@ -44,11 +44,11 @@ def test_pause_rule_removes_transactions_after_pause_date(api_client, user, hous
         currency="USD",
         include_in_forecast=True,
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Streaming",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     rule = RecurringRule.objects.create(
@@ -117,11 +117,11 @@ def test_resume_rule_allows_future_materialization_again(api_client, user, house
         currency="USD",
         include_in_forecast=True,
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Streaming",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     today = timezone.localdate()
     future = today + timedelta(days=21)

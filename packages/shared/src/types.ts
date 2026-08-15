@@ -295,9 +295,23 @@ export interface CreditCardInterestReport {
     account_name: string;
     interest_paid: string;
     projected_interest_remaining: string;
+    apr?: string | null;
+    utilization_percent?: string | null;
+    balance_owed?: string;
   }>;
   total_interest_paid: string;
   total_projected_interest_remaining: string;
+  highest_apr_card?: {
+    account_id: number;
+    account_name: string;
+    apr: string;
+  } | null;
+  highest_utilization_card?: {
+    account_id: number;
+    account_name: string;
+    utilization_percent: string;
+  } | null;
+  interest_trend?: Array<{ month: string; interest_paid: string }>;
 }
 
 export type AccountRelationshipType =
@@ -677,6 +691,14 @@ export interface GoalDetailResponse {
   scenario_projection?: GoalScenarioProjection;
 }
 
+export interface GoalMonthlyFunding {
+  month: string;
+  total: string;
+  contributed?: string;
+  released?: string;
+  kind?: "actual" | "projected";
+}
+
 export interface GoalsReport {
   buckets: FinancialGoal[];
   contribution_history: Array<{
@@ -688,8 +710,13 @@ export interface GoalsReport {
     date: string;
     source: string;
   }>;
-  monthly_funding: Array<{ month: string; total: string }>;
+  monthly_funding: GoalMonthlyFunding[];
+  projected_monthly_funding?: GoalMonthlyFunding[];
   summary: GoalsAggregateSummary;
+  report_month?: string;
+  progress_as_of?: string;
+  history_start?: string;
+  history_end?: string;
 }
 
 export interface FinancialGoal {
@@ -1094,17 +1121,69 @@ export interface SpendingTargetsSummary {
   targets: SpendingTargetMetrics[];
 }
 
+export interface MonthComparisonMetric {
+  current: string;
+  previous: string;
+  delta: string;
+  percent_change: string | null;
+}
+
 export interface MonthlySummary {
   month: string;
   total_income: string;
   total_expenses: string;
   net: string;
+  previous_month?: string;
+  comparison?: {
+    total_income: MonthComparisonMetric;
+    total_expenses: MonthComparisonMetric;
+    net: MonthComparisonMetric;
+  };
 }
 
 export interface CategoryBreakdownItem {
   category_id: number | null;
   category_name: string;
   total: string;
+  previous_total?: string;
+  delta?: string;
+}
+
+export interface MonthlyReportsPeriod {
+  start: string;
+  end: string;
+  previous_start: string;
+  previous_end: string;
+  history_start: string;
+  history_end: string;
+}
+
+export interface MonthlyReportsOverview extends MonthlySummary {
+  trend: MonthlySummary[];
+  top_expense_categories: CategoryBreakdownItem[];
+  goals_snapshot: {
+    total_saved: string | null;
+    total_target: string | null;
+    monthly_needed_total: string | null;
+    goals_on_track: number | null;
+    goals_active_count: number | null;
+  };
+  debt_snapshot: {
+    total_interest_paid: string | null;
+    total_projected_interest_remaining: string | null;
+    highest_apr_card: CreditCardInterestReport["highest_apr_card"];
+    highest_utilization_card: CreditCardInterestReport["highest_utilization_card"];
+  };
+}
+
+export interface MonthlyReports {
+  month: string;
+  period: MonthlyReportsPeriod;
+  overview: MonthlyReportsOverview;
+  category_breakdown: { month: string; breakdown: CategoryBreakdownItem[] };
+  goals: GoalsReport;
+  spending_limits: SpendingTargetsSummary;
+  debt: CreditCardInterestReport;
 }
 
 export interface AccountBalance {
@@ -1614,6 +1693,7 @@ export type TimelineCalendarRiskLevel = "none" | "watch" | "critical";
 
 export interface TimelineCalendarTransaction {
   id: string | number | null;
+  date?: string;
   account_id?: number | null;
   description: string;
   account_name: string;
@@ -1629,6 +1709,11 @@ export interface TimelineCalendarTransaction {
   cleared?: boolean;
   balance_after: string | null;
   is_transfer: boolean;
+  is_internal_transfer?: boolean;
+  is_credit_card_payment?: boolean;
+  risk_flag?: boolean;
+  transfer_from_account_name?: string | null;
+  transfer_to_account_name?: string | null;
 }
 
 /** Top cash-flow line items for a day (sorted by |amount|). */
@@ -1780,6 +1865,7 @@ export interface ReconciliationSessionSummary {
   period_end_date: string | null;
   opening_balance: string;
   app_balance: string;
+  calculated_ending_balance?: string;
   bank_balance: string;
   difference: string;
   transaction_count: number;

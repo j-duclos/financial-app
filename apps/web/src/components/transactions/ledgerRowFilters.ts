@@ -17,7 +17,7 @@ export function ledgerRowAbsAmount(row: LedgerRow): number | null {
     const n = parseFloat(row.txn.amount);
     return Number.isFinite(n) ? Math.abs(n) : null;
   }
-  if (row.type === "transaction_from_timeline") {
+  if (row.type === "transaction_from_timeline" || row.type === "recurring") {
     const n = parseFloat(row.row.amount);
     return Number.isFinite(n) ? Math.abs(n) : null;
   }
@@ -25,7 +25,11 @@ export function ledgerRowAbsAmount(row: LedgerRow): number | null {
 }
 
 export function matchesLedgerRowFilters(row: LedgerRow, filters: LedgerRowFilters): boolean {
-  if (row.type !== "transaction" && row.type !== "transaction_from_timeline") {
+  if (
+    row.type !== "transaction" &&
+    row.type !== "transaction_from_timeline" &&
+    row.type !== "recurring"
+  ) {
     return true;
   }
 
@@ -43,6 +47,9 @@ export function filterLedgerPastRows(rows: LedgerRow[], filters: LedgerRowFilter
   if (!hasActiveLedgerRowFilters(filters)) return rows;
   return rows.filter((row) => matchesLedgerRowFilters(row, filters));
 }
+
+/** Display-only filter for Recent / Pending / Upcoming — does not recompute running balances. */
+export const filterLedgerRows = filterLedgerPastRows;
 
 export function hasActiveLedgerRowFilters(filters: LedgerRowFilters): boolean {
   return filters.amountMin != null || filters.amountMax != null;

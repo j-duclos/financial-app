@@ -39,15 +39,21 @@ UPCOMING_PER_DAY_VISIBLE = 5
 
 def load_transfer_rule_context(
     households,
+    *,
+    household_ids: list[int] | None = None,
 ) -> tuple[set[int], dict[int, int], dict[int, int]]:
     """Active transfer rules: ids, rule → destination account, rule → source account."""
     from timeline.models import RecurringRule
 
-    rows = RecurringRule.objects.filter(
-        household__in=households,
+    qs = RecurringRule.objects.filter(
         active=True,
         transfer_to_account__isnull=False,
-    ).values_list("id", "transfer_to_account_id", "account_id")
+    )
+    if household_ids is not None:
+        qs = qs.filter(household_id__in=household_ids)
+    else:
+        qs = qs.filter(household__in=households)
+    rows = qs.values_list("id", "transfer_to_account_id", "account_id")
     rule_ids: set[int] = set()
     targets: dict[int, int] = {}
     sources: dict[int, int] = {}

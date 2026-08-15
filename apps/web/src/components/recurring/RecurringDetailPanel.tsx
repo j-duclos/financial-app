@@ -308,7 +308,7 @@ export default function RecurringDetailPanel({
             to={`${AUTOMATION_PATH}?edit=${rule.id}`}
             className="text-xs text-blue-600 hover:underline mt-1 inline-block"
           >
-            Edit rule →
+            Manage automation
           </Link>
         </section>
 
@@ -322,11 +322,14 @@ export default function RecurringDetailPanel({
             </h3>
             <ul className="space-y-2">
               {data.linked_transactions.map((t) => (
-                <li key={t.id} className="flex justify-between text-sm">
-                  <span>
+                <li key={t.id} className="flex justify-between text-sm gap-2">
+                  <Link
+                    to={`/transactions?account=${rule.account.id}`}
+                    className="text-blue-700 hover:underline min-w-0"
+                  >
                     {formatRecurringDate(t.date)} · {t.payee}
-                  </span>
-                  <span className="tabular-nums">{formatCurrency(t.amount)}</span>
+                  </Link>
+                  <span className="tabular-nums shrink-0">{formatCurrency(t.amount)}</span>
                 </li>
               ))}
             </ul>
@@ -353,7 +356,7 @@ export default function RecurringDetailPanel({
           to={`${AUTOMATION_PATH}?edit=${rule.id}`}
           className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-white"
         >
-          Edit rule
+          Manage automation
         </Link>
         {rule.active ? (
           <button

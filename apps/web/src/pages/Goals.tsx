@@ -9,9 +9,8 @@ import {
   createBucket,
   deleteBucket,
   duplicateBucket,
-  getBucketsSummary,
+  getBucketsOverview,
   listAccounts,
-  listAllBuckets,
   listHouseholds,
   listRuleAllocations,
   listRules,
@@ -26,6 +25,7 @@ import {
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import GoalFormModal, { type GoalFormValues } from "../components/goals/GoalFormModal";
 import GoalsSummaryBar from "../components/goals/GoalsSummaryBar";
+import PlanningSubnav from "../components/PlanningSubnav";
 import {
   METRIC_TILE_GRID_4,
   METRIC_TILE_SKELETON_CLASS,
@@ -69,21 +69,19 @@ export default function Goals() {
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
   const householdId = households?.[0]?.id;
 
-  const { data: allGoals = [], isLoading } = useQuery({
-    queryKey: ["buckets", "all"],
-    queryFn: () => listAllBuckets(),
+  const { data: overview, isLoading } = useQuery({
+    queryKey: ["buckets", "overview", householdId],
+    queryFn: () => getBucketsOverview({ household: householdId }),
     enabled: !!householdId,
   });
+  const allGoals = overview?.goals ?? [];
+  const summary = overview?.summary;
 
-  const { data: summary } = useQuery({
-    queryKey: ["buckets-summary", householdId],
-    queryFn: () => getBucketsSummary({ household: householdId }),
-    enabled: !!householdId,
-  });
-
-  const { data: accountsData } = useQuery({
+  const { data: accountsData, isLoading: accountsLoading } = useQuery({
     queryKey: ["accounts", "goals"],
     queryFn: () => listAccounts({ balance: "true" }),
+    enabled: modalOpen && !!householdId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const goals = allGoals;
@@ -194,6 +192,11 @@ export default function Goals() {
   return (
     <div className={`${PAGE_SHELL_PY} space-y-4`}>
       <div className="space-y-2">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">Goals</h1>
+          <p className="text-sm text-gray-600 mt-1">What am I trying to accomplish?</p>
+        </div>
+        <PlanningSubnav />
         {isLoading ? (
           <div className={METRIC_TILE_GRID_4}>
             {Array.from({ length: 4 }).map((_, i) => (
@@ -253,6 +256,7 @@ export default function Goals() {
           open={modalOpen}
           householdId={householdId}
           accounts={accounts}
+          accountsLoading={accountsLoading}
           existingGoals={goals}
           incomeRules={incomeRules}
           rulesLoading={rulesLoading}

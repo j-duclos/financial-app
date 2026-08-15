@@ -51,6 +51,41 @@ class SpendingTargetViewSet(ModelViewSet):
         ctx["request"] = self.request
         return ctx
 
+    def list(self, request, *args, **kwargs):
+        from datetime import date as date_cls
+
+        from .services.spending_targets import build_spending_target_context
+
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        targets = list(page) if page is not None else list(queryset)
+        include_scheduled = (
+            request.query_params.get("include_scheduled", "true").lower() != "false"
+            and request.query_params.get("include_forecast", "true").lower() != "false"
+        )
+        anchor = None
+        anchor_str = request.query_params.get("anchor")
+        if anchor_str:
+            try:
+                anchor = date_cls.fromisoformat(anchor_str[:10])
+            except ValueError:
+                anchor = None
+        today = date_cls.today()
+        calc_ctx = build_spending_target_context(
+            targets, today=today, anchor=anchor or today, include_scheduled=include_scheduled
+        )
+        serializer = self.get_serializer(
+            targets,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                "spending_target_calc_context": calc_ctx,
+            },
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         anchor_str = request.query_params.get("anchor")

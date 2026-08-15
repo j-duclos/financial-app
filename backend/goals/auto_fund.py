@@ -29,6 +29,27 @@ def find_auto_fund_transfer_rule(bucket: GoalBucket) -> RecurringRule | None:
     )
 
 
+def bulk_auto_fund_transfer_rules(buckets) -> dict[int, RecurringRule]:
+    """Latest auto-fund TRANSFER rule per bucket (same match as find_auto_fund_transfer_rule)."""
+    enabled = [b for b in buckets if getattr(b, "auto_fund_enabled", False) and b.pk]
+    if not enabled:
+        return {}
+    household_ids = {b.household_id for b in enabled}
+    bucket_ids = {b.pk for b in enabled}
+    rules = RecurringRule.objects.filter(
+        household_id__in=household_ids,
+        direction=RecurringRule.Direction.TRANSFER,
+        notes__contains=AUTO_FUND_NOTE_PREFIX,
+    ).order_by("id")
+    out: dict[int, RecurringRule] = {}
+    for rule in rules:
+        notes = rule.notes or ""
+        for bucket_id in bucket_ids:
+            if auto_fund_note_for_bucket(bucket_id) in notes:
+                out[bucket_id] = rule
+    return out
+
+
 def _allocation_transfer_amount(allocation: RuleAllocation, income_rule: RecurringRule) -> Decimal | None:
     if allocation.fixed_amount and allocation.fixed_amount > 0:
         return _quantize_money(_decimal(allocation.fixed_amount))

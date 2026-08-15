@@ -2,6 +2,8 @@ import type {
   DashboardUpcomingGroup,
   DashboardUpcomingTransaction,
   DayHeatLevel,
+  TimelineCalendarDay,
+  TimelineCalendarTransaction,
 } from "@budget-app/shared";
 import { dayHeatEmoji, resolveDayHeatLevel } from "./dayHeatDisplay";
 import {
@@ -30,6 +32,9 @@ export const UPCOMING_PREVIEW_TRANSFER_FOOTER =
   "Transfers move money between your accounts and do not change household cash flow.";
 
 export const UPCOMING_MAX_VISIBLE_TRANSACTIONS = 25;
+
+/** Calendar page Upcoming Money Flow window (matches backend UPCOMING_DAYS). */
+export const UPCOMING_CALENDAR_WINDOW_DAYS = 14;
 
 /** Default visible rows per day before "show more" (matches backend UPCOMING_PER_DAY_VISIBLE). */
 export const UPCOMING_PER_DAY_VISIBLE = 5;
@@ -664,4 +669,149 @@ export function netColorClass(net: number): string {
 
 export function groupShowsTransferNote(group: DashboardUpcomingGroup): boolean {
   return group.transfers_excluded;
+}
+
+function upcomingGroupLabel(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function upcomingDayOfWeek(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function upcomingMonthLabelUpper(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" }).toUpperCase();
+}
+
+function calendarTxnToUpcoming(
+  txn: TimelineCalendarTransaction,
+  date: string
+): DashboardUpcomingTransaction {
+  const kind = (txn.kind || "bill") as DashboardUpcomingTransaction["kind"];
+  return {
+    id: String(txn.id ?? `${date}-${txn.description}`),
+    date: txn.date ?? date,
+    account_id: txn.account_id ?? 0,
+    account_name: txn.account_name,
+    description: txn.description,
+    amount: txn.amount,
+    kind,
+    category: txn.category,
+    balance_after: txn.balance_after,
+    is_transfer: Boolean(txn.is_transfer),
+    is_internal_transfer: Boolean(txn.is_internal_transfer),
+    is_credit_card_payment: Boolean(txn.is_credit_card_payment),
+    transfer_from_account_name: txn.transfer_from_account_name,
+    transfer_to_account_name: txn.transfer_to_account_name,
+    source: txn.source,
+    status: txn.status ?? null,
+    risk_flag: Boolean(txn.risk_flag),
+  };
+}
+
+function calendarDayToUpcomingGroup(
+  day: TimelineCalendarDay,
+  transactions: TimelineCalendarTransaction[]
+): DashboardUpcomingGroup {
+  const upcomingTxns = transactions.map((txn) => calendarTxnToUpcoming(txn, day.date));
+  const transferTotal = parseAmount(day.transfer_total);
+  const transfersExcluded =
+    transferTotal > 0 ||
+    upcomingTxns.some((t) => t.is_internal_transfer || t.is_transfer);
+  return {
+    date: day.date,
+    label: upcomingGroupLabel(day.date),
+    day_of_week: upcomingDayOfWeek(day.date),
+    month_key: day.date.slice(0, 7),
+    month_label: upcomingMonthLabelUpper(day.date),
+    income_total: day.income_total,
+    expense_total: day.expense_total,
+    net_total: day.net_total,
+    transfer_total: day.transfer_total,
+    transfers_excluded: transfersExcluded,
+    has_risk: day.has_risk,
+    risk_reason: day.risk_reason,
+    heat_level: day.heat_level,
+    heat_label: day.heat_label,
+    heat_reason: day.heat_reason,
+    affected_account_name: day.affected_account_name,
+    lowest_projected_balance: day.lowest_projected_balance,
+    below_buffer_amount: day.below_buffer_amount,
+    is_negative: day.is_negative,
+    lowest_projected_balance_account_id: day.lowest_projected_balance_account_id,
+    lowest_projected_balance_account_name: day.lowest_projected_balance_account_name,
+    lowest_projected_balance_transaction_id: day.lowest_projected_balance_transaction_id,
+    lowest_projected_balance_after_description: day.lowest_projected_balance_after_description,
+    lowest_projected_balance_date: day.lowest_projected_balance_date,
+    amount_needed_to_zero: day.amount_needed_to_zero,
+    amount_needed_to_buffer: day.amount_needed_to_buffer,
+    show_lowest_balance_marker: day.show_lowest_balance_marker,
+    credit_balance_warnings: day.credit_balance_warnings,
+    biggest_drivers: day.biggest_drivers,
+    recovery_date: day.recovery_date,
+    recovery_days_until: day.recovery_days_until,
+    recovery_target: day.recovery_target,
+    recovery_description: day.recovery_description,
+    recovery_is_payroll: day.recovery_is_payroll,
+    recovery_balance: day.recovery_balance,
+    transactions: upcomingTxns,
+    hidden_transaction_count: Math.max(0, upcomingTxns.length - UPCOMING_PER_DAY_VISIBLE),
+    total_transaction_count: upcomingTxns.length,
+    visible_transaction_limit: UPCOMING_PER_DAY_VISIBLE,
+  };
+}
+
+export type UpcomingMoneyFlowFromCalendar = {
+  groups: DashboardUpcomingGroup[];
+  days: number;
+  truncated: boolean;
+};
+
+/**
+ * Build the Calendar page Upcoming Money Flow preview from calendar days
+ * (14-day window, 25-transaction cap) without a dashboard summary request.
+ */
+export function buildUpcomingMoneyFlowFromCalendarDays(
+  days: TimelineCalendarDay[],
+  opts?: {
+    today?: string;
+    maxDays?: number;
+    maxTransactions?: number;
+  }
+): UpcomingMoneyFlowFromCalendar {
+  const today = opts?.today ?? todayIsoLocal();
+  const maxDays = opts?.maxDays ?? UPCOMING_CALENDAR_WINDOW_DAYS;
+  const maxTransactions = opts?.maxTransactions ?? UPCOMING_MAX_VISIBLE_TRANSACTIONS;
+  const end = addDaysIso(today, maxDays);
+
+  const windowDays = days.filter(
+    (day) => day.date >= today && day.date <= end && (day.transactions?.length ?? 0) > 0
+  );
+
+  const flat: { day: TimelineCalendarDay; txn: TimelineCalendarTransaction }[] = [];
+  for (const day of windowDays) {
+    for (const txn of day.transactions) {
+      flat.push({ day, txn });
+    }
+  }
+  const truncated = flat.length > maxTransactions;
+  const visible = flat.slice(0, maxTransactions);
+
+  const byDate = new Map<string, { day: TimelineCalendarDay; txns: TimelineCalendarTransaction[] }>();
+  for (const { day, txn } of visible) {
+    const entry = byDate.get(day.date);
+    if (entry) {
+      entry.txns.push(txn);
+    } else {
+      byDate.set(day.date, { day, txns: [txn] });
+    }
+  }
+
+  const groups = [...byDate.values()].map(({ day, txns }) =>
+    calendarDayToUpcomingGroup(day, txns)
+  );
+  return { groups, days: maxDays, truncated };
 }

@@ -22,6 +22,7 @@ import type {
   Budget,
   MonthlySummary,
   CategoryBreakdownItem,
+  MonthlyReports,
   AccountBalance,
   RecurringRule,
   Scenario,
@@ -124,7 +125,14 @@ export async function updateProfile(data: {
   phone_e164?: string | null;
   default_household?: number | null;
   default_account?: number | null;
-}): Promise<unknown> {
+}): Promise<{
+  id: number;
+  username: string;
+  display_name: string;
+  phone_e164?: string;
+  default_household: number | null;
+  default_account: number | null;
+}> {
   return requestRequired("/api/profile/", { method: "PATCH", body: JSON.stringify(data) });
 }
 
@@ -435,7 +443,8 @@ export async function getAccountPayoff(
   accountId: number,
   options:
     | { strategy: PayoffStrategy; custom_amount?: string; fixed_amount?: string }
-    | { monthly_payment: number | string }
+    | { monthly_payment: number | string },
+  requestOptions?: { signal?: AbortSignal }
 ): Promise<PayoffProjection> {
   const params: Record<string, string> = {};
   if ("monthly_payment" in options) {
@@ -445,18 +454,24 @@ export async function getAccountPayoff(
     if (options.custom_amount != null) params.custom_amount = options.custom_amount;
     if (options.fixed_amount != null) params.fixed_amount = options.fixed_amount;
   }
-  return requestRequired(`/api/accounts/${accountId}/payoff/`, { params });
+  return requestRequired(`/api/accounts/${accountId}/payoff/`, {
+    params,
+    signal: requestOptions?.signal,
+  });
 }
 
-export async function getDebtPayoffPlan(params?: {
-  strategy?: string;
-  mode?: string;
-  extra_monthly?: string;
-  lump_sum?: string;
-  lump_sum_account?: number;
-  custom_order?: string;
-  household?: number;
-}): Promise<DebtPayoffPlan> {
+export async function getDebtPayoffPlan(
+  params?: {
+    strategy?: string;
+    mode?: string;
+    extra_monthly?: string;
+    lump_sum?: string;
+    lump_sum_account?: number;
+    custom_order?: string;
+    household?: number;
+  },
+  requestOptions?: { signal?: AbortSignal }
+): Promise<DebtPayoffPlan> {
   const q: Record<string, string> = {};
   if (params?.strategy) q.strategy = params.strategy;
   if (params?.mode) q.mode = params.mode;
@@ -467,6 +482,7 @@ export async function getDebtPayoffPlan(params?: {
   if (params?.household != null) q.household = String(params.household);
   return requestRequired("/api/credit-cards/plan/", {
     params: Object.keys(q).length ? q : undefined,
+    signal: requestOptions?.signal,
   });
 }
 
@@ -954,6 +970,17 @@ export async function getCategoryBreakdown(month: string): Promise<{ month: stri
   return requestRequired("/api/insights/category-breakdown/", { params: { month } });
 }
 
+export async function getMonthlyReports(
+  month: string,
+  params?: { months?: number; include_history?: boolean; household_id?: number }
+): Promise<MonthlyReports> {
+  const q: Record<string, string> = { month };
+  if (params?.months != null) q.months = String(params.months);
+  if (params?.include_history) q.include_history = "true";
+  if (params?.household_id != null) q.household_id = String(params.household_id);
+  return requestRequired("/api/insights/reports/monthly/", { params: q });
+}
+
 export async function getAccountBalances(): Promise<{ balances: AccountBalance[] }> {
   return requestRequired("/api/insights/account-balances/");
 }
@@ -1184,6 +1211,16 @@ export async function getBucketsSummary(params?: {
   const q: Record<string, string> = {};
   if (params?.household != null) q.household = String(params.household);
   return requestRequired("/api/buckets/summary/", { params: Object.keys(q).length ? q : undefined });
+}
+
+export async function getBucketsOverview(params?: {
+  household?: number;
+}): Promise<{ summary: GoalsAggregateSummary; goals: FinancialGoal[] }> {
+  const q: Record<string, string> = {};
+  if (params?.household != null) q.household = String(params.household);
+  return requestRequired("/api/buckets/overview/", {
+    params: Object.keys(q).length ? q : undefined,
+  });
 }
 
 export async function previewBucketContribution(

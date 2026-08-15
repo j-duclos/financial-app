@@ -15,10 +15,11 @@ import SpendingTargetCard from "../components/spendingTargets/SpendingTargetCard
 import SpendingTargetFormModal from "../components/spendingTargets/SpendingTargetFormModal";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import {
-  METRIC_TILE_GRID_4,
+  METRIC_TILE_GRID_5,
   METRIC_TILE_SKELETON_CLASS,
 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
+import { spendingTargetsRemainingFromSummary } from "../lib/spendingTargetDisplay";
 
 export default function SpendingTargets() {
   const queryClient = useQueryClient();
@@ -33,18 +34,6 @@ export default function SpendingTargets() {
   });
   const householdId = households?.[0]?.id ?? null;
 
-  const { data: categoriesData } = useQuery({
-    queryKey: ["categories", "spending-targets", householdId],
-    queryFn: () =>
-      listCategories({
-        page_size: 500,
-        household: householdId!,
-        type: "EXPENSE",
-      }),
-    enabled: householdId != null,
-  });
-  const categories = categoriesData?.results ?? [];
-
   const { data: summary, isLoading } = useQuery({
     queryKey: ["spending-targets-summary", householdId, monthKey],
     queryFn: () =>
@@ -54,6 +43,19 @@ export default function SpendingTargets() {
       }),
     enabled: householdId != null,
   });
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ["categories", "spending-targets", householdId],
+    queryFn: () =>
+      listCategories({
+        page_size: 500,
+        household: householdId!,
+        type: "EXPENSE",
+      }),
+    enabled: householdId != null && (modalOpen || Boolean(summary)),
+    staleTime: 5 * 60 * 1000,
+  });
+  const categories = categoriesData?.results ?? [];
 
   const { data: targetsData } = useQuery({
     queryKey: ["spending-targets", householdId, monthKey],
@@ -107,32 +109,47 @@ export default function SpendingTargets() {
 
   function confirmDelete(target: SpendingTarget) {
     const label = target.name || target.category.name;
-    if (window.confirm(`Delete spending limit for "${label}"? This cannot be undone.`)) {
+    if (window.confirm(`Delete budget for "${label}"? This cannot be undone.`)) {
       deleteMu.mutate(target.id);
     }
   }
 
+  const remaining = summary
+    ? spendingTargetsRemainingFromSummary(summary)
+    : 0;
+
   return (
     <div className={`${PAGE_SHELL_PY} space-y-4`}>
+      <div>
+        <h1 className="text-lg font-semibold text-gray-900">Budget</h1>
+        <p className="text-sm text-gray-600 mt-1">
+          Monthly category budget from posted spending plus known upcoming scheduled amounts.
+        </p>
+      </div>
       {isLoading ? (
-        <div className={METRIC_TILE_GRID_4}>
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className={METRIC_TILE_GRID_5}>
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className={METRIC_TILE_SKELETON_CLASS} aria-hidden />
           ))}
         </div>
       ) : summary ? (
-        <div className={METRIC_TILE_GRID_4}>
+        <div className={METRIC_TILE_GRID_5}>
           <DashboardMetricTile
-            label="Monthly limits"
+            label="Category budget"
             value={formatCurrency(summary.total_monthly_targets)}
           />
           <DashboardMetricTile
-            label="Spent this month"
+            label="Spent"
             value={formatCurrency(summary.spent_so_far_total)}
           />
           <DashboardMetricTile
             label="Known upcoming"
             value={formatCurrency(summary.scheduled_in_period_total ?? "0")}
+          />
+          <DashboardMetricTile
+            label="Remaining"
+            value={formatCurrency(remaining)}
+            valueClassName={remaining < 0 ? "text-red-700" : "text-emerald-700"}
           />
           <DashboardMetricTile
             label="Above / approaching"
@@ -144,7 +161,8 @@ export default function SpendingTargets() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
         <p className="flex-1 min-w-0 text-sm text-gray-600">
-          Set a monthly spending limit per category. Progress uses posted spending plus known future scheduled transactions only.
+          Set a monthly budget per category. Progress uses posted spending plus known future scheduled
+          transactions only.
         </p>
         <button
           type="button"
@@ -160,7 +178,7 @@ export default function SpendingTargets() {
 
       {targets.length === 0 && !isLoading && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-600">
-          <p className="font-medium text-gray-900">No spending limits yet</p>
+          <p className="font-medium text-gray-900">No category budgets yet</p>
           <p className="mt-1">Use Add limit to create one for an expense category.</p>
         </div>
       )}

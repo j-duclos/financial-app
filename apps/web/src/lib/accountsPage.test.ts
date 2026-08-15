@@ -8,6 +8,10 @@ import {
 import { formatGroupSummaryParts } from "./accountGroupSummaryDisplay";
 import { computeGroupSummary, filterAccounts, accountsForPageStats, DEFAULT_ACCOUNT_ORG_PREFERENCES } from "./accountOrganization";
 import { buildAccountManagementActions } from "./accountQuickActions";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mergeEnrichedAccounts } from "../hooks/useAccountsPageList";
 
 function mockAccount(overrides: Partial<Account> & { id: number }): Account {
   const { id, ...rest } = overrides;
@@ -169,5 +173,32 @@ describe("account management actions", () => {
       )
     ).toBe(false);
     expect(danger.map((a) => a.id)).toEqual(["mgmt_close", "mgmt_delete"]);
+  });
+});
+
+describe("accounts page progressive loading", () => {
+  it("does not wait two seconds before requesting enrichment", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../hooks/useAccountsPageList.ts"),
+      "utf8"
+    );
+    expect(source).not.toMatch(/setTimeout\(\s*\(\)\s*=>\s*setEnableEnrich\(true\),\s*2000\s*\)/);
+    expect(source).not.toMatch(/setTimeout\([^,]+,\s*2000\s*\)/);
+    expect(source).toMatch(/enabled:\s*mainQuery\.isSuccess/);
+  });
+
+  it("merges enrichment onto the already-rendered base list without dropping rows", () => {
+    const base = [
+      mockAccount({ id: 1, balance: "100", health_status: undefined }),
+      mockAccount({ id: 2, balance: "200", health_status: undefined }),
+    ];
+    const enriched = [
+      mockAccount({ id: 1, balance: "100", health_status: "healthy", available_to_spend: "80" }),
+      mockAccount({ id: 2, balance: "200", health_status: "watch", available_to_spend: "10" }),
+    ];
+    const merged = mergeEnrichedAccounts(base, enriched);
+    expect(merged.map((a) => a.id)).toEqual([1, 2]);
+    expect(merged[0].health_status).toBe("healthy");
+    expect(merged[1].available_to_spend).toBe("10");
   });
 });

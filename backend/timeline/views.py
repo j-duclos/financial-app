@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
@@ -15,6 +16,7 @@ from transactions.models import Transaction, Transfer
 
 from .models import (
     RecurringRule,
+    RecurringRuleSchedule,
     Scenario,
     ScenarioRuleOverride,
     ScenarioOneTimeEvent,
@@ -35,7 +37,11 @@ from .serializers import (
     ReconciliationMatchSerializer,
     UpcomingChargeNotificationSerializer,
 )
-from .services.scenario_comparison import build_scenario_comparison, evaluate_affordability
+from .services.scenario_comparison import (
+    build_scenario_comparison_context,
+    evaluate_affordability,
+    serialize_scenario_comparison,
+)
 from .services.calendar import build_timeline_calendar
 from .services.ledger import build_timeline
 from core.timeline_cache import (
@@ -100,19 +106,27 @@ class RecurringRuleViewSet(ModelViewSet):
     permission_classes = [IsHouseholdMember]
     pagination_class = RecurringRulePagination
 
-    def list(self, request, *args, **kwargs):
-        promote_due_schedules()
-        return super().list(request, *args, **kwargs)
-
-    def retrieve(self, request, *args, **kwargs):
-        promote_due_schedules()
-        return super().retrieve(request, *args, **kwargs)
-
     def get_queryset(self):
         households = get_households_for_user(self.request.user)
-        return RecurringRule.objects.filter(household__in=households).select_related(
-            "account", "category", "household", "transfer_to_account"
-        ).prefetch_related("schedules")
+        return (
+            RecurringRule.objects.filter(household__in=households)
+            .select_related(
+                "account",
+                "category",
+                "household",
+                "transfer_to_account",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "schedules",
+                    queryset=RecurringRuleSchedule.objects.select_related(
+                        "account",
+                        "category",
+                        "transfer_to_account",
+                    ).order_by("effective_from", "id"),
+                )
+            )
+        )
 
     def perform_create(self, serializer):
         rule = serializer.save()
@@ -122,7 +136,8 @@ class RecurringRuleViewSet(ModelViewSet):
             refresh_rule_materialization(self.request.user, rule)
 
     def update(self, request, *args, **kwargs):
-        promote_due_schedules()
+        household_ids = list(get_households_for_user(request.user).values_list("id", flat=True))
+        promote_due_schedules(household_ids=household_ids)
         instance = self.get_object()
         was_active = instance.active
         partial = kwargs.pop("partial", False)
@@ -360,7 +375,7 @@ class ScenarioViewSet(ModelViewSet):
         household_id = request.query_params.get("household_id")
         household_id = int(household_id) if household_id else None
         try:
-            payload = build_scenario_comparison(
+            comparison_ctx = build_scenario_comparison_context(
                 request.user,
                 scenario.id,
                 horizon=horizon,
@@ -368,18 +383,16 @@ class ScenarioViewSet(ModelViewSet):
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        payload = serialize_scenario_comparison(comparison_ctx)
         from recommendations.services.engine import build_scenario_recommendations
 
-        from common.services.forecast_horizon import horizon_span_days, snap_span_to_forecast_days
-        from timeline.services.scenario_comparison import _horizon_to_end
-
-        today = timezone.localdate()
-        rec_days = snap_span_to_forecast_days(
-            min(horizon_span_days(today, _horizon_to_end(today, horizon)), 90)
-        )
         try:
             payload["recommendations"] = build_scenario_recommendations(
-                request.user, scenario.id, days=rec_days
+                request.user,
+                scenario.id,
+                days=comparison_ctx.sts_days,
+                as_of_date=comparison_ctx.as_of_date,
+                comparison_context=comparison_ctx,
             )
         except Exception:
             payload["recommendations"] = []
@@ -763,48 +776,6 @@ class TimelineView(APIView):
                 exclude_reconciled_past=exclude_reconciled_past,
                 caller="timeline_page",
             )
-            # #region agent log
-            import json
-            import time
-
-            try:
-                _plat = [
-                    {
-                        "date": str(r.get("date")),
-                        "amount": str(r.get("amount")),
-                        "txn_id": r.get("transaction_id"),
-                        "rule_id": r.get("rule_id"),
-                        "status": r.get("status"),
-                        "source": r.get("source"),
-                        "desc": (r.get("description") or "")[:50],
-                    }
-                    for r in rows
-                    if "platinum" in (r.get("description") or "").lower()
-                    or "platinium" in (r.get("description") or "").lower()
-                ]
-                with open("/Users/capone/Dev_work/.cursor/debug-88e096.log", "a") as _f:
-                    _f.write(
-                        json.dumps(
-                            {
-                                "sessionId": "88e096",
-                                "location": "timeline/views.py:TimelineView.get",
-                                "message": "timeline built",
-                                "data": {
-                                    "account_id": account_id,
-                                    "start": str(start),
-                                    "end": str(end),
-                                    "platinum_rows": _plat,
-                                    "cache_hit": False,
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "hypothesisId": "H1-H2",
-                            }
-                        )
-                        + "\n"
-                    )
-            except OSError:
-                pass
-            # #endregion
             # Serialize dates and decimals for JSON
             for r in rows:
                 r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])

@@ -19,21 +19,24 @@ import TransactionStatusIcons from "../components/transactions/TransactionStatus
 import { categoriesForDropdown } from "../lib/categoryOptions";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import { isTransferCategoryName } from "../components/transactions/transactionsLedgerUtils";
-import ReconcileVarianceLine, {
-  reconcileVarianceHint,
-} from "../components/reconcile/ReconcileVarianceLine";
 import ReconcileHistoryModal from "../components/reconcile/ReconcileHistoryModal";
 import ReconcileAllCaughtUpCard from "../components/reconcile/ReconcileAllCaughtUpCard";
 import ReconcileRemainingPanel from "../components/reconcile/ReconcileRemainingPanel";
-import { reconcileBalanceAfterChecks } from "../lib/reconcileCheckedBalance";
-import { reconcileVarianceDisplay } from "../lib/reconcileVarianceDisplay";
+import ReconcileLiveEquation from "../components/reconcile/ReconcileLiveEquation";
+import ReconcileStickySummary from "../components/reconcile/ReconcileStickySummary";
+import {
+  reconcileBalanceAfterChecksCents,
+  selectedActivityCents,
+} from "../lib/reconcileCheckedBalance";
+import { parseBankBalanceCents, parseMoneyToCents } from "../lib/moneyCents";
+import { selectedCountLabel } from "../lib/reconcileWorkflow";
+import { reconcileSourceTooltip } from "../lib/reconcileSourceLabel";
 import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
 import { sliceIdsByAnchor } from "../lib/shiftClickSelection";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 
-const BALANCE_TOLERANCE = 0.01;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 function parseAmount(value: string): number {
@@ -287,35 +290,23 @@ export default function Reconcile() {
     invalidateReconcileQueries();
   }
 
-  const periodOpeningBalance = parseAmount(
+  const periodOpeningCents = parseMoneyToCents(
     setupData?.period_opening_balance ?? setupData?.last_reconciled_balance ?? "0",
   );
-  const appPeriodEndBalance = parseAmount(setupData?.app_current_balance ?? "0");
-  const bankPeriodEndBalance = bankBalanceInput.trim() === "" ? null : parseAmount(bankBalanceInput);
-  const setupDifference =
-    bankPeriodEndBalance != null ? bankPeriodEndBalance - appPeriodEndBalance : null;
+  const bankCents = parseBankBalanceCents(bankBalanceInput);
 
   const transactions: ReconcileTransactionRow[] = setupSuccess
     ? setupData?.unreconciled_transactions ?? []
     : [];
 
-  const balanceAfterChecks = useMemo(
-    () => reconcileBalanceAfterChecks(transactions, checkedIds, periodOpeningBalance),
-    [transactions, checkedIds, periodOpeningBalance]
+  const calculatedCents = useMemo(
+    () => reconcileBalanceAfterChecksCents(transactions, checkedIds, periodOpeningCents),
+    [transactions, checkedIds, periodOpeningCents]
   );
-
-  const offBy =
-    bankPeriodEndBalance != null ? bankPeriodEndBalance - balanceAfterChecks : null;
-  const isBalanced =
-    reconcileVarianceDisplay(offBy, { tolerance: BALANCE_TOLERANCE })?.tone === "balanced";
-
-  const canComplete =
-    !!accountId &&
-    !!periodStart &&
-    !!periodEnd &&
-    bankPeriodEndBalance != null &&
-    bankBalanceInput.trim() !== "" &&
-    isBalanced;
+  const activityCents = useMemo(
+    () => selectedActivityCents(transactions, checkedIds),
+    [transactions, checkedIds]
+  );
 
   function resetAddForm() {
     setAddPayee("");
@@ -683,7 +674,7 @@ export default function Reconcile() {
       : "";
 
   return (
-    <div className={`${PAGE_SHELL_PY} pb-36`}>
+    <div className={`${PAGE_SHELL_PY} pb-56`}>
       <div className="mb-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 lg:gap-6">
         <p className="text-sm text-gray-600 lg:max-w-2xl">
           Reconcile in date-range chunks. Start from your last reconcile (or opening balance), pick an end
@@ -790,26 +781,7 @@ export default function Reconcile() {
         )}
 
         {accountId && setupData && periodStart && periodEnd && setupSuccess && !allReconciledThroughToday && (
-          <div className="grid sm:grid-cols-3 gap-4 mt-2">
-            <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3">
-              <p className="text-xs font-medium text-gray-500 mb-1">
-                App balance ({formatDateDisplay(periodEnd)})
-              </p>
-              <p className="text-lg font-semibold tabular-nums">{formatCurrency(appPeriodEndBalance)}</p>
-            </div>
-            <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3">
-              <p className="text-xs font-medium text-gray-500 mb-1">
-                Bank balance ({formatDateDisplay(periodEnd)})
-              </p>
-              <p className="text-lg font-semibold tabular-nums">
-                {bankPeriodEndBalance != null ? formatCurrency(bankPeriodEndBalance) : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3">
-              <p className="text-xs font-medium text-gray-500 mb-1">Reconciliation status</p>
-              <ReconcileVarianceLine difference={setupDifference} />
-            </div>
-          </div>
+          <ReconcileLiveEquation bankCents={bankCents} calculatedCents={calculatedCents} />
         )}
       </div>
 
@@ -823,6 +795,7 @@ export default function Reconcile() {
             <h2 className="text-sm font-medium text-gray-800">Unreconciled transactions</h2>
             <span className="text-xs text-gray-500">
               {transactions.length} in {periodLabel}
+              {transactions.length > 0 ? ` · ${selectedCountLabel(checkedIds.size, transactions.length)}` : ""}
             </span>
           </div>
           {transactions.length === 0 ? (
@@ -904,6 +877,11 @@ export default function Reconcile() {
                             description={t.payee}
                             readOnly={t.source === "INTEREST"}
                             hasTransferDestination={isTransferCategoryName(t.category ?? undefined)}
+                            labelOverrides={{
+                              plaid: reconcileSourceTooltip(t.source, selectedAccount?.institution),
+                              manual: "Manual transaction",
+                              rule: "Scheduled automation",
+                            }}
                           />
                         </td>
                         <td className="px-3 py-2 text-center">
@@ -1039,51 +1017,23 @@ export default function Reconcile() {
       )}
 
       {showChecklist && (
-        <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-gray-200 bg-white shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
-          <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-            <div className="grid md:grid-cols-2 gap-6 mb-4">
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-1">
-                  {isFirstReconciliation ? "Opening balance" : "Period opening balance"} (
-                  {formatDateDisplay(effectivePeriodStart)})
-                </p>
-                <p className="text-xl font-semibold tabular-nums">{formatCurrency(periodOpeningBalance)}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Bank balance as of {formatDateDisplay(periodEnd)}:{" "}
-                  <span className="font-medium text-gray-700">
-                    {bankPeriodEndBalance != null ? formatCurrency(bankPeriodEndBalance) : "—"}
-                  </span>
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-1">Reconciliation status</p>
-                <ReconcileVarianceLine difference={offBy} size="lg" />
-                <p className="text-xs text-gray-500 mt-1">
-                  {reconcileVarianceHint(offBy, { tolerance: BALANCE_TOLERANCE })}
-                  {transactions.length > checkedIds.size && isBalanced && (
-                    <> Unchecked transactions will be reviewed after you complete.</>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                {completeError && <p className="text-sm text-red-600">{completeError}</p>}
-                {completeMu.isSuccess && (
-                  <p className="text-sm text-green-700">Reconciliation saved for {periodLabel}.</p>
-                )}
-              </div>
-              <button
-                type="button"
-                disabled={!canComplete || completeMu.isPending}
-                onClick={() => completeMu.mutate()}
-                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {completeMu.isPending ? "Saving…" : "Complete Reconciliation"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ReconcileStickySummary
+          isFirstReconciliation={isFirstReconciliation}
+          periodStartLabel={effectivePeriodStart ? formatDateDisplay(effectivePeriodStart) : ""}
+          periodEndLabel={periodEnd ? formatDateDisplay(periodEnd) : ""}
+          openingCents={periodOpeningCents}
+          selectedActivityCents={activityCents}
+          calculatedCents={calculatedCents}
+          bankCents={bankCents}
+          selectedCount={checkedIds.size}
+          totalCount={transactions.length}
+          leftoverHint={transactions.length > checkedIds.size}
+          completeError={completeError}
+          completeSuccess={completeMu.isSuccess}
+          periodLabel={periodLabel}
+          isPending={completeMu.isPending}
+          onComplete={() => completeMu.mutate()}
+        />
       )}
 
       {editingTxn && (

@@ -1,61 +1,138 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Eye, EyeOff } from "lucide-react";
 import {
   changePassword,
   getProfile,
-  listAccounts,
   listHouseholds,
   updateProfile,
 } from "@budget-app/api-client";
 import { getEffectiveDisplayName } from "@budget-app/shared";
 import { useAuth } from "../context/AuthContext";
+import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
+import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
+import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
+import {
+  clientPasswordErrors,
+  passwordApiFieldErrors,
+  type PasswordFieldErrors,
+} from "../lib/profilePassword";
+
+const PROFILE_STALE_MS = 5 * 60_000;
+const inputClass = "mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white";
+const readOnlyClass = `${inputClass} bg-gray-50 text-gray-600 cursor-default`;
+
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  autoComplete,
+  error,
+  describedBy,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete: string;
+  error?: string;
+  describedBy?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  const errorId = `${id}-error`;
+  return (
+    <div>
+      <label htmlFor={id} className="block text-sm font-medium text-gray-700">
+        {label}
+      </label>
+      <div className="relative mt-1">
+        <input
+          id={id}
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${inputClass} mt-0 pr-10`}
+          autoComplete={autoComplete}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[describedBy, error ? errorId : null].filter(Boolean).join(" ") || undefined}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          className="absolute inset-y-0 right-0 px-2 text-gray-500 hover:text-gray-800"
+          aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+        >
+          {visible ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+        </button>
+      </div>
+      {error ? (
+        <p id={errorId} className="mt-1 text-xs text-red-600">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export default function Profile() {
   const queryClient = useQueryClient();
   const { refreshUser } = useAuth();
+  const usernameHelpId = useId();
+  const displayHelpId = useId();
+  const phoneHelpId = useId();
+  const newPwdHelpId = useId();
+
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["profile"],
     queryFn: getProfile,
+    staleTime: PROFILE_STALE_MS,
   });
   const { data: households } = useQuery({
     queryKey: ["households"],
     queryFn: listHouseholds,
+    staleTime: PROFILE_STALE_MS,
   });
+  const { data: accountsData } = useOperationalAccounts();
+  const accounts = accountsData?.results ?? [];
 
   const [displayName, setDisplayName] = useState("");
-  const [phoneE164, setPhoneE164] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
   const [defaultHousehold, setDefaultHousehold] = useState<number | "">("");
   const [defaultAccount, setDefaultAccount] = useState<number | "">("");
 
-  const householdNum = defaultHousehold === "" ? null : Number(defaultHousehold);
-  const { data: accountsData } = useQuery({
-    queryKey: ["accounts", "profile-defaults", householdNum],
-    queryFn: () =>
-      listAccounts({ household: householdNum!, page_size: 200, active_only: true }),
-    enabled: householdNum != null && !Number.isNaN(householdNum),
-  });
-  const accounts = accountsData?.results ?? [];
+  const householdAccounts = useMemo(
+    () => accountsForHousehold(accounts, defaultHousehold),
+    [accounts, defaultHousehold]
+  );
 
   useEffect(() => {
     if (!profile) return;
     setDisplayName(profile.display_name ?? "");
-    setPhoneE164(profile.phone_e164 ?? "");
+    setPhoneInput(formatPhoneForDisplay(profile.phone_e164 ?? ""));
     setDefaultHousehold(profile.default_household ?? "");
     setDefaultAccount(profile.default_account ?? "");
   }, [profile]);
 
-  const [profileMessage, setProfileMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => {
+    setDefaultAccount((prev) => nextDefaultAccountId(prev, defaultHousehold, accounts));
+  }, [accounts, defaultHousehold]);
+
+  const [profileMessage, setProfileMessage] = useState<{ type: "ok" | "err"; text: string } | null>(
+    null
+  );
   const saveProfileMu = useMutation({
     mutationFn: () =>
       updateProfile({
         display_name: displayName.trim() || "",
-        phone_e164: phoneE164.trim() || null,
+        phone_e164: phoneInput.trim() || null,
         default_household: defaultHousehold === "" ? null : Number(defaultHousehold),
         default_account: defaultAccount === "" ? null : Number(defaultAccount),
       }),
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       setProfileMessage({ type: "ok", text: "Profile saved." });
+      queryClient.setQueryData(["profile"], saved);
       await queryClient.invalidateQueries({ queryKey: ["profile"] });
       await refreshUser();
     },
@@ -70,6 +147,7 @@ export default function Profile() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwdFieldErrors, setPwdFieldErrors] = useState<PasswordFieldErrors>({});
   const [pwdMessage, setPwdMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const changePasswordMu = useMutation({
@@ -80,41 +158,39 @@ export default function Profile() {
         new_password_confirm: confirmPassword,
       }),
     onSuccess: () => {
-      setPwdMessage({ type: "ok", text: "Password updated. Use it next time you log in." });
+      setPwdMessage({ type: "ok", text: "Password updated." });
+      setPwdFieldErrors({});
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     },
     onError: (e: unknown) => {
-      setPwdMessage({
-        type: "err",
-        text: e instanceof Error ? e.message : "Could not change password.",
-      });
+      const text = e instanceof Error ? e.message : "Could not change password.";
+      setPwdMessage({ type: "err", text });
+      setPwdFieldErrors(passwordApiFieldErrors(text));
     },
   });
 
   function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
+    if (saveProfileMu.isPending) return;
     setProfileMessage(null);
     saveProfileMu.mutate();
   }
 
   function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
+    if (changePasswordMu.isPending) return;
     setPwdMessage(null);
-    if (newPassword.length < 8) {
-      setPwdMessage({ type: "err", text: "New password must be at least 8 characters." });
+    const errors = clientPasswordErrors({ currentPassword, newPassword, confirmPassword });
+    if (errors) {
+      setPwdFieldErrors(errors);
+      setPwdMessage({ type: "err", text: "Fix the highlighted password fields." });
       return;
     }
-    if (newPassword !== confirmPassword) {
-      setPwdMessage({ type: "err", text: "New password and confirmation do not match." });
-      return;
-    }
+    setPwdFieldErrors({});
     changePasswordMu.mutate();
   }
-
-  const inputClass =
-    "mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white";
 
   if (profileLoading || !profile) {
     return (
@@ -126,12 +202,18 @@ export default function Profile() {
 
   return (
     <div className={PAGE_SHELL_PY_LOOSE}>
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold text-gray-900">Settings</h1>
+        <p className="text-sm text-gray-600 mt-1">Profile and account defaults for this user.</p>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
-          <h2 className="text-lg font-medium text-gray-900">Account</h2>
-          <form onSubmit={handleSaveProfile} className="space-y-4">
+        <form onSubmit={handleSaveProfile} className="space-y-6 min-w-0">
+          <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
+            <h2 className="text-lg font-medium text-gray-900">Profile</h2>
             {profileMessage && (
               <p
+                role="status"
+                aria-live="polite"
                 className={
                   profileMessage.type === "ok" ? "text-sm text-green-700" : "text-sm text-red-600"
                 }
@@ -139,81 +221,108 @@ export default function Profile() {
                 {profileMessage.text}
               </p>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Username</label>
-                <input
-                  type="text"
-                  value={profile.username}
-                  disabled
-                  className={`${inputClass} bg-gray-50 text-gray-600`}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Display name</label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  className={inputClass}
-                  placeholder="Shown in the header"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Mobile phone</label>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phoneE164}
-                  onChange={(e) => setPhoneE164(e.target.value)}
-                  className={inputClass}
-                  placeholder="5204615387 or +15204615387"
-                />
-                <p className="mt-1 text-xs text-gray-500">
-                  Used for Plaid SMS verification. Saved as E.164 on the server.
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Default household</label>
-                <select
-                  value={defaultHousehold === "" ? "" : String(defaultHousehold)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setDefaultHousehold(v === "" ? "" : Number(v));
-                    setDefaultAccount("");
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">—</option>
-                  {(households ?? []).map((h) => (
-                    <option key={h.id} value={h.id}>
-                      {h.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Default account (optional)
-                </label>
-                <select
-                  value={defaultAccount === "" ? "" : String(defaultAccount)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setDefaultAccount(v === "" ? "" : Number(v));
-                  }}
-                  className={inputClass}
-                  disabled={householdNum == null}
-                >
-                  <option value="">—</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {getEffectiveDisplayName(a)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div>
+              <label htmlFor="profile-username" className="block text-sm font-medium text-gray-700">
+                Username
+              </label>
+              <input
+                id="profile-username"
+                type="text"
+                value={profile.username}
+                readOnly
+                autoComplete="username"
+                className={readOnlyClass}
+                aria-describedby={usernameHelpId}
+              />
+              <p id={usernameHelpId} className="mt-1 text-xs text-gray-500">
+                Account identifier — cannot be changed.
+              </p>
+            </div>
+            <div>
+              <label htmlFor="profile-display-name" className="block text-sm font-medium text-gray-700">
+                Display name
+              </label>
+              <input
+                id="profile-display-name"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className={inputClass}
+                autoComplete="nickname"
+                placeholder="Optional"
+                aria-describedby={displayHelpId}
+              />
+              <p id={displayHelpId} className="mt-1 text-xs text-gray-500">
+                Optional. Shown in the header. Username is used if blank.
+              </p>
+            </div>
+            <div>
+              <label htmlFor="profile-phone" className="block text-sm font-medium text-gray-700">
+                Mobile phone
+              </label>
+              <input
+                id="profile-phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(formatPhoneInput(e.target.value))}
+                className={inputClass}
+                placeholder="(520) 461-5387"
+                aria-describedby={phoneHelpId}
+              />
+              <p id={phoneHelpId} className="mt-1 text-xs text-gray-500">
+                Used for Plaid/bank verification text messages.
+              </p>
+            </div>
+          </section>
+
+          <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
+            <h2 className="text-lg font-medium text-gray-900">Defaults</h2>
+            <div>
+              <label htmlFor="profile-household" className="block text-sm font-medium text-gray-700">
+                Default household
+              </label>
+              <select
+                id="profile-household"
+                value={defaultHousehold === "" ? "" : String(defaultHousehold)}
+                onChange={(e) => {
+                  const v = e.target.value === "" ? "" : Number(e.target.value);
+                  setDefaultHousehold(v);
+                  setDefaultAccount((prev) => nextDefaultAccountId(prev, v, accounts));
+                }}
+                className={inputClass}
+              >
+                <option value="">—</option>
+                {(households ?? []).map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="profile-account" className="block text-sm font-medium text-gray-700">
+                Default account
+              </label>
+              <select
+                id="profile-account"
+                value={defaultAccount === "" ? "" : String(defaultAccount)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDefaultAccount(v === "" ? "" : Number(v));
+                }}
+                className={inputClass}
+                disabled={defaultHousehold === ""}
+              >
+                <option value="">— None</option>
+                {householdAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {getEffectiveDisplayName(a)}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">Optional. Only accounts in the selected household.</p>
             </div>
             <button
               type="submit"
@@ -222,63 +331,49 @@ export default function Profile() {
             >
               {saveProfileMu.isPending ? "Saving…" : "Save profile"}
             </button>
-          </form>
-        </section>
+          </section>
+        </form>
 
-        <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
-          <h2 className="text-lg font-medium text-gray-900">Change password</h2>
-          <form onSubmit={handleChangePassword} className="space-y-4">
+        <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4 min-w-0">
+          <h2 className="text-lg font-medium text-gray-900">Security</h2>
+          <form onSubmit={handleChangePassword} className="space-y-4" autoComplete="off">
             {pwdMessage && (
               <p
-                className={
-                  pwdMessage.type === "ok" ? "text-sm text-green-700" : "text-sm text-red-600"
-                }
+                role="status"
+                aria-live="polite"
+                className={pwdMessage.type === "ok" ? "text-sm text-green-700" : "text-sm text-red-600"}
               >
                 {pwdMessage.text}
               </p>
             )}
-            <div className="grid grid-cols-1 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Current password</label>
-                <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  className={inputClass}
-                  autoComplete="current-password"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">New password</label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className={inputClass}
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                  />
-                  <p className="mt-1 text-xs text-gray-500">At least 8 characters.</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Confirm new password
-                  </label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className={inputClass}
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                  />
-                </div>
-              </div>
-            </div>
+            <PasswordField
+              id="current-password"
+              label="Current password"
+              value={currentPassword}
+              onChange={setCurrentPassword}
+              autoComplete="current-password"
+              error={pwdFieldErrors.current}
+            />
+            <PasswordField
+              id="new-password"
+              label="New password"
+              value={newPassword}
+              onChange={setNewPassword}
+              autoComplete="new-password"
+              error={pwdFieldErrors.next}
+              describedBy={newPwdHelpId}
+            />
+            <p id={newPwdHelpId} className="text-xs text-gray-500 -mt-2">
+              At least 8 characters. Avoid common or all-numeric passwords.
+            </p>
+            <PasswordField
+              id="confirm-password"
+              label="Confirm new password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              autoComplete="new-password"
+              error={pwdFieldErrors.confirm}
+            />
             <button
               type="submit"
               disabled={changePasswordMu.isPending}

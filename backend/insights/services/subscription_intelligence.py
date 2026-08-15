@@ -125,6 +125,8 @@ def _detect_subscriptions_from_transactions(
     today: date | None = None,
     lookback_days: int = 120,
     exclude_names: set[str],
+    households=None,
+    account_ids=None,
 ) -> list[dict[str, Any]]:
     """
     Find merchants with 2+ similar outflows in the lookback window that are not
@@ -132,8 +134,10 @@ def _detect_subscriptions_from_transactions(
     """
     today = today or date.today()
     start = today - timedelta(days=lookback_days)
-    households = get_households_for_user(user)
-    account_ids = Account.objects.filter(household__in=households).values_list("id", flat=True)
+    if account_ids is None:
+        if households is None:
+            households = get_households_for_user(user)
+        account_ids = Account.objects.filter(household__in=households).values_list("id", flat=True)
 
     qs = (
         Transaction.objects.filter(
@@ -148,6 +152,7 @@ def _detect_subscriptions_from_transactions(
             | Q(source=Transaction.Source.ONE_TIME)
             | Q(source=Transaction.Source.ACTUAL)
         )
+        .select_related("category", "account")
         .order_by("-date")
     )
 
@@ -199,7 +204,8 @@ def _detect_subscriptions_from_transactions(
 
 def build_subscription_intelligence(user, *, today: date | None = None) -> dict[str, Any]:
     today = today or date.today()
-    households = get_households_for_user(user)
+    households = list(get_households_for_user(user))
+    account_ids = list(Account.objects.filter(household__in=households).values_list("id", flat=True))
     rules = (
         RecurringRule.objects.filter(household__in=households, direction=RecurringRule.Direction.EXPENSE)
         .select_related("account", "category")
@@ -236,7 +242,13 @@ def build_subscription_intelligence(user, *, today: date | None = None) -> dict[
 
     subscriptions.sort(key=lambda x: (-float(x["monthly_amount"]), x["name"].lower()))
 
-    suggested = _detect_subscriptions_from_transactions(user, today=today, exclude_names=exclude_names)
+    suggested = _detect_subscriptions_from_transactions(
+        user,
+        today=today,
+        exclude_names=exclude_names,
+        households=households,
+        account_ids=account_ids,
+    )
 
     suggested_total = sum(
         (_decimal(s["monthly_amount"]) for s in suggested),

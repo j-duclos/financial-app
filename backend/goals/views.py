@@ -1,3 +1,4 @@
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
@@ -169,8 +170,11 @@ from goals.bucket_serializers import (
 )
 from goals.bucket_services import (
     account_bucket_summary,
+    build_goal_calculation_context,
     calculate_aggregate_bucket_summary,
+    calculate_aggregate_bucket_summary_from_results,
     calculate_bucket_progress,
+    calculate_goal_bucket_results,
     enrich_bucket,
     record_contribution,
 )
@@ -188,8 +192,50 @@ class GoalBucketViewSet(ModelViewSet):
         return (
             GoalBucket.objects.filter(household__in=households)
             .select_related("household", "linked_account")
+            .prefetch_related(
+                Prefetch(
+                    "rule_allocations",
+                    queryset=RuleAllocation.objects.filter(active=True).select_related("rule"),
+                )
+            )
             .order_by("priority", "-created_at")
         )
+
+    def list(self, request, *args, **kwargs):
+        from datetime import date as date_cls
+
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        buckets = list(page) if page is not None else list(queryset)
+        today = date_cls.today()
+        calc_ctx = build_goal_calculation_context(
+            buckets, today=today, as_of=today, user=request.user
+        )
+        serializer = self.get_serializer(
+            buckets,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                "goal_calculation_context": calc_ctx,
+            },
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="overview")
+    def overview(self, request):
+        from datetime import date as date_cls
+
+        qs = self.filter_queryset(self.get_queryset())
+        household = request.query_params.get("household")
+        if household:
+            qs = qs.filter(household_id=household)
+        buckets = list(qs)
+        today = date_cls.today()
+        results = calculate_goal_bucket_results(buckets, user=request.user, today=today)
+        summary = calculate_aggregate_bucket_summary_from_results(results)
+        return Response({"summary": summary, "goals": results})
 
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
@@ -199,7 +245,7 @@ class GoalBucketViewSet(ModelViewSet):
         household = request.query_params.get("household")
         if household:
             qs = qs.filter(household_id=household)
-        return Response(calculate_aggregate_bucket_summary(list(qs)))
+        return Response(calculate_aggregate_bucket_summary(list(qs), user=request.user))
 
     @action(detail=False, methods=["get"], url_path="reports")
     def reports(self, request):
@@ -210,12 +256,18 @@ class GoalBucketViewSet(ModelViewSet):
         months = int(request.query_params.get("months", "12"))
         months = max(1, min(months, 36))
         month = request.query_params.get("month")
+        include_history = request.query_params.get("include_history", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         return Response(
             build_goals_report(
                 households,
                 months=months,
                 month=month,
                 user=request.user,
+                include_history=include_history,
             )
         )
 
@@ -309,8 +361,19 @@ class GoalBucketViewSet(ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="forecast")
     def forecast(self, request, pk=None):
+        from datetime import date as date_cls
+
         bucket = self.get_object()
-        progress = enrich_bucket(bucket, calculate_bucket_progress(bucket))
+        today = date_cls.today()
+        ctx = build_goal_calculation_context(
+            [bucket], today=today, as_of=today, user=request.user
+        )
+        progress = enrich_bucket(
+            bucket,
+            calculate_bucket_progress(bucket, today=today, user=request.user, context=ctx),
+            today=today,
+            context=ctx,
+        )
         recommendation = progress.get("contribution_recommendation")
         if not recommendation:
             gap = progress.get("forecast_gap")

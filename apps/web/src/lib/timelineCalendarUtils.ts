@@ -19,13 +19,19 @@ import {
   type MonthGroup,
 } from "./monthGroupDisplay";
 
-export type TimelineViewMode = "calendar" | "list";
+export type TimelineViewMode = "calendar" | "timeline";
 
 export type TimelineHorizon = "14d" | "3m" | "6m" | "12m" | "24m";
 
 export type TimelineLookbackMonths = 0 | 1 | 2 | 3;
 
 export const DEFAULT_TIMELINE_VIEW: TimelineViewMode = "calendar";
+
+export function parseTimelineViewParam(value: string | null): TimelineViewMode | null {
+  if (value === "calendar") return "calendar";
+  if (value === "timeline" || value === "list") return "timeline";
+  return null;
+}
 
 const HORIZON_DAYS: Record<TimelineHorizon, number> = {
   "14d": 14,
@@ -231,6 +237,39 @@ export function groupTimelineRowsByDate(rows: TimelineRow[]): TimelineDayGroup[]
   return [...map.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, dateRows]) => ({ date, rows: dateRows }));
+}
+
+function timelineSourceFromCalendar(source: string | null | undefined): TimelineRow["source"] {
+  const normalized = (source ?? "").toLowerCase();
+  if (normalized === "rule" || normalized === "interest") return normalized;
+  return "actual";
+}
+
+/** List view rows from calendar days (already superseded-filtered by the calendar endpoint). */
+export function calendarDaysToTimelineRows(days: TimelineCalendarDay[]): TimelineRow[] {
+  const rows: TimelineRow[] = [];
+  for (const day of days) {
+    for (const txn of day.transactions) {
+      rows.push({
+        date: day.date,
+        description: txn.description,
+        account_id: txn.account_id ?? 0,
+        account_name: txn.account_name,
+        category_id: null,
+        category_name: txn.category,
+        amount: txn.amount ?? "0",
+        type: txn.kind,
+        status: txn.status ?? "",
+        source: timelineSourceFromCalendar(txn.source),
+        rule_id: txn.rule_id ?? null,
+        transaction_id: txn.transaction_id ?? null,
+        running_balance: txn.balance_after ?? "0",
+        reconciled: txn.reconciled,
+        txn_source: txn.source,
+      });
+    }
+  }
+  return rows;
 }
 
 /** Income / expense / net from raw timeline rows (fallback when calendar day missing). */

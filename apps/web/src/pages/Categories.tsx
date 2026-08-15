@@ -1,8 +1,7 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Category, CategoryType } from "@budget-app/shared";
 import {
-  listCategories,
   listHouseholds,
   createCategory,
   updateCategory,
@@ -10,96 +9,144 @@ import {
   getProfile,
 } from "@budget-app/api-client";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
+import { useCategories } from "../hooks/useCategories";
+import CategoryActionsMenu from "../components/categories/CategoryActionsMenu";
+import {
+  categoryRowActions,
+  filterManagedCategories,
+  groupManagedCategories,
+  type CategorySourceFilter,
+} from "../lib/categoryList";
 
-function groupByParent(categories: Category[]): Map<number | null, Category[]> {
-  const map = new Map<number | null, Category[]>();
-  for (const c of categories) {
-    const key = c.parent ?? null;
-    const list = map.get(key) ?? [];
-    list.push(c);
-    map.set(key, list);
-  }
-  for (const list of map.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-  }
-  return map;
+const SOURCE_FILTERS: { value: CategorySourceFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "custom", label: "Custom" },
+  { value: "default", label: "Default" },
+];
+
+function CategorySection({
+  title,
+  categories,
+  showHeading,
+  onEdit,
+  onArchive,
+  onDelete,
+}: {
+  title: string;
+  categories: Category[];
+  showHeading: boolean;
+  onEdit: (cat: Category) => void;
+  onArchive: (cat: Category) => void;
+  onDelete: (cat: Category) => void;
+}) {
+  if (categories.length === 0) return null;
+  return (
+    <>
+      {showHeading && (
+        <tr className="bg-gray-50">
+          <th
+            colSpan={4}
+            className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500"
+          >
+            {title}
+          </th>
+        </tr>
+      )}
+      {categories.map((cat) => {
+        const actions = categoryRowActions(cat);
+        return (
+          <tr
+            key={cat.id}
+            className={`border-t border-gray-100 ${
+              cat.is_archived ? "bg-gray-50 text-gray-400" : "hover:bg-gray-50"
+            }`}
+          >
+            <td className="px-4 py-2 text-sm min-w-0">
+              <span className={`font-medium ${cat.is_archived ? "line-through" : "text-gray-900"}`}>
+                {cat.name}
+              </span>
+              <span className="sm:hidden ml-2 inline-flex flex-wrap gap-1 align-middle">
+                {cat.is_system && (
+                  <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">Default</span>
+                )}
+                {cat.is_archived && (
+                  <span className="text-xs text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Archived</span>
+                )}
+              </span>
+            </td>
+            <td className="hidden sm:table-cell px-4 py-2 text-sm text-gray-600 whitespace-nowrap">
+              {cat.is_system ? "Default" : "Custom"}
+            </td>
+            <td className="hidden sm:table-cell px-4 py-2 text-sm whitespace-nowrap">
+              {cat.is_archived ? (
+                <span className="text-xs text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Archived</span>
+              ) : (
+                <span className="text-gray-400">—</span>
+              )}
+            </td>
+            <td className="px-4 py-2 text-right">
+              <div className="inline-flex justify-end">
+                <CategoryActionsMenu
+                  onEdit={() => onEdit(cat)}
+                  onArchive={actions.archive ? () => onArchive(cat) : undefined}
+                  onRestore={actions.restore ? () => onArchive(cat) : undefined}
+                  onDelete={() => onDelete(cat)}
+                />
+              </div>
+            </td>
+          </tr>
+        );
+      })}
+    </>
+  );
 }
 
 export default function Categories() {
   const [type, setType] = useState<CategoryType>("EXPENSE");
+  const [source, setSource] = useState<CategorySourceFilter>("all");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [form, setForm] = useState<{ name: string; parent: number | null; is_archived: boolean }>({ name: "", parent: null, is_archived: false });
+  const [form, setForm] = useState<{ name: string; parent: number | null; is_archived: boolean }>({
+    name: "",
+    parent: null,
+    is_archived: false,
+  });
   const queryClient = useQueryClient();
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
   const householdId = profile?.default_household ?? households?.[0]?.id;
 
-  const { data: categoriesData } = useQuery({
-    queryKey: ["categories", { household: householdId, type, include_archived: showArchived }],
-    queryFn: () =>
-      listCategories({
-        household: householdId!,
-        type,
-        include_archived: showArchived,
-        page_size: 500,
-      }),
+  const { data: categoriesData } = useCategories({
+    householdId,
+    includeArchived: true,
     enabled: !!householdId,
   });
 
   const categories = categoriesData?.results ?? [];
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return categories;
-    return categories.filter((c) => c.name.toLowerCase().includes(q));
-  }, [categories, search]);
-
-  const grouped = useMemo(() => groupByParent(filtered), [filtered]);
-  const displayList = useMemo(() => {
-    const roots = grouped.get(null) ?? [];
-    const children = [...grouped.entries()]
-      .filter(([key]) => key !== null)
-      .flatMap(([, list]) => list);
-    return [...roots, ...children].sort((a, b) => a.name.localeCompare(b.name));
-  }, [grouped]);
+  const filtered = useMemo(
+    () =>
+      filterManagedCategories(categories, {
+        type,
+        source,
+        search,
+        showArchived,
+      }),
+    [categories, type, source, search, showArchived]
+  );
+  const grouped = useMemo(() => groupManagedCategories(filtered), [filtered]);
+  const showSectionHeadings = source === "all";
 
   const createMu = useMutation({
     mutationFn: (body: { household: number; name: string; category_type: string; parent?: number | null }) =>
       createCategory(body),
-    onMutate: async (vars) => {
-      const qk = ["categories", { household: householdId, type, include_archived: showArchived }];
-      await queryClient.cancelQueries({ queryKey: ["categories"] });
-      const prev = queryClient.getQueryData(qk);
-      queryClient.setQueryData(qk, (old: { results: Category[] } | undefined) =>
-        old
-          ? {
-              ...old,
-              results: [
-                ...old.results,
-                { id: -1, household: vars.household, parent: vars.parent ?? null, name: vars.name, category_type: vars.category_type, is_system: false, is_archived: false, sort_order: 999, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } as Category,
-              ],
-            }
-          : old
-      );
-      return { prev };
-    },
-    onError: (err, _vars, ctx) => {
-      if (ctx?.prev) {
-        queryClient.setQueryData(["categories", { household: householdId, type, include_archived: showArchived }], ctx.prev);
-      }
+    onError: (err) => {
       setSubmitError(err.message || "Failed to create category");
     },
-    onSuccess: (data) => {
-      const qk = ["categories", { household: householdId, type, include_archived: showArchived }];
-      queryClient.setQueryData(qk, (old: { results: Category[] } | undefined) =>
-        old && !old.results.some((c) => c.id === data.id)
-          ? { ...old, results: [...old.results, data].sort((a, b) => a.name.localeCompare(b.name)) }
-          : old
-      );
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       setModalOpen(false);
       setForm({ name: "", parent: null, is_archived: false });
@@ -109,26 +156,7 @@ export default function Categories() {
 
   const updateMu = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<Category> }) => updateCategory(id, data),
-    onMutate: async ({ id, data }) => {
-      const qk = ["categories", { household: householdId, type, include_archived: showArchived }];
-      await queryClient.cancelQueries({ queryKey: ["categories"] });
-      const prev = queryClient.getQueryData(qk);
-      queryClient.setQueryData(qk, (old: { results: Category[] } | undefined) =>
-        old
-          ? {
-              ...old,
-              results: old.results.map((c) =>
-                c.id === id ? { ...c, ...data, updated_at: new Date().toISOString() } : c
-              ),
-            }
-          : old
-      );
-      return { prev };
-    },
-    onError: (err, _vars, ctx) => {
-      if (ctx?.prev) {
-        queryClient.setQueryData(["categories", { household: householdId, type, include_archived: showArchived }], ctx.prev);
-      }
+    onError: (err) => {
       setSubmitError(err.message || "Failed to update category");
     },
     onSuccess: () => {
@@ -141,7 +169,7 @@ export default function Categories() {
 
   const deleteMu = useMutation({
     mutationFn: deleteCategory,
-    onSuccess: (_, id) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
   });
@@ -169,7 +197,10 @@ export default function Categories() {
       return;
     }
     if (editing) {
-      updateMu.mutate({ id: editing.id, data: { name: trimmed, parent: form.parent, is_archived: form.is_archived } });
+      updateMu.mutate({
+        id: editing.id,
+        data: { name: trimmed, parent: form.parent, is_archived: form.is_archived },
+      });
     } else if (householdId != null) {
       createMu.mutate({
         household: householdId,
@@ -192,15 +223,25 @@ export default function Categories() {
     }
   }
 
-  const parentsForType = categories.filter((c) => c.category_type === type && c.parent === null && !c.is_archived && c.id !== editing?.id);
+  const parentsForType = categories.filter(
+    (c) => c.category_type === type && c.parent === null && !c.is_archived && c.id !== editing?.id
+  );
 
   return (
     <div className={PAGE_SHELL_PY_LOOSE}>
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold text-gray-900">Categories</h1>
+        <p className="text-sm text-gray-600 mt-1">
+          Configuration for income and expense categories used across Budget, Transactions, and Reports.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex flex-wrap items-center gap-4 min-w-0">
-          <div className="flex rounded overflow-hidden border border-gray-300">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
+          <div className="flex rounded overflow-hidden border border-gray-300" role="tablist" aria-label="Category type">
             <button
               type="button"
+              role="tab"
+              aria-selected={type === "EXPENSE"}
               onClick={() => setType("EXPENSE")}
               className={`px-4 py-2 text-sm font-medium ${type === "EXPENSE" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
             >
@@ -208,17 +249,35 @@ export default function Categories() {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={type === "INCOME"}
               onClick={() => setType("INCOME")}
               className={`px-4 py-2 text-sm font-medium ${type === "INCOME" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
             >
               Income
             </button>
           </div>
+          <div className="flex rounded overflow-hidden border border-gray-300" role="group" aria-label="Category source">
+            {SOURCE_FILTERS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={source === opt.value}
+                onClick={() => setSource(opt.value)}
+                className={`px-3 py-2 text-sm font-medium ${
+                  source === opt.value ? "bg-gray-800 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <input
             type="search"
             placeholder="Search categories..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search categories"
             className="rounded border border-gray-300 px-3 py-2 text-sm min-w-[200px]"
           />
           <label className="flex items-center gap-2 text-sm">
@@ -239,50 +298,53 @@ export default function Categories() {
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden max-h-[calc(100vh-16rem)] overflow-y-auto">
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden max-h-[calc(100vh-16rem)] overflow-y-auto">
         {filtered.length === 0 ? (
           <p className="p-6 text-gray-500">No categories found.</p>
         ) : (
-          <ul className="divide-y divide-gray-200">
-            {displayList.map((cat) => (
-              <li key={cat.id} className="group flex items-center justify-between px-4 py-2 hover:bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <span className={`font-medium ${cat.is_archived ? "text-gray-400 line-through" : ""}`}>
-                    {cat.name}
-                  </span>
-                  {cat.is_system && (
-                    <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">Default</span>
-                  )}
-                  {cat.is_archived && (
-                    <span className="text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Archived</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openEdit(cat)} className="text-blue-600 text-sm py-1 px-2 hover:underline">
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleArchive(cat)}
-                    className="text-sm py-1 px-2 hover:underline"
-                  >
-                    {cat.is_archived ? "Restore" : "Archive"}
-                  </button>
-                  <button onClick={() => handleDelete(cat)} className="text-red-600 text-sm py-1 px-2 hover:underline">
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <table className="min-w-full table-fixed divide-y divide-gray-200">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Category
+                </th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide w-28">
+                  Source
+                </th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide w-28">
+                  Status
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wide w-16">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <CategorySection
+                title="Custom"
+                categories={grouped.custom}
+                showHeading={showSectionHeadings}
+                onEdit={openEdit}
+                onArchive={handleArchive}
+                onDelete={handleDelete}
+              />
+              <CategorySection
+                title="Default"
+                categories={grouped.system}
+                showHeading={showSectionHeadings}
+                onEdit={openEdit}
+                onArchive={handleArchive}
+                onDelete={handleDelete}
+              />
+            </tbody>
+          </table>
         )}
       </div>
 
       {modalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-10">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-lg font-semibold mb-4">
-              {editing ? "Edit category" : "New category"}
-            </h2>
+            <h2 className="text-lg font-semibold mb-4">{editing ? "Edit category" : "New category"}</h2>
             {submitError && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
                 {submitError}

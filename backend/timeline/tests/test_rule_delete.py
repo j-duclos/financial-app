@@ -107,11 +107,11 @@ def test_delete_rule_removes_transfer_pair_future(api_client, user, household):
         name="Savor",
         currency="USD",
     )
-    cat = Category.objects.create(
+    cat, _ = Category.objects.get_or_create(
         household=household,
         name="Credit Card Payment",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     rule = RecurringRule.objects.create(
         household=household,

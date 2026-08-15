@@ -16,7 +16,6 @@ from accounts.services.available_to_spend import (
     _decimal,
     _project_balances,
 )
-from accounts.services.credit_card import ledger_owed_balance
 from recommendations.services.calculators import (
     UTILIZATION_TARGETS,
     is_category_discretionary,
@@ -25,8 +24,7 @@ from recommendations.services.calculators import (
     transfer_amount_to_restore,
     utilization_percent,
 )
-from recommendations.services.context import RecommendationContext
-from timeline.services.ledger import _balance_at_end_of_date
+from recommendations.services.context import RecommendationContext, timeline_row_date
 
 
 @dataclass
@@ -125,7 +123,7 @@ def detect_utilization(ctx: RecommendationContext) -> list[Detection]:
         details = health.get("details") or {}
         util = details.get("utilization_percent")
         if util is None:
-            owed = ledger_owed_balance(acc, ctx.today)
+            owed = ctx.owed_for(acc.id)
             limit = _decimal(acc.credit_limit or 0)
             util_pct = utilization_percent(owed, limit)
             util = float(util_pct) if util_pct is not None else None
@@ -134,7 +132,7 @@ def detect_utilization(ctx: RecommendationContext) -> list[Detection]:
         util_dec = _decimal(util)
         if util_dec < Decimal("70"):
             continue
-        owed = ledger_owed_balance(acc, ctx.today)
+        owed = ctx.owed_for(acc.id)
         limit = _decimal(acc.credit_limit or 0)
         target = Decimal("70")
         for t in UTILIZATION_TARGETS:
@@ -160,30 +158,38 @@ def detect_utilization(ctx: RecommendationContext) -> list[Detection]:
 
 
 def _daily_balances_for_account(
-    account_id: int,
-    timeline_rows: list[dict],
+    account_rows: list[dict],
     today: date,
     window_end: date,
+    current_balance: Decimal,
 ) -> dict[date, Decimal]:
-    current = _balance_at_end_of_date(account_id, today)
     by_date: dict[date, list[Decimal]] = defaultdict(list)
-    for row in timeline_rows:
-        if row.get("account_id") != account_id:
-            continue
-        row_date = row["date"]
-        if not isinstance(row_date, date):
-            row_date = date.fromisoformat(str(row_date)[:10])
+    for row in account_rows:
+        row_date = timeline_row_date(row)
         if row_date <= today or row_date > window_end:
             continue
         by_date[row_date].append(_decimal(row["amount"]))
     lowest, _, lowest_date, _, _, _, _, _ = _project_balances(
-        current,
+        current_balance,
         by_date,
         today,
         window_end,
         Decimal("0"),
     )
     return {"lowest": lowest, "lowest_date": lowest_date, "by_date": by_date}
+
+
+def _inflow_between(
+    daily_inflow: dict[date, Decimal],
+    start_exclusive: date,
+    end_inclusive: date,
+) -> Decimal:
+    total = Decimal("0")
+    day = start_exclusive + timedelta(days=1)
+    while day <= end_inclusive:
+        total += daily_inflow.get(day, Decimal("0"))
+        day += timedelta(days=1)
+    return total
 
 
 def detect_bill_delay_opportunities(
@@ -205,18 +211,15 @@ def detect_bill_delay_opportunities(
         if not risk_date_str:
             continue
         risk_date = date.fromisoformat(risk_date_str[:10])
-        balances = _daily_balances_for_account(acc.id, ctx.timeline_rows, ctx.today, window_end)
+        account_rows = ctx.rows_for_account(acc.id)
+        current = ctx.signed_balances.get(acc.id, Decimal("0"))
+        balances = _daily_balances_for_account(account_rows, ctx.today, window_end, current)
         if balances["lowest"] >= Decimal("0"):
             continue
 
         expenses_on_risk: list[dict] = []
-        for row in ctx.timeline_rows:
-            if row.get("account_id") != acc.id:
-                continue
-            row_date = row["date"]
-            if not isinstance(row_date, date):
-                row_date = date.fromisoformat(str(row_date)[:10])
-            if row_date != risk_date:
+        for row in account_rows:
+            if timeline_row_date(row) != risk_date:
                 continue
             amt = _decimal(row.get("amount") or 0)
             if amt >= 0:
@@ -229,31 +232,20 @@ def detect_bill_delay_opportunities(
                 continue
             expenses_on_risk.append(row)
 
+        daily_inflow = ctx.inflows_for_account(acc.id)
         for row in expenses_on_risk:
             rule = ctx.rules_by_id.get(int(row["rule_id"]))
             if not rule:
                 continue
             flex = int(rule.payment_flexibility_days or 0)
             expense_amt = abs(_decimal(row.get("amount") or 0))
-            row_date = row["date"]
-            if not isinstance(row_date, date):
-                row_date = date.fromisoformat(str(row_date)[:10])
+            row_date = timeline_row_date(row)
 
             for shift in range(1, flex + 1):
                 new_date = row_date + timedelta(days=shift)
                 if new_date > window_end:
                     break
-                inflow_after = Decimal("0")
-                for other in ctx.timeline_rows:
-                    if other.get("account_id") != acc.id:
-                        continue
-                    od = other["date"]
-                    if not isinstance(od, date):
-                        od = date.fromisoformat(str(od)[:10])
-                    if row_date < od <= new_date:
-                        amt = _decimal(other.get("amount") or 0)
-                        if amt > 0:
-                            inflow_after += amt
+                inflow_after = _inflow_between(daily_inflow, row_date, new_date)
                 if inflow_after >= expense_amt:
                     out.append(
                         Detection(
@@ -280,9 +272,7 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
         return out
     shortfall = abs(total_sts) if total_sts < 0 else Decimal("200")
     try:
-        from budgets.services.spending_targets import spending_targets_summary
-
-        summary = spending_targets_summary(ctx.user, anchor=ctx.today)
+        summary = ctx.spending_targets_summary or {}
         for row in summary.get("targets", []):
             if row["status"] not in ("above_target", "risky", "approaching"):
                 continue

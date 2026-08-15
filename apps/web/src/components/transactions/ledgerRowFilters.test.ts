@@ -65,13 +65,24 @@ describe("ledgerRowFilters", () => {
     ).toBe(false);
   });
 
-  it("passes through when no amount filters are set", () => {
+  it("filters upcoming recurring rows by amount without changing balances", () => {
+    const row: LedgerRow = {
+      type: "recurring",
+      row: {
+        date: "2026-09-01",
+        description: "Rent",
+        amount: "-1200.00",
+        running_balance: "100",
+        account_id: 1,
+      } as never,
+      balance: 100,
+    };
     expect(
-      matchesLedgerRowFilters(txnRow(expenseTxn), {
-        amountMin: null,
-        amountMax: null,
-      })
+      matchesLedgerRowFilters(row, { amountMin: 500, amountMax: null })
     ).toBe(true);
-    expect(hasActiveLedgerRowFilters({ amountMin: null, amountMax: null })).toBe(false);
+    expect(
+      matchesLedgerRowFilters(row, { amountMin: null, amountMax: 100 })
+    ).toBe(false);
+    expect(ledgerRowAbsAmount(row)).toBe(1200);
   });
 });

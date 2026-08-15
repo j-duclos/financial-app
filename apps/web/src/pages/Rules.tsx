@@ -6,7 +6,6 @@ import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
 import type { RecurringRule, Account, Category, RecurringRuleFrequency } from "@budget-app/shared";
 import {
   listRules,
-  listCategories,
   listHouseholds,
   getProfile,
   createRule,
@@ -15,10 +14,12 @@ import {
   resumeRule as resumeRuleApi,
   deleteRule,
 } from "@budget-app/api-client";
+import { useCategories } from "../hooks/useCategories";
 import RuleActionsMenu from "../components/rules/RuleActionsMenu";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { formatNextRunDate, getNextRuleRunDate } from "../lib/ruleOccurrences";
 import { formatDateDisplay } from "../lib/dateDisplay";
+import { invalidateRecurringRuleDependents } from "../lib/financialQueryRefresh";
 import {
   RULE_SECTIONS,
   estimatedMonthlyCashFlow,
@@ -27,6 +28,7 @@ import {
   sectionMonthlySubtotal,
   type RuleSectionKey,
 } from "../lib/ruleCashFlow";
+import { AUTOMATION_NAV_LABEL, AUTOMATION_PAGE_INTRO } from "../lib/automationDisplay";
 
 const FREQUENCY_LABELS: Record<RecurringRuleFrequency, string> = {
   WEEKLY: "Weekly",
@@ -149,12 +151,19 @@ export default function Rules() {
   const { data: rulesData } = useQuery({
     queryKey: ["rules"],
     queryFn: () => listRules(),
-    refetchOnMount: "always",
   });
-  const { data: accountsData } = useOperationalAccounts();
-  const { data: categoriesData } = useQuery({ queryKey: ["categories"], queryFn: () => listCategories() });
-  const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
-  const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
+  const { data: accountsData } = useOperationalAccounts({ enabled: modalOpen });
+  const { data: categoriesData } = useCategories({ enabled: modalOpen });
+  const { data: households } = useQuery({
+    queryKey: ["households"],
+    queryFn: listHouseholds,
+    enabled: modalOpen,
+  });
+  const { data: profile } = useQuery({
+    queryKey: ["profile"],
+    queryFn: getProfile,
+    enabled: modalOpen,
+  });
 
   const rules = rulesData?.results ?? [];
   const filteredRules = useMemo(() => {
@@ -163,12 +172,11 @@ export default function Rules() {
     return rules.filter((r: RecurringRule) => (r.name ?? "").toLowerCase().includes(q));
   }, [rules, ruleSearch]);
   const monthlyCashFlow = useMemo(
-    () =>
-      estimatedMonthlyCashFlow(filteredRules, (rule) => getRuleLifecycleStatus(rule) === "running"),
-    [filteredRules]
+    () => estimatedMonthlyCashFlow(rules, (rule) => getRuleLifecycleStatus(rule) === "running"),
+    [rules]
   );
   const cashFlowCurrency =
-    filteredRules.find((r) => getRuleLifecycleStatus(r) === "running")?.currency ?? "USD";
+    rules.find((r) => getRuleLifecycleStatus(r) === "running")?.currency ?? "USD";
 
   const groupedRules = useMemo(() => {
     const groups: Record<RuleSectionKey, RecurringRule[]> = {
@@ -192,6 +200,12 @@ export default function Rules() {
   const accounts = accountsData?.results ?? [];
   const categories = categoriesData?.results ?? [];
   const householdId = form.household || (profile?.default_household ?? households?.[0]?.id ?? 0);
+
+  useEffect(() => {
+    if (!modalOpen || form.household) return;
+    const hid = profile?.default_household ?? households?.[0]?.id;
+    if (hid) setForm((f) => (f.household ? f : { ...f, household: hid }));
+  }, [modalOpen, profile, households, form.household]);
   const accountsForHousehold = householdId
     ? accounts.filter((a: Account) => {
         const h = a.household;
@@ -201,11 +215,7 @@ export default function Rules() {
     : accounts;
 
   function invalidateLedgerQueries() {
-    queryClient.invalidateQueries({ queryKey: ["rules"] });
-    queryClient.invalidateQueries({ queryKey: ["timeline"] });
-    queryClient.invalidateQueries({ queryKey: ["timeline-calendar"] });
-    queryClient.invalidateQueries({ queryKey: ["transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    invalidateRecurringRuleDependents(queryClient);
   }
 
   const createMu = useMutation({
@@ -402,6 +412,10 @@ export default function Rules() {
 
   return (
     <div className={PAGE_SHELL_PY}>
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold text-gray-900">{AUTOMATION_NAV_LABEL}</h1>
+        <p className="text-sm text-gray-600 mt-1">{AUTOMATION_PAGE_INTRO}</p>
+      </div>
       <div
         className={`mb-4 grid gap-3 ${
           rules.length > 0 ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"
@@ -413,9 +427,9 @@ export default function Rules() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-gray-800">Estimated monthly cash flow</p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Running automation only. Includes income, bills, subscriptions, and card or loan payments.
+                  All running automation. Includes income, bills, subscriptions, and card or loan payments.
                   Excludes internal transfers between checking and savings and charges on credit cards (counted
-                  when you pay the card from a bank account).
+                  when you pay the card from a bank account). Search filters the list below, not this total.
                 </p>
               </div>
               <p
@@ -498,7 +512,9 @@ export default function Rules() {
                                 : "text-gray-500"
                           }`}
                         >
-                          <span className="text-gray-500 font-medium mr-1.5">Monthly</span>
+                          <span className="text-gray-500 font-medium mr-1.5">
+                            Monthly{ruleSearch.trim() ? " (matching)" : ""}
+                          </span>
                           {formatMonthlySubtotal(monthlySubtotal, subtotalCurrency)}
                         </span>
                       </div>

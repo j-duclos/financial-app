@@ -26,17 +26,17 @@ def test_monthly_summary(authenticated_client, account):
 
 
 def test_category_breakdown_excludes_bank_transfers(authenticated_client, account, household):
-    transfer_cat = Category.objects.create(
+    transfer_cat, _ = Category.objects.get_or_create(
         household=household,
         name="Bank Transfer",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=99,
+        defaults={"sort_order": 99},
     )
-    groceries = Category.objects.create(
+    groceries, _ = Category.objects.get_or_create(
         household=household,
         name="Groceries",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
+        defaults={"sort_order": 1},
     )
     tg = TransferGroup.objects.create(
         household=household,
@@ -78,11 +78,11 @@ def test_category_breakdown_excludes_bank_transfers(authenticated_client, accoun
 
 
 def test_monthly_summary_excludes_bank_transfers(authenticated_client, account, household):
-    transfer_cat = Category.objects.create(
+    transfer_cat, _ = Category.objects.get_or_create(
         household=household,
         name="Bank Transfer",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=99,
+        defaults={"sort_order": 99},
     )
     tg = TransferGroup.objects.create(
         household=household,

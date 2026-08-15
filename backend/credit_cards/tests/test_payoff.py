@@ -115,6 +115,22 @@ class TestPayoffProjection:
         payment = resolve_strategy_payment_amount(credit_card, "current_balance")
         assert payment == Decimal("1000")
 
+    def test_starting_balance_skips_ledger_lookup(self, credit_card):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        connection.queries_log.clear()
+        with CaptureQueriesContext(connection) as ctx:
+            result = project_credit_card_payoff(
+                credit_card,
+                "custom_amount",
+                custom_amount=Decimal("250"),
+                starting_balance=Decimal("1000"),
+            )
+        assert len(ctx.captured_queries) == 0
+        assert result["payoff_possible"] is True
+        assert result["starting_balance"] == "1000.00"
+
     def test_compare_strategies(self, credit_card):
         data = compare_payment_strategies(
             credit_card,
@@ -177,12 +193,12 @@ class TestPaymentTransactions:
 
         cat_expense = Cat.objects.create(
             household=household,
-            name="Groceries",
+            name="Payoff Test Groceries",
             category_type=Cat.CategoryType.EXPENSE,
         )
         cat_payment = Cat.objects.create(
             household=household,
-            name="Credit Card Payment",
+            name="Payoff Test Credit Card Payment",
             category_type=Cat.CategoryType.EXPENSE,
         )
         post_transaction(

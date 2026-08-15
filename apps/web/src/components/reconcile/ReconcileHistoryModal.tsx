@@ -224,8 +224,11 @@ function SessionDetailView({
         <DetailRow label="Period start" value={formatDateDisplay(detail.period_start_date)} />
         <DetailRow label="Period end" value={formatDateDisplay(detail.period_end_date)} />
         <DetailRow label="Opening balance" value={formatCurrency(parseAmount(detail.opening_balance))} />
-        <DetailRow label="App balance" value={formatCurrency(parseAmount(detail.app_balance))} />
-        <DetailRow label="Bank balance" value={formatCurrency(parseAmount(detail.bank_balance))} />
+        <DetailRow
+          label="Calculated ending balance"
+          value={formatCurrency(parseAmount(detail.calculated_ending_balance ?? detail.app_balance))}
+        />
+        <DetailRow label="Bank statement balance" value={formatCurrency(parseAmount(detail.bank_balance))} />
         <DetailRow label="Difference" value={formatCurrency(parseAmount(detail.difference))} />
         <DetailRow label="Completed" value={formatCompletedAt(detail.completed_at)} />
         {detail.completed_by && <DetailRow label="Completed by" value={detail.completed_by} />}

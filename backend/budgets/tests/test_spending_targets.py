@@ -19,7 +19,7 @@ from budgets.services.spending_targets import (
 )
 from categories.models import Category
 from core.models import Household, HouseholdMembership
-from timeline.models import RecurringRule
+from timeline.models import RecurringRule, RecurringRuleSkip
 from transactions.models import Transaction
 
 User = get_user_model()
@@ -40,7 +40,7 @@ def household(user):
 
 @pytest.fixture
 def expense_category(household):
-    return Category.objects.create(
+    return Category.objects.get(
         household=household,
         name="Groceries",
         category_type=Category.CategoryType.EXPENSE,
@@ -49,11 +49,10 @@ def expense_category(household):
 
 @pytest.fixture
 def transfer_category(household):
-    return Category.objects.create(
+    return Category.objects.get(
         household=household,
         name="Transfer",
         category_type=Category.CategoryType.EXPENSE,
-        is_system=True,
     )
 
 
@@ -100,6 +99,24 @@ def test_period_bounds_monthly():
 
 
 @pytest.mark.django_db
+def test_period_bounds_week_quarter_year_and_month_edges():
+    week_start, week_end = period_bounds("weekly", date(2026, 5, 15))
+    assert week_start == date(2026, 5, 11)
+    assert week_end == date(2026, 5, 17)
+    q_start, q_end = period_bounds("quarterly", date(2026, 5, 15))
+    assert q_start == date(2026, 4, 1)
+    assert q_end == date(2026, 6, 30)
+    y_start, y_end = period_bounds("yearly", date(2026, 5, 15))
+    assert y_start == date(2026, 1, 1)
+    assert y_end == date(2026, 12, 31)
+    first, last = period_bounds("monthly", date(2026, 5, 1))
+    assert first == date(2026, 5, 1)
+    assert last == date(2026, 5, 31)
+    _, end = period_bounds("monthly", date(2026, 5, 31))
+    assert end == date(2026, 5, 31)
+
+
+@pytest.mark.django_db
 def test_spent_excludes_transfers(
     user, household, checking, expense_category, transfer_category, target
 ):
@@ -127,11 +144,10 @@ def test_spent_excludes_transfers(
 def test_credit_card_payment_category_excluded(
     user, household, checking, expense_category, target
 ):
-    cc_pay = Category.objects.create(
+    cc_pay = Category.objects.get(
         household=household,
         name="Credit Card Payment",
         category_type=Category.CategoryType.EXPENSE,
-        is_system=True,
     )
     Transaction.objects.create(
         account=checking,
@@ -250,7 +266,7 @@ def test_groceries_no_future_txns_committed_equals_spent(
 
 @pytest.mark.django_db
 def test_fixed_insurance_no_phantom_pacing(user, household, checking):
-    insurance = Category.objects.create(
+    insurance = Category.objects.get(
         household=household,
         name="Auto Insurance",
         category_type=Category.CategoryType.EXPENSE,
@@ -285,7 +301,7 @@ def test_fixed_insurance_no_phantom_pacing(user, household, checking):
 @pytest.mark.django_db
 def test_fixed_insurance_no_double_count_after_midmonth_payment(user, household, checking):
     """May bill already posted; June bill must not appear in May scheduled remaining."""
-    insurance = Category.objects.create(
+    insurance = Category.objects.get(
         household=household,
         name="Auto Insurance",
         category_type=Category.CategoryType.EXPENSE,
@@ -386,7 +402,7 @@ def test_recommendation_generated(user, target, household, checking, expense_cat
     )
     recs = recommendations_from_spending_targets(user, anchor=AS_OF)
     assert len(recs) >= 1
-    assert recs[0]["primary_action_label"] == "View spending limits"
+    assert recs[0]["primary_action_label"] == "View budget"
     assert recs[0]["primary_action_url"] == "/spending-goals"
     assert "Groceries" in recs[0]["why"] or "groceries" in recs[0]["why"].lower()
 
@@ -405,6 +421,7 @@ def test_spent_aggregates_duplicate_category_names(user, household, checking, ta
         household=household,
         name="Groceries",
         category_type=Category.CategoryType.EXPENSE,
+        parent=target.category,
     )
     Transaction.objects.create(
         account=checking,
@@ -428,11 +445,10 @@ def test_spent_aggregates_duplicate_category_names(user, household, checking, ta
 
 @pytest.mark.django_db
 def test_credit_card_payment_target_includes_payments(user, household, checking):
-    cc_pay = Category.objects.create(
+    cc_pay = Category.objects.get(
         household=household,
         name="Credit Card Payment",
         category_type=Category.CategoryType.EXPENSE,
-        is_system=True,
     )
     cc_target = SpendingTarget.objects.create(
         household=household,
@@ -474,11 +490,10 @@ def test_suggest_fixed_when_recurring_rule(user, household, checking, expense_ca
 def test_credit_card_payment_with_scheduled_remaining(
     user, household, checking
 ):
-    cc_pay = Category.objects.create(
+    cc_pay = Category.objects.get(
         household=household,
         name="Credit Card Payment",
         category_type=Category.CategoryType.EXPENSE,
-        is_system=True,
     )
     cc_target = SpendingTarget.objects.create(
         household=household,
@@ -571,3 +586,131 @@ def test_future_planned_skipped_when_rule_already_posted_same_month(
     assert Decimal(metrics["spent_so_far"]) == Decimal("520")
     assert Decimal(metrics["scheduled_in_period"]) == Decimal("0")
     assert Decimal(metrics["forecast_amount"]) == Decimal("520")
+
+
+@pytest.mark.django_db
+def test_recurring_skip_excludes_rule_projection(user, household, checking, expense_category, fixed_target):
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Gym",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("40.00"),
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        day_of_month=24,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    RecurringRuleSkip.objects.create(rule=rule, date=date(2026, 5, 24))
+    metrics = calculate_target_metrics(fixed_target, anchor=AS_OF, today=AS_OF)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("0")
+    assert Decimal(metrics["scheduled_in_period"]) == Decimal("0")
+
+
+@pytest.mark.django_db
+def test_materialized_rule_txn_not_double_counted_with_projection(
+    user, household, checking, expense_category, fixed_target
+):
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Internet",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("80.00"),
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        day_of_month=20,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 20),
+        payee="Internet",
+        amount=Decimal("-80.00"),
+        category=expense_category,
+        rule=rule,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+    )
+    metrics = calculate_target_metrics(fixed_target, anchor=AS_OF, today=AS_OF)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("0")
+    assert Decimal(metrics["scheduled_in_period"]) == Decimal("80.00")
+    assert Decimal(metrics["forecast_amount"]) == Decimal("80.00")
+
+
+@pytest.mark.django_db
+def test_account_specific_target_ignores_other_accounts(
+    user, household, checking, expense_category
+):
+    other = Account.objects.create(
+        household=household,
+        name="Other",
+        account_type=Account.AccountType.CHECKING,
+        starting_balance=Decimal("1000"),
+    )
+    scoped = SpendingTarget.objects.create(
+        household=household,
+        category=expense_category,
+        target_amount=Decimal("700"),
+        period=SpendingTarget.Period.MONTHLY,
+        account=checking,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF,
+        payee="Keep",
+        amount=Decimal("-40"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=other,
+        date=AS_OF,
+        payee="Ignore",
+        amount=Decimal("-90"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    metrics = calculate_target_metrics(scoped, anchor=AS_OF, today=AS_OF, include_scheduled=False)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("40")
+
+
+@pytest.mark.django_db
+def test_posted_planned_and_rule_projection_combine(
+    user, household, checking, expense_category, target
+):
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Later bill",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("30.00"),
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        day_of_month=28,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF,
+        payee="Posted",
+        amount=Decimal("-100"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 22),
+        payee="Planned one-off",
+        amount=Decimal("-25"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+    )
+    metrics = calculate_target_metrics(target, anchor=AS_OF, today=AS_OF)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("100")
+    assert Decimal(metrics["scheduled_in_period"]) == Decimal("55.00")
+    assert rule.id
+    assert metrics["status"] == STATUS_WITHIN

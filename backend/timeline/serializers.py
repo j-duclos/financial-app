@@ -19,7 +19,7 @@ from .services.rule_schedule import (
     ensure_initial_schedule,
     get_next_scheduled_change,
     params_from_rule,
-    promote_due_schedules,
+    resolve_rule_params,
 )
 from .models import (
     RecurringRule,
@@ -33,6 +33,47 @@ from .models import (
     ReconciliationMatch,
     UpcomingChargeNotification,
 )
+
+
+class RecurringRuleNestedAccountSerializer(serializers.ModelSerializer):
+    """Account fields needed to display/filter rules — no health, payoff, or relationship queries."""
+
+    household = serializers.IntegerField(source="household_id", read_only=True)
+
+    class Meta:
+        model = Account
+        fields = [
+            "id",
+            "household",
+            "name",
+            "display_name",
+            "effective_display_name",
+            "account_type",
+            "currency",
+            "status",
+        ]
+        read_only_fields = fields
+
+
+class RecurringRuleNestedCategorySerializer(serializers.ModelSerializer):
+    household = serializers.IntegerField(source="household_id", read_only=True)
+    parent = serializers.IntegerField(source="parent_id", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Category
+        fields = [
+            "id",
+            "household",
+            "parent",
+            "name",
+            "category_type",
+            "is_system",
+            "is_archived",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
 
 
 class RecurringRuleScheduleSerializer(serializers.ModelSerializer):
@@ -72,15 +113,15 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         help_text="Remove future-dated schedule segments without applying new values.",
     )
     scheduled_change = serializers.SerializerMethodField()
-    account = AccountSerializer(read_only=True)
+    account = RecurringRuleNestedAccountSerializer(read_only=True)
     account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.none(), source="account", write_only=True
     )
-    transfer_to_account = AccountSerializer(read_only=True)
+    transfer_to_account = RecurringRuleNestedAccountSerializer(read_only=True)
     transfer_to_account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.none(), source="transfer_to_account", write_only=True, required=False, allow_null=True
     )
-    category = CategorySerializer(read_only=True)
+    category = RecurringRuleNestedCategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.none(), source="category", write_only=True, required=False, allow_null=True
     )
@@ -129,6 +170,48 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             return None
         return RecurringRuleScheduleSerializer(sched).data
 
+    def to_representation(self, instance: RecurringRule) -> dict:
+        data = super().to_representation(instance)
+        today = timezone.localdate()
+        params = resolve_rule_params(instance, today)
+        data["amount"] = str(Decimal(params.amount).quantize(Decimal("0.01")))
+        data["currency"] = params.currency
+        data["direction"] = params.direction
+        data["frequency"] = params.frequency
+        data["interval"] = params.interval
+        data["day_of_week"] = params.day_of_week
+        data["day_of_month"] = params.day_of_month
+        data["nth_week"] = params.nth_week
+        data["start_date"] = params.start_date.isoformat()
+        data["end_date"] = params.end_date.isoformat() if params.end_date else None
+        segment = self._effective_segment(instance, today)
+        if segment is not None:
+            if params.account_id != instance.account_id and getattr(segment, "account", None):
+                data["account"] = RecurringRuleNestedAccountSerializer(segment.account).data
+            if params.transfer_to_account_id != instance.transfer_to_account_id:
+                if segment.transfer_to_account_id and getattr(segment, "transfer_to_account", None):
+                    data["transfer_to_account"] = RecurringRuleNestedAccountSerializer(
+                        segment.transfer_to_account
+                    ).data
+                else:
+                    data["transfer_to_account"] = None
+            if params.category_id != instance.category_id:
+                if segment.category_id and getattr(segment, "category", None):
+                    data["category"] = RecurringRuleNestedCategorySerializer(segment.category).data
+                else:
+                    data["category"] = None
+        return data
+
+    def _effective_segment(self, obj: RecurringRule, today: date) -> RecurringRuleSchedule | None:
+        cache = getattr(obj, "_prefetched_objects_cache", None)
+        if not cache or "schedules" not in cache:
+            return None
+        eligible = [s for s in obj.schedules.all() if s.effective_from <= today]
+        if not eligible:
+            return None
+        eligible.sort(key=lambda s: (s.effective_from, s.id), reverse=True)
+        return eligible[0]
+
     @property
     def materialize_cutoff(self) -> date:
         return getattr(self, "_materialize_cutoff", timezone.localdate())
@@ -136,13 +219,16 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         req = self.context.get("request")
-        if req and req.user.is_authenticated:
-            households = get_households_for_user(req.user)
-            self.fields["household"].queryset = households
-            accts = Account.objects.filter(household__in=households)
-            self.fields["account_id"].queryset = accts
-            self.fields["transfer_to_account_id"].queryset = accts
-            self.fields["category_id"].queryset = Category.objects.filter(household__in=households)
+        if not req or not req.user.is_authenticated:
+            return
+        if getattr(req, "method", "GET") in ("GET", "HEAD", "OPTIONS"):
+            return
+        households = get_households_for_user(req.user)
+        self.fields["household"].queryset = households
+        accts = Account.objects.filter(household__in=households)
+        self.fields["account_id"].queryset = accts
+        self.fields["transfer_to_account_id"].queryset = accts
+        self.fields["category_id"].queryset = Category.objects.filter(household__in=households)
 
     def validate(self, attrs):
         """

@@ -166,10 +166,41 @@ class TestDetectors:
                     "details": {"utilization_percent": "85"},
                 }
             },
+            owed_balances={credit_card.id: Decimal("4000")},
         )
         dets = detect_utilization(ctx)
         assert len(dets) >= 1
         assert dets[0].amount and dets[0].amount > 0
+
+    @pytest.mark.parametrize(
+        "util,owed,expect_count,target",
+        [
+            ("0", Decimal("0"), 0, None),
+            ("70", Decimal("3500"), 1, Decimal("50")),
+            ("75", Decimal("3750"), 1, Decimal("70")),
+            ("98", Decimal("4900"), 1, Decimal("70")),
+            ("100", Decimal("5000"), 1, Decimal("70")),
+            ("110", Decimal("5500"), 1, Decimal("70")),
+        ],
+    )
+    def test_utilization_thresholds(self, credit_card, util, owed, expect_count, target):
+        ctx = RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=[credit_card],
+            accounts_by_id={credit_card.id: credit_card},
+            forecasts={},
+            st_aggregate={},
+            timeline_rows=[],
+            health_by_id={credit_card.id: {"details": {"utilization_percent": util}}},
+            owed_balances={credit_card.id: owed},
+        )
+        dets = detect_utilization(ctx)
+        assert len(dets) == expect_count
+        if expect_count:
+            assert dets[0].utilization_target == target
+            assert dets[0].amount == payment_to_reach_utilization(owed, Decimal("5000"), target)
 
     def test_survival_mode_multiple_critical(self, checking, savings):
         ctx = RecommendationContext(

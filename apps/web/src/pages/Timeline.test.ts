@@ -1,0 +1,31 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const timelineSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "Timeline.tsx"),
+  "utf8"
+);
+
+describe("Calendar page structure", () => {
+  it("loads calendar data from the calendar endpoint, not the full dashboard summary", () => {
+    expect(timelineSource).toMatch(/getTimelineCalendar/);
+    expect(timelineSource).toMatch(/buildUpcomingMoneyFlowFromCalendarDays/);
+    expect(timelineSource).not.toMatch(/getDashboardSummary/);
+    expect(timelineSource).not.toMatch(/getDashboardSummaryFast/);
+    expect(timelineSource).not.toMatch(/getDashboardDetails/);
+  });
+
+  it("does not fetch the full timeline list endpoint for list view", () => {
+    expect(timelineSource).not.toMatch(/getTimeline\(/);
+    expect(timelineSource).toMatch(/buildUpcomingMoneyFlowFromCalendarDays/);
+  });
+
+  it("renders timeline and calendar views separately", () => {
+    expect(timelineSource).toMatch(/viewMode === "timeline"/);
+    expect(timelineSource).toMatch(/viewMode === "calendar"/);
+    expect(timelineSource).toMatch(/parseTimelineViewParam/);
+    expect(timelineSource).not.toMatch(/TimelineListView/);
+  });
+});

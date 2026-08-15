@@ -392,24 +392,33 @@ export default function Accounts() {
       queryClient.invalidateQueries({ queryKey: ["profile"] });
     },
   });
-  const accountsQueryKey = [
-    "accounts",
-    { balance: "true", forecast_summary: "true", health: "true", days: forecastDays },
-  ] as const;
+  const accountsQueryKey = ["accounts"] as const;
   const reorderMu = useMutation({
     mutationFn: (accountIds: number[]) => reorderAccounts(accountIds),
     onMutate: async (accountIds) => {
-      const prev = queryClient.getQueryData<{ results: Account[] }>(accountsQueryKey);
-      if (!prev?.results) return {};
-      const orderMap = new Map(accountIds.map((id, i) => [id, i]));
-      const reordered = [...prev.results].sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
       await queryClient.cancelQueries({ queryKey: accountsQueryKey });
-      queryClient.setQueryData(accountsQueryKey, { ...prev, results: reordered });
-      return { previous: prev };
+      const previous = queryClient.getQueriesData<{ results: Account[] }>({
+        queryKey: accountsQueryKey,
+      });
+      const orderMap = new Map(accountIds.map((id, i) => [id, i]));
+      queryClient.setQueriesData<{ results: Account[] }>(
+        { queryKey: accountsQueryKey },
+        (prev) => {
+          if (!prev?.results) return prev;
+          const reordered = [...prev.results].sort(
+            (a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0)
+          );
+          return { ...prev, results: reordered };
+        }
+      );
+      return { previous };
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
     onError: (_err, _accountIds, context) => {
-      if (context?.previous) queryClient.setQueryData(accountsQueryKey, context.previous);
+      if (!context?.previous) return;
+      for (const [key, data] of context.previous) {
+        queryClient.setQueryData(key, data);
+      }
     },
   });
 
@@ -955,15 +964,13 @@ export default function Accounts() {
         onClose={() => setForecastAccount(null)}
         onViewLedger={() => {
           if (forecastAccount) {
-            navigate("/transactions", { state: { accountId: forecastAccount.id } });
+            navigate(`/transactions?account=${forecastAccount.id}`);
           }
           setForecastAccount(null);
         }}
         onViewUpcoming={() => {
           if (forecastAccount) {
-            navigate("/transactions", {
-              state: { accountId: forecastAccount.id, focus: "view_upcoming" },
-            });
+            navigate(`/transactions?account=${forecastAccount.id}&focus=upcoming`);
           }
           setForecastAccount(null);
         }}

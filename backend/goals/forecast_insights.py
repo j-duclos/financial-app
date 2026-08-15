@@ -61,7 +61,20 @@ def _months_between(start: date, end: date) -> int:
     )
 
 
-def _monthly_from_contributions(bucket: GoalBucket, months: int, *, today: date) -> Decimal:
+def _monthly_from_contributions(
+    bucket: GoalBucket,
+    months: int,
+    *,
+    today: date,
+    contribution_stats=None,
+    context=None,
+) -> Decimal:
+    if contribution_stats is None and context is not None:
+        contribution_stats = context.contribution_stats_by_bucket_id.get(bucket.id)
+    if contribution_stats is not None:
+        from goals.bucket_services import monthly_from_contribution_stats
+
+        return monthly_from_contribution_stats(contribution_stats, months)
     since = today - timedelta(days=months * 31)
     total = (
         GoalContribution.objects.filter(bucket=bucket, date__gte=since).aggregate(s=Sum("amount"))[
@@ -78,6 +91,7 @@ def _rule_allocation_amount(
     alloc: RuleAllocation,
     *,
     scenario: Scenario | None = None,
+    scenario_overrides: dict | None = None,
 ) -> Decimal:
     rule = alloc.rule
     if not rule or not rule.active:
@@ -87,7 +101,11 @@ def _rule_allocation_amount(
     elif alloc.percent and alloc.percent > 0:
         base = abs(_decimal(rule.amount))
         if scenario:
-            override = ScenarioRuleOverride.objects.filter(scenario=scenario, rule=rule).first()
+            override = None
+            if scenario_overrides is not None:
+                override = scenario_overrides.get(rule.id)
+            else:
+                override = ScenarioRuleOverride.objects.filter(scenario=scenario, rule=rule).first()
             if override and override.override_amount is not None:
                 base = abs(_decimal(override.override_amount))
             elif override and override.override_active is False:
@@ -102,10 +120,24 @@ def monthly_from_rules(
     bucket: GoalBucket,
     *,
     scenario: Scenario | None = None,
+    context=None,
 ) -> Decimal:
+    if context is not None:
+        funding = context.funding_stats_by_bucket_id.get(bucket.id)
+        if funding is not None:
+            monthly = funding.rule_monthly_scenario if scenario else funding.rule_monthly
+            return _quantize_money(monthly) if monthly > 0 else Decimal("0")
     rule_monthly = Decimal("0")
-    for alloc in bucket.rule_allocations.filter(active=True).select_related("rule"):
-        portion = _rule_allocation_amount(alloc, scenario=scenario)
+    from goals.bucket_services import iter_active_rule_allocations
+
+    allocations = (
+        context.active_allocations_by_bucket_id.get(bucket.id) if context is not None else None
+    )
+    overrides = context.scenario_overrides_by_rule_id if context is not None else None
+    for alloc in iter_active_rule_allocations(bucket, allocations):
+        portion = _rule_allocation_amount(
+            alloc, scenario=scenario, scenario_overrides=overrides
+        )
         if portion <= 0:
             continue
         rule = alloc.rule
@@ -118,34 +150,63 @@ def contribution_pace_monthly(
     *,
     today: date | None = None,
     scenario: Scenario | None = None,
+    contribution_stats=None,
+    context=None,
 ) -> Decimal:
     """Best estimate of monthly funding: rules, target, or recent contribution history."""
     today = today or date.today()
-    from_rules = monthly_from_rules(bucket, scenario=scenario)
+    if context is not None:
+        funding = context.funding_stats_by_bucket_id.get(bucket.id)
+        if funding is not None:
+            return funding.contribution_pace_monthly
+    from_rules = monthly_from_rules(bucket, scenario=scenario, context=context)
     if from_rules > 0:
         return from_rules
     if bucket.monthly_target > 0:
         return _decimal(bucket.monthly_target)
-    pace_3 = _monthly_from_contributions(bucket, 3, today=today)
-    pace_6 = _monthly_from_contributions(bucket, 6, today=today)
+    pace_3 = _monthly_from_contributions(
+        bucket, 3, today=today, contribution_stats=contribution_stats, context=context
+    )
+    pace_6 = _monthly_from_contributions(
+        bucket, 6, today=today, contribution_stats=contribution_stats, context=context
+    )
     return max(pace_3, pace_6)
 
 
-def has_funding_activity(bucket: GoalBucket, *, today: date | None = None) -> bool:
+def has_funding_activity(
+    bucket: GoalBucket,
+    *,
+    today: date | None = None,
+    contribution_stats=None,
+    context=None,
+) -> bool:
     today = today or date.today()
     if bucket.monthly_target > 0:
         return True
-    if bucket.rule_allocations.filter(active=True).exists():
+    from goals.bucket_services import iter_active_rule_allocations
+
+    allocations = (
+        context.active_allocations_by_bucket_id.get(bucket.id) if context is not None else None
+    )
+    if any(True for _ in iter_active_rule_allocations(bucket, allocations)):
         return True
+    if contribution_stats is None and context is not None:
+        contribution_stats = context.contribution_stats_by_bucket_id.get(bucket.id)
+    if contribution_stats is not None:
+        return contribution_stats.recent_90d_count > 0
     since = today - timedelta(days=90)
     return GoalContribution.objects.filter(bucket=bucket, date__gte=since).exists()
 
 
-def build_funding_info(bucket: GoalBucket) -> dict[str, Any]:
+def build_funding_info(bucket: GoalBucket, *, context=None) -> dict[str, Any]:
     linked_rules: list[dict[str, Any]] = []
     automatic_parts: list[str] = []
+    from goals.bucket_services import iter_active_rule_allocations
 
-    for alloc in bucket.rule_allocations.filter(active=True).select_related("rule", "rule__account"):
+    allocations = (
+        context.active_allocations_by_bucket_id.get(bucket.id) if context is not None else None
+    )
+    for alloc in iter_active_rule_allocations(bucket, allocations):
         rule = alloc.rule
         if not rule or not rule.active:
             continue
@@ -176,9 +237,13 @@ def build_funding_info(bucket: GoalBucket) -> dict[str, Any]:
     automatic_transfer_label = None
     auto_transfer_rule_id = None
     if bucket.auto_fund_enabled:
-        from goals.auto_fund import find_auto_fund_transfer_rule
+        transfer_rule = None
+        if context is not None:
+            transfer_rule = context.auto_fund_rule_by_bucket_id.get(bucket.id)
+        else:
+            from goals.auto_fund import find_auto_fund_transfer_rule
 
-        transfer_rule = find_auto_fund_transfer_rule(bucket)
+            transfer_rule = find_auto_fund_transfer_rule(bucket)
         if transfer_rule and transfer_rule.active:
             auto_transfer_rule_id = transfer_rule.id
             freq = FREQ_LABELS.get(transfer_rule.frequency, "period")
@@ -235,11 +300,15 @@ def compute_pace_status(
     monthly_pace: Decimal,
     projected: date | None,
     today: date | None = None,
+    contribution_stats=None,
+    context=None,
 ) -> str:
     today = today or date.today()
     if bucket.status == GoalBucket.Status.COMPLETED or progress_percent >= Decimal("100"):
         return PACE_COMPLETED
-    if monthly_pace <= 0 and not has_funding_activity(bucket, today=today):
+    if monthly_pace <= 0 and not has_funding_activity(
+        bucket, today=today, contribution_stats=contribution_stats, context=context
+    ):
         return PACE_STALLED
     if not bucket.target_date:
         return PACE_ON_TRACK if monthly_pace > 0 else PACE_STALLED
@@ -402,12 +471,20 @@ def enrich_goal_forecast(
     *,
     today: date | None = None,
     scenario: Scenario | None = None,
+    contribution_stats=None,
+    context=None,
 ) -> dict[str, Any]:
     """Attach predictive fields to bucket progress dict."""
     today = today or date.today()
     remaining = _decimal(progress["remaining_amount"])
     progress_pct = _decimal(progress["progress_percent"])
-    monthly_pace = contribution_pace_monthly(bucket, today=today, scenario=scenario)
+    monthly_pace = contribution_pace_monthly(
+        bucket,
+        today=today,
+        scenario=scenario,
+        contribution_stats=contribution_stats,
+        context=context,
+    )
 
     from goals.bucket_services import _bucket_as_goal_proxy
 
@@ -442,6 +519,8 @@ def enrich_goal_forecast(
         monthly_pace=monthly_pace,
         projected=projected,
         today=today,
+        contribution_stats=contribution_stats,
+        context=context,
     )
 
     monthly_required = _decimal(progress.get("monthly_required") or 0) or None
@@ -455,7 +534,7 @@ def enrich_goal_forecast(
         forecast_gap = gap if gap > Decimal("0") else Decimal("0")
 
     suggestions = suggested_contributions(remaining, bucket.target_date, today=today)
-    funding = build_funding_info(bucket)
+    funding = build_funding_info(bucket, context=context)
     warnings = pace_warnings(
         pace_status,
         monthly_pace,
@@ -473,6 +552,12 @@ def enrich_goal_forecast(
     current = _decimal(progress["current_amount"])
     target = _decimal(progress["target_amount"])
 
+    pace_3 = _monthly_from_contributions(
+        bucket, 3, today=today, contribution_stats=contribution_stats, context=context
+    )
+    pace_6 = _monthly_from_contributions(
+        bucket, 6, today=today, contribution_stats=contribution_stats, context=context
+    )
     return {
         **progress,
         "projected_completion_date": projected.isoformat() if projected else None,
@@ -480,12 +565,8 @@ def enrich_goal_forecast(
         "pace_status": pace_status,
         "projection_headline": headline,
         "contribution_pace_monthly": _serialize_decimal(monthly_pace) if monthly_pace > 0 else None,
-        "pace_avg_3mo": _serialize_decimal(_monthly_from_contributions(bucket, 3, today=today))
-        if _monthly_from_contributions(bucket, 3, today=today) > 0
-        else None,
-        "pace_avg_6mo": _serialize_decimal(_monthly_from_contributions(bucket, 6, today=today))
-        if _monthly_from_contributions(bucket, 6, today=today) > 0
-        else None,
+        "pace_avg_3mo": _serialize_decimal(pace_3) if pace_3 > 0 else None,
+        "pace_avg_6mo": _serialize_decimal(pace_6) if pace_6 > 0 else None,
         "monthly_required": _serialize_decimal(monthly_required) if monthly_required else progress.get("monthly_required"),
         "current_contribution_rate": _serialize_decimal(monthly_pace) if monthly_pace > 0 else None,
         "forecast_gap": _serialize_decimal(forecast_gap) if forecast_gap is not None else None,
@@ -528,16 +609,22 @@ def build_goal_detail(
         households = get_households_for_user(user)
         scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
 
-    base_progress = calculate_bucket_progress(bucket, today=today)
-    enriched = enrich_bucket(bucket, base_progress, today=today)
-    forecast = (
-        enrich_goal_forecast(bucket, enriched, today=today, scenario=scenario)
-        if scenario
-        else enriched
+    context = None
+    from goals.bucket_services import build_goal_calculation_context
+
+    context = build_goal_calculation_context(
+        [bucket], today=today, as_of=today, user=user, scenario=scenario
     )
+    base_progress = calculate_bucket_progress(bucket, today=today, user=user, context=context)
+    enriched = enrich_bucket(
+        bucket, base_progress, today=today, context=context, scenario=scenario
+    )
+    forecast = enriched
 
     if scenario:
-        scenario_pace = contribution_pace_monthly(bucket, today=today, scenario=scenario)
+        scenario_pace = contribution_pace_monthly(
+            bucket, today=today, scenario=scenario, context=context
+        )
         remaining = _decimal(forecast["remaining_amount"])
         if scenario_pace > 0 and bucket.forecast_enabled:
 

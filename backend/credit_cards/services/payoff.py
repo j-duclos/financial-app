@@ -56,10 +56,11 @@ def resolve_strategy_payment_amount(
     *,
     custom_amount: Optional[Decimal] = None,
     as_of: Optional[date] = None,
+    starting_balance: Optional[Decimal] = None,
 ) -> Decimal:
     """Map strategy name to a monthly (or one-shot) payment amount."""
     as_of = as_of or date.today()
-    owed = _starting_balance(card, as_of)
+    owed = starting_balance if starting_balance is not None else _starting_balance(card, as_of)
 
     if strategy == "minimum_payment":
         return _quantize_money(Decimal(str(card.minimum_payment_amount or 0)))
@@ -100,6 +101,7 @@ def project_credit_card_payoff(
     custom_amount: Optional[Decimal] = None,
     start_date: Optional[date] = None,
     max_months: int = 360,
+    starting_balance: Optional[Decimal] = None,
 ) -> dict[str, Any]:
     """
     Project payoff using MVP monthly compounding:
@@ -114,15 +116,21 @@ def project_credit_card_payoff(
     today = start_date or date.today()
     apr_val = _effective_apr(card)
     monthly_rate = apr_val / Decimal("100") / Decimal("12") if apr_val > 0 else Decimal("0")
+    if starting_balance is None:
+        starting_balance = _starting_balance(card, today)
 
     try:
         payment_amount = resolve_strategy_payment_amount(
-            card, strategy, custom_amount=custom_amount, as_of=today,
+            card,
+            strategy,
+            custom_amount=custom_amount,
+            as_of=today,
+            starting_balance=starting_balance,
         )
     except ValueError as exc:
-        return _error_projection(card, str(exc), apr_val, monthly_rate)
-
-    starting_balance = _starting_balance(card, today)
+        return _error_projection(
+            card, str(exc), apr_val, monthly_rate, starting_balance=starting_balance
+        )
     if starting_balance <= 0:
         return _paid_off_projection(card, starting_balance, apr_val, monthly_rate, payment_amount, today)
 
@@ -234,8 +242,11 @@ def compare_payment_strategies(
     fixed_amount: Optional[Decimal] = None,
     custom_amount: Optional[Decimal] = None,
     start_date: Optional[date] = None,
+    starting_balance: Optional[Decimal] = None,
 ) -> dict[str, Any]:
     """Run all standard strategies and return projections keyed by strategy."""
+    today = start_date or date.today()
+    owed = starting_balance if starting_balance is not None else _starting_balance(card, today)
     strategies: list[tuple[str, Optional[Decimal]]] = [
         ("minimum_payment", None),
         ("statement_balance", None),
@@ -253,11 +264,15 @@ def compare_payment_strategies(
     comparisons: dict[str, Any] = {}
     for name, amount in strategies:
         comparisons[name] = project_credit_card_payoff(
-            card, name, custom_amount=amount, start_date=start_date,
+            card,
+            name,
+            custom_amount=amount,
+            start_date=today,
+            starting_balance=owed,
         )
     return {
         "account_id": card.pk,
-        "starting_balance": _money_str(_starting_balance(card, start_date or date.today())),
+        "starting_balance": _money_str(owed),
         "strategies": comparisons,
     }
 
@@ -266,13 +281,21 @@ def payoff_estimates_for_accounts(
     accounts: list[Account],
     *,
     strategy: str = "minimum_payment",
+    signed_balances: dict[int, Decimal] | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Batch payoff estimate summaries keyed by account id."""
+    from accounts.services.balances import credit_owed_from_signed_balance
+
     result: dict[int, dict[str, Any]] = {}
     for card in accounts:
         if not card.is_credit_card():
             continue
-        summary = payoff_estimate_summary(card, strategy=strategy)
+        owed = None
+        if signed_balances is not None and card.pk in signed_balances:
+            owed = credit_owed_from_signed_balance(signed_balances[card.pk])
+        summary = payoff_estimate_summary(
+            card, strategy=strategy, starting_balance=owed
+        )
         if summary:
             result[card.pk] = summary
     return result
@@ -283,20 +306,29 @@ def payoff_estimate_summary(
     *,
     strategy: str = "minimum_payment",
     custom_amount: Optional[Decimal] = None,
+    starting_balance: Optional[Decimal] = None,
 ) -> dict[str, Any] | None:
     """Compact summary for account list / dashboard."""
     if not card.is_credit_card():
         return None
-    owed = _starting_balance(card, date.today())
+    owed = (
+        starting_balance
+        if starting_balance is not None
+        else _starting_balance(card, date.today())
+    )
     if owed <= 0:
         return {"label": "Paid off", "months_to_payoff": 0, "payment_amount": "0"}
 
     try:
-        payment = resolve_strategy_payment_amount(card, strategy, custom_amount=custom_amount)
+        payment = resolve_strategy_payment_amount(
+            card, strategy, custom_amount=custom_amount, starting_balance=owed
+        )
     except ValueError:
         return None
 
-    proj = project_credit_card_payoff(card, strategy, custom_amount=custom_amount)
+    proj = project_credit_card_payoff(
+        card, strategy, custom_amount=custom_amount, starting_balance=owed
+    )
     if not proj.get("payoff_possible"):
         return {
             "label": proj.get("message", IMPOSSIBLE_MESSAGE),
@@ -369,11 +401,14 @@ def _error_projection(
     message: str,
     apr_val: Decimal,
     monthly_rate: Decimal,
+    *,
+    starting_balance: Optional[Decimal] = None,
 ) -> dict[str, Any]:
+    owed = starting_balance if starting_balance is not None else _starting_balance(card, date.today())
     return {
         "payoff_possible": False,
         "message": message,
-        "starting_balance": _money_str(_starting_balance(card, date.today())),
+        "starting_balance": _money_str(owed),
         "apr": _money_str(apr_val),
         "monthly_interest_rate": _money_str(monthly_rate * Decimal("100")),
         "payment_amount": "0.00",

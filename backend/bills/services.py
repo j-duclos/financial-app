@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import calendar
 from calendar import monthrange
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable, Optional
@@ -31,6 +33,7 @@ from .bill_insights import (
     DISPLAY_SKIPPED,
     average_paid_amount,
     bill_amount_history,
+    bulk_average_paid_amounts,
     build_checklist_warnings,
     build_occurrence_warnings,
     compute_display_status,
@@ -38,6 +41,7 @@ from .bill_insights import (
     detect_likely_forgotten,
     payment_confidence,
     _match_score_for_txn,
+    _prior_month,
 )
 from .recurring_payment_status import (
     compute_recurring_payment_counts,
@@ -125,7 +129,7 @@ def _signed_rule_amount(rule: RecurringRule, *, as_of_date: date | None = None) 
     return -amt
 
 
-def _transaction_is_paid(txn: Transaction) -> bool:
+def _transaction_is_paid(txn: Transaction, *, matched_ids: Optional[set[int]] = None) -> bool:
     if txn.reconciled:
         return True
     if txn.status == Transaction.Status.RECONCILED:
@@ -140,6 +144,8 @@ def _transaction_is_paid(txn: Transaction) -> bool:
             Transaction.ImportMatchStatus.NONE,
         ):
             return True
+    if matched_ids is not None:
+        return txn.pk in matched_ids
     if TransactionMatch.objects.filter(planned_transaction_id=txn.pk).exists():
         return True
     if TransactionMatch.objects.filter(imported_transaction_id=txn.pk).exists():
@@ -147,12 +153,19 @@ def _transaction_is_paid(txn: Transaction) -> bool:
     return False
 
 
-def _status_from_transaction(txn: Transaction, *, due_date: date, today: date, skipped: bool) -> str:
+def _status_from_transaction(
+    txn: Transaction,
+    *,
+    due_date: date,
+    today: date,
+    skipped: bool,
+    matched_ids: Optional[set[int]] = None,
+) -> str:
     if skipped:
         return BillOccurrence.Status.PROJECTED
     if txn.reconciled or txn.status == Transaction.Status.RECONCILED:
         return BillOccurrence.Status.RECONCILED
-    if _transaction_is_paid(txn):
+    if _transaction_is_paid(txn, matched_ids=matched_ids):
         return BillOccurrence.Status.PAID
     if due_date < today:
         return BillOccurrence.Status.MISSED
@@ -230,12 +243,84 @@ def find_matching_transaction(
     return best
 
 
+def find_matching_transaction_from_pool(
+    *,
+    account_id: int,
+    expected_amount: Decimal,
+    due_date: date,
+    rule: Optional[RecurringRule] = None,
+    category_id: Optional[int] = None,
+    month_start: date,
+    month_end: date,
+    txns_by_account: dict[int, list[Transaction]],
+    visible_ids: set[int],
+    matched_ids: set[int],
+) -> Optional[Transaction]:
+    """In-memory equivalent of find_matching_transaction()."""
+    account_txns = txns_by_account.get(account_id, [])
+    if rule:
+        exact_matches = [
+            txn for txn in account_txns if txn.rule_id == rule.id and txn.date == due_date
+        ]
+        if exact_matches:
+            exact_matches.sort(key=lambda t: t.id, reverse=True)
+            return exact_matches[0]
+        month_rule = [
+            txn
+            for txn in account_txns
+            if txn.rule_id == rule.id
+            and month_start <= txn.date <= month_end
+            and txn.id in visible_ids
+        ]
+        month_rule.sort(key=lambda t: (t.date, t.id))
+        for txn in month_rule:
+            if abs(txn.amount - expected_amount) <= AMOUNT_TOLERANCE and _transaction_is_paid(
+                txn, matched_ids=matched_ids
+            ):
+                return txn
+
+    low = due_date - timedelta(days=BILL_MATCH_DATE_WINDOW_DAYS)
+    high = due_date + timedelta(days=BILL_MATCH_DATE_WINDOW_DAYS)
+    window_start = max(low, month_start)
+    window_end = min(high, month_end)
+    window = [
+        txn
+        for txn in account_txns
+        if txn.id in visible_ids
+        and txn.amount is not None
+        and txn.amount < 0
+        and window_start <= txn.date <= window_end
+    ]
+    window.sort(key=lambda t: (-t.date.toordinal(), -t.id))
+    best: Optional[Transaction] = None
+    best_score = -1
+    for txn in window:
+        if abs(abs(txn.amount) - abs(expected_amount)) > AMOUNT_TOLERANCE:
+            continue
+        score = 40
+        if category_id and txn.category_id == category_id:
+            score += 30
+        elif rule and txn.rule_id == rule.id:
+            score += 25
+        dd = abs((txn.date - due_date).days)
+        if dd == 0:
+            score += 20
+        elif dd <= BILL_MATCH_DATE_WINDOW_DAYS:
+            score += 10
+        else:
+            continue
+        if score > best_score:
+            best_score = score
+            best = txn
+    return best
+
+
 def _persisted_occurrence_transaction(occ: BillOccurrence) -> Optional[Transaction]:
     """Return a user-linked or previously matched transaction stored on the occurrence."""
     if not occ.transaction_id:
         return None
     try:
-        return Transaction.objects.select_related("category", "account").get(pk=occ.transaction_id)
+        return occ.transaction
     except Transaction.DoesNotExist:
         return None
 
@@ -245,6 +330,7 @@ def _sync_occurrence_from_transaction(
     txn: Optional[Transaction],
     *,
     today: date,
+    matched_ids: Optional[set[int]] = None,
 ) -> BillOccurrence:
     if occurrence.skipped:
         occurrence.status = BillOccurrence.Status.PROJECTED
@@ -258,7 +344,11 @@ def _sync_occurrence_from_transaction(
         return occurrence
     occurrence.transaction = txn
     occurrence.status = _status_from_transaction(
-        txn, due_date=occurrence.due_date, today=today, skipped=occurrence.skipped
+        txn,
+        due_date=occurrence.due_date,
+        today=today,
+        skipped=occurrence.skipped,
+        matched_ids=matched_ids,
     )
     if occurrence.status == BillOccurrence.Status.PAID and not occurrence.paid_at:
         occurrence.paid_at = timezone.now()
@@ -272,20 +362,28 @@ def _rule_occurrence_candidates(
     month_start: date,
     month_end: date,
     month_key: str,
+    *,
+    rules: Optional[Iterable[RecurringRule]] = None,
+    skipped: Optional[set[tuple[int, date]]] = None,
 ) -> list[dict[str, Any]]:
-    rules = (
-        RecurringRule.objects.filter(household__in=households, active=True)
-        .select_related("account", "category", "transfer_to_account")
-    )
-    skipped = set(
-        RecurringRuleSkip.objects.filter(
-            rule__household__in=households,
-            date__gte=month_start,
-            date__lte=month_end,
-        ).values_list("rule_id", "date")
-    )
+    if rules is None:
+        rules = list(
+            RecurringRule.objects.filter(household__in=households, active=True)
+            .select_related("account", "category", "transfer_to_account")
+            .prefetch_related("schedules")
+        )
+    if skipped is None:
+        skipped = set(
+            RecurringRuleSkip.objects.filter(
+                rule__household__in=households,
+                date__gte=month_start,
+                date__lte=month_end,
+            ).values_list("rule_id", "date")
+        )
     out: list[dict[str, Any]] = []
     for rule in rules:
+        if not getattr(rule, "active", True):
+            continue
         if not rule_counts_as_bill(rule):
             continue
         for due_date in generate_rule_occurrence_dates(rule, month_start, month_end):
@@ -364,6 +462,196 @@ def _manual_bill_candidates(
     return out
 
 
+@dataclass
+class RecurringChecklistContext:
+    """Bulk-loaded data for one monthly checklist request. Serialization should not query."""
+
+    accounts_by_id: dict[int, Account] = field(default_factory=dict)
+    rules_by_id: dict[int, RecurringRule] = field(default_factory=dict)
+    txns_by_account: dict[int, list[Transaction]] = field(default_factory=dict)
+    visible_ids: set[int] = field(default_factory=set)
+    matched_ids: set[int] = field(default_factory=set)
+    average_paid_by_rule_id: dict[int, Decimal] = field(default_factory=dict)
+    outflows_by_rule_id: dict[int, list[Transaction]] = field(default_factory=dict)
+    paid_year_months_by_rule_id: dict[int, set[tuple[int, int]]] = field(default_factory=dict)
+    latest_current_month_occ_by_rule_id: dict[int, BillOccurrence] = field(default_factory=dict)
+
+
+OCCURRENCE_UPDATE_FIELDS = [
+    "month",
+    "name",
+    "account",
+    "category",
+    "expected_amount",
+    "status",
+    "transaction",
+    "paid_at",
+    "reconciled_at",
+    "updated_at",
+]
+
+
+def _occurrence_field_tuple(occ: BillOccurrence) -> tuple:
+    return (
+        occ.month,
+        occ.name,
+        occ.account_id,
+        occ.category_id,
+        occ.expected_amount,
+        occ.status,
+        occ.transaction_id,
+        occ.paid_at,
+        occ.reconciled_at,
+    )
+
+
+def _load_month_occurrences(
+    household_ids: list[int],
+    start: date,
+    end: date,
+) -> list[BillOccurrence]:
+    return list(
+        BillOccurrence.objects.filter(
+            household_id__in=household_ids,
+            due_date__gte=start,
+            due_date__lte=end,
+        )
+        .select_related(
+            "rule",
+            "account",
+            "category",
+            "transaction",
+            "transaction__account",
+            "transaction__category",
+        )
+        .order_by("id")
+    )
+
+
+def _occurrence_lookup_maps(
+    occurrences: list[BillOccurrence],
+) -> tuple[dict[tuple[int, date], BillOccurrence], dict[tuple, BillOccurrence]]:
+    by_rule_date: dict[tuple[int, date], BillOccurrence] = {}
+    by_manual: dict[tuple, BillOccurrence] = {}
+    for occ in occurrences:
+        if occ.rule_id:
+            by_rule_date.setdefault((occ.rule_id, occ.due_date), occ)
+        else:
+            by_manual.setdefault(
+                (occ.household_id, occ.due_date, occ.name, occ.account_id),
+                occ,
+            )
+    return by_rule_date, by_manual
+
+
+def _lookup_occurrence(
+    cand: dict[str, Any],
+    by_rule_date: dict[tuple[int, date], BillOccurrence],
+    by_manual: dict[tuple, BillOccurrence],
+) -> Optional[BillOccurrence]:
+    rule = cand.get("rule")
+    if rule:
+        return by_rule_date.get((rule.id, cand["due_date"]))
+    return by_manual.get(
+        (cand["household_id"], cand["due_date"], cand["name"], cand["account"].id)
+    )
+
+
+def _new_occurrence_from_candidate(cand: dict[str, Any], month_key: str) -> BillOccurrence:
+    return BillOccurrence(
+        household_id=cand["household_id"],
+        rule=cand.get("rule"),
+        due_date=cand["due_date"],
+        month=month_key,
+        name=cand["name"],
+        account=cand["account"],
+        category=cand.get("category"),
+        expected_amount=abs(_decimal(cand["expected_amount"])),
+        status=BillOccurrence.Status.PROJECTED,
+    )
+
+
+def _history_window(today: date, as_of: date, month_end: date) -> tuple[date, date]:
+    y_asof, m_asof = _prior_month(as_of.year, as_of.month, 6)
+    y_real, m_real = _prior_month(today.year, today.month, 6)
+    start = min(date(y_asof, m_asof, 1), date(y_real, m_real, 1))
+    end = max(month_end, today)
+    return start, end
+
+
+def _load_checklist_transactions(
+    account_ids: list[int],
+    start: date,
+    end: date,
+) -> tuple[list[Transaction], set[int], set[int]]:
+    if not account_ids:
+        return [], set(), set()
+    base = Transaction.objects.filter(
+        account_id__in=account_ids,
+        date__gte=start,
+        date__lte=end,
+    )
+    txns = list(base.select_related("account", "category", "rule"))
+    visible_ids = set(ledger_visible_transactions(base).values_list("pk", flat=True))
+    txn_ids = [t.pk for t in txns]
+    matched_ids: set[int] = set()
+    if txn_ids:
+        for planned_id, imported_id in TransactionMatch.objects.filter(
+            Q(planned_transaction_id__in=txn_ids) | Q(imported_transaction_id__in=txn_ids)
+        ).values_list("planned_transaction_id", "imported_transaction_id"):
+            if planned_id:
+                matched_ids.add(planned_id)
+            if imported_id:
+                matched_ids.add(imported_id)
+    return txns, visible_ids, matched_ids
+
+
+def _manual_bill_candidates_from_txns(
+    txns: list[Transaction],
+    visible_ids: set[int],
+    month_start: date,
+    month_end: date,
+    month_key: str,
+    rule_ids_with_occurrences: set[tuple[int, date]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for txn in txns:
+        if txn.id not in visible_ids:
+            continue
+        if txn.amount is None or txn.amount >= 0:
+            continue
+        if not (month_start <= txn.date <= month_end):
+            continue
+        if not (
+            txn.source == Transaction.Source.ONE_TIME
+            or (txn.source == Transaction.Source.ACTUAL and txn.rule_id is None)
+            or txn.is_bill
+        ):
+            continue
+        if txn.rule_id and (txn.rule_id, txn.date) in rule_ids_with_occurrences:
+            continue
+        if not transaction_counts_as_bill(txn):
+            continue
+        if txn.rule_id and txn.rule and rule_counts_as_bill(txn.rule):
+            if (txn.rule_id, txn.date) in rule_ids_with_occurrences:
+                continue
+        out.append(
+            {
+                "household_id": txn.account.household_id,
+                "rule": txn.rule,
+                "due_date": txn.date,
+                "name": txn.payee or "Bill",
+                "account": txn.account,
+                "category": txn.category,
+                "expected_amount": txn.amount,
+                "month": month_key,
+                "source_type": "imported" if txn.source == Transaction.Source.PLAID else "manual",
+                "transaction": txn,
+            }
+        )
+    return out
+
+
 def get_monthly_bill_checklist(
     user,
     *,
@@ -382,55 +670,122 @@ def get_monthly_bill_checklist(
         households = [h for h in households if h.id == household_id]
     if not households:
         return _empty_checklist(month_key)
+    household_ids = [h.id for h in households]
 
-    rule_candidates = _rule_occurrence_candidates(households, month_start, month_end, month_key)
+    all_rules = list(
+        RecurringRule.objects.filter(household_id__in=household_ids)
+        .select_related("account", "category", "transfer_to_account")
+        .prefetch_related("schedules")
+    )
+    skipped = set(
+        RecurringRuleSkip.objects.filter(
+            rule__household_id__in=household_ids,
+            date__gte=month_start,
+            date__lte=month_end,
+        ).values_list("rule_id", "date")
+    )
+    rule_candidates = _rule_occurrence_candidates(
+        households,
+        month_start,
+        month_end,
+        month_key,
+        rules=all_rules,
+        skipped=skipped,
+    )
     rule_keys = {(c["rule"].id, c["due_date"]) for c in rule_candidates if c.get("rule")}
-    manual_candidates = _manual_bill_candidates(
-        households, month_start, month_end, month_key, rule_keys
+
+    account_ids = list(
+        Account.objects.filter(household_id__in=household_ids).values_list("id", flat=True)
+    )
+    history_start, history_end = _history_window(date.today(), today, month_end)
+    txns, visible_ids, matched_ids = _load_checklist_transactions(
+        account_ids, history_start, history_end
+    )
+    manual_candidates = _manual_bill_candidates_from_txns(
+        txns, visible_ids, month_start, month_end, month_key, rule_keys
     )
     all_candidates = rule_candidates + manual_candidates
+    if account_id:
+        all_candidates = [c for c in all_candidates if c["account"].id == account_id]
+    if category_id:
+        all_candidates = [
+            c for c in all_candidates if c.get("category") and c["category"].id == category_id
+        ]
+
+    today_real = date.today()
+    today_month_start = date(today_real.year, today_real.month, 1)
+    today_month_end = date(
+        today_real.year, today_real.month, monthrange(today_real.year, today_real.month)[1]
+    )
+    occ_start = min(month_start, today_month_start)
+    occ_end = max(month_end, today_month_end)
+    existing = _load_month_occurrences(household_ids, occ_start, occ_end)
+    by_rule_date, by_manual = _occurrence_lookup_maps(existing)
+
+    missing = [
+        cand for cand in all_candidates if _lookup_occurrence(cand, by_rule_date, by_manual) is None
+    ]
+    # GET-time materialization remains: checklist rows need occurrence IDs for
+    # detail/skip/link, and there is no scheduled job that creates the next month.
+    # Missing rows are bulk-created once per request instead of get_or_create() per item.
+    if missing:
+        BillOccurrence.objects.bulk_create(
+            [_new_occurrence_from_candidate(cand, month_key) for cand in missing],
+            ignore_conflicts=True,
+        )
+        existing = _load_month_occurrences(household_ids, occ_start, occ_end)
+        by_rule_date, by_manual = _occurrence_lookup_maps(existing)
+
+    txns_by_account: dict[int, list[Transaction]] = defaultdict(list)
+    outflows_by_rule_id: dict[int, list[Transaction]] = defaultdict(list)
+    paid_year_months_by_rule_id: dict[int, set[tuple[int, int]]] = defaultdict(set)
+    for txn in txns:
+        txns_by_account[txn.account_id].append(txn)
+        if txn.rule_id and txn.amount is not None and txn.amount < 0 and txn.id in visible_ids:
+            outflows_by_rule_id[txn.rule_id].append(txn)
+            paid_year_months_by_rule_id[txn.rule_id].add((txn.date.year, txn.date.month))
+
+    today_month_key = f"{today_real.year:04d}-{today_real.month:02d}"
+    latest_current_month_occ_by_rule_id: dict[int, BillOccurrence] = {}
+    for occ in existing:
+        if not occ.rule_id or occ.month != today_month_key:
+            continue
+        prev = latest_current_month_occ_by_rule_id.get(occ.rule_id)
+        if prev is None or occ.due_date > prev.due_date:
+            latest_current_month_occ_by_rule_id[occ.rule_id] = occ
+
+    ctx = RecurringChecklistContext(
+        accounts_by_id={a.id: a for a in (c["account"] for c in all_candidates if c.get("account"))},
+        rules_by_id={r.id: r for r in all_rules},
+        txns_by_account=dict(txns_by_account),
+        visible_ids=visible_ids,
+        matched_ids=matched_ids,
+        average_paid_by_rule_id=bulk_average_paid_amounts(
+            dict(outflows_by_rule_id), today=today_real
+        ),
+        outflows_by_rule_id=dict(outflows_by_rule_id),
+        paid_year_months_by_rule_id=dict(paid_year_months_by_rule_id),
+        latest_current_month_occ_by_rule_id=latest_current_month_occ_by_rule_id,
+    )
 
     items: list[dict[str, Any]] = []
+    to_update_by_id: dict[int, BillOccurrence] = {}
+    now = timezone.now()
     for cand in all_candidates:
-        if account_id and cand["account"].id != account_id:
+        occ = _lookup_occurrence(cand, by_rule_date, by_manual)
+        if occ is None:
             continue
-        if category_id and (not cand.get("category") or cand["category"].id != category_id):
-            continue
+        before = _occurrence_field_tuple(occ)
+        occ.month = month_key
+        occ.name = cand["name"]
+        occ.account = cand["account"]
+        occ.category = cand.get("category")
+        occ.expected_amount = abs(_decimal(cand["expected_amount"]))
 
         rule = cand.get("rule")
-        lookup = {
-            "household_id": cand["household_id"],
-            "due_date": cand["due_date"],
-        }
-        if rule:
-            lookup["rule"] = rule
-        else:
-            lookup["rule"] = None
-            lookup["name"] = cand["name"]
-            lookup["account"] = cand["account"]
-        occ, _created = BillOccurrence.objects.get_or_create(
-            **lookup,
-            defaults={
-                "month": month_key,
-                "name": cand["name"],
-                "account": cand["account"],
-                "category": cand.get("category"),
-                "expected_amount": abs(_decimal(cand["expected_amount"])),
-                "status": BillOccurrence.Status.PROJECTED,
-            },
-        )
-        if not _created:
-            occ.month = month_key
-            occ.name = cand["name"]
-            occ.account = cand["account"]
-            occ.category = cand.get("category")
-            occ.expected_amount = abs(_decimal(cand["expected_amount"]))
-
-        txn = (
-            cand.get("transaction")
-            or _persisted_occurrence_transaction(occ)
-            or find_matching_transaction(
-                household_id=cand["household_id"],
+        txn = cand.get("transaction") or _persisted_occurrence_transaction(occ)
+        if txn is None:
+            txn = find_matching_transaction_from_pool(
                 account_id=cand["account"].id,
                 expected_amount=cand["expected_amount"],
                 due_date=cand["due_date"],
@@ -438,17 +793,16 @@ def get_monthly_bill_checklist(
                 category_id=cand["category"].id if cand.get("category") else None,
                 month_start=month_start,
                 month_end=month_end,
+                txns_by_account=ctx.txns_by_account,
+                visible_ids=ctx.visible_ids,
+                matched_ids=ctx.matched_ids,
             )
-        )
-        _sync_occurrence_from_transaction(occ, txn, today=today)
-        occ.save()
+        _sync_occurrence_from_transaction(occ, txn, today=today, matched_ids=ctx.matched_ids)
+        if _occurrence_field_tuple(occ) != before:
+            occ.updated_at = now
+            to_update_by_id[occ.pk] = occ
 
-        if occ.skipped:
-            display_status = "skipped"
-        else:
-            display_status = occ.status
-
-        item = _serialize_checklist_item(occ, cand, txn, today=today)
+        item = _serialize_checklist_item(occ, cand, txn, today=today, ctx=ctx)
         if status_filter:
             sf = status_filter
             if sf == "missed":
@@ -456,6 +810,9 @@ def get_monthly_bill_checklist(
             if item["status"] != sf:
                 continue
         items.append(item)
+
+    if to_update_by_id:
+        BillOccurrence.objects.bulk_update(list(to_update_by_id.values()), OCCURRENCE_UPDATE_FIELDS)
 
     items.sort(key=lambda x: (x["due_date"], x["name"]))
 
@@ -473,10 +830,7 @@ def get_monthly_bill_checklist(
             forgotten_count += 1
 
     late_occurrence_count = count_late_occurrences(items)
-    rules = RecurringRule.objects.filter(household__in=households).select_related(
-        "account", "category", "transfer_to_account"
-    )
-    late_count, due_soon_count = compute_recurring_payment_counts(rules, items, today=today)
+    late_count, due_soon_count = compute_recurring_payment_counts(all_rules, items, today=today)
 
     total_bills = sum(_decimal(it["amount"]) for it in items if it["status"] != DISPLAY_SKIPPED)
     total_remaining = total_bills - total_paid
@@ -535,15 +889,20 @@ def _serialize_checklist_item(
     txn: Optional[Transaction],
     *,
     today: date,
+    ctx: Optional[RecurringChecklistContext] = None,
 ) -> dict[str, Any]:
     has_payment = txn is not None
     base_status = occ.status
+    paid_year_months = None
+    if ctx is not None and occ.rule_id:
+        paid_year_months = ctx.paid_year_months_by_rule_id.get(occ.rule_id, set())
     likely_forgotten = detect_likely_forgotten(
         rule_id=occ.rule_id,
         due_date=occ.due_date,
         today=today,
         has_payment=has_payment,
         base_status=base_status,
+        paid_year_months=paid_year_months,
     )
     status = compute_display_status(
         occ,
@@ -571,28 +930,46 @@ def _serialize_checklist_item(
         manual_mark=bool(occ.paid_at and not txn),
     )
 
-    rule = cand.get("rule") or (occ.rule if occ.rule_id else None)
-    avg_amt = average_paid_amount(occ.rule_id) if occ.rule_id else None
-    autopay = detect_autopay(
-        rule,
-        household_id=occ.household_id,
-        rule_id=occ.rule_id,
-        occurrence=occ,
-    )
+    rule = cand.get("rule")
+    if rule is None and occ.rule_id:
+        if ctx is not None:
+            rule = ctx.rules_by_id.get(occ.rule_id)
+        else:
+            rule = occ.rule
+    if ctx is not None and occ.rule_id:
+        avg_amt = ctx.average_paid_by_rule_id.get(occ.rule_id)
+        autopay = detect_autopay(
+            rule,
+            household_id=occ.household_id,
+            rule_id=occ.rule_id,
+            occurrence=occ,
+            visible_outflows=ctx.outflows_by_rule_id.get(occ.rule_id, []),
+            latest_current_month_occurrence=ctx.latest_current_month_occ_by_rule_id.get(occ.rule_id),
+        )
+    else:
+        avg_amt = average_paid_amount(occ.rule_id) if occ.rule_id else None
+        autopay = detect_autopay(
+            rule,
+            household_id=occ.household_id,
+            rule_id=occ.rule_id,
+            occurrence=occ,
+        )
 
+    account = occ.account
+    category = occ.category
     item = {
         "id": occ.id,
         "name": occ.name,
         "account": {
             "id": occ.account_id,
-            "name": occ.account.effective_display_name,
+            "name": account.effective_display_name if account else "",
         },
         "due_date": occ.due_date.isoformat(),
         "amount": str(occ.expected_amount),
         "average_amount": str(avg_amt) if avg_amt else None,
         "category": (
-            {"id": occ.category_id, "name": occ.category.name}
-            if occ.category_id and occ.category
+            {"id": occ.category_id, "name": category.name}
+            if occ.category_id and category
             else None
         ),
         "source_type": source_type,

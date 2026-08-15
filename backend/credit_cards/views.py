@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from rest_framework.permissions import IsAuthenticated
@@ -5,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import Account
+from accounts.services.balances import bulk_signed_ledger_balances
 from core.utils import get_households_for_user
 from credit_cards.services.debt_engine import (
     DEBT_STRATEGIES,
@@ -84,6 +86,8 @@ class DebtPayoffPlanView(APIView):
                 return Response({"detail": "custom_order must be comma-separated account ids."}, status=400)
 
         cards = _credit_cards_for_user(request.user, request.query_params.get("household"))
+        today = date.today()
+        balance_by_account = bulk_signed_ledger_balances(cards, today)
         plan = simulate_household_debt(
             cards,
             strategy=strategy,
@@ -91,6 +95,8 @@ class DebtPayoffPlanView(APIView):
             extra_monthly=extra,
             lump_sum_by_account=lump_by or None,
             custom_order=custom_order,
+            as_of=today,
+            balance_by_account=balance_by_account,
         )
         return Response(plan)
 
@@ -100,4 +106,12 @@ class DebtDashboardSummaryView(APIView):
 
     def get(self, request):
         cards = _credit_cards_for_user(request.user, request.query_params.get("household"))
-        return Response(build_dashboard_debt_summary(cards))
+        today = date.today()
+        balance_by_account = bulk_signed_ledger_balances(cards, today)
+        return Response(
+            build_dashboard_debt_summary(
+                cards,
+                as_of=today,
+                balance_by_account=balance_by_account,
+            )
+        )

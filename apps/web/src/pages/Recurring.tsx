@@ -27,6 +27,11 @@ import {
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { RECURRING_SUMMARY } from "../lib/recurringTerminology";
 import SubscriptionIntelligencePanel from "../components/recurring/SubscriptionIntelligencePanel";
+import {
+  AUTOMATION_NAV_LABEL,
+  AUTOMATION_PATH,
+  RECURRING_PAGE_INTRO,
+} from "../lib/automationDisplay";
 
 const STATUS_FILTER_OPTIONS: { value: "" | RecurringPaymentStatus; label: string }[] = [
   { value: "", label: "All statuses" },
@@ -231,7 +236,11 @@ export default function Recurring() {
       <div className="space-y-2">
         <div className="space-y-0.5">
           <p className="text-sm text-gray-500">
-            Manage repeating obligations, subscriptions, and payment matching — not cash-flow forecasts.
+            {RECURRING_PAGE_INTRO} Use{" "}
+            <Link to={AUTOMATION_PATH} className="text-blue-600 hover:underline">
+              {AUTOMATION_NAV_LABEL}
+            </Link>{" "}
+            to change the rules that create these patterns.
           </p>
           <p className="text-xs text-gray-400">
             For day-by-day balances and risk timing, use{" "}

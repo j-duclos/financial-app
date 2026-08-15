@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReconcileTransactionRow } from "@budget-app/shared";
-import { reconcileBalanceAfterChecks } from "./reconcileCheckedBalance";
+import { reconcileBalanceAfterChecks, selectedActivityCents } from "./reconcileCheckedBalance";
 
 function row(
   partial: Pick<ReconcileTransactionRow, "id" | "date" | "amount"> &
@@ -32,14 +32,8 @@ describe("reconcileBalanceAfterChecks", () => {
   });
 
   it("uses opening plus checked amounts only", () => {
-    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2]), opening)).toBeCloseTo(
-      opening + 1835.52 - 21.21,
-      2
-    );
-    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2, 3]), opening)).toBeCloseTo(
-      opening + 1835.52 - 21.21 - 50,
-      2
-    );
+    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2]), opening)).toBe(3050.83);
+    expect(reconcileBalanceAfterChecks(txns, new Set([1, 2, 3]), opening)).toBe(3000.83);
   });
 
   it("ignores unchecked siblings even when running balances include them", () => {
@@ -49,5 +43,10 @@ describe("reconcileBalanceAfterChecks", () => {
       row({ id: 3, date: "2026-05-14", amount: "20.00", running_balance: "1040.00" }),
     ];
     expect(reconcileBalanceAfterChecks(partial, new Set([1, 3]), 1000)).toBe(1070);
+  });
+
+  it("sums selected activity in cents", () => {
+    expect(selectedActivityCents(txns, new Set([1, 2]))).toBe(181431);
+    expect(selectedActivityCents(txns, new Set())).toBe(0);
   });
 });
