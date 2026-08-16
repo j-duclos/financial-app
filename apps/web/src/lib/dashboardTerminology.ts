@@ -67,5 +67,6 @@ export const DEPRECATED_DASHBOARD_LABELS = [
 ] as const;
 
 export function lowestForecastBalanceLabel(days: number): string {
+  if (days === 180) return "Lowest Forecast Balance (6 Months)";
   return `Lowest Forecast Balance (${days} Days)`;
 }

@@ -28,7 +28,7 @@ export function logTransactionsPageLoadPlan(plan: TransactionsPageLoadPlan): voi
       `getTimeline(upcoming)=${plan.upcomingRange.start}..${plan.upcomingRange.end} (${plan.forecastRange})`,
       plan.forecastSummaryDeferred
         ? "getAccount=light (balance) then deferred forecast_summary+health after ledger"
-        : "getAccount=1 (balance+forecast_summary+health+days=90)",
+        : "getAccount=1 (balance+forecast_summary+health+selected Forecast Window)",
       `listAccounts=cached`,
       `listCategories=cached`,
       `householdTimeline=${plan.householdTimelineEnabled ? "enabled (transfer/edit)" : "skipped"}`,

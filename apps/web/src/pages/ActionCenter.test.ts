@@ -9,6 +9,15 @@ const actionCenterSource = readFileSync(
 );
 
 describe("Action Center page structure", () => {
+  it("adds a Forecast Window selector and keys recommendations by the selected days", () => {
+    expect(actionCenterSource).toMatch(/usePageForecastWindow/);
+    expect(actionCenterSource).toMatch(/ForecastWindowSelect/);
+    expect(actionCenterSource).toMatch(/\["recommendations", "action-center", forecastDays\]/);
+    expect(actionCenterSource).toMatch(/getRecommendations\(\{ days: forecastDays \}\)/);
+    expect(actionCenterSource).toMatch(/forecastDays=\{forecastDays\}/);
+    expect(actionCenterSource).not.toMatch(/updateProfile/);
+    expect(actionCenterSource).not.toMatch(/DEFAULT_PASSIVE_FORECAST_DAYS/);
+  });
   it("loads recommendations from the dedicated endpoint, not the full dashboard summary", () => {
     expect(actionCenterSource).toMatch(/getRecommendations/);
     expect(actionCenterSource).not.toMatch(/getDashboardSummary/);

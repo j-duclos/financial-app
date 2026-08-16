@@ -608,7 +608,7 @@ class MaterializeRecurringView(APIView):
             forecast_days = normalize_forecast_days(int(raw_days))
         except (TypeError, ValueError):
             return Response(
-                {"detail": "forecast_days must be one of the allowed forecast horizons."},
+                {"detail": "forecast_days must be one of the allowed Forecast Window values."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

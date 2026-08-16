@@ -5,6 +5,7 @@ import pytest
 
 from common.services.forecast_horizon import (
     PASSIVE_DEFAULT_FORECAST_DAYS,
+    normalize_operational_forecast_days,
     parse_forecast_days_param,
     snap_span_to_forecast_days,
 )
@@ -25,7 +26,7 @@ class TestParseForecastDaysParam:
         assert parse_forecast_days_param(_request(forecast_days="60", days="30")) == 60
 
     def test_rejects_invalid_value(self):
-        with pytest.raises(ValueError, match="Invalid forecast horizon"):
+        with pytest.raises(ValueError, match="Invalid Forecast Window"):
             parse_forecast_days_param(_request(days="45"))
 
     def test_accepts_extended_when_explicit(self):
@@ -43,4 +44,18 @@ class TestSnapSpanToForecastDays:
         assert snap_span_to_forecast_days(1) == 7
         assert snap_span_to_forecast_days(8) == 14
         assert snap_span_to_forecast_days(31) == 60
-        assert snap_span_to_forecast_days(200) == 90
+        assert snap_span_to_forecast_days(200) == 365
+
+
+class TestNormalizeOperationalForecastDays:
+    def test_defaults_and_clamps_to_30(self):
+        assert normalize_operational_forecast_days(None) == 30
+        assert normalize_operational_forecast_days(1) == 30
+        assert normalize_operational_forecast_days(45) == 30
+        assert normalize_operational_forecast_days(9999) == 30
+
+    def test_accepts_operational_set(self):
+        assert normalize_operational_forecast_days(30) == 30
+        assert normalize_operational_forecast_days(60) == 60
+        assert normalize_operational_forecast_days(90) == 90
+        assert normalize_operational_forecast_days(180) == 180

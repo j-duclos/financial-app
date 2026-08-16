@@ -4,6 +4,10 @@ from django.db import models
 
 class Household(models.Model):
     name = models.CharField(max_length=255)
+    financial_revision = models.PositiveIntegerField(
+        default=0,
+        help_text="Incremented on mutations that change balances or forecasts.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -47,6 +51,16 @@ class UserProfile(models.Model):
     )
     default_account = models.ForeignKey(
         "accounts.Account", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    default_forecast_days = models.PositiveSmallIntegerField(
+        default=30,
+        choices=[
+            (30, "30 days"),
+            (60, "60 days"),
+            (90, "90 days"),
+            (180, "6 months"),
+        ],
+        help_text="Default Forecast Window for Dashboard, Action Center, and Transactions.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

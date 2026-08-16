@@ -1,6 +1,7 @@
 import type { Transaction, TimelineRow } from "@budget-app/shared";
 export { formatDateDisplay, formatDateTimeDisplay } from "../../lib/dateDisplay";
 import { formatDateDisplay } from "../../lib/dateDisplay";
+import type { OperationalForecastDays } from "../../lib/forecastWindow";
 
 /** Today's date in YYYY-MM-DD using local timezone (not UTC). */
 export function todayStr(): string {
@@ -76,37 +77,38 @@ export function timelineRangeForFilter(filter: TimeFilter): { start: string; end
 export const PROJECTION_HINT_HISTORY_DAYS = 120;
 
 /** Forecast window for Upcoming Transactions — independent of history range. */
-export type ForecastRange = "30d" | "3m" | "6m" | "12m";
+export type ForecastRange = "30d" | "60d" | "90d" | "6m";
 
-export const DEFAULT_FORECAST_RANGE: ForecastRange = "3m";
+export const DEFAULT_FORECAST_RANGE: ForecastRange = "30d";
 
-export const FORECAST_RANGE_MONTHS: Record<Exclude<ForecastRange, "30d">, number> = {
-  "3m": 3,
-  "6m": 6,
-  "12m": 12,
-};
-
-/** Default upcoming window in days (3 months). */
-export const UPCOMING_FORECAST_DAYS = 90;
+/** Default upcoming window in days (30 days). */
+export const UPCOMING_FORECAST_DAYS = 30;
 
 export function forecastRangeLabel(range: ForecastRange): string {
   switch (range) {
     case "30d":
       return "30 days";
-    case "3m":
-      return "3 months";
+    case "60d":
+      return "60 days";
+    case "90d":
+      return "90 days";
     case "6m":
       return "6 months";
-    case "12m":
-      return "12 months";
   }
 }
 
-export function forecastRangeToDays(range: ForecastRange): number {
+export function forecastRangeToDays(range: ForecastRange): OperationalForecastDays {
   if (range === "30d") return 30;
-  if (range === "3m") return 90;
-  if (range === "6m") return 180;
-  return 365;
+  if (range === "60d") return 60;
+  if (range === "90d") return 90;
+  return 180;
+}
+
+export function daysToForecastRange(days: number): ForecastRange {
+  if (days === 60) return "60d";
+  if (days === 90) return "90d";
+  if (days === 180) return "6m";
+  return "30d";
 }
 
 /** Past window for listTransactions (history through today). */
@@ -153,6 +155,16 @@ export function ledgerPastTransactionStart(
   return filterStart;
 }
 
+/** Rows already included in a completed reconciliation checkpoint ending balance. */
+export function transactionAlreadyInCheckpoint(
+  txn: { date: string; reconciled?: boolean },
+  checkpointPeriodEnd: string | null | undefined
+): boolean {
+  if (!checkpointPeriodEnd) return false;
+  if (txn.date < checkpointPeriodEnd) return true;
+  return txn.date === checkpointPeriodEnd && Boolean(txn.reconciled);
+}
+
 /** Drop unreconciled rows inside a closed reconcile period — already in opening bank balance. */
 export function filterPastTransactionsAfterReconcileClose(
   txns: Transaction[],
@@ -163,16 +175,12 @@ export function filterPastTransactionsAfterReconcileClose(
   return txns.filter((t) => t.date > lastReconcilePeriodEnd);
 }
 
-/** Upcoming projection window: today through today + selected forecast range. */
+/** Upcoming projection window: today through today + selected forecast range (canonical day counts). */
 export function upcomingTimelineRange(
   asOf: string = todayStr(),
   forecastRange: ForecastRange = DEFAULT_FORECAST_RANGE
 ): { start: string; end: string } {
-  const end =
-    forecastRange === "30d"
-      ? addDaysToIsoDate(asOf, 30)
-      : addMonthsToIsoDate(asOf, FORECAST_RANGE_MONTHS[forecastRange]);
-  return { start: asOf, end };
+  return { start: asOf, end: addDaysToIsoDate(asOf, forecastRangeToDays(forecastRange)) };
 }
 
 /**
@@ -819,6 +827,11 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     /** When set, omit unreconciled rows on/before this date (hide-reconciled ledger only). */
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
+    /**
+     * Completed reconciliation period end. Reconciled rows on/before this date are
+     * shown when requested but must not be added on top of the checkpoint opening.
+     */
+    checkpointPeriodEnd?: string | null;
   }
 ): LedgerRow[] {
   const pastSource =
@@ -843,10 +856,13 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   const rows: LedgerRow[] = [{ type: "starting_balance", balance: start }];
   let running = start;
 
+  const checkpointPeriodEnd = options?.checkpointPeriodEnd ?? null;
   for (const txn of pastTxns) {
     const amt = signedTransactionLedgerAmount(txn);
     if (Number.isNaN(amt)) continue;
-    running = applyTimelineAmountToBalance(running, amt, isCredit);
+    if (!transactionAlreadyInCheckpoint(txn, checkpointPeriodEnd)) {
+      running = applyTimelineAmountToBalance(running, amt, isCredit);
+    }
     rows.push({ type: "transaction", txn, balance: running });
   }
 

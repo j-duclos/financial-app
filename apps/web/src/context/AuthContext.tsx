@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   configureApiClient,
   login as apiLogin,
@@ -14,6 +15,7 @@ import {
   register as apiRegister,
   getProfile,
 } from "@budget-app/api-client";
+import { PROFILE_QUERY_KEY } from "../lib/profileQuery";
 
 const ACCESS_KEY = "budget_access";
 const REFRESH_KEY = "budget_refresh";
@@ -41,6 +43,7 @@ function profileLabel(profile: { username: string; display_name: string }) {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [auth, setAuth] = useState<AuthState>({
     access: localStorage.getItem(ACCESS_KEY),
     refresh: localStorage.getItem(REFRESH_KEY),
@@ -89,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     getProfile()
       .then((profile) => {
+        queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
         setAuth((prev) => ({
           ...prev,
           user: { id: profile.id, username: profileLabel(profile) },
@@ -102,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setTokens(r.access, auth.refresh!);
               try {
                 const profile = await getProfile();
+                queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
                 setAuth((prev) => ({
                   ...prev,
                   user: { id: profile.id, username: profileLabel(profile) },
@@ -118,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logout();
         }
       });
-  }, [auth.access, auth.refresh, auth.user, logout, setTokens]);
+  }, [auth.access, auth.refresh, auth.user, logout, queryClient, setTokens]);
 
   const login = useCallback(
     async (username: string, password: string) => {
@@ -143,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!access) return;
     try {
       const profile = await getProfile();
+      queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
       setAuth((prev) => ({
         ...prev,
         user: { id: profile.id, username: profileLabel(profile) },
@@ -150,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo(
     () => ({ auth, login, register, logout, setTokens, refreshUser }),

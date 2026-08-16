@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DashboardSummaryFast, FinancialGoal } from "@budget-app/shared";
+import type { FinancialGoal } from "@budget-app/shared";
 import { getDashboardDetails, getDashboardSummaryFast, listAccounts, listAllBuckets } from "@budget-app/api-client";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
@@ -16,12 +16,9 @@ import QuickTransactionModal, {
 } from "../components/quickActions/QuickTransactionModal";
 import ActionToast from "../components/quickActions/ActionToast";
 import { attentionTransferPreset } from "../lib/attentionCardDisplay";
-import {
-  DEFAULT_PASSIVE_FORECAST_DAYS,
-  type ForecastDays,
-} from "../lib/safeToSpendLabels";
 import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
 import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
+import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 function DashboardOnboarding() {
@@ -51,9 +48,7 @@ function DashboardOnboarding() {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const [forecastDays, setForecastDays] = useState<ForecastDays>(
-    DEFAULT_PASSIVE_FORECAST_DAYS
-  );
+  const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const needsAccounts = txnPreset != null;
@@ -61,6 +56,7 @@ export default function Dashboard() {
   const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
+    enabled: forecastReady,
   });
 
   const [detailsEnabled, setDetailsEnabled] = useState(false);
@@ -77,7 +73,7 @@ export default function Dashboard() {
   const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery({
     queryKey: ["dashboard-summary-details", forecastDays],
     queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
-    enabled: detailsEnabled,
+    enabled: detailsEnabled && forecastReady,
   });
 
   const { data: accountsData } = useQuery({
@@ -115,11 +111,11 @@ export default function Dashboard() {
           summary={summaryFast}
           forecastDays={forecastDays}
           onForecastDaysChange={setForecastDays}
-          loading={fastLoading}
+          loading={fastLoading || !forecastReady}
         />
       </section>
 
-      {fastLoading && <DashboardSkeleton omitHealth />}
+      {(fastLoading || !forecastReady) && <DashboardSkeleton omitHealth />}
 
       {fastError && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">

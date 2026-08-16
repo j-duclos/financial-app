@@ -32,10 +32,10 @@ import {
   UPCOMING_FORECAST_DAYS,
   forecastRangeToDays,
   DEFAULT_FORECAST_RANGE,
-  addMonthsToIsoDate,
   pastTransactionsRange,
   ledgerPastTransactionStart,
   filterPastTransactionsAfterReconcileClose,
+  transactionAlreadyInCheckpoint,
   buildLedgerRowsFromPastAndUpcomingTimeline,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
@@ -54,11 +54,11 @@ describe("timelineRangeForFilter", () => {
 });
 
 describe("upcomingTimelineRange", () => {
-  it("spans today through default 3-month forecast", () => {
+  it("spans today through default 30-day forecast", () => {
     const today = todayStr();
     const { start, end } = upcomingTimelineRange(today);
     expect(start).toBe(today);
-    expect(end).toBe(addMonthsToIsoDate(today, 3));
+    expect(end).toBe(addDaysToIsoDate(today, 30));
   });
 
   it("uses 30 days for 30d forecast range", () => {
@@ -68,16 +68,21 @@ describe("upcomingTimelineRange", () => {
     expect(end).toBe(addDaysToIsoDate(today, 30));
   });
 
-  it("uses 12 calendar months for 12m forecast range", () => {
+  it("uses 60 and 90 days for those forecast windows", () => {
     const today = todayStr();
-    const { end } = upcomingTimelineRange(today, "12m");
-    expect(end).toBe(addMonthsToIsoDate(today, 12));
+    expect(upcomingTimelineRange(today, "60d").end).toBe(addDaysToIsoDate(today, 60));
+    expect(upcomingTimelineRange(today, "90d").end).toBe(addDaysToIsoDate(today, 90));
+  });
+
+  it("uses 180 days for the 6-month forecast range", () => {
+    const today = todayStr();
+    const { end } = upcomingTimelineRange(today, "6m");
+    expect(end).toBe(addDaysToIsoDate(today, 180));
   });
 
   it("maps forecast ranges to day counts for loading hints", () => {
     expect(forecastRangeToDays(DEFAULT_FORECAST_RANGE)).toBe(UPCOMING_FORECAST_DAYS);
     expect(forecastRangeToDays("6m")).toBe(180);
-    expect(forecastRangeToDays("12m")).toBe(365);
   });
 });
 
@@ -92,7 +97,7 @@ describe("ledgerProjectionRange", () => {
     const projection12m = ledgerProjectionRange(today, "6m");
     expect(projection1m).toEqual(projection12m);
     expect(projection1m.start).toBe(today);
-    expect(projection1m.end).toBe(addMonthsToIsoDate(today, 6));
+    expect(projection1m.end).toBe(addDaysToIsoDate(today, 180));
   });
 });
 
@@ -140,6 +145,15 @@ describe("filterPastTransactionsAfterReconcileClose", () => {
     ] as never[];
     const kept = filterPastTransactionsAfterReconcileClose(txns, periodEnd, "2026-05-05");
     expect(kept.map((t) => t.id)).toEqual([3]);
+  });
+});
+
+describe("transactionAlreadyInCheckpoint", () => {
+  it("treats reconciled rows on or before period end as already in the checkpoint", () => {
+    expect(transactionAlreadyInCheckpoint({ date: "2026-07-27", reconciled: true }, "2026-07-27")).toBe(true);
+    expect(transactionAlreadyInCheckpoint({ date: "2026-07-26", reconciled: false }, "2026-07-27")).toBe(true);
+    expect(transactionAlreadyInCheckpoint({ date: "2026-07-27", reconciled: false }, "2026-07-27")).toBe(false);
+    expect(transactionAlreadyInCheckpoint({ date: "2026-07-28", reconciled: false }, "2026-07-27")).toBe(false);
   });
 });
 

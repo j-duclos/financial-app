@@ -315,3 +315,68 @@ def test_history_range_does_not_change_projection_work(user, household, auth_cli
         f"txn_12m_rows={n12} txn_12m_sql={len(txn_12m.captured_queries)} "
         f"timeline_occ={occ_first} timeline_sql={sql_first} timeline_rows={rows_first}"
     )
+
+
+def test_thirty_day_forecast_is_smaller_than_six_month(user, household, monkeypatch):
+    """Operational 30-day window must not generate a full 6-month timeline."""
+    checking = _seed_ledger(user, household)
+    cache.clear()
+    end_30 = AS_OF + timedelta(days=30)
+    end_180 = AS_OF + timedelta(days=180)
+
+    spans = _occurrence_span(monkeypatch)
+    reset_build_timeline_count()
+    t0 = time.perf_counter()
+    with CaptureQueriesContext(connection) as ctx30:
+        rows_30 = build_timeline(
+            user,
+            AS_OF,
+            end_30,
+            account_id=checking.id,
+            as_of_date=AS_OF,
+            projection_only=True,
+            exclude_reconciled_past=True,
+            caller="forecast_window_30",
+        )
+    ms_30 = (time.perf_counter() - t0) * 1000
+    occ_30 = sum(n for _, _, n in spans)
+    sql_30 = len(ctx30.captured_queries)
+    future_30 = [
+        r for r in rows_30 if str(r.get("date") or "")[:10] >= AS_OF.isoformat()
+    ]
+    spans.clear()
+
+    reset_build_timeline_count()
+    t1 = time.perf_counter()
+    with CaptureQueriesContext(connection) as ctx180:
+        rows_180 = build_timeline(
+            user,
+            AS_OF,
+            end_180,
+            account_id=checking.id,
+            as_of_date=AS_OF,
+            projection_only=True,
+            exclude_reconciled_past=True,
+            caller="forecast_window_180",
+        )
+    ms_180 = (time.perf_counter() - t1) * 1000
+    occ_180 = sum(n for _, _, n in spans)
+    sql_180 = len(ctx180.captured_queries)
+    future_180 = [
+        r for r in rows_180 if str(r.get("date") or "")[:10] >= AS_OF.isoformat()
+    ]
+
+    dates_30 = [str(r.get("date") or "")[:10] for r in future_30]
+    dates_180 = [str(r.get("date") or "")[:10] for r in future_180]
+    assert dates_30
+    assert max(dates_30) <= end_30.isoformat()
+    assert any(d > end_30.isoformat() for d in dates_180)
+    assert len(future_30) < len(future_180)
+    assert occ_30 < occ_180
+    print(
+        "\nFORECAST_WINDOW_ROW_PROFILE "
+        f"BEFORE 6-month forecast: {len(future_180)} projected rows "
+        f"occ={occ_180} sql={sql_180} ms={ms_180:.0f} | "
+        f"AFTER 30-day forecast: {len(future_30)} projected rows "
+        f"occ={occ_30} sql={sql_30} ms={ms_30:.0f}"
+    )

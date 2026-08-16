@@ -14,6 +14,15 @@ const accountsSource = readFileSync(
 );
 
 describe("Dashboard page structure", () => {
+  it("initializes Forecast Window from the saved profile default and keys queries by days", () => {
+    expect(dashboardSource).toMatch(/usePageForecastWindow/);
+    expect(dashboardSource).toMatch(/enabled: forecastReady/);
+    expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
+    expect(dashboardSource).toMatch(/\["dashboard-summary-details", forecastDays\]/);
+    expect(dashboardSource).toMatch(/getDashboardSummaryFast\(\{ forecast_days: forecastDays \}\)/);
+    expect(dashboardSource).not.toMatch(/updateProfile/);
+  });
+
   it("includes action-focused overview sections in priority order", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);

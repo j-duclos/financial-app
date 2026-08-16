@@ -1,7 +1,7 @@
 import type { AccountRole } from "@budget-app/shared";
 import { normalizeSeverity, severityLabel, severityTokens } from "./severity";
 
-/** Default windows for dashboard, accounts, and other passive loads. */
+/** Accounts-page windows (7/14/30). Dashboard / Action Center / Transactions use forecastWindow.ts. */
 export const PASSIVE_FORECAST_DAY_OPTIONS = [7, 14, 30] as const;
 
 /** Extended windows for timeline, scenarios, and advanced tools (explicit user choice). */

@@ -53,12 +53,7 @@ def test_find_counterpart_helper_misaligned_dates(household):
         name="Venture",
         currency="USD",
     )
-    cat = Category.objects.create(
-        household=household,
-        name="Credit Card Payment",
-        category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
-    )
+    cat = Category.objects.get(household=household, name="Credit Card Payment")
     rule = RecurringRule.objects.create(
         household=household,
         name="ATT - Move to CC",
@@ -400,12 +395,7 @@ def test_patch_imported_date_moves_matched_planned_row_same_account(auth_client,
         name="Care Credit",
         currency="USD",
     )
-    cat = Category.objects.create(
-        household=household,
-        name="Credit Card Payment",
-        category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
-    )
+    cat = Category.objects.get(household=household, name="Credit Card Payment")
     rule = RecurringRule.objects.create(
         household=household,
         name="Care payment",
@@ -463,11 +453,11 @@ def test_patch_imported_date_moves_matched_planned_row_same_account(auth_client,
         {"date": "2026-07-29"},
         format="json",
     )
-    assert r.status_code == 200, getattr(r, "data", r.content)
+    assert r.status_code == 400, getattr(r, "data", r.content)
     planned.refresh_from_db()
     imported.refresh_from_db()
-    assert planned.date == date(2026, 7, 29)
-    assert imported.date == date(2026, 7, 29)
+    assert planned.date == date(2026, 7, 28)
+    assert imported.date == date(2026, 7, 28)
     assert Transaction.objects.filter(pk=planned.pk).exists()
 
 

@@ -74,6 +74,7 @@ def test_get_profile(authenticated_client, user):
     assert "phone_e164" in body
     assert "default_household" in body
     assert "default_account" in body
+    assert body["default_forecast_days"] == 30
 
 
 def test_profile_get_is_read_only(authenticated_client, user):
@@ -167,3 +168,30 @@ def test_username_is_not_writable(authenticated_client, user):
     user.refresh_from_db()
     assert user.username == "testuser"
     assert r.json()["username"] == "testuser"
+
+
+@pytest.mark.parametrize("days", [30, 60, 90, 180])
+def test_patch_default_forecast_days_allowed(authenticated_client, user, days):
+    r = authenticated_client.patch(
+        "/api/profile/", {"default_forecast_days": days}, format="json"
+    )
+    assert r.status_code == 200
+    assert r.json()["default_forecast_days"] == days
+    assert UserProfile.objects.get(user=user).default_forecast_days == days
+
+
+@pytest.mark.parametrize("days", [1, 45, 9999])
+def test_patch_default_forecast_days_rejects_unsupported(authenticated_client, days):
+    r = authenticated_client.patch(
+        "/api/profile/", {"default_forecast_days": days}, format="json"
+    )
+    assert r.status_code == 400
+    assert "default_forecast_days" in r.json()
+
+
+def test_legacy_profile_without_saved_forecast_defaults_to_30(authenticated_client, user):
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    UserProfile.objects.filter(pk=profile.pk).update(default_forecast_days=45)
+    r = authenticated_client.get("/api/profile/")
+    assert r.status_code == 200
+    assert r.json()["default_forecast_days"] == 30

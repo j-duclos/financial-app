@@ -601,6 +601,15 @@ def detect_restore_buffer(
 
 
 def run_all_detectors(ctx: RecommendationContext) -> list[Detection]:
+    """
+    Run every detector.
+
+    Forecast-window dependent (use ctx.days / projected timeline):
+      survival_mode, move_money, delay_bill, restore_buffer, reduce_spending
+
+    Current-state (not hidden merely because the Forecast Window changed):
+      reduce_utilization, pause_subscription, increase_goal_contribution, debt_payoff
+    """
     ctx.survival_mode = detect_survival_mode(ctx)
     detections: list[Detection] = []
     detections.extend(detect_survival_recommendations(ctx))

@@ -18,6 +18,7 @@ describe("dashboardTerminology", () => {
   it("uses human-first financial health labels", () => {
     expect(FINANCIAL_HEALTH.lowestProjectedCash.label).toBe("Lowest Forecast Balance");
     expect(lowestForecastBalanceLabel(30)).toBe("Lowest Forecast Balance (30 Days)");
+    expect(lowestForecastBalanceLabel(180)).toBe("Lowest Forecast Balance (6 Months)");
     expect(lowestForecastBalanceLabel(14)).toBe("Lowest Forecast Balance (14 Days)");
     expect(FINANCIAL_HEALTH.availableCash.label).toBe("Available Cash");
     expect(FINANCIAL_HEALTH.availableCredit.label).toBe("Available Credit");

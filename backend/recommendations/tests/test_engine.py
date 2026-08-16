@@ -1,6 +1,7 @@
 """Tests for deterministic recommendation engine."""
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -368,6 +369,32 @@ def test_recommendations_api(auth_client):
     data = r.json()
     assert "recommendations" in data
     assert data["days"] == 30
+
+
+@pytest.mark.django_db
+def test_recommendation_context_timeline_end_matches_requested_days(user, checking):
+    from django.core.cache import cache
+
+    cache.clear()
+    with patch(
+        "recommendations.services.engine.build_forecast_projection_timeline",
+        return_value=[],
+    ) as mock_build:
+        build_recommendation_context(user, days=30, as_of_date=AS_OF)
+        assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=30)
+        mock_build.reset_mock()
+        build_recommendation_context(user, days=180, as_of_date=AS_OF)
+        assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=180)
+
+
+@pytest.mark.django_db
+def test_recommendations_api_isolates_forecast_windows(auth_client):
+    r30 = auth_client.get("/api/recommendations/?days=30")
+    r90 = auth_client.get("/api/recommendations/?days=90")
+    assert r30.status_code == 200
+    assert r90.status_code == 200
+    assert r30.json()["days"] == 30
+    assert r90.json()["days"] == 90
 
 
 @pytest.fixture

@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff } from "lucide-react";
 import {
   changePassword,
-  getProfile,
   listHouseholds,
   updateProfile,
 } from "@budget-app/api-client";
@@ -13,13 +12,19 @@ import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
+import { PROFILE_QUERY_KEY, useProfileQuery } from "../lib/profileQuery";
+import {
+  FORECAST_WINDOW_LABELS,
+  OPERATIONAL_FORECAST_DAY_OPTIONS,
+  normalizeOperationalForecastDays,
+  type OperationalForecastDays,
+} from "../lib/forecastWindow";
 import {
   clientPasswordErrors,
   passwordApiFieldErrors,
   type PasswordFieldErrors,
 } from "../lib/profilePassword";
 
-const PROFILE_STALE_MS = 5 * 60_000;
 const inputClass = "mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white";
 const readOnlyClass = `${inputClass} bg-gray-50 text-gray-600 cursor-default`;
 
@@ -84,15 +89,11 @@ export default function Profile() {
   const phoneHelpId = useId();
   const newPwdHelpId = useId();
 
-  const { data: profile, isLoading: profileLoading } = useQuery({
-    queryKey: ["profile"],
-    queryFn: getProfile,
-    staleTime: PROFILE_STALE_MS,
-  });
+  const { data: profile, isLoading: profileLoading } = useProfileQuery();
   const { data: households } = useQuery({
     queryKey: ["households"],
     queryFn: listHouseholds,
-    staleTime: PROFILE_STALE_MS,
+    staleTime: 5 * 60_000,
   });
   const { data: accountsData } = useOperationalAccounts();
   const accounts = accountsData?.results ?? [];
@@ -101,6 +102,7 @@ export default function Profile() {
   const [phoneInput, setPhoneInput] = useState("");
   const [defaultHousehold, setDefaultHousehold] = useState<number | "">("");
   const [defaultAccount, setDefaultAccount] = useState<number | "">("");
+  const [defaultForecastDays, setDefaultForecastDays] = useState<OperationalForecastDays>(30);
 
   const householdAccounts = useMemo(
     () => accountsForHousehold(accounts, defaultHousehold),
@@ -113,6 +115,7 @@ export default function Profile() {
     setPhoneInput(formatPhoneForDisplay(profile.phone_e164 ?? ""));
     setDefaultHousehold(profile.default_household ?? "");
     setDefaultAccount(profile.default_account ?? "");
+    setDefaultForecastDays(normalizeOperationalForecastDays(profile.default_forecast_days));
   }, [profile]);
 
   useEffect(() => {
@@ -129,11 +132,12 @@ export default function Profile() {
         phone_e164: phoneInput.trim() || null,
         default_household: defaultHousehold === "" ? null : Number(defaultHousehold),
         default_account: defaultAccount === "" ? null : Number(defaultAccount),
+        default_forecast_days: defaultForecastDays,
       }),
     onSuccess: async (saved) => {
       setProfileMessage({ type: "ok", text: "Profile saved." });
-      queryClient.setQueryData(["profile"], saved);
-      await queryClient.invalidateQueries({ queryKey: ["profile"] });
+      queryClient.setQueryData(PROFILE_QUERY_KEY, saved);
+      await queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY });
       await refreshUser();
     },
     onError: (e: unknown) => {
@@ -323,6 +327,29 @@ export default function Profile() {
                 ))}
               </select>
               <p className="mt-1 text-xs text-gray-500">Optional. Only accounts in the selected household.</p>
+            </div>
+            <div>
+              <label htmlFor="profile-forecast-window" className="block text-sm font-medium text-gray-700">
+                Default Forecast Window
+              </label>
+              <select
+                id="profile-forecast-window"
+                value={defaultForecastDays}
+                onChange={(e) =>
+                  setDefaultForecastDays(Number(e.target.value) as OperationalForecastDays)
+                }
+                className={inputClass}
+                data-testid="default-forecast-window"
+              >
+                {OPERATIONAL_FORECAST_DAY_OPTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    {FORECAST_WINDOW_LABELS[d]}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Used as the default on Dashboard, Action Center, and Transactions.
+              </p>
             </div>
             <button
               type="submit"

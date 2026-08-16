@@ -3,7 +3,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from .models import Transaction, TransactionMatch, Transfer, TransferGroup
-from .services.immutability import reject_if_reconciled
+from .services.immutability import validate_transaction_update
 from .services.posting import get_transfer_group_sibling
 from accounts.models import Account
 from accounts.serializers import AccountSerializer
@@ -49,6 +49,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "plaid_transaction_id",
             "imported_description",
             "normalized_payee",
+            "posted_date",
         ]
 
     def get_direction(self, obj):
@@ -173,7 +174,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             self.fields["transfer_to_account_id"].queryset = accts
 
     def update(self, instance, validated_data):
-        reject_if_reconciled(instance, action="edited")
+        validate_transaction_update(instance, validated_data)
         """
         ``transfer_to_account_id`` is not a DB column; when set, create the paired inflow on the
         destination account (``Transfer`` + ``TransferGroup``). If the edited row is a matched
@@ -196,7 +197,17 @@ class TransactionSerializer(serializers.ModelSerializer):
             if m:
                 out_for_link = m.planned_transaction
 
-        instance = super().update(instance, validated_data)
+        concrete = {f.name for f in Transaction._meta.concrete_fields}
+        written = [k for k in validated_data if k in concrete]
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        save_kwargs = {}
+        if written:
+            fields = set(written)
+            if "updated_at" in concrete:
+                fields.add("updated_at")
+            save_kwargs["update_fields"] = list(fields)
+        instance.save(**save_kwargs)
         instance.refresh_from_db()
 
         # Matched Plaid import ↔ planned forecast rows share the same bank account. When only one

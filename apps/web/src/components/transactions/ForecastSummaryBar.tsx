@@ -111,7 +111,7 @@ export default function ForecastSummaryBar({
           />
           {showForecastMetrics && (
             <SummaryMetric
-              label="Lowest Projected in Forecast Range"
+              label="Lowest Projected in Forecast Window"
               value={lowestProjectedValue}
               valueClass={
                 lowestProjected != null && lowestProjected < 0

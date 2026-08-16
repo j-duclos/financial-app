@@ -1096,7 +1096,12 @@ def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
     """Dashboard build_timeline uses today → today+days, not a fixed long horizon."""
     from contextlib import ExitStack
 
-    for days, expected_end in ((60, AS_OF + timedelta(days=60)), (90, AS_OF + timedelta(days=90))):
+    for days, expected_end in (
+        (30, AS_OF + timedelta(days=30)),
+        (60, AS_OF + timedelta(days=60)),
+        (90, AS_OF + timedelta(days=90)),
+        (180, AS_OF + timedelta(days=180)),
+    ):
         with ExitStack() as stack:
             mock_build = stack.enter_context(
                 patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])

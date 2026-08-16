@@ -1869,6 +1869,8 @@ def sum_transaction_amounts_for_balance(
     *,
     date_lt: Optional[date] = None,
     date_lte: Optional[date] = None,
+    date_gt: Optional[date] = None,
+    include_unreconciled_on: Optional[date] = None,
     exclude_interest: bool = True,
     sources: Optional[Collection[str]] = None,
 ) -> Decimal:
@@ -1878,6 +1880,12 @@ def sum_transaction_amounts_for_balance(
         qs = qs.filter(date__lt=date_lt)
     if date_lte is not None:
         qs = qs.filter(date__lte=date_lte)
+    if date_gt is not None and include_unreconciled_on is not None:
+        from django.db.models import Q
+
+        qs = qs.filter(Q(date__gt=date_gt) | Q(date=include_unreconciled_on, reconciled=False))
+    elif date_gt is not None:
+        qs = qs.filter(date__gt=date_gt)
     if sources is not None:
         qs = qs.filter(source__in=sources)
     if exclude_interest:
@@ -1902,25 +1910,55 @@ def sum_transaction_amounts_for_balance(
     return total
 
 
-def _opening_balance(account_id: int, as_of_date: date) -> Decimal:
-    """Balance for account as of end of day before as_of_date. amount is signed: positive=inflow, negative=outflow.
-    For CREDIT accounts, negate so debt is negative: debits (expenses) make balance more negative, credits (payments) less negative.
-    Includes all transaction sources (ACTUAL, RULE, ONE_TIME) so interest uses full balance."""
-    cache = get_active_balance_cache()
-    if cache is not None:
-        return cache.opening_balance(account_id, as_of_date)
-    acc = Account.objects.filter(pk=account_id).first()
-    txn_sum = sum_transaction_amounts_for_balance(account_id, date_lt=as_of_date)
+def _signed_starting_balance(acc: Account | None) -> tuple[Decimal, bool]:
     opening = Decimal("0")
     credit_opening_pre_negated = False
     if acc and acc.starting_balance is not None:
         opening = Decimal(str(acc.starting_balance))
-        # Match timeline: opening debt entered as a positive starting_balance is stored as negative signed balance.
         if acc.account_type == Account.AccountType.CREDIT and opening > 0:
             opening = -opening
             credit_opening_pre_negated = True
+    return opening, credit_opening_pre_negated
+
+
+def _opening_balance(account_id: int, as_of_date: date) -> Decimal:
+    """Balance for account as of end of day before as_of_date. amount is signed: positive=inflow, negative=outflow.
+    For CREDIT accounts, negate so debt is negative: debits (expenses) make balance more negative, credits (payments) less negative.
+    Includes all transaction sources (ACTUAL, RULE, ONE_TIME) so interest uses full balance.
+
+    When a completed reconciliation exists with period_end < as_of_date, starts from that
+    session's verified ending balance instead of replaying reconciled history.
+    """
+    cache = get_active_balance_cache()
+    if cache is not None:
+        return cache.opening_balance(account_id, as_of_date)
+    return _compute_opening_balance(account_id, as_of_date)
+
+
+def _compute_opening_balance(account_id: int, as_of_date: date) -> Decimal:
+    acc = Account.objects.filter(pk=account_id).first()
+    as_of_end = as_of_date - timedelta(days=1)
+    rec = None
+    if acc is not None:
+        from transactions.services.checkpoints import (
+            checkpoint_signed_balance,
+            latest_completed_reconciliation_as_of,
+        )
+
+        rec = latest_completed_reconciliation_as_of(acc, as_of_end)
+    if rec is not None and rec.period_end_date is not None:
+        opening = checkpoint_signed_balance(rec, acc)
+        txn_sum = sum_transaction_amounts_for_balance(
+            account_id,
+            date_lt=as_of_date,
+            date_gt=rec.period_end_date,
+            include_unreconciled_on=rec.period_end_date,
+        )
+        return opening + txn_sum
+
+    txn_sum = sum_transaction_amounts_for_balance(account_id, date_lt=as_of_date)
+    opening, credit_opening_pre_negated = _signed_starting_balance(acc)
     total = opening + txn_sum
-    # Legacy cards with unsigned (all-positive) activity and non-positive starting balance.
     if (
         acc
         and acc.account_type == Account.AccountType.CREDIT
@@ -2060,17 +2098,8 @@ def _raw_balance_at_end_of_date(account_id: int, as_of_date: date) -> Decimal:
     cache = get_active_balance_cache()
     if cache is not None:
         return cache.raw_balance_at_end_of_date(account_id, as_of_date)
-    acc = Account.objects.filter(pk=account_id).first()
-    txns = ledger_visible_transactions(
-        Transaction.objects.filter(
-            account_id=account_id,
-            date__lte=as_of_date,
-        )
-    ).values_list("amount", flat=True)
-    total = sum((Decimal(str(a)) for a in txns), start=Decimal("0"))
-    if acc and acc.starting_balance is not None:
-        total += Decimal(str(acc.starting_balance))
-    return total
+    # Signed ledger already applies credit convention; use it for the no-debt check.
+    return _balance_at_end_of_date(account_id, as_of_date)
 
 
 def _credit_card_balance_through_date(
@@ -2247,21 +2276,14 @@ def _interest_average_daily_balance(
     Returns None if no debt (ADB non-negative) or zero interest.
     """
     today = as_of_date or date.today()
-    raw_balance_today = _raw_balance_at_end_of_date(account_id, today)
+    signed_today = _balance_at_end_of_date(account_id, today)
     acc = Account.objects.filter(pk=account_id).first()
-    # Don't project interest when there's no debt. For CREDIT: raw < 0 = debt when starting_balance <= 0;
-    # when starting_balance > 0 (entered as "opening debt"), raw > 0 = debt.
+    # Don't project interest when there's no debt (signed credit debt is negative).
     if acc and acc.account_type == Account.AccountType.CREDIT:
-        sb = acc.starting_balance
-        if sb is not None and sb > 0:
-            if raw_balance_today <= 0:
-                return None  # paid off or in credit
-        else:
-            if raw_balance_today >= 0:
-                return None  # paid off or in credit
-    else:
-        if raw_balance_today >= 0:
+        if signed_today >= 0:
             return None
+    elif signed_today >= 0:
+        return None
     prev = _previous_cycle_end(cycle_end)
     period_start = prev + timedelta(days=1)
     period_end = cycle_end
@@ -2658,7 +2680,12 @@ def _build_timeline_impl(
 
     balance_cache, balance_cache_token = activate_balance_cache()
     try:
-        preload_household_balance_data(balance_cache, households, end_date)
+        preload_household_balance_data(
+            balance_cache,
+            households,
+            end_date,
+            min_as_of=today if projection_only else start_date,
+        )
         scenario = None
         if scenario_id:
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()

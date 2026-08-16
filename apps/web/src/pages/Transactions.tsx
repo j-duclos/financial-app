@@ -16,7 +16,6 @@ import {
   skipTransactionOccurrence,
   moveTransactionDate,
   matchTransactionToImport,
-  getProfile,
   getAccount,
   getTimeline,
   getTransaction,
@@ -38,9 +37,13 @@ import {
   type TransactionRowData,
 } from "../components/transactions/TransactionRow";
 import {
-  HideReconciledFilter,
+  ShowReconciledFilter,
   TransactionColumnFilters,
 } from "../components/transactions/TransactionsFilterBar";
+import {
+  isBankImportedTransaction,
+  transactionEditLockMessage,
+} from "../components/transactions/transactionStatusUtils";
 import {
   filterLedgerPastRows,
   filterLedgerRows,
@@ -74,6 +77,8 @@ import {
   timelineRowFlowDirection,
   projectionTimelineRangeForAsOf,
   forecastRangeLabel,
+  daysToForecastRange,
+  forecastRangeToDays,
   type TimeFilter,
   type ForecastRange,
 } from "../components/transactions/transactionsLedgerUtils";
@@ -94,13 +99,12 @@ import {
   saveStoredTransactionsAccountId,
   loadStoredTransactionsTimeFilter,
   saveStoredTransactionsTimeFilter,
-  loadStoredTransactionsForecastRange,
-  saveStoredTransactionsForecastRange,
   loadStoredTransactionsAmountMin,
   loadStoredTransactionsAmountMax,
   saveStoredTransactionsAmountRange,
 } from "../lib/transactionsPageState";
 import { categoriesForDropdown } from "../lib/categoryOptions";
+import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 export type { TimeFilter, ForecastRange };
@@ -128,22 +132,22 @@ export default function Transactions() {
   const hasUrlCategory = Number.isInteger(urlCategoryId) && urlCategoryId > 0;
   const [accountId, setAccountId] = useState<number | "">(() => loadStoredTransactionsAccountId());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() => loadStoredTransactionsTimeFilter());
-  const [forecastRange, setForecastRange] = useState<ForecastRange>(() => loadStoredTransactionsForecastRange());
-  /** Always default true on load — unreconciled-only queries; user may uncheck for this session. */
-  const [hideReconciledPast, setHideReconciledPast] = useState(true);
+  const {
+    forecastDays,
+    setForecastDays,
+    ready: forecastReady,
+    profile,
+  } = usePageForecastWindow();
+  const forecastRange = daysToForecastRange(forecastDays);
+  /** Default OFF — reconciled history is loaded only when the user asks. */
+  const [showReconciled, setShowReconciled] = useState(false);
+  const hideReconciledPast = !showReconciled;
   const [amountMinInput, setAmountMinInput] = useState(() => loadStoredTransactionsAmountMin());
   const [amountMaxInput, setAmountMaxInput] = useState(() => loadStoredTransactionsAmountMax());
   const hasSetInitialAccount = useRef(false);
   const consumedNavAccountRef = useRef(false);
   const hasAppliedBillPrefill = useRef(false);
   const inlineAddInFlight = useRef(false);
-
-  const { data: profile } = useQuery({
-    queryKey: ["profile"],
-    queryFn: getProfile,
-    staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-  });
 
   const [inlineRow, setInlineRow] = useState({
     date: todayStr(),
@@ -223,12 +227,11 @@ export default function Transactions() {
     queryKey: [
       "transactions",
       {
-        historyRange: timeFilter,
         account: accountId || undefined,
         category: hasUrlCategory ? urlCategoryId : undefined,
-        date_after: pastTransactionsDateAfter,
         date_before: pastRangeEnd,
-        unreconciled_only: hideReconciledPast,
+        showReconciled,
+        ...(showReconciled ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart } : {}),
       },
     ],
     queryFn: () =>
@@ -236,15 +239,19 @@ export default function Transactions() {
         ...(accountId
           ? {
               account: accountId as number,
-              date_after: pastTransactionsDateAfter,
               date_before: pastRangeEnd,
               page_size: 2000,
               ...(hasUrlCategory ? { category: urlCategoryId } : {}),
-              ...(hideReconciledPast ? { reconciled: false } : {}),
+              ...(showReconciled
+                ? {
+                    show_reconciled: true,
+                    include_reconciled_after: pastRangeStart,
+                  }
+                : { reconciled: false }),
             }
           : {}),
       }),
-    enabled: !!accountId && !!pastTransactionsDateAfter && !!pastRangeEnd,
+    enabled: !!accountId && !!pastRangeEnd,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -271,7 +278,7 @@ export default function Transactions() {
         account_id: typeof accountId === "number" ? accountId : undefined,
         exclude_reconciled_past: hideReconciledPast,
       }),
-    enabled: typeof accountId === "number",
+    enabled: typeof accountId === "number" && forecastReady,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
@@ -331,14 +338,14 @@ export default function Transactions() {
 
   /** Heavy forecast/health — only after the ledger is on screen (first load + account swaps). */
   const { data: accountForecastData, isPending: accountForecastPending } = useQuery({
-    queryKey: ["account", accountId, "transactions-page", "forecast-summary"],
+    queryKey: ["account", accountId, "transactions-page", "forecast-summary", forecastDays],
     queryFn: () =>
       getAccount(accountId as number, true, {
         forecast_summary: true,
         health: true,
-        days: 90,
+        days: forecastDays,
       }),
-    enabled: ledgerReady,
+    enabled: ledgerReady && forecastReady,
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
@@ -415,10 +422,6 @@ export default function Transactions() {
   useEffect(() => {
     setSelectedTransactionIds(new Set());
   }, [accountId]);
-
-  useEffect(() => {
-    saveStoredTransactionsForecastRange(forecastRange);
-  }, [forecastRange]);
 
   useEffect(() => {
     saveStoredTransactionsAmountRange(amountMinInput, amountMaxInput);
@@ -1104,9 +1107,9 @@ export default function Transactions() {
     const today = todayStr();
     const openingBalance = ledgerOpeningBalance(account.starting_balance, isCreditAccount);
     const pastOpeningOverrideRaw =
-      hideReconciledPast && ledgerTimelineData?.past_opening_balance != null
+      ledgerTimelineData?.past_opening_balance != null
         ? parseFloat(ledgerTimelineData.past_opening_balance)
-        : hideReconciledPast && reconcileSetupData?.last_reconciled_balance != null
+        : reconcileSetupData?.last_reconciled_balance != null
           ? parseFloat(reconcileSetupData.last_reconciled_balance)
           : null;
     const pastOpeningOverride = hideReconciledOpeningBalance(
@@ -1123,9 +1126,9 @@ export default function Transactions() {
       }
     }
 
-    const pastTxns = hideReconciledPast
-      ? transactions.filter((t) => !t.reconciled)
-      : transactions;
+    const pastTxns = showReconciled
+      ? transactions
+      : transactions.filter((t) => !t.reconciled);
     const timelineForAccount = ledgerTimelineByAccount.get(Number(accountId)) ?? [];
 
     if (ledgerTimelineError && pastTxns.length === 0) {
@@ -1152,6 +1155,7 @@ export default function Transactions() {
         reconcileFloor: hideReconciledPast
           ? reconcileSetupData?.min_start_date ?? null
           : null,
+        checkpointPeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
       }
     );
   }, [
@@ -1166,6 +1170,7 @@ export default function Transactions() {
     ledgerTimelineError,
     isCreditAccount,
     hideReconciledPast,
+    showReconciled,
     reconcileSetupData?.last_reconciled_balance,
     reconcileSetupData?.last_reconcile_period_end,
     reconcileSetupData?.min_start_date,
@@ -1243,12 +1248,14 @@ export default function Transactions() {
         "transactions",
         {
           account: accountId || undefined,
-          date_after: pastTransactionsDateAfter,
           date_before: pastRangeEnd,
-          unreconciled_only: hideReconciledPast,
+          showReconciled,
+          ...(showReconciled
+            ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart }
+            : {}),
         },
       ] as const,
-    [accountId, pastTransactionsDateAfter, pastRangeEnd, hideReconciledPast]
+    [accountId, pastRangeEnd, pastRangeStart, showReconciled, timeFilter]
   );
 
   function afterFinancialEdit(
@@ -1518,13 +1525,23 @@ export default function Transactions() {
   const forecastRangeLoading =
     ledgerTimelineFetching &&
     !balancesRecalculating &&
-    (forecastRange === "6m" || forecastRange === "12m");
+    (forecastRange === "90d" || forecastRange === "6m");
+
+  const editingImported = editing ? isBankImportedTransaction(editing) : false;
+  const editingReconciled = Boolean(editing?.reconciled);
+  const editingFinancialLocked = editingImported || editingReconciled;
+  const editingPayeeLocked = editingReconciled;
+  const editingLockMessage = editing
+    ? transactionEditLockMessage(
+        editing,
+        (editing.account as { name?: string } | undefined)?.name ??
+          accounts.find(
+            (a) => a.id === (editing.account_id ?? (editing.account as { id?: number })?.id)
+          )?.name
+      )
+    : null;
 
   function openEdit(txn: Transaction, opts?: { ledgerFlow?: "INFLOW" | "OUTFLOW" }) {
-    if (txn.reconciled) {
-      setDeleteError("Reconciled transactions cannot be edited.");
-      return;
-    }
     setDeleteError(null);
     setEditing(txn);
     const ruleId = (txn as { rule_id?: number | null }).rule_id ?? null;
@@ -1557,10 +1574,6 @@ export default function Transactions() {
     try {
       setDeleteError(null);
       const txn = await getTransaction(transactionId);
-      if (txn.reconciled) {
-        setDeleteError("Reconciled transactions cannot be edited.");
-        return;
-      }
       openEdit(txn, opts);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
@@ -1604,7 +1617,7 @@ export default function Transactions() {
   }
 
   async function openEditByLedgerRow(row: TimelineRow) {
-    if (row.reconciled || row.source === "interest") return;
+    if (row.source === "interest") return;
     try {
       setDeleteError(null);
       const transactionId =
@@ -1779,17 +1792,26 @@ export default function Transactions() {
         editForm.direction === "OUTFLOW" &&
         editForm.transfer_to_account_id &&
         (linkedTransfer || transferCategory));
+    const imported = isBankImportedTransaction(editing);
+    const reconciled = Boolean(editing.reconciled);
+    const financialLocked = imported || reconciled;
+    const metadataLocked = reconciled;
     const payload = {
-      date: editForm.date,
-      payee: editForm.payee || "—",
-      amount: String(signedAmount),
-      category_id: editForm.category_id || null,
-      ...(editForm.account_id ? { account_id: editForm.account_id as number } : {}),
-      ...(includeTransferToOnSubmit
-        ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
-        : {}),
+      ...(metadataLocked ? {} : { payee: editForm.payee || "—" }),
+      ...(metadataLocked ? {} : { category_id: editForm.category_id || null }),
+      ...(financialLocked
+        ? {}
+        : {
+            date: editForm.date,
+            amount: String(signedAmount),
+            ...(editForm.account_id ? { account_id: editForm.account_id as number } : {}),
+            ...(includeTransferToOnSubmit
+              ? { transfer_to_account_id: editForm.transfer_to_account_id as number }
+              : {}),
+          }),
     };
-    if (applyToRule && editingRuleId != null) {
+    if (Object.keys(payload).length === 0) return;
+    if (applyToRule && editingRuleId != null && !financialLocked) {
       const ruleDirection =
         isOrphanCcPaidFromSubmit || includeTransferToOnSubmit
           ? "TRANSFER"
@@ -2119,6 +2141,7 @@ export default function Transactions() {
           )}
 
         <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-wrap sm:items-end">
+          {showReconciled && (
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
             <label className="block text-xs font-medium text-gray-500 mb-0.5">History Range</label>
             <select
@@ -2126,8 +2149,8 @@ export default function Transactions() {
               onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
               className="w-full sm:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
             >
-              <option value="14d">14 days</option>
-              <option value="1m">1 month</option>
+              <option value="14d">2 weeks</option>
+              <option value="1m">30 days</option>
               <option value="3m">3 months</option>
               <option value="6m">6 months</option>
               <option value="12m">12 months</option>
@@ -2136,17 +2159,19 @@ export default function Transactions() {
               <option value="36m">36 months</option>
             </select>
           </div>
+          )}
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
-            <label className="block text-xs font-medium text-gray-500 mb-0.5">Forecast Range</label>
+            <label className="block text-xs font-medium text-gray-500 mb-0.5">Forecast Window</label>
             <select
               value={forecastRange}
-              onChange={(e) => setForecastRange(e.target.value as ForecastRange)}
+              onChange={(e) => setForecastDays(forecastRangeToDays(e.target.value as ForecastRange))}
               className="w-full sm:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
+              disabled={!forecastReady}
             >
               <option value="30d">30 days</option>
-              <option value="3m">3 months</option>
+              <option value="60d">60 days</option>
+              <option value="90d">90 days</option>
               <option value="6m">6 months</option>
-              <option value="12m">12 months</option>
             </select>
           </div>
           <div className="w-full sm:w-auto sm:min-w-[12rem]">
@@ -2164,9 +2189,9 @@ export default function Transactions() {
               ))}
             </select>
           </div>
-          <HideReconciledFilter
-            hideReconciledPast={hideReconciledPast}
-            onHideReconciledPastChange={setHideReconciledPast}
+          <ShowReconciledFilter
+            showReconciled={showReconciled}
+            onShowReconciledChange={setShowReconciled}
           />
           {hasUrlCategory && (
             <p className="text-xs text-gray-600 self-end pb-1.5">
@@ -2481,6 +2506,11 @@ export default function Transactions() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">Edit transaction</h2>
+            {editingLockMessage && (
+              <p className="mb-4 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                {editingLockMessage}
+              </p>
+            )}
             {deleteError && (
               <div
                 role="alert"
@@ -2505,8 +2535,9 @@ export default function Transactions() {
                     onChange={(e) =>
                       setEditForm((f) => ({ ...f, account_id: e.target.value ? Number(e.target.value) : "" }))
                     }
-                    className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                    className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                     required
+                    disabled={editingFinancialLocked}
                   >
                     <option value="">Select account</option>
                     {editAccounts.map((a) => (
@@ -2523,8 +2554,9 @@ export default function Transactions() {
                   type="date"
                   value={editForm.date}
                   onChange={(e) => setEditForm((f) => ({ ...f, date: e.target.value }))}
-                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                   required
+                  disabled={editingFinancialLocked}
                 />
               </div>
               <div>
@@ -2533,7 +2565,8 @@ export default function Transactions() {
                   type="text"
                   value={editForm.payee}
                   onChange={(e) => setEditForm((f) => ({ ...f, payee: e.target.value }))}
-                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
+                  disabled={editingPayeeLocked}
                 />
                 {showEditTransferToSelector && editForm.transfer_to_account_id && editDestinationAccount && (
                   <p className="mt-1 text-xs text-gray-500">
@@ -2562,7 +2595,8 @@ export default function Transactions() {
                 <select
                   value={editForm.category_id}
                   onChange={(e) => setEditForm((f) => ({ ...f, category_id: e.target.value ? Number(e.target.value) : "" }))}
-                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
+                  disabled={editingPayeeLocked}
                 >
                   <option value="">None</option>
                   {categoryDropdownOptions.map((c) => (
@@ -2719,7 +2753,7 @@ export default function Transactions() {
                 <select
                   value={editForm.direction}
                   onChange={(e) => setEditForm((f) => ({ ...f, direction: e.target.value as "INFLOW" | "OUTFLOW" }))}
-                  disabled={editIsTransferInflowLeg && editIsLinkedTransfer}
+                  disabled={editingFinancialLocked || (editIsTransferInflowLeg && editIsLinkedTransfer)}
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                 >
                   {editDirectionIsPaymentLike ? (
@@ -2748,11 +2782,12 @@ export default function Transactions() {
                   min="0"
                   value={editForm.amount}
                   onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
-                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                  className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                   required
+                  disabled={editingFinancialLocked}
                 />
               </div>
-              {editingRuleId != null && (
+              {editingRuleId != null && !editingFinancialLocked && (
                 <div>
                   <span className="block text-sm font-medium text-gray-700 mb-2">Apply changes to</span>
                   <div className="space-y-2">
@@ -2789,7 +2824,7 @@ export default function Transactions() {
                 </button>
                 <button
                   type="submit"
-                  disabled={updateMu.isPending}
+                  disabled={updateMu.isPending || editingReconciled}
                   className="py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
                   {updateMu.isPending ? "Saving…" : "Save"}

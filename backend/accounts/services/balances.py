@@ -76,7 +76,7 @@ def bulk_signed_ledger_balances(
     cache = TimelineBalanceCache()
     account_ids = [acc.pk for acc in account_list]
     cache.preload_accounts(account_list)
-    cache.preload_transactions(account_ids, as_of_date)
+    cache.preload_transactions(account_ids, as_of_date, min_as_of=as_of_date)
 
     return {
         acc.pk: cache.balance_at_end_of_date(acc.pk, as_of_date)

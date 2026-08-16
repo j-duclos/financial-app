@@ -52,7 +52,7 @@ def test_forecast_summary_cache_hit_after_first_call(user, spending_account):
     with patch(
         "accounts.services.available_to_spend._calculate_forecast_summaries_for_accounts"
     ) as mock_calc:
-        mock_calc.return_value = {spending_account.id: {"account_id": spending_account.id}}
+        mock_calc.return_value = ({spending_account.id: {"account_id": spending_account.id}}, None)
         first = calculate_forecast_summaries_for_accounts(
             user, accounts, as_of_date=today, days=30
         )
@@ -83,3 +83,42 @@ def test_invalidate_user_forecast_cache_bumps_version(user, spending_account):
         as_of_date=today,
     )
     assert before != after
+
+
+@pytest.mark.django_db
+def test_forecast_summary_cache_isolated_by_forecast_days(user, spending_account):
+    today = date(2026, 6, 2)
+    cache.clear()
+    key_30 = get_forecast_summary_cache_key(
+        user_id=user.pk,
+        household_ids=[spending_account.household_id],
+        account_ids=[spending_account.id],
+        forecast_days=30,
+        as_of_date=today,
+    )
+    key_90 = get_forecast_summary_cache_key(
+        user_id=user.pk,
+        household_ids=[spending_account.household_id],
+        account_ids=[spending_account.id],
+        forecast_days=90,
+        as_of_date=today,
+    )
+    assert key_30 != key_90
+
+    with patch(
+        "accounts.services.available_to_spend._calculate_forecast_summaries_for_accounts"
+    ) as mock_calc:
+        mock_calc.side_effect = [
+            ({spending_account.id: {"account_id": spending_account.id, "days": 30}}, None),
+            ({spending_account.id: {"account_id": spending_account.id, "days": 90}}, None),
+        ]
+        first = calculate_forecast_summaries_for_accounts(
+            user, [spending_account], as_of_date=today, days=30
+        )
+        second = calculate_forecast_summaries_for_accounts(
+            user, [spending_account], as_of_date=today, days=90
+        )
+
+    assert mock_calc.call_count == 2
+    assert first[spending_account.id]["days"] == 30
+    assert second[spending_account.id]["days"] == 90

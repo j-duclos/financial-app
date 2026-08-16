@@ -7,6 +7,25 @@ const ACCOUNTS_DEBOUNCE_MS = 4000;
 let timelineTimer: ReturnType<typeof setTimeout> | null = null;
 let accountsTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Query prefixes that must go stale after a financial mutation. */
+export const FINANCIAL_QUERY_PREFIXES = [
+  ["transactions"],
+  ["timeline"],
+  ["timeline-calendar"],
+  ["accounts"],
+  ["account"],
+  ["dashboard-summary"],
+  ["dashboard-summary-fast"],
+  ["dashboard-summary-details"],
+  ["recommendations"],
+] as const;
+
+export function invalidateFinancialQueries(queryClient: QueryClient): void {
+  for (const queryKey of FINANCIAL_QUERY_PREFIXES) {
+    void queryClient.invalidateQueries({ queryKey: [...queryKey] });
+  }
+}
+
 export function scheduleTimelineRefresh(
   queryClient: QueryClient,
   delayMs = TIMELINE_DEBOUNCE_MS
@@ -28,6 +47,9 @@ export function scheduleAccountsRefresh(
     void queryClient.refetchQueries({ queryKey: ["accounts"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["account"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }, delayMs);
 }
 
@@ -40,6 +62,7 @@ export function refreshAfterTransactionEdit(
     skipTransactionsInvalidate?: boolean;
   }
 ): void {
+  invalidateFinancialQueries(queryClient);
   if (!opts?.skipTransactionsInvalidate) {
     void queryClient.refetchQueries({ queryKey: ["transactions"], type: "active" });
   }
@@ -51,6 +74,9 @@ export function refreshAfterTransactionEdit(
     void queryClient.refetchQueries({ queryKey: ["accounts"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["account"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }
 }
 
@@ -63,19 +89,12 @@ export function flushFinancialRefresh(queryClient: QueryClient): void {
     clearTimeout(accountsTimer);
     accountsTimer = null;
   }
-  void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-  void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-  void queryClient.invalidateQueries({ queryKey: ["account"] });
-  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+  invalidateFinancialQueries(queryClient);
 }
 
 /** Recurring-rule mutations affect forecasts; mark dependents stale (active screens refetch). */
 export function invalidateRecurringRuleDependents(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["rules"] });
   void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
-  void queryClient.invalidateQueries({ queryKey: ["timeline"] });
-  void queryClient.invalidateQueries({ queryKey: ["timeline-calendar"] });
-  void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-  void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+  invalidateFinancialQueries(queryClient);
 }

@@ -28,7 +28,7 @@ from .services import (
     post_transaction,
     skip_scheduled_transaction,
 )
-from .services.immutability import reject_if_reconciled
+from .services.immutability import is_financial_update, reject_if_reconciled
 from .services.matching import (
     explain_import_candidate_exclusions,
     find_candidate_matches,
@@ -367,16 +367,28 @@ class TransactionViewSet(ModelViewSet):
         )
         date_after = self.request.query_params.get("date_after")
         date_before = self.request.query_params.get("date_before")
-        if date_after:
-            qs = qs.filter(date__gte=date_after)
-        if date_before:
-            qs = qs.filter(date__lte=date_before)
+        show_reconciled = (self.request.query_params.get("show_reconciled") or "").lower()
+        include_reconciled_after = self.request.query_params.get("include_reconciled_after")
         reconciled = self.request.query_params.get("reconciled")
-        if reconciled is not None and reconciled != "":
-            if reconciled.lower() in ("true", "1", "yes"):
-                qs = qs.filter(reconciled=True)
-            elif reconciled.lower() in ("false", "0", "no"):
-                qs = qs.filter(reconciled=False)
+
+        if show_reconciled in ("true", "1", "yes"):
+            rec_after = include_reconciled_after or date_after
+            if rec_after:
+                qs = qs.filter(Q(reconciled=False) | Q(reconciled=True, date__gte=rec_after))
+            else:
+                qs = qs.filter(Q(reconciled=False) | Q(reconciled=True))
+            if date_before:
+                qs = qs.filter(date__lte=date_before)
+        else:
+            if date_after:
+                qs = qs.filter(date__gte=date_after)
+            if date_before:
+                qs = qs.filter(date__lte=date_before)
+            if reconciled is not None and reconciled != "":
+                if reconciled.lower() in ("true", "1", "yes"):
+                    qs = qs.filter(reconciled=True)
+                elif reconciled.lower() in ("false", "0", "no"):
+                    qs = qs.filter(reconciled=False)
         return qs
 
     def _get_lifecycle_transaction(self, pk: int) -> Transaction:
@@ -415,14 +427,13 @@ class TransactionViewSet(ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         from common.services.cache import invalidate_financial_cache_for_household
 
-        invalidate_financial_cache_for_household(txn.account.household_id)
+        invalidate_financial_cache_for_household(txn.account.household_id, bump_revision=False)
         serializer = self.get_serializer(txn)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
-        reject_if_reconciled(instance, action="edited")
         old_date = instance.date
         old_amount = instance.amount
         old_account_id = instance.account_id
@@ -556,7 +567,10 @@ class TransactionViewSet(ModelViewSet):
             )
         from common.services.cache import invalidate_financial_cache_for_household
 
-        invalidate_financial_cache_for_household(instance.account.household_id)
+        invalidate_financial_cache_for_household(
+            instance.account.household_id,
+            bump_revision=is_financial_update(serializer.validated_data),
+        )
         data = dict(serializer.data)
         if other is not None:
             data["synced_to_account_id"] = other.account_id

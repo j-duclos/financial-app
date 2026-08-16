@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveTransactionStatusIcons } from "./transactionStatusUtils";
+import {
+  isBankImportedTransaction,
+  resolveTransactionStatusIcons,
+  transactionEditLockMessage,
+} from "./transactionStatusUtils";
 
 describe("resolveTransactionStatusIcons", () => {
   it("shows reconciled plus plaid for imported rows", () => {
@@ -90,5 +94,20 @@ describe("resolveTransactionStatusIcons", () => {
         transactionId: 9,
       })
     ).toEqual(["rule"]);
+  });
+});
+
+describe("imported and reconciled edit locks", () => {
+  it("detects bank-imported rows by plaid id or PLAID source", () => {
+    expect(isBankImportedTransaction({ plaid_transaction_id: "tx_1", source: "ACTUAL" })).toBe(true);
+    expect(isBankImportedTransaction({ plaid_transaction_id: null, source: "PLAID" })).toBe(true);
+    expect(isBankImportedTransaction({ plaid_transaction_id: null, source: "ACTUAL" })).toBe(false);
+  });
+
+  it("explains imported and reconciled lock state", () => {
+    expect(transactionEditLockMessage({ reconciled: true })).toContain("Reconciled transaction");
+    expect(transactionEditLockMessage({ plaid_transaction_id: "abc", source: "ACTUAL" }, "Chase")).toContain(
+      "Imported from Chase"
+    );
   });
 });

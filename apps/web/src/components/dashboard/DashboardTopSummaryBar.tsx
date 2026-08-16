@@ -1,10 +1,8 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { DashboardLowestProjectedCash, DashboardSummaryFast } from "@budget-app/shared";
 import { DASHBOARD_SECTION, FINANCIAL_HEALTH, lowestForecastBalanceLabel } from "../../lib/dashboardTerminology";
-import {
-  FORECAST_DAY_OPTIONS,
-  type ForecastDays,
-} from "../../lib/safeToSpendLabels";
+import type { OperationalForecastDays } from "../../lib/forecastWindow";
+import ForecastWindowSelect from "../forecast/ForecastWindowSelect";
 import {
   availableCreditSubtitle,
   lowestProjectedCashAmountClass,
@@ -18,8 +16,8 @@ import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "./metricTileLayo
 
 type Props = {
   summary: DashboardSummaryFast | undefined;
-  forecastDays: ForecastDays;
-  onForecastDaysChange: (days: ForecastDays) => void;
+  forecastDays: OperationalForecastDays;
+  onForecastDaysChange: (days: OperationalForecastDays) => void;
   loading?: boolean;
 };
 
@@ -31,28 +29,18 @@ function healthSkeletonCount(debt?: DashboardSummaryFast["debt"]) {
 function ForecastWindowControl({
   forecastDays,
   onForecastDaysChange,
+  disabled,
 }: {
-  forecastDays: ForecastDays;
-  onForecastDaysChange: (days: ForecastDays) => void;
+  forecastDays: OperationalForecastDays;
+  onForecastDaysChange: (days: OperationalForecastDays) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex items-center gap-2 shrink-0">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-        Forecast window
-      </span>
-      <select
-        value={forecastDays}
-        onChange={(e) => onForecastDaysChange(Number(e.target.value) as ForecastDays)}
-        className="rounded border border-gray-300 bg-white px-2 py-1.5 text-xs sm:text-sm"
-        data-testid="forecast-window-select"
-      >
-        {FORECAST_DAY_OPTIONS.map((d) => (
-          <option key={d} value={d}>
-            {d} days
-          </option>
-        ))}
-      </select>
-    </label>
+    <ForecastWindowSelect
+      value={forecastDays}
+      onChange={onForecastDaysChange}
+      disabled={disabled}
+    />
   );
 }
 
@@ -61,7 +49,7 @@ function LowestProjectedCashTile({
   forecastDays,
 }: {
   lowest: DashboardLowestProjectedCash;
-  forecastDays: ForecastDays;
+  forecastDays: OperationalForecastDays;
 }) {
   const isNegative = parseFloat(lowest.amount) < 0;
   return (
@@ -103,6 +91,7 @@ export default function DashboardTopSummaryBar({
         <ForecastWindowControl
           forecastDays={forecastDays}
           onForecastDaysChange={onForecastDaysChange}
+          disabled={loading}
         />
       </div>
       <div className={gridClass}>

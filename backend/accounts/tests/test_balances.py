@@ -105,11 +105,12 @@ def test_bulk_signed_ledger_balances_matches_per_account(checking, credit_card):
     assert balance_map[credit_card.pk] == signed_ledger_balance(credit_card, today)
 
 
-def test_bulk_signed_ledger_balances_single_query(checking, credit_card):
+def test_bulk_signed_ledger_balances_bounded_queries(checking, credit_card):
+    """Checkpoint lookup + post-checkpoint ledger preload — does not scale per account."""
     accounts = [checking, credit_card]
     with CaptureQueriesContext(connection) as ctx:
         bulk_signed_ledger_balances(accounts, date.today())
-    assert len(ctx.captured_queries) == 1
+    assert len(ctx.captured_queries) <= 3
 
 
 def test_credit_owed_from_signed_balance():

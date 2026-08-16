@@ -47,12 +47,15 @@ describe("Profile page", () => {
     expect(profileSource).not.toMatch(/listAccounts\(\{ household/);
   });
 
-  it("saves profile independently from password", () => {
+  it("saves Default Forecast Window with the profile and does not rewrite open page queries", () => {
     expect(profileSource).toMatch(/handleSaveProfile/);
     expect(profileSource).toMatch(/handleChangePassword/);
     expect(profileSource).toMatch(/Profile saved\./);
     expect(profileSource).toMatch(/Password updated\./);
-    expect(profileSource).toMatch(/invalidateQueries\(\{ queryKey: \["profile"\] \}\)/);
+    expect(profileSource).toMatch(/Default Forecast Window/);
+    expect(profileSource).toMatch(/default_forecast_days/);
+    expect(profileSource).toMatch(/Used as the default on Dashboard, Action Center, and Transactions/);
+    expect(profileSource).toMatch(/invalidateQueries\(\{ queryKey: PROFILE_QUERY_KEY \}\)/);
     expect(profileSource).toMatch(/refreshUser/);
     expect(profileSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["timeline"\]/);
     expect(profileSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["dashboard/);

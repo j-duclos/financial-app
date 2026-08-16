@@ -13,6 +13,8 @@ from datetime import date
 from typing import Iterable
 
 from django.core.cache import cache
+from django.db.models import F
+from django.utils import timezone
 
 FORECAST_SUMMARY_CACHE_VERSION = "v1"
 # Short TTL: balances and rules change often; invalidation covers writes but TTL is a safety net.
@@ -46,6 +48,30 @@ def get_user_forecast_cache_version(user_id: int) -> int:
     return int(cache.get(_user_forecast_version_key(user_id)) or 0)
 
 
+def _household_revision_token(household_ids: Iterable[int | None]) -> str:
+    ids = sorted({int(v) for v in household_ids if v is not None})
+    if not ids:
+        return "none"
+    from core.models import Household
+
+    rows = dict(
+        Household.objects.filter(pk__in=ids).values_list("pk", "financial_revision")
+    )
+    return "-".join(f"{hid}:{int(rows.get(hid, 0))}" for hid in ids)
+
+
+def bump_household_financial_revision(household_id: int | None) -> None:
+    """Increment the household financial revision so forecast cache keys miss."""
+    if household_id is None:
+        return
+    from core.models import Household
+
+    Household.objects.filter(pk=household_id).update(
+        financial_revision=F("financial_revision") + 1,
+        updated_at=timezone.now(),
+    )
+
+
 def get_forecast_summary_cache_key(
     *,
     user_id: int,
@@ -58,13 +84,15 @@ def get_forecast_summary_cache_key(
     Stable cache key scoped to one user and one account/household batch.
 
     Sorted household and account ids prevent cross-user or cross-scope cache bleed.
+    Household financial_revision makes prior payloads unreachable after mutations.
     """
     ver = get_user_forecast_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"forecast_summary:{FORECAST_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
         f":accounts:{_sorted_scope_ids(account_ids)}"
-        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -85,10 +113,11 @@ def get_dashboard_summary_cache_key(
     Sorted household ids scope the payload to the user's membership set.
     """
     ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"dashboard_summary:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
-        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -101,10 +130,11 @@ def get_dashboard_summary_fast_cache_key(
 ) -> str:
     """Cache key for above-the-fold dashboard summary (fast paint)."""
     ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"dashboard_summary_fast:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
-        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -117,10 +147,11 @@ def get_dashboard_summary_details_cache_key(
 ) -> str:
     """Cache key for lazy-loaded dashboard sections."""
     ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"dashboard_summary_details:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
-        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -133,10 +164,11 @@ def get_debt_payoff_projection_cache_key(
 ) -> str:
     """Cache key for household credit-card payoff projection (debt-free date, interest saved)."""
     ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"debt_payoff_projection:{DEBT_PAYOFF_PROJECTION_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
-        f":fp:{fingerprint}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":fp:{fingerprint}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -149,10 +181,11 @@ def get_dashboard_shared_context_cache_key(
 ) -> str:
     """Cache key for timeline-derived dashboard core (shared by fast + details)."""
     ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
     return (
         f"dashboard_shared_ctx:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
-        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}"
+        f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 
@@ -180,13 +213,19 @@ def invalidate_user_financial_cache(user_id: int) -> None:
     invalidate_user_dashboard_cache(user_id)
 
 
-def invalidate_financial_cache_for_household(household_id: int | None) -> None:
+def invalidate_financial_cache_for_household(
+    household_id: int | None,
+    *,
+    bump_revision: bool = True,
+) -> None:
     """Invalidate forecast + dashboard cache for every member of a household."""
     if household_id is None:
         return
     from core.models import HouseholdMembership
     from core.timeline_cache import bump_timeline_cache_for_household
 
+    if bump_revision:
+        bump_household_financial_revision(household_id)
     bump_timeline_cache_for_household(household_id)
 
     user_ids = (

@@ -107,8 +107,7 @@ export async function refreshToken(refresh: string): Promise<{ access: string }>
   });
 }
 
-// Profile
-export async function getProfile(): Promise<{
+export type UserProfile = {
   id: number;
   username: string;
   display_name: string;
@@ -116,7 +115,12 @@ export async function getProfile(): Promise<{
   phone_e164?: string;
   default_household: number | null;
   default_account: number | null;
-}> {
+  /** Saved Default Forecast Window: 30, 60, 90, or 180. */
+  default_forecast_days: number;
+};
+
+// Profile
+export async function getProfile(): Promise<UserProfile> {
   return requestRequired("/api/profile/");
 }
 
@@ -125,14 +129,8 @@ export async function updateProfile(data: {
   phone_e164?: string | null;
   default_household?: number | null;
   default_account?: number | null;
-}): Promise<{
-  id: number;
-  username: string;
-  display_name: string;
-  phone_e164?: string;
-  default_household: number | null;
-  default_account: number | null;
-}> {
+  default_forecast_days?: number;
+}): Promise<UserProfile> {
   return requestRequired("/api/profile/", { method: "PATCH", body: JSON.stringify(data) });
 }
 
@@ -611,6 +609,8 @@ export async function listTransactions(params?: {
   date_after?: string;
   date_before?: string;
   reconciled?: boolean;
+  show_reconciled?: boolean;
+  include_reconciled_after?: string;
   page?: number;
   page_size?: number;
 }): Promise<PaginatedResponse<Transaction>> {
@@ -621,6 +621,8 @@ export async function listTransactions(params?: {
   if (params?.date_before) q.date_before = params.date_before;
   if (params?.reconciled === true) q.reconciled = "true";
   if (params?.reconciled === false) q.reconciled = "false";
+  if (params?.show_reconciled === true) q.show_reconciled = "true";
+  if (params?.include_reconciled_after) q.include_reconciled_after = params.include_reconciled_after;
   if (params?.page != null) q.page = String(params.page);
   if (params?.page_size != null) q.page_size = String(params.page_size);
   q._ = String(Date.now());

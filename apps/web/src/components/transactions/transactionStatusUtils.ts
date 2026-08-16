@@ -63,6 +63,34 @@ export function resolveTransactionStatusIcons(
   return icons;
 }
 
+export function isBankImportedTransaction(txn: {
+  plaid_transaction_id?: string | null;
+  source?: string | null;
+}): boolean {
+  if ((txn.plaid_transaction_id ?? "").trim()) return true;
+  return (txn.source ?? "").toUpperCase() === "PLAID";
+}
+
+export function transactionEditLockMessage(
+  txn: {
+    reconciled?: boolean;
+    plaid_transaction_id?: string | null;
+    source?: string | null;
+  },
+  accountName?: string | null
+): string | null {
+  if (txn.reconciled) {
+    return "Reconciled transaction. Financial fields are locked. Undo the reconciliation to change accounting history.";
+  }
+  if (isBankImportedTransaction(txn)) {
+    const from = accountName?.trim()
+      ? `Imported from ${accountName.trim()}`
+      : "Imported from your bank";
+    return `${from}. Amount and posted date are controlled by your bank.`;
+  }
+  return null;
+}
+
 export const STATUS_ICON_LABELS: Record<TransactionStatusIcon, string> = {
   reconciled: "Reconciled",
   manual: "Manual transaction",

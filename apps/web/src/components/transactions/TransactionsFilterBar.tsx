@@ -1,24 +1,40 @@
-type HideReconciledProps = {
-  hideReconciledPast: boolean;
-  onHideReconciledPastChange: (hide: boolean) => void;
+type ShowReconciledProps = {
+  showReconciled: boolean;
+  onShowReconciledChange: (show: boolean) => void;
 };
 
-export function HideReconciledFilter({
-  hideReconciledPast,
-  onHideReconciledPastChange,
-}: HideReconciledProps) {
+export function ShowReconciledFilter({
+  showReconciled,
+  onShowReconciledChange,
+}: ShowReconciledProps) {
   return (
     <div className="flex flex-col justify-end w-full sm:w-auto">
       <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pb-1.5">
         <input
           type="checkbox"
-          checked={hideReconciledPast}
-          onChange={(e) => onHideReconciledPastChange(e.target.checked)}
+          checked={showReconciled}
+          onChange={(e) => onShowReconciledChange(e.target.checked)}
           className="rounded border-gray-300"
         />
-        Hide reconciled
+        Show reconciled
       </label>
     </div>
+  );
+}
+
+/** @deprecated Use ShowReconciledFilter. */
+export function HideReconciledFilter({
+  hideReconciledPast,
+  onHideReconciledPastChange,
+}: {
+  hideReconciledPast: boolean;
+  onHideReconciledPastChange: (hide: boolean) => void;
+}) {
+  return (
+    <ShowReconciledFilter
+      showReconciled={!hideReconciledPast}
+      onShowReconciledChange={(show) => onHideReconciledPastChange(!show)}
+    />
   );
 }
 
@@ -78,15 +94,15 @@ export function TransactionColumnFilters({
   );
 }
 
-type Props = HideReconciledProps & ColumnFiltersProps;
+type Props = ShowReconciledProps & ColumnFiltersProps;
 
-/** @deprecated Prefer HideReconciledFilter + TransactionColumnFilters for responsive layouts. */
+/** @deprecated Prefer ShowReconciledFilter + TransactionColumnFilters for responsive layouts. */
 export default function TransactionsFilterBar(props: Props) {
   return (
     <>
-      <HideReconciledFilter
-        hideReconciledPast={props.hideReconciledPast}
-        onHideReconciledPastChange={props.onHideReconciledPastChange}
+      <ShowReconciledFilter
+        showReconciled={props.showReconciled}
+        onShowReconciledChange={props.onShowReconciledChange}
       />
       <TransactionColumnFilters {...props} />
     </>

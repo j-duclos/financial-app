@@ -5,6 +5,10 @@ from rest_framework import serializers
 
 from .models import Household, HouseholdMembership, UserProfile
 from .phone_e164 import normalize_to_e164
+from common.services.forecast_horizon import (
+    OPERATIONAL_FORECAST_WINDOW_DAYS,
+    normalize_operational_forecast_days,
+)
 
 User = get_user_model()
 
@@ -14,10 +18,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
     phone_e164 = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, max_length=20
     )
+    default_forecast_days = serializers.IntegerField(required=False)
 
     class Meta:
         model = UserProfile
-        fields = ["id", "username", "display_name", "phone_e164", "default_household", "default_account"]
+        fields = [
+            "id",
+            "username",
+            "display_name",
+            "phone_e164",
+            "default_household",
+            "default_account",
+            "default_forecast_days",
+        ]
         read_only_fields = ["id", "username"]
 
     def validate_phone_e164(self, value):
@@ -31,6 +44,28 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 "Enter a valid mobile number (10-digit US or full international starting with +)."
             )
         return n
+
+    def validate_default_forecast_days(self, value):
+        if value is None:
+            return normalize_operational_forecast_days(None)
+        try:
+            days = int(value)
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(
+                f"Default Forecast Window must be one of {sorted(OPERATIONAL_FORECAST_WINDOW_DAYS)}."
+            ) from exc
+        if days not in OPERATIONAL_FORECAST_WINDOW_DAYS:
+            raise serializers.ValidationError(
+                f"Default Forecast Window must be one of {sorted(OPERATIONAL_FORECAST_WINDOW_DAYS)}."
+            )
+        return days
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["default_forecast_days"] = normalize_operational_forecast_days(
+            getattr(instance, "default_forecast_days", None)
+        )
+        return data
 
     def validate(self, attrs):
         household = attrs["default_household"] if "default_household" in attrs else getattr(

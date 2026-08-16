@@ -298,12 +298,20 @@ def period_opening_balance(account: Account, period_start: date) -> Decimal:
 
 
 def last_reconciled_balance(account: Account, as_of: Optional[date] = None) -> Decimal:
-    """Balance at end of last completed reconciliation, or before all unreconciled rows."""
-    prev = last_completed_reconciliation(account)
-    if prev is not None:
-        return prev.bank_current_balance
+    """
+    Verified ending balance of the latest completed reconciliation on or before ``as_of``.
+
+    Uses ``bank_current_balance`` (the statement checkpoint). Falls back to
+    starting-balance ledger math when the account has never been reconciled
+    through ``as_of``.
+    """
+    from .checkpoints import checkpoint_signed_balance, latest_completed_reconciliation_as_of
 
     as_of = _as_of_date(as_of)
+    prev = latest_completed_reconciliation_as_of(account, as_of)
+    if prev is not None:
+        return checkpoint_signed_balance(prev, account)
+
     app_bal = app_current_balance(account, as_of)
     unrec_sum = sum_checked_amounts(unreconciled_transactions_qs(account, as_of))
     return app_bal - unrec_sum
@@ -1111,6 +1119,9 @@ def undo_reconciliation(*, session: Reconciliation, user) -> dict[str, Any]:
     new_last_end = last_reconcile_period_end(session.account)
     if user is not None and getattr(user, "pk", None):
         invalidate_user_financial_cache(user.pk)
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    invalidate_financial_cache_for_household(session.account.household_id)
     return {
         "success": True,
         "account_id": session.account_id,

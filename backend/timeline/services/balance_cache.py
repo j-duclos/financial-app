@@ -43,6 +43,13 @@ class TimelineBalanceCache:
         self._balance_end_cache: dict[tuple[int, date], Decimal] = {}
         self._raw_balance_cache: dict[tuple[int, date], Decimal] = {}
         self._through_balance_cache: dict[tuple, Decimal] = {}
+        # Checkpoint used as the in-memory opening for loaded rows (period_end, signed balance).
+        self._checkpoint_by_account: dict[int, tuple[date, Decimal]] = {}
+        # Exclusive start of loaded rows (checkpoint period_end). None = from inception.
+        self._tx_load_start_by_account: dict[int, date | None] = {}
+        self._inception_opening_by_account: dict[int, Decimal] = {}
+        self.debug_loaded_txn_count: int = 0
+        self.debug_checkpoint_by_account: dict[int, date] = {}
 
     def preload_accounts(self, accounts: Collection[Account]) -> None:
         for acc in accounts:
@@ -54,18 +61,48 @@ class TimelineBalanceCache:
     def get_account(self, account_id: int) -> Account | None:
         return self.accounts_by_id.get(account_id)
 
-    def preload_transactions(self, account_ids: Collection[int], end_date: date) -> None:
+    def preload_transactions(
+        self,
+        account_ids: Collection[int],
+        end_date: date,
+        *,
+        min_as_of: date | None = None,
+    ) -> None:
+        from django.db.models import Q
+
         from transactions.models import Transaction
+        from transactions.services.checkpoints import (
+            bulk_latest_completed_reconciliations,
+            checkpoint_signed_balance,
+            post_checkpoint_q,
+        )
         from transactions.services.matching import ledger_visible_transactions
 
         if not account_ids:
             return
-        qs = ledger_visible_transactions(
-            Transaction.objects.filter(
-                account_id__in=account_ids,
-                date__lte=end_date,
-            )
-        ).order_by("account_id", "date", "id")
+        ids = list(account_ids)
+        floor = min_as_of or end_date
+        checkpoints = bulk_latest_completed_reconciliations(ids, floor)
+        q = Q()
+        for aid in ids:
+            acc = self.get_account(aid)
+            inception, _ = self._signed_opening_from_account(acc)
+            self._inception_opening_by_account[aid] = inception
+            rec = checkpoints.get(aid)
+            if rec is not None and rec.period_end_date is not None:
+                signed = checkpoint_signed_balance(rec, acc)
+                self._checkpoint_by_account[aid] = (rec.period_end_date, signed)
+                self._tx_load_start_by_account[aid] = rec.period_end_date
+                self.debug_checkpoint_by_account[aid] = rec.period_end_date
+                q |= Q(account_id=aid, date__lte=end_date) & post_checkpoint_q(rec.period_end_date)
+            else:
+                self._tx_load_start_by_account[aid] = None
+                q |= Q(account_id=aid, date__lte=end_date)
+
+        qs = ledger_visible_transactions(Transaction.objects.filter(q)).order_by(
+            "account_id", "date", "id"
+        )
+        loaded = 0
         for txn in qs.iterator():
             row = {
                 "id": txn.pk,
@@ -75,10 +112,18 @@ class TimelineBalanceCache:
                 "rule_id": txn.rule_id,
                 "account_id": txn.account_id,
                 "source": txn.source,
+                "reconciled": bool(txn.reconciled),
             }
             aid = txn.account_id
             self._ledger_rows_by_account.setdefault(aid, []).append(row)
             self._posting_dates_by_account.setdefault(aid, set()).add(txn.date)
+            loaded += 1
+        self.debug_loaded_txn_count += loaded
+
+    def loaded_transaction_count(self, account_id: int | None = None) -> int:
+        if account_id is None:
+            return sum(len(rows) for rows in self._ledger_rows_by_account.values())
+        return len(self._ledger_rows_by_account.get(account_id, []))
 
     def note_transaction_saved(self, txn) -> None:
         """Keep preload in sync when build_timeline materializes rule rows."""
@@ -180,8 +225,22 @@ class TimelineBalanceCache:
         key = (account_id, as_of_date)
         if key in self._opening_balance_cache:
             return self._opening_balance_cache[key]
+        as_of_end = as_of_date - timedelta(days=1)
+        load_start = self._tx_load_start_by_account.get(account_id)
+        if load_start is not None and as_of_end < load_start:
+            from timeline.services.ledger import _compute_opening_balance
+
+            total = _compute_opening_balance(account_id, as_of_date)
+            self._opening_balance_cache[key] = total
+            return total
+
         acc = self.get_account(account_id)
-        opening, credit_opening_pre_negated = self._signed_opening_from_account(acc)
+        cp = self._checkpoint_by_account.get(account_id)
+        if cp is not None:
+            opening = cp[1]
+            credit_opening_pre_negated = True
+        else:
+            opening, credit_opening_pre_negated = self._signed_opening_from_account(acc)
         txn_sum = self._sum_ledger_rows(account_id, date_lt=as_of_date)
         total = opening + txn_sum
         if (
@@ -206,12 +265,9 @@ class TimelineBalanceCache:
         key = (account_id, as_of_date)
         if key in self._raw_balance_cache:
             return self._raw_balance_cache[key]
-        acc = self.get_account(account_id)
-        total = self._sum_ledger_rows(account_id, date_lte=as_of_date, exclude_interest=False)
-        if acc and acc.starting_balance is not None:
-            total += Decimal(str(acc.starting_balance))
-        self._raw_balance_cache[key] = total
-        return total
+        value = self.balance_at_end_of_date(account_id, as_of_date)
+        self._raw_balance_cache[key] = value
+        return value
 
     def db_card_postings_in_exclusive_range(
         self, card_account_id: int, after_date: date, through_date: date
@@ -254,11 +310,15 @@ class TimelineBalanceCache:
             self._through_balance_cache[cache_key] = value
             return value
 
-        sb = Decimal(str(acc.starting_balance)) if acc.starting_balance is not None else Decimal("0")
-        if credit_style and acc.account_type == Account.AccountType.CREDIT and sb > 0:
-            opening_one = -sb
+        cp = self._checkpoint_by_account.get(account_id)
+        if cp is not None:
+            opening_one = cp[1]
         else:
-            opening_one = sb
+            sb = Decimal(str(acc.starting_balance)) if acc.starting_balance is not None else Decimal("0")
+            if credit_style and acc.account_type == Account.AccountType.CREDIT and sb > 0:
+                opening_one = -sb
+            else:
+                opening_one = sb
 
         ex = exclude_transaction_ids
         if include_db_postings_on_as_of_date:
@@ -346,8 +406,10 @@ def preload_household_balance_data(
     cache: TimelineBalanceCache,
     households,
     end_date: date,
+    *,
+    min_as_of: date | None = None,
 ) -> set[int]:
-    """Load all household accounts and ledger rows once for timeline build."""
+    """Load all household accounts and post-checkpoint ledger rows once for timeline build."""
     from accounts.models import Account
 
     account_ids = set(
@@ -359,5 +421,5 @@ def preload_household_balance_data(
         return set()
     accounts = list(Account.objects.filter(pk__in=account_ids))
     cache.preload_accounts(accounts)
-    cache.preload_transactions(account_ids, end_date)
+    cache.preload_transactions(account_ids, end_date, min_as_of=min_as_of)
     return account_ids

@@ -9,6 +9,7 @@ import QuickTransactionModal, {
   type QuickTransactionPreset,
 } from "../components/quickActions/QuickTransactionModal";
 import ActionToast from "../components/quickActions/ActionToast";
+import ForecastWindowSelect from "../components/forecast/ForecastWindowSelect";
 import {
   ACTION_CENTER_PAGE_TITLE,
   dismissRecommendation,
@@ -22,20 +23,22 @@ import {
   unsnoozeRecommendation,
 } from "../lib/recommendationDisplay";
 import { buildActionCenterView } from "../lib/actionCenterView";
-import { DEFAULT_PASSIVE_FORECAST_DAYS } from "../lib/safeToSpendLabels";
+import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 export default function ActionCenter() {
   const queryClient = useQueryClient();
+  const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const [refresh, setRefresh] = useState(0);
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["recommendations", "action-center", DEFAULT_PASSIVE_FORECAST_DAYS],
-    queryFn: () => getRecommendations({ days: DEFAULT_PASSIVE_FORECAST_DAYS }),
+    queryKey: ["recommendations", "action-center", forecastDays],
+    queryFn: () => getRecommendations({ days: forecastDays }),
     staleTime: 60_000,
+    enabled: forecastReady,
   });
 
   const { data: accountsData } = useQuery({
@@ -77,14 +80,22 @@ export default function ActionCenter() {
 
   return (
     <div className={`${PAGE_SHELL} py-4 space-y-4`}>
-      <div>
-        <h1 className="text-lg font-semibold text-gray-900">{ACTION_CENTER_PAGE_TITLE}</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          What requires my attention? Forecast-driven actions, grouped by urgency.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">{ACTION_CENTER_PAGE_TITLE}</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            What requires my attention? Forecast-driven actions, grouped by urgency.
+          </p>
+        </div>
+        <ForecastWindowSelect
+          value={forecastDays}
+          onChange={setForecastDays}
+          disabled={!forecastReady}
+          testId="action-center-forecast-window"
+        />
       </div>
 
-      {isLoading && (
+      {(isLoading || !forecastReady) && (
         <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2 animate-pulse">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-40 rounded-lg bg-gray-200" aria-hidden />
@@ -161,7 +172,7 @@ export default function ActionCenter() {
             accounts.find((a) => a.id === resolveRiskAccountId)?.effective_display_name ??
             "Account"
           }
-          forecastDays={DEFAULT_PASSIVE_FORECAST_DAYS}
+          forecastDays={forecastDays}
           accounts={accounts}
           onClose={() => setResolveRiskAccountId(null)}
           onApplyTransfer={(preset) => {

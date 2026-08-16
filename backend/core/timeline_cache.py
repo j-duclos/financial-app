@@ -47,13 +47,23 @@ def timeline_response_cache_key(
     exclude_reconciled_past: bool = False,
 ) -> str:
     version = 0
+    frev = 0
     if household_id is not None:
         version = cache.get(_household_version_key(household_id)) or 0
+        from core.models import Household
+
+        frev = (
+            Household.objects.filter(pk=household_id)
+            .values_list("financial_revision", flat=True)
+            .first()
+            or 0
+        )
     raw = json.dumps(
         {
             "h": household_id,
             "u": user_id,
             "v": version,
+            "fr": int(frev),
             "s": start.isoformat(),
             "e": end.isoformat(),
             "a": account_id,
