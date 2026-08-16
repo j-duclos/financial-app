@@ -4,6 +4,7 @@ import {
   cardPayoffTagline,
   debtFreeHeadline,
   debtModeDescription,
+  debtModeLabel,
   debtStrategyDescription,
   interestSavedLine,
   parseDebtModeParam,
@@ -79,6 +80,7 @@ describe("strategy and mode descriptions", () => {
   it("returns copy for selected strategy and mode", () => {
     expect(debtStrategyDescription("avalanche")).toMatch(/highest apr/i);
     expect(debtModeDescription("aggressive")).toMatch(/extra monthly/i);
+    expect(debtModeLabel("survival")).toBe("Survival");
   });
 
   it("parses survival mode from the payment planner URL", () => {
