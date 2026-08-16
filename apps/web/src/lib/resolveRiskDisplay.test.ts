@@ -76,8 +76,9 @@ describe("recommendationShowsResolveRisk", () => {
         type: "move_money",
         why: "Checking projected negative.",
         primary_action_url: "/transactions?transfer=1",
+        primary_action_type: "move_money",
       } as DashboardRecommendation)
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

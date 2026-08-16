@@ -134,6 +134,7 @@ describe("recommendationDisplay", () => {
     expect(recommendationActionLabel("View Timeline")).toBe("Open calendar");
     expect(recommendationActionLabel("Calendar")).toBe("Open calendar");
     expect(recommendationActionLabel("View calendar")).toBe("Open calendar");
+    expect(recommendationActionLabel("View forecast")).toBe("View forecast");
     expect(recommendationActionLabel("Debt payoff")).toBe("Payment Planner");
     expect(recommendationActionLabel("Payment planner")).toBe("Payment Planner");
     expect(recommendationActionLabel("Payoff planner")).toBe("Payment Planner");
@@ -244,5 +245,31 @@ describe("recommendationDisplay", () => {
       priority_score: 99,
     };
     expect(compareRecommendationsByPriority(critical, watch)).toBeLessThan(0);
+  });
+
+  it("tie-breaks equal priority by earlier date then id", () => {
+    const a: DashboardRecommendation = {
+      id: "b",
+      severity: "critical",
+      title: "B",
+      why: "x",
+      recommended_action: null,
+      impact_label: null,
+      impact_value: null,
+      primary_action_label: null,
+      primary_action_url: null,
+      primary_action_type: null,
+      secondary_action_label: null,
+      secondary_action_url: null,
+      secondary_action_type: null,
+      priority_score: 10,
+      recommended_date: "2026-08-22",
+    };
+    const b: DashboardRecommendation = {
+      ...a,
+      id: "a",
+      recommended_date: "2026-08-18",
+    };
+    expect(compareRecommendationsByPriority(b, a)).toBeLessThan(0);
   });
 });

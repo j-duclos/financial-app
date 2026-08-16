@@ -88,8 +88,10 @@ def transfer_amount_to_restore(
     return Decimal("0")
 
 
-def latest_safe_transfer_date(risk_date: date, *, buffer_days: int = 2) -> date:
-    return max(risk_date - timedelta(days=buffer_days), date.today())
+def latest_safe_transfer_date(
+    risk_date: date, *, buffer_days: int = 2, today: date | None = None
+) -> date:
+    return max(risk_date - timedelta(days=buffer_days), today or date.today())
 
 
 def priority_score(

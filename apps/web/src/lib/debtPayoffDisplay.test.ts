@@ -6,6 +6,7 @@ import {
   debtModeDescription,
   debtStrategyDescription,
   interestSavedLine,
+  parseDebtModeParam,
 } from "./debtPayoffDisplay";
 
 const basePlan = (overrides: Partial<DebtPayoffPlan> = {}): DebtPayoffPlan => ({
@@ -78,6 +79,12 @@ describe("strategy and mode descriptions", () => {
   it("returns copy for selected strategy and mode", () => {
     expect(debtStrategyDescription("avalanche")).toMatch(/highest apr/i);
     expect(debtModeDescription("aggressive")).toMatch(/extra monthly/i);
+  });
+
+  it("parses survival mode from the payment planner URL", () => {
+    expect(parseDebtModeParam("survival")).toBe("survival");
+    expect(parseDebtModeParam("aggressive")).toBe("aggressive");
+    expect(parseDebtModeParam("nope")).toBeNull();
   });
 });
 

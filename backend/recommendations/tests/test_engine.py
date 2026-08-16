@@ -17,6 +17,7 @@ from recommendations.services.calculators import (
 from recommendations.services.context import RecommendationContext
 from recommendations.services.detectors import (
     Detection,
+    detect_debt_payoff,
     detect_move_money_opportunities,
     detect_survival_mode,
     detect_utilization,
@@ -24,9 +25,15 @@ from recommendations.services.detectors import (
 from recommendations.services.engine import (
     build_recommendations,
     build_recommendation_context,
+    consolidate_recommendations,
 )
-from recommendations.services.generators import generate_from_detection
-from recommendations.services.serializers import to_dashboard_recommendation
+from recommendations.services.generators import (
+    debt_payoff_title,
+    generate_from_detection,
+    goal_action_title,
+    spending_action_title,
+)
+from recommendations.services.serializers import sanitize_user_copy, to_dashboard_recommendation
 from timeline.models import RecurringRule
 
 AS_OF = date(2025, 6, 1)
@@ -142,12 +149,18 @@ class TestGenerators:
         )
         rec = generate_from_detection(det, ctx)
         assert rec["type"] == "move_money"
-        assert "Savings" in rec["recommended_action"]
+        assert rec["title"] == "Move $300.00 from Savings to Main"
         assert rec["why"] == det.reason
+        assert rec["recommended_action"] == "Transfer $300.00 before Jun 9 to avoid the shortfall."
+        assert rec["primary_action_label"] == "Transfer $300.00"
+        assert rec["secondary_action_label"] == "View forecast"
+        assert rec["recommended_amount"] == "300.00"
+        assert rec["recommended_date"] == "2025-06-09"
         assert rec["projected_improvement"] == det.projected_improvement
         dash = to_dashboard_recommendation(rec)
         assert dash["severity"] == "critical"
         assert dash["primary_action_type"] == "move_money"
+        assert "placeholder" not in (dash["why"] + (dash["projected_improvement"] or "")).lower()
 
 
 class TestDetectors:
@@ -233,6 +246,7 @@ class TestDetectors:
                     "lowest_projected_balance": "-50",
                     "minimum_buffer": "200",
                     "risk_date": (AS_OF + timedelta(days=5)).isoformat(),
+                    "first_negative_date": (AS_OF + timedelta(days=5)).isoformat(),
                     "risk_reason": "Below zero",
                 },
                 savings.id: {
@@ -248,6 +262,9 @@ class TestDetectors:
         )
         dets = detect_move_money_opportunities(ctx)
         assert any(d.kind == "move_money" for d in dets)
+        move = next(d for d in dets if d.kind == "move_money")
+        assert "Main is projected to fall below $0 on" in move.reason
+        assert "placeholder" not in move.reason.lower()
 
 
 @pytest.mark.django_db
@@ -281,3 +298,232 @@ def api_client():
     from rest_framework.test import APIClient
 
     return APIClient()
+
+
+class TestCopyAndTitles:
+    def test_sanitize_strips_placeholder_notes(self):
+        assert (
+            sanitize_user_copy("Brings utilization toward 70% (score improvement placeholder).")
+            == "Brings utilization toward 70%"
+        )
+        assert sanitize_user_copy("All good") == "All good"
+
+    def test_goal_and_spending_titles_use_sentence_case(self):
+        assert goal_action_title("Save for House Down Payment") == (
+            "Increase house down-payment savings"
+        )
+        assert spending_action_title("Discretionary") == "Reduce discretionary spending"
+        assert debt_payoff_title("Care Credit") == "Prioritize Care Credit payoff"
+
+    def test_utilization_copy_has_no_placeholder(self, credit_card):
+        ctx = RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=[credit_card],
+            accounts_by_id={credit_card.id: credit_card},
+            forecasts={},
+            st_aggregate={},
+            timeline_rows=[],
+            health_by_id={
+                credit_card.id: {"details": {"utilization_percent": "98"}},
+            },
+            owed_balances={credit_card.id: Decimal("4900")},
+        )
+        dets = detect_utilization(ctx)
+        assert dets
+        rec = generate_from_detection(dets[0], ctx)
+        blob = " ".join(
+            str(rec.get(k) or "")
+            for k in ("title", "why", "recommended_action", "projected_improvement")
+        ).lower()
+        assert "placeholder" not in blob
+        assert "todo" not in blob
+        assert rec["why"].startswith("Venture is at 98% utilization")
+        assert "bring utilization below 70%" in rec["recommended_action"].lower()
+
+
+class TestDebtPayoffConsolidation:
+    def _debt_ctx(self, credit_card, extra_card=None):
+        accounts = [credit_card] + ([extra_card] if extra_card else [])
+        return RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=accounts,
+            accounts_by_id={a.id: a for a in accounts},
+            forecasts={},
+            st_aggregate={},
+            timeline_rows=[],
+            health_by_id={},
+            debt_summary={
+                "interest_saved_vs_minimums": "3289.71",
+                "plan": {
+                    "payoff_order": [credit_card.id],
+                    "cards": [
+                        {
+                            "account_id": credit_card.id,
+                            "name": credit_card.name,
+                            "apr": str(credit_card.apr),
+                            "payoff_order": 1,
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "id": "focus_high_apr",
+                            "priority": "high",
+                            "message": (
+                                f"Pay {credit_card.effective_display_name} first to attack "
+                                f"{credit_card.apr}% APR debt."
+                            ),
+                        },
+                        {
+                            "id": "interest_saved",
+                            "priority": "medium",
+                            "message": "This plan saves about $3289.71 vs minimum payments only.",
+                        },
+                        {
+                            "id": "utilization",
+                            "priority": "medium",
+                            "message": (
+                                f"Bring {credit_card.effective_display_name} below 30% utilization "
+                                "to improve your credit profile."
+                            ),
+                        },
+                    ],
+                },
+            },
+        )
+
+    def test_overlapping_payoff_tips_become_one_detection(self, credit_card):
+        dets = detect_debt_payoff(self._debt_ctx(credit_card))
+        assert len(dets) == 1
+        det = dets[0]
+        assert det.kind == "debt_payoff"
+        assert det.account_id == credit_card.id
+        assert "highest APR" in det.reason
+        assert "3289.71" in det.projected_improvement
+        rec = generate_from_detection(det, self._debt_ctx(credit_card))
+        assert rec["title"] == "Prioritize Venture payoff"
+        assert rec["id"] == f"debt-payoff-{credit_card.id}"
+
+    def test_engine_consolidates_duplicate_debt_payoff_recs(self):
+        recs = consolidate_recommendations(
+            [
+                {
+                    "id": "debt-payoff-household",
+                    "type": "debt_payoff",
+                    "title": "Debt payoff opportunity",
+                    "why": "Pay Care Credit first to attack 32.99% APR debt.",
+                    "recommended_action": "Pay Care Credit first to attack 32.99% APR debt.",
+                    "projected_improvement": "Reduces interest and speeds payoff.",
+                    "priority_score": 800,
+                    "severity": "high",
+                },
+                {
+                    "id": "debt-payoff-household",
+                    "type": "debt_payoff",
+                    "title": "Debt payoff opportunity",
+                    "why": "This plan saves about $3289.71 vs minimum payments only.",
+                    "recommended_action": "This plan saves about $3289.71 vs minimum payments only.",
+                    "projected_improvement": "This plan saves about $3289.71 vs minimum payments only.",
+                    "priority_score": 500,
+                    "severity": "medium",
+                },
+            ]
+        )
+        assert len(recs) == 1
+        assert "APR" in recs[0]["why"]
+        assert "3289.71" in (recs[0].get("projected_improvement") or "")
+
+    def test_independent_recs_are_not_consolidated(self):
+        recs = consolidate_recommendations(
+            [
+                {
+                    "id": "utilization-3-70",
+                    "type": "reduce_utilization",
+                    "title": "Pay $97.92 toward Savor",
+                    "why": "Savor is at 75% utilization.",
+                    "priority_score": 600,
+                    "account_id": 3,
+                },
+                {
+                    "id": "debt-payoff-9",
+                    "type": "debt_payoff",
+                    "title": "Prioritize Care Credit payoff",
+                    "why": "Care Credit has the highest APR at 32.99%.",
+                    "priority_score": 750,
+                    "account_id": 9,
+                },
+                {
+                    "id": "utilization-9-70",
+                    "type": "reduce_utilization",
+                    "title": "Pay $200.00 toward Care Credit",
+                    "why": "Care Credit is at 91% utilization.",
+                    "priority_score": 700,
+                    "account_id": 9,
+                },
+                {
+                    "id": "move-money-2-1",
+                    "type": "move_money",
+                    "title": "Move $50.00 from Savings to Main",
+                    "why": "Main is projected to fall below $0 on Aug 20.",
+                    "priority_score": 1000,
+                    "account_id": 1,
+                },
+            ]
+        )
+        ids = [r["id"] for r in recs]
+        assert ids == [
+            "utilization-3-70",
+            "debt-payoff-9",
+            "utilization-9-70",
+            "move-money-2-1",
+        ]
+
+    def test_consolidation_order_is_deterministic(self):
+        a = {
+            "id": "debt-payoff-a",
+            "type": "debt_payoff",
+            "title": "Prioritize A payoff",
+            "why": "A has the highest APR at 20.00%.",
+            "priority_score": 500,
+        }
+        b = {
+            "id": "debt-payoff-b",
+            "type": "debt_payoff",
+            "title": "Prioritize B payoff",
+            "why": "This plan saves about $10 vs minimum payments only.",
+            "projected_improvement": "This plan saves about $10 vs minimum payments only.",
+            "priority_score": 500,
+        }
+        first = consolidate_recommendations([a, b])
+        second = consolidate_recommendations([b, a])
+        assert len(first) == 1 and len(second) == 1
+        assert first[0]["id"] == second[0]["id"]
+
+
+class TestSurvivalExcludedFromActionLimit:
+    def test_survival_is_generated_separately_from_action_cap(self):
+        recs = consolidate_recommendations(
+            [
+                {
+                    "id": "survival-mode",
+                    "type": "survival_mode",
+                    "title": "Survival mode recommended",
+                    "why": "Multiple accounts are projected to fall below zero.",
+                    "priority_score": 1200,
+                },
+                {
+                    "id": "move-money-2-1",
+                    "type": "move_money",
+                    "title": "Move $10.00 from Savings to Main",
+                    "why": "Main is projected to fall below $0 on Aug 20.",
+                    "priority_score": 1100,
+                },
+            ]
+        )
+        types = [r["type"] for r in recs]
+        assert types.count("survival_mode") == 1
+        assert "move_money" in types
+

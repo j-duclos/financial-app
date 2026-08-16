@@ -40,8 +40,11 @@ export function debtStrategyLabel(strategy: DebtPayoffStrategy): string {
   return DEBT_STRATEGY_OPTIONS.find((o) => o.id === strategy)?.label ?? "";
 }
 
-export function debtModeLabel(mode: DebtPayoffMode): string {
-  return DEBT_MODE_OPTIONS.find((o) => o.id === mode)?.label ?? "";
+export function parseDebtModeParam(raw: string | null | undefined): DebtPayoffMode | null {
+  if (raw === "survival" || raw === "aggressive" || raw === "credit_score" || raw === "balanced") {
+    return raw;
+  }
+  return null;
 }
 
 export function debtFreeHeadline(plan: DebtPayoffPlan | null | undefined): string {

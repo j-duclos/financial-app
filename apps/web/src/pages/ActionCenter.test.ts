@@ -19,4 +19,19 @@ describe("Action Center page structure", () => {
   it("keeps a lightweight accounts list for transfer and resolve-risk actions", () => {
     expect(actionCenterSource).toMatch(/listAccounts/);
   });
+
+  it("builds grouped view from the same recommendation collection", () => {
+    expect(actionCenterSource).toMatch(/buildActionCenterView/);
+    expect(actionCenterSource).toMatch(/SurvivalModeBanner/);
+    expect(actionCenterSource).toMatch(/view\.summaryText/);
+    expect(actionCenterSource).toMatch(/view\.groups/);
+    expect(actionCenterSource).not.toMatch(/activeCount/);
+  });
+
+  it("preserves snooze and dismiss wiring", () => {
+    expect(actionCenterSource).toMatch(/snoozeRecommendation/);
+    expect(actionCenterSource).toMatch(/dismissRecommendation/);
+    expect(actionCenterSource).toMatch(/unsnoozeRecommendation/);
+    expect(actionCenterSource).toMatch(/restoreRecommendation/);
+  });
 });

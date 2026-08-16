@@ -3,10 +3,22 @@ Recommendation DTOs — deterministic, explainable, not AI.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from recommendations.services.calculators import map_severity_to_dashboard
+
+_INTERNAL_COPY_RE = re.compile(r"\s*\([^)]*placeholder[^)]*\)\.?", re.I)
+
+
+def sanitize_user_copy(text: str | None) -> str | None:
+    """Strip developer/placeholder notes so they never reach the UI."""
+    if text is None:
+        return None
+    cleaned = _INTERNAL_COPY_RE.sub("", str(text)).strip()
+    return cleaned or None
+
 
 RECOMMENDATION_TYPES = frozenset(
     {
@@ -56,9 +68,11 @@ def make_recommendation(
     secondary_action_type: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
-    message = description
-    if why and why not in description:
-        message = f"{description}\n\nReason: {why}"
+    title = sanitize_user_copy(title) or title
+    description = sanitize_user_copy(description) or description or ""
+    why = sanitize_user_copy(why)
+    recommended_action = sanitize_user_copy(recommended_action)
+    projected_improvement = sanitize_user_copy(projected_improvement)
     return {
         "id": rec_id,
         "type": rec_type,

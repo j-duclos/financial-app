@@ -110,7 +110,6 @@ export default function Dashboard() {
 
   return (
     <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
-      <p className="text-sm text-gray-600">How am I doing?</p>
       <section aria-label={DASHBOARD_SECTION.financialHealth}>
         <DashboardTopSummaryBar
           summary={summaryFast}

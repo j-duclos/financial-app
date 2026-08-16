@@ -18,6 +18,8 @@ from accounts.services.available_to_spend import (
 )
 from recommendations.services.calculators import (
     UTILIZATION_TARGETS,
+    format_money,
+    format_short_date,
     is_category_discretionary,
     payment_to_reach_utilization,
     rule_allows_payment_delay,
@@ -97,7 +99,21 @@ def detect_move_money_opportunities(
             amount = min(amount, donors[0][1])
         if not donor:
             continue
-        reason = forecast.get("risk_reason") or f"{acc.effective_display_name} projected below safety buffer."
+        dest_name = acc.effective_display_name
+        # Prefer the same first-negative date the dashboard uses; fall back to risk_date.
+        negative_raw = forecast.get("first_negative_date") or risk_date_str
+        display_date = (
+            date.fromisoformat(negative_raw[:10]) if negative_raw else risk_date
+        )
+        if status == RISK_STATUS_CRITICAL:
+            reason = (
+                f"{dest_name} is projected to fall below $0 on {format_short_date(display_date)}."
+            )
+        else:
+            reason = (
+                f"{dest_name} is projected to fall below your buffer on "
+                f"{format_short_date(risk_date)}."
+            )
         out.append(
             Detection(
                 kind="move_money",
@@ -108,7 +124,10 @@ def detect_move_money_opportunities(
                 target_date=risk_date,
                 reason=reason,
                 projected_improvement="Avoids overdraft and restores buffer.",
-                extra={"donor_name": donor.effective_display_name, "dest_name": acc.effective_display_name},
+                extra={
+                    "donor_name": donor.effective_display_name,
+                    "dest_name": dest_name,
+                },
             )
         )
     return out
@@ -150,8 +169,10 @@ def detect_utilization(ctx: RecommendationContext) -> list[Detection]:
                 amount=payment,
                 utilization_current=util_dec,
                 utilization_target=target,
-                reason=f"{acc.effective_display_name} utilization is {util_dec:.0f}%.",
-                projected_improvement=f"Brings utilization toward {target:.0f}% (score improvement placeholder).",
+                reason=f"{acc.effective_display_name} is at {util_dec:.0f}% utilization.",
+                projected_improvement=(
+                    f"Pay ${format_money(payment)} to bring utilization below {target:.0f}%."
+                ),
             )
         )
     return out
@@ -356,16 +377,22 @@ def detect_subscription_issues(ctx: RecommendationContext) -> list[Detection]:
 
 def detect_goal_gaps(ctx: RecommendationContext) -> list[Detection]:
     out: list[Detection] = []
+    seen_goal_ids: set[int] = set()
     warnings = (ctx.goals_aggregate or {}).get("warnings") or []
     for w in warnings:
         gap = _decimal(w.get("gap") or 0)
         if gap <= 0:
             continue
+        goal_id = w.get("bucket_id")
+        if goal_id is not None:
+            if goal_id in seen_goal_ids:
+                continue
+            seen_goal_ids.add(goal_id)
         out.append(
             Detection(
                 kind="increase_goal_contribution",
                 severity="medium",
-                goal_id=w.get("bucket_id"),
+                goal_id=goal_id,
                 amount=gap,
                 reason=w.get("message") or "Goal is behind target pace.",
                 projected_improvement=f"Increase funding by about ${gap}/month to get back on track.",
@@ -379,11 +406,16 @@ def detect_goal_gaps(ctx: RecommendationContext) -> list[Detection]:
             gap = _decimal(goal.get("forecast_gap") or monthly)
             if gap <= 0:
                 continue
+            goal_id = goal.get("id")
+            if goal_id is not None:
+                if goal_id in seen_goal_ids:
+                    continue
+                seen_goal_ids.add(goal_id)
             out.append(
                 Detection(
                     kind="increase_goal_contribution",
                     severity="low",
-                    goal_id=goal.get("id"),
+                    goal_id=goal_id,
                     amount=gap,
                     reason=f"{goal.get('name')} is behind pace.",
                     projected_improvement=f"Increase contributions by about ${gap}/month.",
@@ -393,37 +425,87 @@ def detect_goal_gaps(ctx: RecommendationContext) -> list[Detection]:
     return out[:3]
 
 
-def detect_debt_payoff(ctx: RecommendationContext) -> list[Detection]:
-    out: list[Detection] = []
-    plan = (ctx.debt_summary or {}).get("plan") or {}
-    for raw in plan.get("recommendations") or []:
-        msg = raw.get("message") or ""
-        if not msg:
-            continue
-        priority = raw.get("priority") or "medium"
-        sev = "high" if priority == "high" else "medium"
-        out.append(
-            Detection(
-                kind="debt_payoff",
-                severity=sev,
-                account_id=raw.get("account_id"),
-                reason=msg,
-                projected_improvement=raw.get("impact") or "Reduces interest and speeds payoff.",
-                extra=raw,
-            )
+def _focus_debt_account(
+    ctx: RecommendationContext, plan: dict[str, Any]
+) -> tuple[int | None, str | None, Decimal | None]:
+    """Resolve the household payoff-plan focus card (highest-APR / first in order)."""
+    account_id = None
+    payoff_order = plan.get("payoff_order") or []
+    if payoff_order:
+        account_id = int(payoff_order[0])
+    elif plan.get("cards"):
+        ranked = sorted(
+            plan["cards"],
+            key=lambda card: card.get("payoff_order") or 999,
         )
-    if not out and ctx.debt_summary:
-        saved = ctx.debt_summary.get("interest_saved_vs_minimums")
-        if saved and _decimal(saved) > 0:
-            out.append(
-                Detection(
-                    kind="debt_payoff",
-                    severity="info",
-                    reason=ctx.debt_summary.get("message") or "Extra payments save interest.",
-                    projected_improvement=f"Save ${saved} vs minimum payments only.",
-                )
-            )
-    return out[:2]
+        if ranked:
+            raw_id = ranked[0].get("account_id")
+            account_id = int(raw_id) if raw_id is not None else None
+    account = ctx.accounts_by_id.get(account_id) if account_id else None
+    name = account.effective_display_name if account else None
+    apr = _decimal(account.apr) if account and account.apr is not None else None
+    if name is None and plan.get("cards"):
+        for card in plan["cards"]:
+            if account_id is not None and int(card.get("account_id") or 0) == account_id:
+                name = card.get("name")
+                if card.get("apr") is not None:
+                    apr = _decimal(card["apr"])
+                break
+    return account_id, name, apr
+
+
+def detect_debt_payoff(ctx: RecommendationContext) -> list[Detection]:
+    """One Action Center rec per household payoff strategy — not one per planner tip."""
+    plan = (ctx.debt_summary or {}).get("plan") or {}
+    raw_recs = [row for row in (plan.get("recommendations") or []) if row.get("message")]
+    by_id = {row.get("id"): row for row in raw_recs}
+
+    focus = by_id.get("focus_high_apr")
+    saved_row = by_id.get("interest_saved")
+    saved_amount = None
+    if ctx.debt_summary:
+        saved_amount = ctx.debt_summary.get("interest_saved_vs_minimums")
+
+    if not focus and not saved_row and not (saved_amount and _decimal(saved_amount) > 0):
+        return []
+
+    account_id, account_name, apr = _focus_debt_account(ctx, plan)
+    if account_name is None and focus:
+        message = focus.get("message") or ""
+        if message.lower().startswith("pay "):
+            account_name = message[4:].split(" first", 1)[0].strip() or None
+
+    if account_name and apr is not None and apr > 0:
+        reason = f"{account_name} has the highest APR at {format_money(apr)}%."
+    elif focus:
+        reason = focus.get("message") or "Prioritize the highest-APR balance."
+    else:
+        reason = "Following the recommended payoff plan reduces interest versus minimum payments."
+
+    if saved_amount and _decimal(saved_amount) > 0:
+        improvement = (
+            "Following the recommended payoff plan could save approximately "
+            f"${format_money(_decimal(saved_amount))} in interest versus minimum payments."
+        )
+    else:
+        improvement = "Prioritizing this balance reduces interest and speeds payoff."
+    severity = "high" if focus else "medium"
+
+    # Skip plan "utilization" tips — detect_utilization already emits per-card payment actions.
+    return [
+        Detection(
+            kind="debt_payoff",
+            severity=severity,
+            account_id=account_id,
+            reason=reason,
+            projected_improvement=improvement,
+            extra={
+                "strategy_id": "household_payoff",
+                "focus_account_name": account_name,
+                "source_ids": [row.get("id") for row in raw_recs if row.get("id")],
+            },
+        )
+    ]
 
 
 def detect_survival_recommendations(ctx: RecommendationContext) -> list[Detection]:
@@ -433,8 +515,13 @@ def detect_survival_recommendations(ctx: RecommendationContext) -> list[Detectio
         Detection(
             kind="survival_mode",
             severity="critical",
-            reason="Multiple accounts project negative balances in the forecast window.",
-            projected_improvement="Use minimum debt payments, pause discretionary spend, delay flexible bills.",
+            reason=(
+                "Multiple accounts are projected to fall below zero. "
+                "Prioritize required bills and minimum debt payments until cash flow stabilizes."
+            ),
+            projected_improvement=(
+                "Prioritize required bills and minimum debt payments until cash flow stabilizes."
+            ),
         )
     ]
 

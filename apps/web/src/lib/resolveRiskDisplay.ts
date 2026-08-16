@@ -8,7 +8,7 @@ import type {
 import { formatCurrency } from "@budget-app/shared";
 import { simulationStatusClass, simulationStatusLabel } from "./transferSimulation";
 import { normalizeSeverity, severityShowsAlert } from "./severity";
-import { snoozeRecommendation } from "./recommendationDisplay";
+import { recommendationOpensTransfer, snoozeRecommendation } from "./recommendationDisplay";
 import type { QuickTransactionPreset } from "../components/quickActions/QuickTransactionModal";
 
 export function accountShowsResolveRisk(
@@ -45,6 +45,7 @@ export function recommendationIsCreditPayment(rec: DashboardRecommendation): boo
 export function recommendationShowsResolveRisk(rec: DashboardRecommendation): boolean {
   if (rec.account_id == null) return false;
   if (recommendationIsCreditPayment(rec)) return false;
+  if (recommendationOpensTransfer(rec)) return false;
   const sev = normalizeSeverity(rec.severity);
   return sev === "critical" || sev === "at_risk";
 }

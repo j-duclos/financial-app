@@ -28,7 +28,7 @@ from recommendations.services.context import (
     owed_balances_from_signed,
 )
 from recommendations.services.detectors import run_all_detectors
-from recommendations.services.generators import generate_from_detection
+from recommendations.services.generators import generate_from_detection, spending_action_title
 from recommendations.services.serializers import to_dashboard_recommendation
 from timeline.models import RecurringRule
 from timeline.services.ledger import build_timeline
@@ -310,6 +310,104 @@ def build_recommendation_context(
     )
 
 
+SURVIVAL_MODE_TYPE = "survival_mode"
+DEBT_PAYOFF_TYPE = "debt_payoff"
+
+
+def recommendation_merge_key(rec: dict[str, Any]) -> str:
+    """Stable semantic key for overlapping strategy/condition recs — not title-based."""
+    rec_type = rec.get("type") or ""
+    rec_id = rec.get("id") or ""
+    if rec_type == SURVIVAL_MODE_TYPE or rec_id == "survival-mode":
+        return "survival_mode"
+    if rec_type == DEBT_PAYOFF_TYPE:
+        return "debt_payoff:household"
+    if rec_id:
+        return rec_id
+    return f"{rec_type}:{rec.get('account_id')}:{rec.get('goal_id')}:{rec.get('rule_id')}"
+
+
+def _merge_recommendation_pair(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Fold overlapping copy into one rec, keeping the stronger priority/title."""
+    out = dict(base)
+    extra_why = (extra.get("why") or extra.get("description") or "").strip()
+    extra_imp = (extra.get("projected_improvement") or extra.get("recommended_action") or "").strip()
+    base_why = (out.get("why") or "").strip()
+    base_imp = (out.get("projected_improvement") or "").strip()
+    extra_title = extra.get("title") or ""
+    base_title = out.get("title") or ""
+
+    if extra_title.lower().startswith("prioritize") and not base_title.lower().startswith("prioritize"):
+        out["title"] = extra_title
+    if extra_why and "APR" in extra_why and "APR" not in base_why:
+        out["why"] = extra_why
+        out["description"] = extra_why
+    savings_like = "versus minimum" in extra_imp.lower() or "vs minimum" in extra_imp.lower()
+    if extra_imp and extra_imp not in base_why and extra_imp not in base_imp:
+        if savings_like or not base_imp:
+            out["projected_improvement"] = extra_imp
+            if savings_like or not (out.get("recommended_action") or "").strip():
+                out["recommended_action"] = extra_imp
+
+    extra_score = int(extra.get("priority_score") or 0)
+    base_score = int(out.get("priority_score") or 0)
+    if extra_score > base_score:
+        out["priority_score"] = extra_score
+        if extra.get("severity"):
+            out["severity"] = extra["severity"]
+            if extra.get("severity_dashboard"):
+                out["severity_dashboard"] = extra["severity_dashboard"]
+        if extra.get("account_id") and not out.get("account_id"):
+            out["account_id"] = extra["account_id"]
+    return out
+
+
+def consolidate_recommendations(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge overlapping strategy recs; keep genuinely independent recs."""
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for rec in recs:
+        key = recommendation_merge_key(rec)
+        if key not in merged:
+            merged[key] = dict(rec)
+            order.append(key)
+            continue
+        existing = merged[key]
+        extra_score = int(rec.get("priority_score") or 0)
+        existing_score = int(existing.get("priority_score") or 0)
+        if extra_score > existing_score:
+            merged[key] = _merge_recommendation_pair(rec, existing)
+        elif extra_score < existing_score:
+            merged[key] = _merge_recommendation_pair(existing, rec)
+        else:
+            # Deterministic: keep the earlier title, fold in extra copy.
+            if (rec.get("id") or "") < (existing.get("id") or ""):
+                merged[key] = _merge_recommendation_pair(rec, existing)
+            else:
+                merged[key] = _merge_recommendation_pair(existing, rec)
+
+    by_id: dict[str, dict[str, Any]] = {}
+    id_order: list[str] = []
+    for key in order:
+        rec = merged[key]
+        rid = rec.get("id") or key
+        if rid not in by_id:
+            by_id[rid] = rec
+            id_order.append(rid)
+        else:
+            by_id[rid] = _merge_recommendation_pair(by_id[rid], rec)
+    return [by_id[rid] for rid in id_order]
+
+
+def _sort_recommendation_key(rec: dict[str, Any]) -> tuple:
+    return (
+        -int(rec.get("priority_score") or 0),
+        rec.get("recommended_date") or "9999-12-31",
+        rec.get("title") or "",
+        rec.get("id") or "",
+    )
+
+
 def build_recommendations(
     ctx: RecommendationContext,
     *,
@@ -332,8 +430,11 @@ def build_recommendations(
     except Exception:
         pass
 
-    recs.sort(key=lambda r: (-int(r.get("priority_score") or 0), r.get("title") or ""))
-    return recs[:limit]
+    recs = consolidate_recommendations(recs)
+    recs.sort(key=_sort_recommendation_key)
+    survival = [rec for rec in recs if rec.get("type") == SURVIVAL_MODE_TYPE]
+    actions = [rec for rec in recs if rec.get("type") != SURVIVAL_MODE_TYPE]
+    return survival[:1] + actions[:limit]
 
 
 def _legacy_to_full(legacy: dict[str, Any]) -> dict[str, Any]:
@@ -343,7 +444,7 @@ def _legacy_to_full(legacy: dict[str, Any]) -> dict[str, Any]:
         legacy["id"],
         "reduce_spending",
         legacy.get("severity", "warning") if legacy.get("severity") != "warning" else "medium",
-        legacy.get("title", "Spending"),
+        spending_action_title(legacy.get("title") or "Spending"),
         legacy.get("why", ""),
         why=legacy.get("why"),
         recommended_action=legacy.get("recommended_action"),

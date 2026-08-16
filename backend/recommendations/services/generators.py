@@ -3,7 +3,7 @@ Turn detections into recommendation DTOs with explainable copy.
 """
 from __future__ import annotations
 
-from datetime import date
+import re
 
 from recommendations.services.calculators import (
     format_money,
@@ -14,6 +14,32 @@ from recommendations.services.calculators import (
 from recommendations.services.context import RecommendationContext
 from recommendations.services.detectors import Detection
 from recommendations.services.serializers import make_recommendation
+
+_SAVE_FOR_PREFIX = re.compile(r"^(save for|saving for|savings for)\s+", re.I)
+_DOWN_PAYMENT = re.compile(r"\bdown payment\b", re.I)
+
+
+def _lower_phrase(value: str) -> str:
+    return value[:1].lower() + value[1:] if value else value
+
+
+def goal_action_title(goal_name: str | None) -> str:
+    name = (goal_name or "goal").strip()
+    name = _SAVE_FOR_PREFIX.sub("", name).strip() or "goal"
+    name = _DOWN_PAYMENT.sub("down-payment", name)
+    return f"Increase {_lower_phrase(name)} savings"
+
+
+def spending_action_title(category_name: str | None) -> str:
+    cat = (category_name or "discretionary").strip()
+    return f"Reduce {_lower_phrase(cat)} spending"
+
+
+def debt_payoff_title(account_name: str | None) -> str:
+    name = (account_name or "").strip()
+    if name:
+        return f"Prioritize {name} payoff"
+    return "Prioritize debt payoff"
 
 
 def generate_from_detection(det: Detection, ctx: RecommendationContext) -> dict:
@@ -58,10 +84,11 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
     donor = extra.get("donor_name", "Savings")
     dest = extra.get("dest_name", "Checking")
     amount = det.amount or 0
-    transfer_date = latest_safe_transfer_date(det.target_date or ctx.today)
+    transfer_date = latest_safe_transfer_date(det.target_date or ctx.today, today=ctx.today)
     date_label = format_short_date(transfer_date)
-    title = f"Move ${format_money(amount)} from {donor} to {dest}"
-    action = f"Move ${format_money(amount)} from {donor} to {dest} before {date_label}"
+    amount_label = format_money(amount)
+    title = f"Move ${amount_label} from {donor} to {dest}"
+    action = f"Transfer ${amount_label} before {date_label} to avoid the shortfall."
     return make_recommendation(
         f"move-money-{det.related_account_id}-{det.account_id}",
         "move_money",
@@ -70,7 +97,7 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
         det.reason,
         why=det.reason,
         recommended_action=action,
-        recommended_amount=format_money(amount),
+        recommended_amount=amount_label,
         recommended_date=transfer_date.isoformat(),
         account_id=det.account_id,
         related_account_id=det.related_account_id,
@@ -78,11 +105,11 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
         projected_improvement=det.projected_improvement,
         priority_score=score,
         impact_label="Transfer amount",
-        impact_value=format_money(amount),
-        primary_action_label="Execute transfer",
+        impact_value=amount_label,
+        primary_action_label=f"Transfer ${amount_label}",
         primary_action_url=f"/transactions?transfer=1&from={det.related_account_id}&to={det.account_id}",
         primary_action_type="move_money",
-        secondary_action_label="Open calendar",
+        secondary_action_label="View forecast",
         secondary_action_url=f"/timeline?date={transfer_date.isoformat()}",
         secondary_action_type="navigate",
     )
@@ -93,8 +120,9 @@ def _gen_utilization(det: Detection, ctx: RecommendationContext, score: int) -> 
     name = acc.effective_display_name if acc else "Credit card"
     target = det.utilization_target or 70
     amount = det.amount or 0
-    title = f"Pay ${format_money(amount)} toward {name}"
-    action = f"Pay ${format_money(amount)} toward {name} to reduce utilization below {target:.0f}%"
+    amount_label = format_money(amount)
+    title = f"Pay ${amount_label} toward {name}"
+    action = f"Pay ${amount_label} to bring utilization below {target:.0f}%."
     return make_recommendation(
         f"utilization-{det.account_id}-{int(target)}",
         "reduce_utilization",
@@ -158,8 +186,8 @@ def _gen_delay_bill(det: Detection, ctx: RecommendationContext, score: int) -> d
 def _gen_reduce_spending(det: Detection, ctx: RecommendationContext, score: int) -> dict:
     cat = det.category_name or "Discretionary"
     amount = det.amount or 0
-    title = f"Reduce {cat} spending"
-    action = f"Reduce {cat} spending by approximately ${format_money(amount)}/month"
+    title = spending_action_title(cat)
+    action = f"Reduce {_lower_phrase(cat)} spending by approximately ${format_money(amount)}/month"
     tid = (det.extra or {}).get("target_id")
     return make_recommendation(
         f"reduce-spending-{cat.lower().replace(' ', '-')}-{tid or 'general'}",
@@ -215,8 +243,8 @@ def _gen_pause_subscription(det: Detection, ctx: RecommendationContext, score: i
 def _gen_goal(det: Detection, ctx: RecommendationContext, score: int) -> dict:
     name = (det.extra or {}).get("goal_name", "Goal")
     amount = det.amount or 0
-    title = f"Increase {name} funding"
-    action = f"Increase {name} funding by about ${format_money(amount)}/month"
+    title = goal_action_title(name)
+    action = f"Increase {_lower_phrase(name)} funding by about ${format_money(amount)}/month"
     return make_recommendation(
         f"goal-contrib-{det.goal_id}",
         "increase_goal_contribution",
@@ -237,20 +265,25 @@ def _gen_goal(det: Detection, ctx: RecommendationContext, score: int) -> dict:
 
 
 def _gen_debt(det: Detection, ctx: RecommendationContext, score: int) -> dict:
+    extra = det.extra or {}
     aid = det.account_id
+    name = extra.get("focus_account_name")
+    if not name and aid:
+        acc = ctx.accounts_by_id.get(aid)
+        name = acc.effective_display_name if acc else None
     return make_recommendation(
         f"debt-payoff-{aid or 'household'}",
         "debt_payoff",
         det.severity,
-        "Debt payoff opportunity",
+        debt_payoff_title(name),
         det.reason,
         why=det.reason,
-        recommended_action=det.reason,
+        recommended_action=det.projected_improvement or det.reason,
         account_id=aid,
         impact_type="interest_savings",
         projected_improvement=det.projected_improvement,
         priority_score=score,
-        primary_action_label="Open payoff planner",
+        primary_action_label="Payment Planner",
         primary_action_url="/credit-cards",
         primary_action_type="navigate",
     )
@@ -264,16 +297,15 @@ def _gen_survival(det: Detection, ctx: RecommendationContext, score: int) -> dic
         "Survival mode recommended",
         det.reason,
         why=det.reason,
-        recommended_action="Minimum debt payments, pause discretionary spend, delay flexible bills",
+        recommended_action=(
+            "Prioritize required bills and minimum debt payments until cash flow stabilizes."
+        ),
         impact_type="cashflow_stability",
         projected_improvement=det.projected_improvement,
         priority_score=score + 200,
-        primary_action_label="Open payoff planner",
+        primary_action_label="Review survival plan",
         primary_action_url="/credit-cards?mode=survival",
         primary_action_type="navigate",
-        secondary_action_label="Open calendar",
-        secondary_action_url="/timeline",
-        secondary_action_type="navigate",
     )
 
 

@@ -25,6 +25,7 @@ import {
   debtStrategyDescription,
   debtStrategyLabel,
   interestSavedLine,
+  parseDebtModeParam,
 } from "../lib/debtPayoffDisplay";
 import {
   buildDrawerPayoffParams,
@@ -41,7 +42,9 @@ export default function CreditCards() {
   const strategyFromUrl = searchParams.get("strategy") as PayoffStrategy | null;
 
   const [strategy, setStrategy] = useState<DebtPayoffStrategy>("avalanche");
-  const [mode, setMode] = useState<DebtPayoffMode>("aggressive");
+  const [mode, setMode] = useState<DebtPayoffMode>(
+    () => parseDebtModeParam(searchParams.get("mode")) ?? "aggressive"
+  );
   const [extraMonthly, setExtraMonthly] = useState("150");
   const [whatIfLump, setWhatIfLump] = useState("");
   const [whatIfLumpAccount, setWhatIfLumpAccount] = useState("");

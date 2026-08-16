@@ -98,7 +98,12 @@ export function compareRecommendationsByPriority(
   const rankDiff =
     severityRank(normalizeSeverity(a.severity)) - severityRank(normalizeSeverity(b.severity));
   if (rankDiff !== 0) return rankDiff;
-  return (b.priority_score ?? 0) - (a.priority_score ?? 0);
+  const scoreDiff = (b.priority_score ?? 0) - (a.priority_score ?? 0);
+  if (scoreDiff !== 0) return scoreDiff;
+  const dateA = a.recommended_date || "9999-12-31";
+  const dateB = b.recommended_date || "9999-12-31";
+  if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+  return (a.id || "").localeCompare(b.id || "");
 }
 
 export function recommendationsForDisplay(
@@ -256,10 +261,51 @@ export function recommendationActionLabel(
   if (/^view timeline$/i.test(trimmed)) return "Open calendar";
   if (/^calendar$/i.test(trimmed)) return "Open calendar";
   if (/^view calendar$/i.test(trimmed)) return "Open calendar";
+  if (/^view forecast$/i.test(trimmed)) return "View forecast";
   if (/^(debt payoff|payment planner|payoff planner|open payoff planner|make payment)$/i.test(trimmed)) {
     return PAYMENT_PLANNER_LABEL;
   }
   return normalizePaymentActionLabel(label);
+}
+
+const INTERNAL_COPY_RE = /\s*\([^)]*placeholder[^)]*\)\.?/gi;
+
+export function sanitizeRecommendationCopy(text: string | null | undefined): string {
+  if (!text) return "";
+  return text.replace(INTERNAL_COPY_RE, "").replace(/\s+/g, " ").trim();
+}
+
+export function isSurvivalModeRecommendation(rec: DashboardRecommendation): boolean {
+  return rec.type === "survival_mode" || rec.id === "survival-mode";
+}
+
+export function recommendationPrimaryCtaLabel(rec: DashboardRecommendation): string {
+  if (recommendationOpensTransfer(rec)) {
+    const raw = rec.recommended_amount ?? rec.impact_value;
+    if (raw) {
+      const amount = String(raw).replace(/^\$/, "");
+      return `Transfer $${amount}`;
+    }
+    return "Transfer";
+  }
+  return (
+    recommendationActionLabel(rec.primary_action_label, rec.primary_action_url) ??
+    rec.primary_action_label ??
+    "Continue"
+  );
+}
+
+export function recommendationSecondaryCtaLabel(
+  rec: DashboardRecommendation,
+  label?: string | null,
+  url?: string | null
+): string | null {
+  const resolvedUrl = url ?? rec.secondary_action_url;
+  const resolvedLabel = label ?? rec.secondary_action_label;
+  if (recommendationOpensTransfer(rec) && resolvedUrl?.includes("/timeline")) {
+    return "View forecast";
+  }
+  return recommendationActionLabel(resolvedLabel, resolvedUrl);
 }
 
 /** Extra planner button only when primary/secondary do not already link to the planner. */

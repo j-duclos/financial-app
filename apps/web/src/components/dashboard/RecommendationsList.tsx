@@ -1,19 +1,23 @@
 import { Link } from "react-router-dom";
-import type { ReactNode } from "react";
 import type { DashboardRecommendation } from "@budget-app/shared";
 import {
   OPEN_PAYOFF_PLANNER_LABEL,
-  recommendationActionLabel,
-  recommendationImpactLine,
   recommendationOpensTransfer,
   recommendationPayoffPlannerUrl,
+  recommendationPrimaryCtaLabel,
+  recommendationSecondaryCtaLabel,
   recommendationSeverityClass,
   type RecommendationDisplayState,
   type RecommendationListEntry,
 } from "../../lib/recommendationDisplay";
+import {
+  recommendationCardCopy,
+  type ActionCenterGroup,
+} from "../../lib/actionCenterView";
 import { attentionLedgerState } from "../../lib/attentionCardDisplay";
-import SeverityBadge from "../shared/SeverityBadge";
 import { recommendationShowsResolveRisk } from "../../lib/resolveRiskDisplay";
+import { severityTokens } from "../../lib/severity";
+import SeverityBadge from "../shared/SeverityBadge";
 
 function accountIdFromRecommendation(rec: DashboardRecommendation): number | null {
   const m = rec.id.match(/^attention-(\d+)$/);
@@ -23,27 +27,73 @@ function accountIdFromRecommendation(rec: DashboardRecommendation): number | nul
   return um ? Number(um[1]) : null;
 }
 
-function RecommendationDetailBlock({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 leading-none mb-0.5">
-        {label}
-      </p>
-      <div className="text-sm text-gray-800 leading-snug">{children}</div>
-    </div>
-  );
-}
-
 function stateBadgeLabel(state: RecommendationDisplayState): string | null {
   if (state === "snoozed") return "Snoozed";
   if (state === "dismissed") return "Dismissed";
   return null;
+}
+
+const primaryButtonClass =
+  "inline-flex items-center justify-center min-h-8 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 shadow-sm";
+const secondaryButtonClass =
+  "inline-flex items-center justify-center min-h-8 rounded-md px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:underline";
+
+export function SurvivalModeBanner({
+  entry,
+  onDismiss,
+  onSnooze,
+}: {
+  entry: RecommendationListEntry;
+  onDismiss?: (id: string) => void;
+  onSnooze?: (id: string) => void;
+}) {
+  const { rec } = entry;
+  const tokens = severityTokens("critical");
+  const { condition, action } = recommendationCardCopy(rec);
+  const body = action && action !== condition ? `${condition} ${action}`.trim() : condition;
+  const href = rec.primary_action_url || "/credit-cards?mode=survival";
+
+  return (
+    <aside
+      className={`flex flex-col gap-2 rounded-lg px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${tokens.cardClass}`}
+      aria-label="Survival mode recommended"
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-gray-900">{rec.title}</p>
+        <p className="mt-0.5 text-sm leading-snug text-gray-800">{body}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <Link to={href} className={primaryButtonClass}>
+          {recommendationPrimaryCtaLabel(rec)}
+        </Link>
+        <div className="flex items-center gap-0.5 text-xs text-gray-600">
+          {onSnooze && (
+            <>
+              <button
+                type="button"
+                onClick={() => onSnooze(rec.id)}
+                className="rounded px-2 py-1 font-medium hover:bg-black/5 hover:text-gray-900"
+              >
+                Snooze
+              </button>
+              <span className="text-gray-300" aria-hidden>
+                ·
+              </span>
+            </>
+          )}
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={() => onDismiss(rec.id)}
+              className="rounded px-2 py-1 font-medium hover:bg-black/5 hover:text-gray-900"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
 }
 
 export function RecommendationCard({
@@ -65,20 +115,20 @@ export function RecommendationCard({
   onRestore?: () => void;
   onUnsnooze?: () => void;
 }) {
-  const impact = recommendationImpactLine(rec);
+  const { condition, action } = recommendationCardCopy(rec);
   const plannerUrl = recommendationPayoffPlannerUrl(rec);
   const primaryUrl = rec.primary_action_url ?? "/transactions";
   const accountId = accountIdFromRecommendation(rec);
   const navState = accountId ? attentionLedgerState(accountId) : undefined;
   const opensTransferModal = recommendationOpensTransfer(rec);
   const inactive = displayState !== "active";
-
-  const primaryButtonClass =
-    "inline-flex items-center rounded-md bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700 shadow-sm";
-  const secondaryButtonClass =
-    "inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50";
-
+  const showResolveRisk =
+    recommendationShowsResolveRisk(rec) && onResolveRisk && rec.account_id != null && !opensTransferModal;
   const stateLabel = stateBadgeLabel(displayState);
+  const primaryLabel = recommendationPrimaryCtaLabel(rec);
+  const secondaryLabel = rec.secondary_action_label
+    ? recommendationSecondaryCtaLabel(rec)
+    : null;
 
   return (
     <article
@@ -86,7 +136,7 @@ export function RecommendationCard({
         inactive ? "opacity-75" : ""
       }`}
     >
-      <header className="mb-2 flex items-start justify-between gap-2">
+      <header className="mb-1.5 flex items-start justify-between gap-2">
         <h3 className="min-w-0 flex-1 text-sm font-semibold leading-snug text-gray-900">
           {rec.title}
         </h3>
@@ -100,27 +150,16 @@ export function RecommendationCard({
         </div>
       </header>
 
-      <div className="flex flex-1 flex-col gap-2 min-w-0">
-        <RecommendationDetailBlock label="Why">
-          <p className="text-gray-700">{rec.why}</p>
-        </RecommendationDetailBlock>
-        {rec.recommended_action && (
-          <RecommendationDetailBlock label="What">
-            <p className="font-medium text-gray-900">{rec.recommended_action}</p>
-          </RecommendationDetailBlock>
-        )}
-        {impact && (
-          <RecommendationDetailBlock label="Impact">
-            <p>{impact}</p>
-          </RecommendationDetailBlock>
-        )}
+      <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+        {condition && <p className="text-sm leading-snug text-gray-700">{condition}</p>}
+        {action && <p className="text-sm leading-snug font-medium text-gray-900">{action}</p>}
       </div>
 
       <footer className="mt-2.5 flex flex-col gap-2 border-t border-black/5 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         {!inactive ? (
           <>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {recommendationShowsResolveRisk(rec) && onResolveRisk && rec.account_id != null && (
+              {showResolveRisk && (
                 <button type="button" onClick={onResolveRisk} className={primaryButtonClass}>
                   Resolve risk
                 </button>
@@ -132,8 +171,7 @@ export function RecommendationCard({
                     onClick={() => onExecuteTransfer(rec)}
                     className={primaryButtonClass}
                   >
-                    {recommendationActionLabel(rec.primary_action_label, rec.primary_action_url) ??
-                      "Execute transfer"}
+                    {primaryLabel}
                   </button>
                 ) : (
                   <Link
@@ -145,7 +183,7 @@ export function RecommendationCard({
                     state={navState}
                     className={primaryButtonClass}
                   >
-                    {recommendationActionLabel(rec.primary_action_label, rec.primary_action_url)}
+                    {primaryLabel}
                   </Link>
                 )
               ) : (
@@ -157,11 +195,11 @@ export function RecommendationCard({
                   Open ledger
                 </Link>
               )}
-              {rec.secondary_action_label &&
+              {secondaryLabel &&
                 rec.secondary_action_url &&
                 rec.secondary_action_type !== "move_money" && (
-                  <Link to={rec.secondary_action_url} className={primaryButtonClass}>
-                    {recommendationActionLabel(rec.secondary_action_label)}
+                  <Link to={rec.secondary_action_url} className={secondaryButtonClass}>
+                    {secondaryLabel}
                   </Link>
                 )}
               {plannerUrl && (
@@ -223,37 +261,25 @@ export function RecommendationCard({
   );
 }
 
-type ListProps = {
-  entries: RecommendationListEntry[];
-  emptyMessage: string;
-  onExecuteTransfer?: (rec: DashboardRecommendation) => void;
-  onResolveRisk?: (accountId: number) => void;
-  onDismiss?: (id: string) => void;
-  onSnooze?: (id: string) => void;
-  onRestore?: (id: string) => void;
-  onUnsnooze?: (id: string) => void;
-};
-
-export default function RecommendationsList({
+function RecommendationGrid({
   entries,
-  emptyMessage,
   onExecuteTransfer,
   onResolveRisk,
   onDismiss,
   onSnooze,
   onRestore,
   onUnsnooze,
-}: ListProps) {
-  if (entries.length === 0) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-2.5 text-sm text-gray-600">
-        {emptyMessage}
-      </div>
-    );
-  }
-
+}: {
+  entries: RecommendationListEntry[];
+  onExecuteTransfer?: (rec: DashboardRecommendation) => void;
+  onResolveRisk?: (accountId: number) => void;
+  onDismiss?: (id: string) => void;
+  onSnooze?: (id: string) => void;
+  onRestore?: (id: string) => void;
+  onUnsnooze?: (id: string) => void;
+}) {
   return (
-    <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2 lg:gap-3">
+    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 md:gap-3">
       {entries.map(({ rec, displayState }) => (
         <RecommendationCard
           key={rec.id}
@@ -275,6 +301,68 @@ export default function RecommendationsList({
           }
         />
       ))}
+    </div>
+  );
+}
+
+type ListProps = {
+  groups: ActionCenterGroup[];
+  inactive?: RecommendationListEntry[];
+  emptyMessage: string;
+  onExecuteTransfer?: (rec: DashboardRecommendation) => void;
+  onResolveRisk?: (accountId: number) => void;
+  onDismiss?: (id: string) => void;
+  onSnooze?: (id: string) => void;
+  onRestore?: (id: string) => void;
+  onUnsnooze?: (id: string) => void;
+};
+
+export default function RecommendationsList({
+  groups,
+  inactive = [],
+  emptyMessage,
+  onExecuteTransfer,
+  onResolveRisk,
+  onDismiss,
+  onSnooze,
+  onRestore,
+  onUnsnooze,
+}: ListProps) {
+  if (groups.length === 0 && inactive.length === 0) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-2.5 text-sm text-gray-600">
+        {emptyMessage}
+      </div>
+    );
+  }
+
+  const gridProps = {
+    onExecuteTransfer,
+    onResolveRisk,
+    onDismiss,
+    onSnooze,
+    onRestore,
+    onUnsnooze,
+  };
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <section key={group.key} aria-label={`${group.label} · ${group.count}`}>
+          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            {group.label} · {group.count}
+          </h2>
+          <RecommendationGrid entries={group.entries} {...gridProps} />
+        </section>
+      ))}
+      {inactive.length > 0 && (
+        <section aria-label="Snoozed and dismissed">
+          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            Snoozed & dismissed · {inactive.length}
+          </h2>
+          <RecommendationGrid entries={inactive} {...gridProps} />
+        </section>
+      )}
     </div>
   );
 }

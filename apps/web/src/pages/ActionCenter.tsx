@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DashboardRecommendation } from "@budget-app/shared";
 import { getRecommendations, listAccounts } from "@budget-app/api-client";
 import { PAGE_SHELL } from "../lib/pageLayout";
-import RecommendationsList from "../components/dashboard/RecommendationsList";
+import RecommendationsList, { SurvivalModeBanner } from "../components/dashboard/RecommendationsList";
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
 import QuickTransactionModal, {
   type QuickTransactionPreset,
@@ -21,6 +21,7 @@ import {
   snoozeRecommendation,
   unsnoozeRecommendation,
 } from "../lib/recommendationDisplay";
+import { buildActionCenterView } from "../lib/actionCenterView";
 import { DEFAULT_PASSIVE_FORECAST_DAYS } from "../lib/safeToSpendLabels";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
@@ -54,7 +55,10 @@ export default function ActionCenter() {
     );
   }, [data, refresh]);
 
-  const activeCount = entries.filter((e) => e.displayState === "active").length;
+  const view = useMemo(
+    () => buildActionCenterView(entries),
+    [entries]
+  );
   const snoozedCount = entries.filter((e) => e.displayState === "snoozed").length;
   const dismissedCount = entries.filter((e) => e.displayState === "dismissed").length;
 
@@ -97,9 +101,7 @@ export default function ActionCenter() {
       {data && !isLoading && (
         <>
           <div className="flex flex-wrap gap-3 text-xs text-gray-600">
-            <span>
-              <span className="font-semibold text-gray-900">{activeCount}</span> active
-            </span>
+            <span className="font-medium text-gray-800">{view.summaryText}</span>
             {snoozedCount > 0 && (
               <span>
                 <span className="font-semibold text-gray-900">{snoozedCount}</span> snoozed
@@ -112,31 +114,54 @@ export default function ActionCenter() {
             )}
           </div>
 
-          <RecommendationsList
-            entries={entries}
-            emptyMessage={recommendationsEmptyMessage()}
-            onExecuteTransfer={(rec: DashboardRecommendation) => {
-              const preset = recommendationTransferPreset(rec);
-              if (preset) setTxnPreset(preset);
-            }}
-            onResolveRisk={setResolveRiskAccountId}
-            onDismiss={(id) => {
-              dismissRecommendation(id);
-              bumpRefresh();
-            }}
-            onSnooze={(id) => {
-              snoozeRecommendation(id);
-              bumpRefresh();
-            }}
-            onRestore={(id) => {
-              restoreRecommendation(id);
-              bumpRefresh();
-            }}
-            onUnsnooze={(id) => {
-              unsnoozeRecommendation(id);
-              bumpRefresh();
-            }}
-          />
+          {view.survival && (
+            <SurvivalModeBanner
+              entry={view.survival}
+              onDismiss={(id) => {
+                dismissRecommendation(id);
+                bumpRefresh();
+              }}
+              onSnooze={(id) => {
+                snoozeRecommendation(id);
+                bumpRefresh();
+              }}
+            />
+          )}
+
+          {(view.groups.length > 0 || view.inactive.length > 0) && (
+            <RecommendationsList
+              groups={view.groups}
+              inactive={view.inactive}
+              emptyMessage={recommendationsEmptyMessage()}
+              onExecuteTransfer={(rec: DashboardRecommendation) => {
+                const preset = recommendationTransferPreset(rec);
+                if (preset) setTxnPreset(preset);
+              }}
+              onResolveRisk={setResolveRiskAccountId}
+              onDismiss={(id) => {
+                dismissRecommendation(id);
+                bumpRefresh();
+              }}
+              onSnooze={(id) => {
+                snoozeRecommendation(id);
+                bumpRefresh();
+              }}
+              onRestore={(id) => {
+                restoreRecommendation(id);
+                bumpRefresh();
+              }}
+              onUnsnooze={(id) => {
+                unsnoozeRecommendation(id);
+                bumpRefresh();
+              }}
+            />
+          )}
+
+          {view.groups.length === 0 && view.inactive.length === 0 && !view.survival && (
+            <div className="rounded-lg border border-gray-200 bg-white p-2.5 text-sm text-gray-600">
+              {recommendationsEmptyMessage()}
+            </div>
+          )}
         </>
       )}
 
