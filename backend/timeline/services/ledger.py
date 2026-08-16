@@ -2473,6 +2473,34 @@ def _apply_scenario_category_shocks(
             break
 
 
+def build_forecast_projection_timeline(
+    user,
+    *,
+    today: date,
+    end_date: date,
+    caller: str,
+    scenario_id: Optional[int] = None,
+    account_id: Optional[int] = None,
+) -> list[dict]:
+    """
+    Canonical forward forecast timeline for Dashboard, Action Center, and account forecasts.
+
+    Matches the Transactions ledger when hide-reconciled-past is enabled: each account
+    opens at its latest reconciled balance and reconciled history rows are omitted.
+    """
+    return build_timeline(
+        user,
+        start_date=today,
+        end_date=end_date,
+        as_of_date=today,
+        scenario_id=scenario_id,
+        account_id=account_id,
+        projection_only=True,
+        exclude_reconciled_past=True,
+        caller=caller,
+    )
+
+
 def build_timeline(
     user,
     start_date: date,

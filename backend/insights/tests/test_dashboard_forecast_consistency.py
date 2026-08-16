@@ -288,3 +288,77 @@ def test_selected_forecast_window_changes_lowest_balance(
     assert Decimal(fast_30["lowest_projected_cash"]["amount"]) == Decimal("-1050.00")
     assert fast_30["lowest_projected_cash"]["date"] == SEP_10.isoformat()
     assert fast_30["first_cash_shortfall"]["date"] == SEP_10.isoformat()
+
+
+def test_action_center_first_negative_matches_dashboard_and_amount_covers_window(
+    user, household, main, expense_category, income_category
+):
+    """Dashboard first-cash-shortfall date and Action Center move-money share one forecast."""
+    from django.core.cache import cache
+
+    from recommendations.services.calculators import (
+        latest_safe_transfer_date,
+        transfer_amount_to_restore,
+    )
+    from recommendations.services.engine import (
+        build_recommendation_context,
+        build_recommendations,
+    )
+
+    Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.SAVINGS,
+        role=Account.AccountRole.SAVINGS,
+        name="Savings",
+        starting_balance=Decimal("5000.00"),
+        minimum_buffer=Decimal("0"),
+        currency="USD",
+    )
+    _txn(main, AUG_20, "Quicksilver C/C Payment", Decimal("-329.02"), expense_category)
+    _txn(main, AUG_20, "Utilities", Decimal("-712.00"), expense_category)
+    _txn(main, AUG_21, "Payroll", Decimal("1835.52"), income_category)
+    _txn(main, SEP_10, "Large planned bill", Decimal("-2700.00"), expense_category)
+
+    cache.clear()
+    fast = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
+    ctx = build_recommendation_context(user, days=30, as_of_date=AS_OF)
+    recs = build_recommendations(ctx, limit=20)
+    move = next(
+        rec for rec in recs if rec.get("type") == "move_money" and rec.get("account_id") == main.id
+    )
+
+    shortfall = fast["first_cash_shortfall"]
+    assert shortfall is not None
+    assert shortfall["date"] == AUG_20.isoformat()
+    assert shortfall["date"] == ctx.forecasts[main.id]["first_negative_date"]
+    assert "Aug 20" in move["why"]
+    assert move["recommended_date"] == latest_safe_transfer_date(AUG_20, today=AS_OF).isoformat()
+
+    needed = transfer_amount_to_restore(
+        Decimal(str(ctx.forecasts[main.id]["lowest_projected_balance"])),
+        Decimal(str(ctx.forecasts[main.id].get("minimum_buffer") or 0)),
+    )
+    assert Decimal(move["recommended_amount"]) == needed
+    assert needed == Decimal("905.50")
+    assert needed != abs(Decimal(shortfall["amount"]))
+    assert "lowest projected balance" in move["recommended_action"]
+    assert "avoid the shortfall" not in move["recommended_action"]
+
+
+def test_recommendation_context_uses_reconciliation_aware_timeline(user, household):
+    from unittest.mock import patch
+
+    from django.core.cache import cache
+
+    from recommendations.services.engine import build_recommendation_context
+
+    cache.clear()
+    with patch(
+        "recommendations.services.engine.build_forecast_projection_timeline",
+        return_value=[],
+    ) as mock_build:
+        build_recommendation_context(user, days=30, as_of_date=AS_OF)
+    mock_build.assert_called_once()
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["today"] == AS_OF
+    assert kwargs["end_date"] == AS_OF + timedelta(days=30)

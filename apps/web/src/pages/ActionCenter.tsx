@@ -114,19 +114,7 @@ export default function ActionCenter() {
             )}
           </div>
 
-          {view.survival && (
-            <SurvivalModeBanner
-              entry={view.survival}
-              onDismiss={(id) => {
-                dismissRecommendation(id);
-                bumpRefresh();
-              }}
-              onSnooze={(id) => {
-                snoozeRecommendation(id);
-                bumpRefresh();
-              }}
-            />
-          )}
+          {view.survival && <SurvivalModeBanner entry={view.survival} />}
 
           {(view.groups.length > 0 || view.inactive.length > 0) && (
             <RecommendationsList

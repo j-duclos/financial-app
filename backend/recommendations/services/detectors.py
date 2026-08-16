@@ -18,9 +18,11 @@ from accounts.services.available_to_spend import (
 )
 from recommendations.services.calculators import (
     UTILIZATION_TARGETS,
+    account_available_for_transfer,
     format_money,
     format_short_date,
     is_category_discretionary,
+    parse_forecast_date,
     payment_to_reach_utilization,
     rule_allows_payment_delay,
     transfer_amount_to_restore,
@@ -70,8 +72,6 @@ def detect_move_money_opportunities(
         forecast = ctx.forecasts.get(acc.id)
         if not forecast or not forecast.get("supports_available_to_spend"):
             continue
-        from recommendations.services.calculators import account_available_for_transfer
-
         avail = account_available_for_transfer(acc, forecast)
         if avail >= Decimal("100"):
             donors.append((acc, avail))
@@ -88,32 +88,59 @@ def detect_move_money_opportunities(
         status = forecast.get("risk_status")
         if status not in (RISK_STATUS_CRITICAL, RISK_STATUS_RISK):
             continue
-        amount = transfer_amount_to_restore(lowest, buffer)
-        if amount <= 0:
+        needed = transfer_amount_to_restore(lowest, buffer)
+        if needed <= 0:
             continue
-        risk_date_str = forecast.get("risk_date")
-        risk_date = date.fromisoformat(risk_date_str[:10]) if risk_date_str else ctx.today + timedelta(days=7)
-        donor = next((d for d, avail in donors if d.id != acc.id and avail >= amount), None)
-        if not donor and donors:
-            donor, _ = donors[0]
-            amount = min(amount, donors[0][1])
-        if not donor:
-            continue
-        dest_name = acc.effective_display_name
-        # Prefer the same first-negative date the dashboard uses; fall back to risk_date.
-        negative_raw = forecast.get("first_negative_date") or risk_date_str
-        display_date = (
-            date.fromisoformat(negative_raw[:10]) if negative_raw else risk_date
+        first_negative = parse_forecast_date(forecast.get("first_negative_date"))
+        lowest_date = parse_forecast_date(forecast.get("lowest_projected_balance_date"))
+        risk_date = parse_forecast_date(forecast.get("risk_date")) or (
+            ctx.today + timedelta(days=7)
         )
+        # CRITICAL: first day projected balance goes below $0 (same field as Dashboard).
+        # RISK: first buffer breach / risk_date. Transfer-by is derived from this date.
+        shortfall_date = (
+            (first_negative or risk_date) if status == RISK_STATUS_CRITICAL else risk_date
+        )
+        eligible = [(d, avail) for d, avail in donors if d.id != acc.id]
+        if not eligible:
+            continue
+        full_donor = next((d for d, avail in eligible if avail >= needed), None)
+        if full_donor is not None:
+            donor = full_donor
+            amount = needed
+            remaining = Decimal("0")
+            partial = False
+        else:
+            donor, avail = eligible[0]
+            if avail <= 0:
+                continue
+            amount = avail
+            remaining = needed - amount
+            partial = True
+        dest_name = acc.effective_display_name
+        donor_name = donor.effective_display_name
         if status == RISK_STATUS_CRITICAL:
             reason = (
-                f"{dest_name} is projected to fall below $0 on {format_short_date(display_date)}."
+                f"{dest_name} is projected to fall below $0 on "
+                f"{format_short_date(shortfall_date)}."
             )
         else:
             reason = (
                 f"{dest_name} is projected to fall below your buffer on "
                 f"{format_short_date(risk_date)}."
             )
+        if partial:
+            improvement = (
+                f"Covers part of the shortfall. Remaining after transfer: "
+                f"${format_money(remaining)}."
+            )
+        elif buffer > 0:
+            improvement = (
+                "Covers the lowest projected balance in the forecast window "
+                "and restores the safety buffer."
+            )
+        else:
+            improvement = "Covers the lowest projected balance in the forecast window."
         out.append(
             Detection(
                 kind="move_money",
@@ -121,12 +148,24 @@ def detect_move_money_opportunities(
                 account_id=acc.id,
                 related_account_id=donor.id,
                 amount=amount,
-                target_date=risk_date,
+                target_date=shortfall_date,
                 reason=reason,
-                projected_improvement="Avoids overdraft and restores buffer.",
+                projected_improvement=improvement,
                 extra={
-                    "donor_name": donor.effective_display_name,
+                    "donor_name": donor_name,
                     "dest_name": dest_name,
+                    "first_negative_date": (
+                        first_negative.isoformat() if first_negative else None
+                    ),
+                    "lowest_projected_balance": str(lowest),
+                    "lowest_projected_balance_date": (
+                        lowest_date.isoformat() if lowest_date else None
+                    ),
+                    "needed_amount": str(needed),
+                    "remaining_shortfall": str(remaining) if partial else "0",
+                    "partial": partial,
+                    "forecast_days": ctx.days,
+                    "minimum_buffer": str(buffer),
                 },
             )
         )

@@ -3,7 +3,7 @@ Deterministic financial calculations for recommendations.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -55,6 +55,20 @@ def format_short_date(d: date | str | None) -> str | None:
     return d.strftime("%b %d").replace(" 0", " ")
 
 
+def parse_forecast_date(value: date | str | None) -> date | None:
+    """Parse a forecast date field that may be a date, datetime, or ISO string."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def utilization_percent(balance: Decimal, limit: Decimal) -> Decimal | None:
     if limit <= 0:
         return None
@@ -81,6 +95,14 @@ def transfer_amount_to_restore(
     *,
     restore_to_buffer: bool = True,
 ) -> Decimal:
+    """
+    Dollars to transfer so the account's lowest projected balance in the forecast
+    window stays at the safety buffer (or $0 when no buffer is configured).
+
+    This is a window-cover amount, not the first-below-zero shortfall:
+    if lowest < 0, returns abs(lowest) + buffer; if 0 <= lowest < buffer,
+    returns buffer - lowest.
+    """
     if lowest_balance < Decimal("0"):
         return quantize_money(abs(lowest_balance) + minimum_buffer)
     if restore_to_buffer and lowest_balance < minimum_buffer:

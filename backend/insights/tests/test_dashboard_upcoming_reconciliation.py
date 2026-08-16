@@ -156,13 +156,15 @@ def reconciled_main_scenario(user, main, expense_category):
 def test_dashboard_timeline_uses_exclude_reconciled_past(user):
     today = AS_OF
     end = today + timedelta(days=30)
-    with patch("insights.services.dashboard_summary.build_timeline", return_value=[]) as mock_build:
+    with patch("timeline.services.ledger.build_timeline", return_value=[]) as mock_build:
         _build_dashboard_timeline(user, today=today, end_date=end, caller="dashboard_summary")
     mock_build.assert_called_once_with(
         user,
         start_date=today,
         end_date=end,
         as_of_date=today,
+        scenario_id=None,
+        account_id=None,
         projection_only=True,
         exclude_reconciled_past=True,
         caller="dashboard_summary",

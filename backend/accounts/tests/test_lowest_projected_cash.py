@@ -348,7 +348,7 @@ def test_dashboard_uses_forecasts_not_second_timeline(user, main, expense_catego
             patch("accounts.services.lowest_projected_cash.get_lowest_projected_cash")
         )
         mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+            patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
         )
         stack.enter_context(
             patch(

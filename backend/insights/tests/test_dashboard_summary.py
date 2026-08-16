@@ -813,7 +813,7 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
 
     with ExitStack() as stack:
         mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+            patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
         )
         mock_forecast = stack.enter_context(
             patch(
@@ -863,9 +863,8 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
         _build_dashboard_summary(user, days=30, as_of_date=AS_OF)
 
     assert mock_build.call_count == 1
-    assert mock_build.call_args.kwargs.get("projection_only") is True
     assert mock_build.call_args.kwargs.get("caller") == "dashboard_summary"
-    assert mock_build.call_args.kwargs["start_date"] == AS_OF
+    assert mock_build.call_args.kwargs["today"] == AS_OF
     assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=30)
     shared_rows = mock_build.return_value
     assert mock_forecast.call_args.kwargs["timeline_rows"] is shared_rows
@@ -878,7 +877,7 @@ def test_dashboard_fast_mode_skips_heavy_phases(user, checking):
     from contextlib import ExitStack
 
     with ExitStack() as stack:
-        stack.enter_context(patch("insights.services.dashboard_summary.build_timeline", return_value=[]))
+        stack.enter_context(patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[]))
         stack.enter_context(
             patch(
                 "insights.services.dashboard_summary.calculate_forecast_summaries_for_accounts",
@@ -944,7 +943,7 @@ def test_dashboard_details_reuses_shared_context_timeline(user, checking):
 
     with ExitStack() as stack:
         mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+            patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
         )
         stack.enter_context(
             patch(
@@ -1100,7 +1099,7 @@ def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
     for days, expected_end in ((60, AS_OF + timedelta(days=60)), (90, AS_OF + timedelta(days=90))):
         with ExitStack() as stack:
             mock_build = stack.enter_context(
-                patch("insights.services.dashboard_summary.build_timeline", return_value=[])
+                patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
             )
             stack.enter_context(
                 patch(
@@ -1149,13 +1148,13 @@ def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
             mock_rec_ctx.return_value = object()
             _build_dashboard_summary(user, days=days, as_of_date=AS_OF)
 
-        assert mock_build.call_args.kwargs["start_date"] == AS_OF
+        assert mock_build.call_args.kwargs["today"] == AS_OF
         assert mock_build.call_args.kwargs["end_date"] == expected_end
 
 
 def test_forecast_summaries_reuse_precomputed_timeline(user, checking):
     """Passing timeline_rows skips an internal build_timeline call."""
-    with patch("accounts.services.available_to_spend.build_timeline") as mock_build:
+    with patch("accounts.services.available_to_spend.build_forecast_projection_timeline") as mock_build:
         mock_build.return_value = []
         calculate_forecast_summaries_for_accounts(
             user,

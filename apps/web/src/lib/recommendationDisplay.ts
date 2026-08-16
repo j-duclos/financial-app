@@ -19,6 +19,10 @@ export type RecommendationListEntry = {
   displayState: RecommendationDisplayState;
 };
 
+export function isSurvivalModeId(id: string | null | undefined): boolean {
+  return id === "survival-mode";
+}
+
 import { normalizePaymentActionLabel, PAYMENT_PLANNER_LABEL } from "./paymentPlannerDisplay";
 import { SPENDING_GOALS_PATH, VIEW_BUDGET_LABEL } from "./spendingTargetDisplay";
 
@@ -45,12 +49,14 @@ export function loadDismissedRecommendationIds(): Set<string> {
 }
 
 export function dismissRecommendation(id: string): void {
+  if (isSurvivalModeId(id)) return;
   const map = readMap(DISMISS_STORAGE_KEY);
   map[id] = Date.now();
   writeMap(DISMISS_STORAGE_KEY, map);
 }
 
 export function snoozeRecommendation(id: string): void {
+  if (isSurvivalModeId(id)) return;
   const map = readMap(SNOOZE_STORAGE_KEY);
   map[id] = Date.now() + SNOOZE_MS;
   writeMap(SNOOZE_STORAGE_KEY, map);
@@ -131,11 +137,13 @@ export function recommendationsForActionCenter(
     .filter((r) => !isHealthyRecommendationSeverity(r.severity))
     .map((rec) => ({
       rec,
-      displayState: dismissed.has(rec.id)
-        ? "dismissed"
-        : snoozed.has(rec.id)
-          ? "snoozed"
-          : "active",
+      displayState: isSurvivalModeRecommendation(rec)
+        ? "active"
+        : dismissed.has(rec.id)
+          ? "dismissed"
+          : snoozed.has(rec.id)
+            ? "snoozed"
+            : "active",
     }))
     .sort((a, b) => {
       const stateOrder = { active: 0, snoozed: 1, dismissed: 2 };
@@ -276,7 +284,7 @@ export function sanitizeRecommendationCopy(text: string | null | undefined): str
 }
 
 export function isSurvivalModeRecommendation(rec: DashboardRecommendation): boolean {
-  return rec.type === "survival_mode" || rec.id === "survival-mode";
+  return rec.type === "survival_mode" || isSurvivalModeId(rec.id);
 }
 
 export function recommendationPrimaryCtaLabel(rec: DashboardRecommendation): string {

@@ -80,7 +80,7 @@ from insights.services.dashboard_upcoming import (
     build_upcoming_groups,
     load_transfer_rule_context,
 )
-from timeline.services.ledger import build_timeline
+from timeline.services.ledger import build_forecast_projection_timeline
 from transactions.models import Transaction
 
 ATTENTION_TOP_LIMIT = 3
@@ -1148,13 +1148,10 @@ def _build_dashboard_timeline(
     Matches the Transactions page when hide-reconciled-past is enabled: each account
     opens at its latest reconciled balance and reconciled history rows are omitted.
     """
-    return build_timeline(
+    return build_forecast_projection_timeline(
         user,
-        start_date=today,
+        today=today,
         end_date=end_date,
-        as_of_date=today,
-        projection_only=True,
-        exclude_reconciled_past=True,
         caller=caller,
     )
 

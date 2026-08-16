@@ -28,10 +28,16 @@ describe("Action Center page structure", () => {
     expect(actionCenterSource).not.toMatch(/activeCount/);
   });
 
-  it("preserves snooze and dismiss wiring", () => {
+  it("preserves snooze and dismiss wiring for normal recommendations, not survival", () => {
     expect(actionCenterSource).toMatch(/snoozeRecommendation/);
     expect(actionCenterSource).toMatch(/dismissRecommendation/);
     expect(actionCenterSource).toMatch(/unsnoozeRecommendation/);
     expect(actionCenterSource).toMatch(/restoreRecommendation/);
+    const bannerCall = actionCenterSource.slice(
+      actionCenterSource.indexOf("{view.survival &&"),
+      actionCenterSource.indexOf("RecommendationsList")
+    );
+    expect(bannerCall).not.toMatch(/onSnooze/);
+    expect(bannerCall).not.toMatch(/onDismiss/);
   });
 });

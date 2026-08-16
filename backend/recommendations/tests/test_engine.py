@@ -9,6 +9,8 @@ from accounts.services.available_to_spend import RISK_STATUS_CRITICAL
 from categories.models import Category
 from core.models import Household, HouseholdMembership
 from recommendations.services.calculators import (
+    latest_safe_transfer_date,
+    parse_forecast_date,
     payment_to_reach_utilization,
     priority_score,
     rule_allows_payment_delay,
@@ -95,6 +97,19 @@ class TestCalculators:
     def test_transfer_amount_negative_balance(self):
         assert transfer_amount_to_restore(Decimal("-42"), Decimal("200")) == Decimal("242.00")
 
+    def test_latest_safe_transfer_date_is_two_days_before_unless_clamped(self):
+        today = date(2026, 8, 15)
+        assert latest_safe_transfer_date(date(2026, 8, 20), today=today) == date(2026, 8, 18)
+        assert latest_safe_transfer_date(date(2026, 8, 16), today=today) == today
+
+    def test_parse_forecast_date_accepts_date_datetime_and_iso(self):
+        from datetime import datetime
+
+        assert parse_forecast_date(date(2026, 8, 20)) == date(2026, 8, 20)
+        assert parse_forecast_date("2026-08-20") == date(2026, 8, 20)
+        assert parse_forecast_date(datetime(2026, 8, 20, 12, 0, 0)) == date(2026, 8, 20)
+        assert parse_forecast_date(None) is None
+
     def test_payment_to_utilization(self):
         owed = Decimal("4000")
         limit = Decimal("5000")
@@ -151,7 +166,10 @@ class TestGenerators:
         assert rec["type"] == "move_money"
         assert rec["title"] == "Move $300.00 from Savings to Main"
         assert rec["why"] == det.reason
-        assert rec["recommended_action"] == "Transfer $300.00 before Jun 9 to avoid the shortfall."
+        assert rec["recommended_action"] == (
+            "Transfer $300.00 by Jun 9 to cover the lowest projected "
+            "balance in the next 30 days."
+        )
         assert rec["primary_action_label"] == "Transfer $300.00"
         assert rec["secondary_action_label"] == "View forecast"
         assert rec["recommended_amount"] == "300.00"
@@ -232,6 +250,27 @@ class TestDetectors:
         )
         assert detect_survival_mode(ctx) is True
 
+    def test_survival_mode_off_when_condition_false(self, checking, savings):
+        ctx = RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=[checking, savings],
+            accounts_by_id={checking.id: checking, savings.id: savings},
+            forecasts={
+                checking.id: {"risk_status": "healthy"},
+                savings.id: {"risk_status": "healthy"},
+            },
+            st_aggregate={"total_safe_to_spend": "500"},
+            timeline_rows=[],
+            health_by_id={},
+        )
+        assert detect_survival_mode(ctx) is False
+        from recommendations.services.detectors import detect_survival_recommendations
+
+        ctx.survival_mode = False
+        assert detect_survival_recommendations(ctx) == []
+
     def test_move_money_finds_donor(self, checking, savings):
         ctx = RecommendationContext(
             user=None,
@@ -264,7 +303,51 @@ class TestDetectors:
         assert any(d.kind == "move_money" for d in dets)
         move = next(d for d in dets if d.kind == "move_money")
         assert "Main is projected to fall below $0 on" in move.reason
+        assert "Jun 6" in move.reason
+        assert move.target_date == AS_OF + timedelta(days=5)
+        assert move.amount == Decimal("250.00")
+        assert move.extra and move.extra.get("partial") is False
+        assert move.extra.get("needed_amount") == "250.00"
         assert "placeholder" not in move.reason.lower()
+
+    def test_move_money_partial_when_donor_cannot_cover(self, checking, savings):
+        ctx = RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=[checking, savings],
+            accounts_by_id={checking.id: checking, savings.id: savings},
+            forecasts={
+                checking.id: {
+                    "supports_available_to_spend": True,
+                    "risk_status": RISK_STATUS_CRITICAL,
+                    "lowest_projected_balance": "-2000",
+                    "lowest_projected_balance_date": (AS_OF + timedelta(days=20)).isoformat(),
+                    "minimum_buffer": "200",
+                    "risk_date": (AS_OF + timedelta(days=5)).isoformat(),
+                    "first_negative_date": (AS_OF + timedelta(days=5)).isoformat(),
+                },
+                savings.id: {
+                    "supports_available_to_spend": True,
+                    "lowest_projected_balance": "400",
+                    "minimum_buffer": "100",
+                    "current_balance": "400",
+                },
+            },
+            st_aggregate={},
+            timeline_rows=[],
+            health_by_id={},
+        )
+        dets = detect_move_money_opportunities(ctx)
+        move = next(d for d in dets if d.kind == "move_money")
+        assert move.extra and move.extra["partial"] is True
+        assert move.amount == Decimal("300.00")
+        assert move.extra["needed_amount"] == "2200.00"
+        assert move.extra["remaining_shortfall"] == "1900.00"
+        rec = generate_from_detection(move, ctx)
+        assert "toward Main" in rec["title"]
+        assert "Remaining shortfall after transfer: $1900.00" in rec["recommended_action"]
+        assert "avoid the shortfall" not in rec["recommended_action"]
 
 
 @pytest.mark.django_db

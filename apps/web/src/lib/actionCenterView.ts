@@ -161,20 +161,12 @@ export function buildActionCenterView(entries: RecommendationListEntry[]): Actio
     return compareRecommendationsByPriority(a.rec, b.rec);
   });
 
-  const survivalActive =
-    consolidated.find(
-      (entry) => isSurvivalModeRecommendation(entry.rec) && entry.displayState === "active"
-    ) ?? null;
-  const survivalInactive = consolidated.filter(
-    (entry) => isSurvivalModeRecommendation(entry.rec) && entry.displayState !== "active"
-  );
+  const survival =
+    consolidated.find((entry) => isSurvivalModeRecommendation(entry.rec)) ?? null;
 
   const actionEntries = consolidated.filter((entry) => !isSurvivalModeRecommendation(entry.rec));
   const activeActions = actionEntries.filter((entry) => entry.displayState === "active");
-  const inactive = [
-    ...survivalInactive,
-    ...actionEntries.filter((entry) => entry.displayState !== "active"),
-  ];
+  const inactive = actionEntries.filter((entry) => entry.displayState !== "active");
 
   const grouped = new Map<ActionUrgencyGroup, RecommendationListEntry[]>();
   for (const key of ACTION_URGENCY_GROUPS) grouped.set(key, []);
@@ -205,7 +197,7 @@ export function buildActionCenterView(entries: RecommendationListEntry[]): Actio
   };
 
   return {
-    survival: survivalActive,
+    survival,
     groups,
     inactive,
     summary,

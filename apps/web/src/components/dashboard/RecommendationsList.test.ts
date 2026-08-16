@@ -28,5 +28,11 @@ describe("RecommendationsList presentation", () => {
   it("renders survival mode as a compact banner, not a grid card", () => {
     expect(source).toMatch(/function SurvivalModeBanner/);
     expect(source).toMatch(/Review survival plan|recommendationPrimaryCtaLabel/);
+    const banner = source.slice(
+      source.indexOf("function SurvivalModeBanner"),
+      source.indexOf("function RecommendationCard")
+    );
+    expect(banner).not.toMatch(/Snooze/);
+    expect(banner).not.toMatch(/Dismiss/);
   });
 });

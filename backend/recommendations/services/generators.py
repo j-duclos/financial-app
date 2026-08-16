@@ -4,6 +4,7 @@ Turn detections into recommendation DTOs with explainable copy.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 from recommendations.services.calculators import (
     format_money,
@@ -87,8 +88,37 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
     transfer_date = latest_safe_transfer_date(det.target_date or ctx.today, today=ctx.today)
     date_label = format_short_date(transfer_date)
     amount_label = format_money(amount)
-    title = f"Move ${amount_label} from {donor} to {dest}"
-    action = f"Transfer ${amount_label} before {date_label} to avoid the shortfall."
+    partial = bool(extra.get("partial"))
+    remaining = extra.get("remaining_shortfall")
+    forecast_days = extra.get("forecast_days") or ctx.days
+    buffer = extra.get("minimum_buffer")
+    has_buffer = False
+    if buffer is not None:
+        try:
+            has_buffer = Decimal(str(buffer)) > 0
+        except Exception:
+            has_buffer = False
+    if partial:
+        title = f"Move ${amount_label} from {donor} toward {dest}"
+        remaining_label = None
+        if remaining is not None and str(remaining) != "":
+            remaining_label = format_money(Decimal(str(remaining)))
+        if remaining_label:
+            action = (
+                f"Transfer ${amount_label} (all available from {donor}) toward {dest}. "
+                f"Remaining shortfall after transfer: ${remaining_label}."
+            )
+        else:
+            action = (
+                f"Transfer ${amount_label} (all available from {donor}) toward {dest}."
+            )
+    else:
+        title = f"Move ${amount_label} from {donor} to {dest}"
+        buffer_clause = " and restore your safety buffer" if has_buffer else ""
+        action = (
+            f"Transfer ${amount_label} by {date_label} to cover the lowest projected "
+            f"balance in the next {forecast_days} days{buffer_clause}."
+        )
     return make_recommendation(
         f"move-money-{det.related_account_id}-{det.account_id}",
         "move_money",

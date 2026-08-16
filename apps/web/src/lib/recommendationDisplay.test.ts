@@ -221,6 +221,39 @@ describe("recommendationDisplay", () => {
     expect(entries[0].displayState).toBe("snoozed");
   });
 
+  it("keeps survival mode active even if snoozed or dismissed in storage", () => {
+    const survival: DashboardRecommendation = {
+      id: "survival-mode",
+      type: "survival_mode",
+      severity: "critical",
+      title: "Survival mode recommended",
+      why: "Multiple accounts are projected to fall below zero.",
+      recommended_action: null,
+      impact_label: null,
+      impact_value: null,
+      primary_action_label: "Review survival plan",
+      primary_action_url: "/credit-cards?mode=survival",
+      primary_action_type: "navigate",
+      secondary_action_label: null,
+      secondary_action_url: null,
+      secondary_action_type: null,
+    };
+    const snoozed = recommendationsForActionCenter(
+      [survival],
+      undefined,
+      new Set(),
+      new Set(["survival-mode"])
+    );
+    expect(snoozed[0]?.displayState).toBe("active");
+    const dismissed = recommendationsForActionCenter(
+      [survival],
+      undefined,
+      new Set(["survival-mode"]),
+      new Set()
+    );
+    expect(dismissed[0]?.displayState).toBe("active");
+  });
+
   it("sorts critical before watch", () => {
     const critical: DashboardRecommendation = {
       id: "c",

@@ -31,7 +31,7 @@ from recommendations.services.detectors import run_all_detectors
 from recommendations.services.generators import generate_from_detection, spending_action_title
 from recommendations.services.serializers import to_dashboard_recommendation
 from timeline.models import RecurringRule
-from timeline.services.ledger import build_timeline
+from timeline.services.ledger import build_forecast_projection_timeline
 
 RECOMMENDATION_LIMIT = 8
 DASHBOARD_RECOMMENDATION_LIMIT = 5
@@ -206,14 +206,12 @@ def build_recommendation_context(
     owed_balances = owed_balances_from_signed(signed_balances)
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
+        timeline_rows = build_forecast_projection_timeline(
             user,
-            start_date=today,
+            today=today,
             end_date=window_end,
-            as_of_date=today,
-            scenario_id=scenario_id,
-            projection_only=True,
             caller="forecast_summary",
+            scenario_id=scenario_id,
         )
 
     if forecasts is None:

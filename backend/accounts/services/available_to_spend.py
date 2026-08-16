@@ -32,7 +32,7 @@ from common.services.profiler import (
 )
 from timeline.services.ledger import (
     _balance_at_end_of_date,
-    build_timeline,
+    build_forecast_projection_timeline,
     forecast_account_balance_metrics,
 )
 
@@ -267,14 +267,12 @@ def _calculate_account_forecast_summary(
     current_balance = ledger_today_balance_before_pending(account, today)
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
+        timeline_rows = build_forecast_projection_timeline(
             user,
-            start_date=window_start,
+            today=today,
             end_date=window_end,
-            account_id=account.pk,
-            as_of_date=today,
-            projection_only=True,
             caller="forecast_summary",
+            account_id=account.pk,
         )
 
     by_date, inflows, outflows, committed_outflows = _summarize_future_rows(
@@ -523,12 +521,10 @@ def _calculate_forecast_summaries_for_accounts(
     built_timeline: list[dict] | None = None
     if timeline_rows is None:
         _phase_timeline = phase_start(timer, "timeline_build")
-        timeline_rows = build_timeline(
+        timeline_rows = build_forecast_projection_timeline(
             user,
-            start_date=today,
+            today=today,
             end_date=window_end,
-            as_of_date=today,
-            projection_only=True,
             caller="forecast_summary",
         )
         built_timeline = timeline_rows

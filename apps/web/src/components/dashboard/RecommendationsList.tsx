@@ -40,12 +40,8 @@ const secondaryButtonClass =
 
 export function SurvivalModeBanner({
   entry,
-  onDismiss,
-  onSnooze,
 }: {
   entry: RecommendationListEntry;
-  onDismiss?: (id: string) => void;
-  onSnooze?: (id: string) => void;
 }) {
   const { rec } = entry;
   const tokens = severityTokens("critical");
@@ -66,31 +62,6 @@ export function SurvivalModeBanner({
         <Link to={href} className={primaryButtonClass}>
           {recommendationPrimaryCtaLabel(rec)}
         </Link>
-        <div className="flex items-center gap-0.5 text-xs text-gray-600">
-          {onSnooze && (
-            <>
-              <button
-                type="button"
-                onClick={() => onSnooze(rec.id)}
-                className="rounded px-2 py-1 font-medium hover:bg-black/5 hover:text-gray-900"
-              >
-                Snooze
-              </button>
-              <span className="text-gray-300" aria-hidden>
-                ·
-              </span>
-            </>
-          )}
-          {onDismiss && (
-            <button
-              type="button"
-              onClick={() => onDismiss(rec.id)}
-              className="rounded px-2 py-1 font-medium hover:bg-black/5 hover:text-gray-900"
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
       </div>
     </aside>
   );

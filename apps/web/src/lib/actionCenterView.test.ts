@@ -96,22 +96,24 @@ describe("actionCenterView grouping", () => {
     expect(view.inactive.map((e) => e.rec.id)).toEqual(["c1"]);
   });
 
-  it("keeps snoozed survival out of the banner and out of action counts", () => {
-    const view = buildActionCenterView([
-      entry(
-        rec({
-          id: "survival-mode",
-          type: "survival_mode",
-          title: "Survival mode recommended",
-          severity: "critical",
-        }),
-        "snoozed"
-      ),
+  it("shows survival whenever the derived rec is present, ignoring snooze/dismiss", () => {
+    const survival = rec({
+      id: "survival-mode",
+      type: "survival_mode",
+      title: "Survival mode recommended",
+      severity: "critical",
+    });
+    const snoozed = buildActionCenterView([entry(survival, "snoozed")]);
+    expect(snoozed.survival?.rec.id).toBe("survival-mode");
+    expect(snoozed.inactive.map((e) => e.rec.id)).not.toContain("survival-mode");
+
+    const dismissed = buildActionCenterView([entry(survival, "dismissed")]);
+    expect(dismissed.survival?.rec.id).toBe("survival-mode");
+
+    const gone = buildActionCenterView([
       entry(rec({ id: "w1", title: "Watch", severity: "info" })),
     ]);
-    expect(view.survival).toBeNull();
-    expect(view.inactive.map((e) => e.rec.id)).toContain("survival-mode");
-    expect(view.summary.total).toBe(1);
+    expect(gone.survival).toBeNull();
   });
 
   it("summary matches rendered active cards after consolidation", () => {
