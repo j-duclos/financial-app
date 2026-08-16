@@ -17,7 +17,7 @@ describe("Dashboard page structure", () => {
   it("includes action-focused overview sections in priority order", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);
-    expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
+    expect(dashboardSource).toMatch(/first_cash_shortfall/);
     expect(dashboardSource).toMatch(/GoalsPreviewSection/);
 
     const healthIdx = dashboardSource.indexOf("<DashboardTopSummaryBar");
@@ -38,9 +38,12 @@ describe("Dashboard page structure", () => {
     );
     expect(previewSource).not.toMatch(/UpcomingList/);
     expect(previewSource).toMatch(/UPCOMING_PREVIEW_TRANSFER_FOOTER/);
-    expect(previewSource).not.toMatch(/balance_after/);
+    expect(previewSource).toMatch(/balance_after/);
+    expect(previewSource).toMatch(/upcomingFullTimelineLinkLabel/);
+    expect(previewSource).not.toMatch(/Projected end-of-day balance/);
+    expect(previewSource).not.toMatch(/PreviewDaySummary/);
     const calendarLinks = previewSource.match(/to=\{UPCOMING_CALENDAR_PATH\}/g) ?? [];
-    expect(calendarLinks).toHaveLength(1);
+    expect(calendarLinks).toHaveLength(2);
   });
 
   it("does not render resource breakdown or legacy dashboard widgets", () => {

@@ -119,6 +119,7 @@ def test_dashboard_summary_api_returns_lowest_projected_cash(auth_client, checki
     assert r.status_code == 200
     data = r.json()
     assert "lowest_projected_cash" in data
+    assert "first_cash_shortfall" in data
     assert "safe_to_spend" in data
     lpc = data["lowest_projected_cash"]
     if lpc is not None:
@@ -143,6 +144,7 @@ def test_dashboard_summary_fast_api_returns_above_the_fold(auth_client, checking
     assert r.status_code == 200
     data = r.json()
     assert "lowest_projected_cash" in data
+    assert "first_cash_shortfall" in data
     assert "safe_to_spend" in data
     assert "top_summary" in data
     assert "attention" in data
@@ -169,6 +171,7 @@ def test_dashboard_fast_and_details_match_full_summary(user, checking):
     full_details = _extract_dashboard_details(full)
 
     assert fast["lowest_projected_cash"] == full["lowest_projected_cash"]
+    assert fast["first_cash_shortfall"] == full.get("first_cash_shortfall")
     assert fast["safe_to_spend"] == full["safe_to_spend"]
     assert fast["top_summary"] == full["top_summary"]
     assert fast["attention"] == full["attention"]

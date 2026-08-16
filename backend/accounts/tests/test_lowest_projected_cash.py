@@ -217,6 +217,8 @@ def test_from_forecasts_picks_single_lowest_main_over_bills(user, main, bills):
             "supports_available_to_spend": True,
             "lowest_projected_balance": "-298.74",
             "lowest_projected_balance_date": "2026-07-08",
+            "first_negative_date": "2026-07-03",
+            "first_negative_balance": "-40.00",
             "minimum_buffer": "1000",
             "bucket_allocation": "2000",
             "available_to_spend": "-3298.74",
@@ -225,6 +227,8 @@ def test_from_forecasts_picks_single_lowest_main_over_bills(user, main, bills):
             "supports_available_to_spend": True,
             "lowest_projected_balance": "200.00",
             "lowest_projected_balance_date": "2026-07-10",
+            "first_negative_date": None,
+            "first_negative_balance": None,
             "minimum_buffer": "100",
             "bucket_allocation": "0",
             "available_to_spend": "100.00",
@@ -238,6 +242,80 @@ def test_from_forecasts_picks_single_lowest_main_over_bills(user, main, bills):
     assert result["account_name"] == "Main"
     assert result["date"] == "2026-07-08"
     assert result["is_negative"] is True
+
+
+def test_first_cash_shortfall_is_earliest_below_zero_not_lowest(user, main, bills):
+    """First shortfall can be milder and earlier than the window's lowest point."""
+    from accounts.services.lowest_projected_cash import get_first_cash_shortfall_from_forecasts
+
+    forecasts = {
+        main.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "-863.41",
+            "lowest_projected_balance_date": "2026-09-10",
+            "first_negative_date": "2026-08-20",
+            "first_negative_balance": "-41.28",
+        },
+        bills.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "-200.00",
+            "lowest_projected_balance_date": "2026-08-25",
+            "first_negative_date": "2026-08-25",
+            "first_negative_balance": "-200.00",
+        },
+    }
+    lowest = get_lowest_projected_cash_from_forecasts([main, bills], forecasts)
+    shortfall = get_first_cash_shortfall_from_forecasts([main, bills], forecasts)
+
+    assert lowest is not None
+    assert lowest["amount"] == "-863.41"
+    assert lowest["date"] == "2026-09-10"
+    assert shortfall is not None
+    assert shortfall["date"] == "2026-08-20"
+    assert shortfall["amount"] == "-41.28"
+    assert shortfall["account_id"] == main.id
+    assert Decimal(lowest["amount"]) < Decimal(shortfall["amount"])
+    assert shortfall["date"] < lowest["date"]
+
+
+def test_first_cash_shortfall_none_when_all_positive(user, main):
+    from accounts.services.lowest_projected_cash import get_first_cash_shortfall_from_forecasts
+
+    forecasts = {
+        main.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "200.00",
+            "lowest_projected_balance_date": "2026-08-20",
+            "first_negative_date": None,
+            "first_negative_balance": None,
+        },
+    }
+    assert get_first_cash_shortfall_from_forecasts([main], forecasts) is None
+
+
+def test_first_cash_shortfall_excludes_credit_cards(user, main, credit_card):
+    from accounts.services.lowest_projected_cash import get_first_cash_shortfall_from_forecasts
+
+    forecasts = {
+        credit_card.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "-5000.00",
+            "lowest_projected_balance_date": "2026-08-18",
+            "first_negative_date": "2026-08-18",
+            "first_negative_balance": "-5000.00",
+        },
+        main.id: {
+            "supports_available_to_spend": True,
+            "lowest_projected_balance": "-10.00",
+            "lowest_projected_balance_date": "2026-08-22",
+            "first_negative_date": "2026-08-22",
+            "first_negative_balance": "-10.00",
+        },
+    }
+    shortfall = get_first_cash_shortfall_from_forecasts([main, credit_card], forecasts)
+    assert shortfall is not None
+    assert shortfall["account_id"] == main.id
+    assert shortfall["date"] == "2026-08-22"
 
 
 def test_dashboard_uses_forecasts_not_second_timeline(user, main, expense_category):
@@ -267,7 +345,7 @@ def test_dashboard_uses_forecasts_not_second_timeline(user, main, expense_catego
             ),
         )
         mock_timeline_lpc = stack.enter_context(
-            patch("insights.services.dashboard_summary.get_lowest_projected_cash")
+            patch("accounts.services.lowest_projected_cash.get_lowest_projected_cash")
         )
         mock_build = stack.enter_context(
             patch("insights.services.dashboard_summary.build_timeline", return_value=[])

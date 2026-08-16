@@ -4,7 +4,9 @@ import {
   DASHBOARD_SECTION,
   DEPRECATED_DASHBOARD_LABELS,
   FINANCIAL_HEALTH,
+  FIRST_CASH_SHORTFALL,
   RESOURCE_BREAKDOWN,
+  lowestForecastBalanceLabel,
 } from "./dashboardTerminology";
 
 describe("dashboardTerminology", () => {
@@ -14,22 +16,28 @@ describe("dashboardTerminology", () => {
   });
 
   it("uses human-first financial health labels", () => {
-    expect(FINANCIAL_HEALTH.lowestProjectedCash.label).toBe("Lowest Projected Cash");
+    expect(FINANCIAL_HEALTH.lowestProjectedCash.label).toBe("Lowest Forecast Balance");
+    expect(lowestForecastBalanceLabel(30)).toBe("Lowest Forecast Balance (30 Days)");
+    expect(lowestForecastBalanceLabel(14)).toBe("Lowest Forecast Balance (14 Days)");
     expect(FINANCIAL_HEALTH.availableCash.label).toBe("Available Cash");
     expect(FINANCIAL_HEALTH.availableCredit.label).toBe("Available Credit");
-    expect(FINANCIAL_HEALTH.cashAfterDebt.label).toBe("Cash After Debt");
+    expect(FINANCIAL_HEALTH.cashAfterDebt.label).toBe("Liquid Net Position");
     expect(FINANCIAL_HEALTH.cashAfterDebt.subtitle).toBe(
       "Available cash minus total debt"
     );
     expect(FINANCIAL_HEALTH.lowestProjectedCash.help).toMatch(
-      /lowest actual projected balance among your active cash accounts/i
+      /lowest projected balance among your active cash accounts/i
     );
+    expect(FINANCIAL_HEALTH.lowestProjectedCash.help).toMatch(/forecast window/i);
     expect(FINANCIAL_HEALTH.availableCash.help).toMatch(/checking, savings, and cash accounts/i);
     expect(FINANCIAL_HEALTH.availableCash.help).toMatch(/excludes bills pools/i);
     expect(FINANCIAL_HEALTH.cashAfterDebt.help).toMatch(
-      /current liquid cash minus current total debt/i
+      /available cash minus current total debt/i
     );
     expect(FINANCIAL_HEALTH.cashAfterDebt.help).toMatch(/not a forecasted balance/i);
+    expect(FIRST_CASH_SHORTFALL.label).toBe("First Cash Shortfall");
+    expect(FIRST_CASH_SHORTFALL.help).toMatch(/earliest date/i);
+    expect(FIRST_CASH_SHORTFALL.help).toMatch(/below zero/i);
   });
 
   it("uses resource breakdown labels without net position", () => {
@@ -42,6 +50,9 @@ describe("dashboardTerminology", () => {
     expect(DEPRECATED_DASHBOARD_LABELS).toContain("Net Position");
     expect(DEPRECATED_DASHBOARD_LABELS).toContain("Liquid Cash");
     expect(DEPRECATED_DASHBOARD_LABELS).toContain("Financial Snapshot");
+    expect(DEPRECATED_DASHBOARD_LABELS).toContain("Cash After Debt");
+    expect(DEPRECATED_DASHBOARD_LABELS).toContain("Lowest Projected Cash");
+    expect(DEPRECATED_DASHBOARD_LABELS).toContain("Next cash risk");
   });
 
   it("reserves net worth for future asset tracking", () => {

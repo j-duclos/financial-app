@@ -161,11 +161,12 @@ export default function Dashboard() {
                 <UpcomingMoneyFlowPreviewSection
                   groups={details.upcoming_groups ?? []}
                   nextIssue={
-                    summaryFast.lowest_projected_cash?.is_negative
+                    summaryFast.first_cash_shortfall
                       ? {
-                          risk_date: summaryFast.lowest_projected_cash.date,
-                          account_name: summaryFast.lowest_projected_cash.account_name,
+                          risk_date: summaryFast.first_cash_shortfall.date,
+                          account_name: summaryFast.first_cash_shortfall.account_name ?? undefined,
                           reason: "Projected balance drops below zero",
+                          projected_balance: summaryFast.first_cash_shortfall.amount,
                         }
                       : null
                   }

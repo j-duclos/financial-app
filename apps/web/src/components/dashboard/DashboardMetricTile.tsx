@@ -9,7 +9,7 @@ type Props = {
   badge?: ReactNode;
   help?: string;
   valueClassName?: string;
-  /** Hero tile for Lowest Projected Cash — larger type, stronger border. */
+  /** Hero tile for Lowest Forecast Balance — larger type, stronger border. */
   hero?: boolean;
   /** Secondary row tiles — slightly muted. */
   muted?: boolean;
@@ -32,7 +32,7 @@ export default function DashboardMetricTile({
       : "rounded-lg border border-gray-200 bg-white px-2.5 py-2 sm:px-3 sm:py-2.5 min-h-[4.5rem] h-full shadow-sm";
 
   const labelClass = hero
-    ? "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-600 truncate"
+    ? "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-600 line-clamp-2"
     : "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-500 truncate";
 
   const valueClass = `text-base sm:text-lg md:text-xl lg:text-2xl font-bold tabular-nums leading-tight ${valueClassName}`;

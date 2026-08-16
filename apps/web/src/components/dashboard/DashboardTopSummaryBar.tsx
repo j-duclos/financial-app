@@ -1,6 +1,6 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { DashboardLowestProjectedCash, DashboardSummaryFast } from "@budget-app/shared";
-import { DASHBOARD_SECTION, FINANCIAL_HEALTH } from "../../lib/dashboardTerminology";
+import { DASHBOARD_SECTION, FINANCIAL_HEALTH, lowestForecastBalanceLabel } from "../../lib/dashboardTerminology";
 import {
   FORECAST_DAY_OPTIONS,
   type ForecastDays,
@@ -56,11 +56,17 @@ function ForecastWindowControl({
   );
 }
 
-function LowestProjectedCashTile({ lowest }: { lowest: DashboardLowestProjectedCash }) {
+function LowestProjectedCashTile({
+  lowest,
+  forecastDays,
+}: {
+  lowest: DashboardLowestProjectedCash;
+  forecastDays: ForecastDays;
+}) {
   const isNegative = parseFloat(lowest.amount) < 0;
   return (
     <DashboardMetricTile
-      label={FINANCIAL_HEALTH.lowestProjectedCash.label}
+      label={lowestForecastBalanceLabel(forecastDays)}
       value={lowestProjectedCashDisplayValue(lowest.amount)}
       valueClassName={lowestProjectedCashAmountClass(lowest)}
       help={FINANCIAL_HEALTH.lowestProjectedCash.help}
@@ -111,10 +117,10 @@ export default function DashboardTopSummaryBar({
         ) : (
           <>
             {lowest ? (
-              <LowestProjectedCashTile lowest={lowest} />
+              <LowestProjectedCashTile lowest={lowest} forecastDays={forecastDays} />
             ) : (
               <DashboardMetricTile
-                label={FINANCIAL_HEALTH.lowestProjectedCash.label}
+                label={lowestForecastBalanceLabel(forecastDays)}
                 value="—"
                 help={FINANCIAL_HEALTH.lowestProjectedCash.help}
                 hero

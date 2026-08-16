@@ -22,6 +22,8 @@ import {
   upcomingSectionCollapsedSummary,
   upcomingSectionTitle,
   upcomingTimelineLinkLabel,
+  upcomingFullTimelineLinkLabel,
+  flattenUpcomingPreviewTransactions,
   upcomingTransferAccountsLabel,
   upcomingPreviewTruncatedMessage,
   upcomingTruncatedMessage,
@@ -335,7 +337,7 @@ describe("upcomingDisplay", () => {
     expect(filtered.map((g) => g.date)).toEqual(["2026-06-26", "2026-07-01"]);
   });
 
-  it("buildUpcomingDashboardPreview caps items and surfaces risk", () => {
+  it("buildUpcomingDashboardPreview caps items and uses forecast first shortfall", () => {
     const today = "2026-06-26";
     const preview = buildUpcomingDashboardPreview(
       [
@@ -353,7 +355,12 @@ describe("upcomingDisplay", () => {
           ],
         }),
       ],
-      null,
+      {
+        risk_date: "2026-06-27",
+        account_name: "Main",
+        reason: "Projected balance drops below zero",
+        projected_balance: "-41.28",
+      },
       today
     );
     expect(preview.daysHorizon).toBe(UPCOMING_PREVIEW_DAYS);
@@ -363,10 +370,28 @@ describe("upcomingDisplay", () => {
     expect(preview.groups).toHaveLength(1);
     expect(preview.days).toHaveLength(1);
     expect(preview.days[0]!.transactions).toHaveLength(5);
+    expect(preview.transactions).toHaveLength(5);
     expect(preview.nextRisk?.date).toBe("2026-06-27");
+    expect(preview.nextRisk?.projectedEndBalance).toBe("-41.28");
   });
 
-  it("shows one first-below-zero warning per account", () => {
+  it("does not treat buffer-risk days as a cash shortfall without forecast payload", () => {
+    const today = "2026-06-26";
+    const preview = buildUpcomingDashboardPreview(
+      [
+        group({
+          date: "2026-06-27",
+          has_risk: true,
+          risk_reason: "Main projected below buffer",
+        }),
+      ],
+      null,
+      today
+    );
+    expect(preview.nextRisk).toBeNull();
+  });
+
+  it("marks only the first below-zero crossing in the compact preview", () => {
     const today = "2026-06-26";
     const account = "Main";
     const firstDay = group({
@@ -375,6 +400,26 @@ describe("upcomingDisplay", () => {
       lowest_projected_balance: "-50.00",
       lowest_projected_balance_account_name: account,
       is_negative: true,
+      transactions: [
+        txn({
+          id: "card",
+          date: "2026-06-27",
+          description: "Quicksilver C/C Payment",
+          amount: "-329.02",
+          kind: "bill",
+          balance_after: "-41.28",
+        }),
+        txn({
+          id: "move",
+          date: "2026-06-27",
+          description: "Move to credit card (Savor)",
+          amount: "-1000.00",
+          kind: "transfer",
+          is_transfer: true,
+          is_credit_card_payment: true,
+          balance_after: "-1041.28",
+        }),
+      ],
     });
     const secondDay = group({
       date: "2026-06-28",
@@ -382,12 +427,23 @@ describe("upcomingDisplay", () => {
       lowest_projected_balance: "-80.00",
       lowest_projected_balance_account_name: account,
       is_negative: true,
+      transactions: [
+        txn({
+          id: "later",
+          date: "2026-06-28",
+          description: "Later bill",
+          amount: "-40.00",
+          kind: "bill",
+          balance_after: "-80.00",
+        }),
+      ],
     });
     const preview = buildUpcomingDashboardPreview(
       [firstDay, secondDay],
       {
         risk_date: "2026-06-27",
         account_name: account,
+        projected_balance: "-41.28",
       },
       today
     );
@@ -395,6 +451,34 @@ describe("upcomingDisplay", () => {
       "Main first falls below zero today"
     );
     expect(preview.days[1]!.firstNegativeWarning).toBeNull();
+    expect(preview.transactions.map((row) => row.isFirstZeroCross)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(preview.nextRisk?.projectedEndBalance).toBe("-41.28");
+  });
+
+  it("labels the full timeline link for the compact preview footer", () => {
+    expect(upcomingFullTimelineLinkLabel()).toBe("View full timeline →");
+  });
+
+  it("flattenUpcomingPreviewTransactions skips risk rows and empty amounts", () => {
+    const rows = flattenUpcomingPreviewTransactions(
+      [
+        txn({ id: "risk", kind: "risk", amount: null, balance_after: "-10.00" }),
+        txn({
+          id: "pay",
+          amount: "1835.52",
+          kind: "income",
+          balance_after: "437.87",
+        }),
+      ],
+      "Main"
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.txn.id).toBe("pay");
+    expect(rows[0]!.isFirstZeroCross).toBe(false);
   });
 });
 

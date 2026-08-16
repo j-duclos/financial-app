@@ -7,8 +7,8 @@ export const DASHBOARD_SECTION = {
 
 export const FINANCIAL_HEALTH = {
   lowestProjectedCash: {
-    label: "Lowest Projected Cash",
-    help: "The lowest actual projected balance among your active cash accounts during the selected forecast window.",
+    label: "Lowest Forecast Balance",
+    help: "The lowest projected balance among your active cash accounts during the selected forecast window. This is the worst point in the window, not the first time an account goes below zero.",
   },
   availableCash: {
     label: "Available Cash",
@@ -21,10 +21,16 @@ export const FINANCIAL_HEALTH = {
     help: "Remaining usable credit across active credit accounts, shown against total combined credit limits.",
   },
   cashAfterDebt: {
-    label: "Cash After Debt",
+    label: "Liquid Net Position",
     subtitle: "Available cash minus total debt",
-    help: "Current liquid cash minus current total debt. This is not a forecasted balance.",
+    help: "Available cash minus current total debt (available cash − total debt). This is a current snapshot, not a forecasted balance.",
   },
+} as const;
+
+export const FIRST_CASH_SHORTFALL = {
+  label: "First Cash Shortfall",
+  help: "The earliest date an active cash account is projected to fall below zero in the selected forecast window.",
+  amountLabel: "Projected balance",
 } as const;
 
 export const RESOURCE_BREAKDOWN = {
@@ -55,4 +61,11 @@ export const DEPRECATED_DASHBOARD_LABELS = [
   "Net Position",
   "Liquid Cash",
   "Financial Snapshot",
+  "Cash After Debt",
+  "Lowest Projected Cash",
+  "Next cash risk",
 ] as const;
+
+export function lowestForecastBalanceLabel(days: number): string {
+  return `Lowest Forecast Balance (${days} Days)`;
+}

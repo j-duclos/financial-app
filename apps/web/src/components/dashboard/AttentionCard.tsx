@@ -43,7 +43,7 @@ export default function AttentionCard({ item, onMoveMoney }: AttentionCardProps)
 
   return (
     <article
-      className={`rounded-lg border border-gray-200 p-3 flex flex-col gap-2 min-h-[10rem] ${styles.card}`}
+      className={`rounded-lg border border-gray-200 p-2.5 flex flex-col gap-1.5 min-h-[9rem] ${styles.card}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -141,7 +141,7 @@ export function AttentionCardGrid({
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {cards.map((item) => (
           <AttentionCard
             key={item.account_id}

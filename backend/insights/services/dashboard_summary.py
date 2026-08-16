@@ -63,6 +63,7 @@ from accounts.services.available_to_spend import (
     normalize_forecast_days,
 )
 from accounts.services.lowest_projected_cash import (
+    get_first_cash_shortfall_from_forecasts,
     get_lowest_projected_cash_from_forecasts,
 )
 from core.utils import get_households_for_user
@@ -1414,6 +1415,7 @@ def _forecast_risk_from_full_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _extract_dashboard_fast(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "lowest_projected_cash": payload.get("lowest_projected_cash"),
+        "first_cash_shortfall": payload.get("first_cash_shortfall"),
         "safe_to_spend": payload["safe_to_spend"],
         "top_summary": payload.get("top_summary"),
         "attention": payload.get("attention", []),
@@ -1776,6 +1778,12 @@ def _compute_dashboard_core(
         forecasts = shared_context["forecasts"]
         health_by_id = shared_context["health_by_id"]
         lowest_projected_cash = shared_context["lowest_projected_cash"]
+        first_cash_shortfall = shared_context.get("first_cash_shortfall")
+        if first_cash_shortfall is None and forecasts:
+            first_cash_shortfall = get_first_cash_shortfall_from_forecasts(
+                accounts_by_id,
+                forecasts,
+            )
         attention_all = shared_context["attention_all"]
     else:
         _phase_timeline = phase_start(timer, "timeline_build")
@@ -1831,6 +1839,10 @@ def _compute_dashboard_core(
             accounts_by_id,
             forecasts,
         )
+        first_cash_shortfall = get_first_cash_shortfall_from_forecasts(
+            accounts_by_id,
+            forecasts,
+        )
         attention_all = build_attention_items(
             health_by_id,
             accounts_by_id,
@@ -1863,6 +1875,7 @@ def _compute_dashboard_core(
         "forecasts": forecasts,
         "health_by_id": health_by_id,
         "lowest_projected_cash": lowest_projected_cash,
+        "first_cash_shortfall": first_cash_shortfall,
         "legacy_safe_to_spend": legacy_safe_to_spend,
         "attention_all": attention_all,
         "attention": attention,
@@ -1873,6 +1886,7 @@ def _compute_dashboard_core(
             "forecasts": forecasts,
             "health_by_id": health_by_id,
             "lowest_projected_cash": lowest_projected_cash,
+            "first_cash_shortfall": first_cash_shortfall,
             "attention_all": attention_all,
         },
     }
@@ -1923,6 +1937,7 @@ def _build_dashboard_summary(
     forecasts = core["forecasts"]
     health_by_id = core["health_by_id"]
     lowest_projected_cash = core["lowest_projected_cash"]
+    first_cash_shortfall = core.get("first_cash_shortfall")
     legacy_safe_to_spend = core["legacy_safe_to_spend"]
     attention_all = core["attention_all"]
     attention = core["attention"]
@@ -2009,6 +2024,7 @@ def _build_dashboard_summary(
 
         payload: dict[str, Any] = {
             "lowest_projected_cash": lowest_projected_cash,
+            "first_cash_shortfall": first_cash_shortfall,
             "safe_to_spend": legacy_safe_to_spend,
             "top_summary": top_summary,
             "attention": attention,
@@ -2240,6 +2256,7 @@ def _build_dashboard_summary(
 
     return {
         "lowest_projected_cash": lowest_projected_cash,
+        "first_cash_shortfall": first_cash_shortfall,
         "safe_to_spend": legacy_safe_to_spend,
         "top_summary": top_summary,
         "net_worth": _compute_net_worth(

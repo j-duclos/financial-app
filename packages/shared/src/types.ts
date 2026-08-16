@@ -902,9 +902,19 @@ export interface DashboardLowestProjectedCash {
   is_negative: boolean;
 }
 
+/** Earliest projected below-zero among cash accounts in the selected forecast window. */
+export interface DashboardFirstCashShortfall {
+  amount: string;
+  account_id: number | null;
+  account_name: string | null;
+  date: string | null;
+  is_negative: boolean;
+}
+
 /** Above-the-fold dashboard payload for fast first paint. */
 export interface DashboardSummaryFast {
   lowest_projected_cash: DashboardLowestProjectedCash | null;
+  first_cash_shortfall?: DashboardFirstCashShortfall | null;
   /** @deprecated Use lowest_projected_cash for the dashboard top bar. */
   safe_to_spend: DashboardSummary["safe_to_spend"];
   top_summary?: DashboardTopSummary;
@@ -936,6 +946,7 @@ export interface DashboardSummaryDetails {
 
 export interface DashboardSummary {
   lowest_projected_cash: DashboardLowestProjectedCash | null;
+  first_cash_shortfall?: DashboardFirstCashShortfall | null;
   /** @deprecated Use lowest_projected_cash for the dashboard top bar. */
   safe_to_spend: {
     window_days: number;

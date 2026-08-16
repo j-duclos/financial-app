@@ -353,6 +353,62 @@ def forecast_lowest_balance_from_rows(
     return global_low, global_date, global_aid
 
 
+def _row_decimal(val) -> Decimal:
+    if isinstance(val, Decimal):
+        return val
+    return Decimal(str(val))
+
+
+def timeline_opening_balance_for_account(
+    rows: list[dict],
+    account_id: int,
+    today: date,
+) -> Decimal | None:
+    """
+    Start-of-today opening implied by precomputed timeline ``running_balance``.
+
+    Upcoming/calendar rows already include overdue pending and other ledger-visible
+    activity. Deriving opening from those rows keeps forecast lowest / first-negative
+    on the same walk as projected ``balance_after``.
+    """
+    account_rows = [r for r in rows if r.get("account_id") == account_id]
+    if not account_rows:
+        return None
+    if not any(r.get("running_balance") is not None for r in account_rows):
+        return None
+
+    in_window: list[dict] = []
+    pre_today: list[dict] = []
+    for row in account_rows:
+        if row.get("running_balance") is None:
+            continue
+        row_date = _timeline_row_date(row.get("date"))
+        if row_date is None:
+            continue
+        if is_superseded_planned_row(row, account_rows):
+            continue
+        if row_date >= today:
+            in_window.append(row)
+        else:
+            pre_today.append(row)
+
+    if in_window:
+        first = min(
+            in_window,
+            key=lambda r: (_timeline_row_date(r["date"]), timeline_row_process_order(r)),
+        )
+        return _row_decimal(first["running_balance"]) - _row_decimal(first.get("amount") or 0)
+
+    if pre_today:
+        last = max(
+            pre_today,
+            key=lambda r: (_timeline_row_date(r["date"]), timeline_row_process_order(r)),
+        )
+        return _row_decimal(last["running_balance"])
+
+    return None
+
+
 def forecast_account_balance_metrics(
     rows: list[dict],
     *,
@@ -364,16 +420,21 @@ def forecast_account_balance_metrics(
     """
     Ledger-aligned balance projection for one account (matches calendar / Transactions).
 
-    When the account has a reconciliation anchor, opens from the same cleared balance
-  as the Transactions ledger (hide reconciled past), then applies today+ timeline rows.
+    When timeline rows include ``running_balance``, opening is derived from those rows
+    so overdue pending already in the timeline are not dropped. Otherwise opens from
+    ``ledger_today_balance_before_pending`` (cleared balance before pending).
     """
-    acc = Account.objects.filter(pk=account_id).first()
-    if acc is not None:
-        from transactions.services.reconciliation import ledger_today_balance_before_pending
-
-        opening = ledger_today_balance_before_pending(acc, today)
+    timeline_opening = timeline_opening_balance_for_account(rows, account_id, today)
+    if timeline_opening is not None:
+        opening = timeline_opening
     else:
-        opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
+        acc = Account.objects.filter(pk=account_id).first()
+        if acc is not None:
+            from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+            opening = ledger_today_balance_before_pending(acc, today)
+        else:
+            opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
     account_rows = [r for r in rows if r.get("account_id") == account_id]
 
     by_date: dict[date, list[dict]] = defaultdict(list)

@@ -6,6 +6,7 @@ import type {
   TimelineCalendarTransaction,
 } from "@budget-app/shared";
 import { dayHeatEmoji, resolveDayHeatLevel } from "./dayHeatDisplay";
+import { severityTokens } from "./severity";
 import {
   groupItemsByMonth,
   monthKeyFromIsoDate,
@@ -82,6 +83,10 @@ export function upcomingPreviewTruncatedMessage(
 
 export function upcomingTimelineLinkLabel(): string {
   return "Open Calendar";
+}
+
+export function upcomingFullTimelineLinkLabel(): string {
+  return "View full timeline →";
 }
 
 export type UpcomingHeatLevel = DayHeatLevel;
@@ -243,6 +248,11 @@ export type UpcomingPreviewRisk = {
   projectedEndBalance?: string | null;
 };
 
+export type UpcomingPreviewTxnRow = {
+  txn: DashboardUpcomingTransaction;
+  isFirstZeroCross: boolean;
+};
+
 export type UpcomingPreviewDayBlock = {
   group: DashboardUpcomingGroup;
   transactions: DashboardUpcomingTransaction[];
@@ -252,6 +262,7 @@ export type UpcomingPreviewDayBlock = {
 export type UpcomingDashboardPreviewLayout = {
   groups: DashboardUpcomingGroup[];
   days: UpcomingPreviewDayBlock[];
+  transactions: UpcomingPreviewTxnRow[];
   daysHorizon: number;
   truncated: boolean;
   truncatedMessage: string | null;
@@ -260,6 +271,64 @@ export type UpcomingDashboardPreviewLayout = {
   anyTransfers: boolean;
   spansMultipleMonths: boolean;
 };
+
+export type UpcomingPreviewNextIssue = {
+  risk_date: string | null;
+  account_name?: string;
+  reason?: string;
+  projected_balance?: string | null;
+} | null;
+
+function isPreviewableTransaction(txn: DashboardUpcomingTransaction): boolean {
+  return txn.kind !== "risk" && txn.amount != null;
+}
+
+/** Flatten preview transactions and mark the first below-zero crossing for the shortfall account. */
+export function flattenUpcomingPreviewTransactions(
+  transactions: DashboardUpcomingTransaction[],
+  shortfallAccountName?: string | null
+): UpcomingPreviewTxnRow[] {
+  const target = (shortfallAccountName ?? "").trim();
+  let crossed = false;
+  const rows: UpcomingPreviewTxnRow[] = [];
+  for (const txn of transactions) {
+    if (!isPreviewableTransaction(txn)) continue;
+    const bal = parseAmount(txn.balance_after);
+    const account = (txn.account_name ?? "").trim();
+    const scoped = !target || account === target;
+    const isFirstZeroCross = scoped && !crossed && txn.balance_after != null && bal < 0;
+    if (isFirstZeroCross) crossed = true;
+    rows.push({ txn, isFirstZeroCross });
+  }
+  return rows;
+}
+
+export function upcomingPreviewAmountClass(
+  amount: number,
+  txn: DashboardUpcomingTransaction
+): string {
+  const isCardPayment = txn.is_credit_card_payment;
+  const isTransfer = !isCardPayment && (txn.is_transfer || txn.is_internal_transfer);
+  if (isTransfer) return "text-gray-900";
+  if (amount > 0) return "text-green-600";
+  if (amount < 0) return "text-red-600";
+  return "text-gray-900";
+}
+
+export function upcomingPreviewBalanceClass(
+  balance: number,
+  isFirstZeroCross: boolean
+): string {
+  if (isFirstZeroCross) return severityTokens("critical").endingClass;
+  if (balance < 0) return "text-red-700 font-semibold tabular-nums";
+  return "text-gray-900 tabular-nums";
+}
+
+export function upcomingPreviewRowClass(isFirstZeroCross: boolean): string {
+  return isFirstZeroCross
+    ? `${severityTokens("critical").rowTintClass} border-l-2 border-l-red-600 pl-1.5 -ml-1.5`
+    : "";
+}
 
 /** Projected end-of-day balance for a cash account on a grouped day. */
 export function upcomingPreviewProjectedEndBalance(
@@ -320,33 +389,22 @@ function buildPreviewDayBlocks(
   });
 }
 
-/** First at-risk day in preview window, or dashboard next_issue fallback. */
+/** First below-zero from the forecast payload, not the first buffer-risk day. */
 export function upcomingPreviewNextRiskDay(
   groups: DashboardUpcomingGroup[],
-  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null
+  nextIssue?: UpcomingPreviewNextIssue
 ): UpcomingPreviewRisk | null {
-  const riskAccount = nextIssue?.account_name ?? null;
-  const risky = groups.find((g) => g.has_risk);
-  if (risky) {
-    return {
-      date: risky.date,
-      accountName: risky.affected_account_name ?? riskAccount,
-      reason: risky.risk_reason ?? risky.heat_reason,
-      projectedEndBalance: upcomingPreviewProjectedEndBalance(
-        risky,
-        risky.affected_account_name ?? riskAccount
-      ),
-    };
-  }
-  if (nextIssue?.risk_date && nextIssue.reason) {
+  if (nextIssue?.risk_date) {
     const match = groups.find((g) => g.date === nextIssue.risk_date);
     return {
       date: nextIssue.risk_date,
       accountName: nextIssue.account_name,
-      reason: nextIssue.reason,
-      projectedEndBalance: match
-        ? upcomingPreviewProjectedEndBalance(match, nextIssue.account_name)
-        : null,
+      reason: nextIssue.reason ?? "Projected balance drops below zero",
+      projectedEndBalance:
+        nextIssue.projected_balance ??
+        (match
+          ? upcomingPreviewProjectedEndBalance(match, nextIssue.account_name)
+          : null),
     };
   }
   return null;
@@ -354,7 +412,7 @@ export function upcomingPreviewNextRiskDay(
 
 export function buildUpcomingDashboardPreview(
   groups: DashboardUpcomingGroup[],
-  nextIssue?: { risk_date: string | null; account_name?: string; reason?: string } | null,
+  nextIssue?: UpcomingPreviewNextIssue,
   today: string = todayIsoLocal()
 ): UpcomingDashboardPreviewLayout {
   const dayFiltered = filterUpcomingGroupsForPreview(groups, UPCOMING_PREVIEW_DAYS, today);
@@ -367,10 +425,15 @@ export function buildUpcomingDashboardPreview(
   const nextRisk = upcomingPreviewNextRiskDay(dayFiltered, nextIssue);
   const riskAccount = nextRisk?.accountName ?? nextIssue?.account_name ?? null;
   const dayBlocks = buildPreviewDayBlocks(limitedGroups, riskAccount);
+  const transactions = flattenUpcomingPreviewTransactions(
+    dayBlocks.flatMap((block) => block.transactions),
+    riskAccount
+  );
 
   return {
     groups: limitedGroups,
     days: dayBlocks,
+    transactions,
     daysHorizon: UPCOMING_PREVIEW_DAYS,
     truncated,
     truncatedMessage: truncated

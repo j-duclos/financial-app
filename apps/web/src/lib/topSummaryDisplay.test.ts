@@ -26,9 +26,9 @@ describe("topSummaryDisplay", () => {
   });
 
   it("lowestProjectedCashSubtitle shows account and date only", () => {
-    expect(lowestProjectedCashSubtitle(lpc())).toBe("Main · 07-22-26");
+    expect(lowestProjectedCashSubtitle(lpc())).toBe("Main · Jul 22");
     expect(lowestProjectedCashSubtitle(lpc({ amount: "-298.74", date: "2026-07-08" }))).toBe(
-      "Main · 07-08-26"
+      "Main · Jul 8"
     );
     expect(lowestProjectedCashSubtitle(lpc({ amount: "-298.74", date: "2026-07-08" }))).not.toMatch(
       /buffer|reserved|short by/i

@@ -5,7 +5,7 @@ import type {
   DashboardTopSummary,
 } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { formatHealthRiskDate } from "./accountHealthDisplay";
+import { formatShortMonthDay } from "./dateDisplay";
 import { riskStatusClass, riskStatusLabel } from "./safeToSpendLabels";
 
 export function topSummaryFromDashboard(
@@ -41,7 +41,7 @@ export function lowestProjectedCashDisplayValue(amount: string): string {
 export function lowestProjectedCashSubtitle(
   metric: DashboardLowestProjectedCash
 ): string {
-  const dateLabel = metric.date ? formatHealthRiskDate(metric.date) : "—";
+  const dateLabel = metric.date ? formatShortMonthDay(metric.date) : "—";
   const account = metric.account_name?.trim() || "Account";
   return `${account} · ${dateLabel}`;
 }

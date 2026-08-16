@@ -154,6 +154,61 @@ def get_lowest_projected_cash_from_forecasts(
     }
 
 
+def get_first_cash_shortfall_from_forecasts(
+    accounts: list[Account] | dict[int, Account],
+    forecast_summaries: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """
+    Earliest projected below-zero among eligible cash accounts.
+
+    Distinct from lowest projected cash: this is the first crossing below zero,
+    not the worst point in the forecast window.
+    """
+    if isinstance(accounts, dict):
+        accounts_by_id = accounts
+    else:
+        accounts_by_id = {a.id: a for a in accounts}
+
+    best_date: str | None = None
+    best_amount: Decimal | None = None
+    best_aid: int | None = None
+
+    for aid, summary in forecast_summaries.items():
+        account = accounts_by_id.get(aid)
+        if not account or not account_eligible_for_lowest_projected_cash(account):
+            continue
+        if not summary.get("supports_available_to_spend"):
+            continue
+        first_date = (summary.get("first_negative_date") or "")[:10] or None
+        first_raw = summary.get("first_negative_balance")
+        if first_date is None or first_raw is None:
+            continue
+        first_amount = _decimal(first_raw)
+        if first_amount >= 0:
+            continue
+        if (
+            best_date is None
+            or first_date < best_date
+            or (first_date == best_date and (best_amount is None or first_amount < best_amount))
+        ):
+            best_date = first_date
+            best_amount = first_amount
+            best_aid = aid
+
+    if best_date is None or best_amount is None or best_aid is None:
+        return None
+
+    account = accounts_by_id.get(best_aid)
+    amount = best_amount.quantize(Decimal("0.01"))
+    return {
+        "amount": str(amount),
+        "account_id": best_aid,
+        "account_name": account.effective_display_name if account else "",
+        "date": best_date,
+        "is_negative": True,
+    }
+
+
 def get_lowest_projected_cash(
     accounts: list[Account] | dict[int, Account],
     timeline_rows: list[dict],
