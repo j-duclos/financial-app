@@ -40,10 +40,15 @@ describe("Dashboard page structure", () => {
     expect(previewSource).toMatch(/UPCOMING_PREVIEW_TRANSFER_FOOTER/);
     expect(previewSource).toMatch(/balance_after/);
     expect(previewSource).toMatch(/upcomingFullTimelineLinkLabel/);
+    expect(previewSource).toMatch(/truncatedMessage/);
     expect(previewSource).not.toMatch(/Projected end-of-day balance/);
     expect(previewSource).not.toMatch(/PreviewDaySummary/);
+    expect(previewSource).not.toMatch(
+      /truncatedMessage[\s\S]{0,80}border-amber-200/
+    );
     const calendarLinks = previewSource.match(/to=\{UPCOMING_CALENDAR_PATH\}/g) ?? [];
-    expect(calendarLinks).toHaveLength(2);
+    expect(calendarLinks).toHaveLength(1);
+    expect(previewSource).not.toMatch(/upcomingTimelineLinkLabel/);
   });
 
   it("does not render resource breakdown or legacy dashboard widgets", () => {

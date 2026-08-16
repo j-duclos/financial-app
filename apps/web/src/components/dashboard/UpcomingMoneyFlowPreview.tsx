@@ -14,7 +14,6 @@ import {
   upcomingPreviewAmountClass,
   upcomingPreviewBalanceClass,
   upcomingPreviewRowClass,
-  upcomingTimelineLinkLabel,
   type UpcomingPreviewNextIssue,
   type UpcomingPreviewTxnRow,
 } from "../../lib/upcomingDisplay";
@@ -103,14 +102,11 @@ export default function UpcomingMoneyFlowPreview({ groups, nextIssue }: Props) {
         </div>
       ) : null}
 
-      {preview.truncated && preview.truncatedMessage ? (
-        <p className="text-xs text-amber-900 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
-          {preview.truncatedMessage}
-        </p>
-      ) : null}
-
       <div className="overflow-x-auto">
         <div className="min-w-[18rem]">
+          {preview.truncated && preview.truncatedMessage ? (
+            <p className="text-[11px] text-gray-500 mb-1.5">{preview.truncatedMessage}</p>
+          ) : null}
           <div className="hidden sm:grid grid-cols-[4.5rem_minmax(0,1fr)_5.75rem_5.75rem] gap-x-3 px-0.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
             <span>Date</span>
             <span>Transaction</span>
@@ -146,14 +142,9 @@ export function UpcomingMoneyFlowPreviewSection({
 }: Props) {
   return (
     <section aria-label={UPCOMING_SECTION_TITLE}>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          {UPCOMING_SECTION_TITLE}
-        </h2>
-        <Link to={UPCOMING_CALENDAR_PATH} className="text-xs text-blue-600 hover:underline shrink-0">
-          {upcomingTimelineLinkLabel()}
-        </Link>
-      </div>
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+        {UPCOMING_SECTION_TITLE}
+      </h2>
       <UpcomingMoneyFlowPreview groups={groups} nextIssue={nextIssue} />
     </section>
   );
