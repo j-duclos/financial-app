@@ -1813,35 +1813,43 @@ export async function getTimelineCalendar(params: {
   return requestRequired("/api/timeline/calendar/", { params: q });
 }
 
-export async function getTimelineCalendarSummary(params: {
-  start?: string;
-  end?: string;
-  as_of?: string;
-  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
-  lookback_months?: number;
-  scenario_id?: number | null;
-  account_id?: number | null;
-  household_id?: number | null;
-}): Promise<TimelineCalendarSummaryResponse> {
+export async function getTimelineCalendarSummary(
+  params: {
+    start?: string;
+    end?: string;
+    as_of?: string;
+    horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+    lookback_months?: number;
+    scenario_id?: number | null;
+    account_id?: number | null;
+    household_id?: number | null;
+  },
+  requestOptions?: { signal?: AbortSignal }
+): Promise<TimelineCalendarSummaryResponse> {
   return requestRequired("/api/timeline/calendar/summary/", {
     params: calendarQueryParams(params),
+    signal: requestOptions?.signal,
   });
 }
 
-export async function getTimelineCalendarChunk(params: {
-  start?: string;
-  end?: string;
-  as_of?: string;
-  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
-  lookback_months?: number;
-  scenario_id?: number | null;
-  account_id?: number | null;
-  household_id?: number | null;
-  chunk_start?: string;
-  chunk_end?: string;
-}): Promise<TimelineCalendarChunkResponse> {
+export async function getTimelineCalendarChunk(
+  params: {
+    start?: string;
+    end?: string;
+    as_of?: string;
+    horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+    lookback_months?: number;
+    scenario_id?: number | null;
+    account_id?: number | null;
+    household_id?: number | null;
+    chunk_start?: string;
+    chunk_end?: string;
+  },
+  requestOptions?: { signal?: AbortSignal }
+): Promise<TimelineCalendarChunkResponse> {
   return requestRequired("/api/timeline/calendar/chunk/", {
     params: calendarQueryParams(params),
+    signal: requestOptions?.signal,
   });
 }
 

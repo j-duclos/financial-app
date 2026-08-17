@@ -11,7 +11,7 @@ import TimelineCalendar from "../components/timeline/TimelineCalendar";
 import TimelineDayPanel from "../components/timeline/TimelineDayPanel";
 import UpcomingMoneyFlowSection from "../components/dashboard/UpcomingMoneyFlowSection";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
-import { METRIC_TILE_GRID_5, METRIC_TILE_SKELETON_CLASS } from "../components/dashboard/metricTileLayout";
+import { METRIC_TILE_GRID_5 } from "../components/dashboard/metricTileLayout";
 import QuickTransactionModal, {
   type QuickTransactionPreset,
 } from "../components/quickActions/QuickTransactionModal";
@@ -70,16 +70,6 @@ function ViewToggle({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function SummarySkeleton() {
-  return (
-    <div className={`${METRIC_TILE_GRID_5} mb-4`}>
-      {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className={METRIC_TILE_SKELETON_CLASS} aria-hidden />
-      ))}
     </div>
   );
 }
@@ -306,9 +296,29 @@ export default function Timeline() {
         </div>
       </div>
 
-      {viewMode === "calendar" && calendar.summaryLoading && <SummarySkeleton />}
+      {viewMode === "calendar" && !summary && (
+        <div className={`${METRIC_TILE_GRID_5} mb-4`}>
+          {(
+            [
+              CALENDAR_SUMMARY.nextRiskDate,
+              CALENDAR_SUMMARY.safeUntilNextIncome,
+              CALENDAR_SUMMARY.lowestProjectedBalance,
+              CALENDAR_SUMMARY.highestProjectedBalance,
+              CALENDAR_SUMMARY.upcomingIncomeExpenses,
+            ] as const
+          ).map((metric) => (
+            <DashboardMetricTile
+              key={metric.label}
+              label={metric.label}
+              help={metric.help}
+              value="Calculating..."
+              valueClassName="text-gray-400"
+            />
+          ))}
+        </div>
+      )}
 
-      {viewMode === "calendar" && summary && !calendar.summaryLoading && (
+      {viewMode === "calendar" && summary && (
         <div className={`${METRIC_TILE_GRID_5} mb-4`}>
           <DashboardMetricTile
             label={CALENDAR_SUMMARY.nextRiskDate.label}
@@ -441,6 +451,7 @@ export default function Timeline() {
             loadingRemaining={calendar.loadingRemaining}
             onLoadMore={calendar.loadMoreMonths}
             eagerMonthCount={calendar.eagerMonthCount}
+            onMonthVisible={calendar.ensureMonthLoaded}
           />
         ) : (
           <p className="text-center text-gray-500 py-12 bg-white border border-gray-200 rounded-lg">

@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 
+from accounts.services.account_health import _target_utilization_percent
+from accounts.services.account_health_constants import DEFAULT_TARGET_UTILIZATION_PERCENT
 from recommendations.services.calculators import (
     format_money,
     format_short_date,
@@ -54,7 +56,7 @@ def generate_from_detection(det: Detection, ctx: RecommendationContext) -> dict:
         amount_at_risk=det.amount,
         utilization_delta=(
             (det.utilization_current - det.utilization_target)
-            if det.utilization_current and det.utilization_target
+            if det.utilization_current is not None and det.utilization_target is not None
             else None
         ),
     )
@@ -148,11 +150,16 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
 def _gen_utilization(det: Detection, ctx: RecommendationContext, score: int) -> dict:
     acc = ctx.accounts_by_id.get(det.account_id) if det.account_id else None
     name = acc.effective_display_name if acc else "Credit card"
-    target = det.utilization_target or 70
+    if det.utilization_target is not None:
+        target = det.utilization_target
+    elif acc is not None:
+        target = _target_utilization_percent(acc)
+    else:
+        target = DEFAULT_TARGET_UTILIZATION_PERCENT
     amount = det.amount or 0
     amount_label = format_money(amount)
     title = f"Pay ${amount_label} toward {name}"
-    action = f"Pay ${amount_label} to bring utilization below {target:.0f}%."
+    action = f"Pay ${amount_label} to reach your {target:.0f}% target."
     return make_recommendation(
         f"utilization-{det.account_id}-{int(target)}",
         "reduce_utilization",

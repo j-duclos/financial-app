@@ -1,4 +1,4 @@
-import { formatCurrency } from "@budget-app/shared";
+import { DEFAULT_TARGET_UTILIZATION_PERCENT, formatCurrency } from "@budget-app/shared";
 import type { Account, DebtPayoffCardSummary, PayoffProjection, PayoffStrategy } from "@budget-app/shared";
 
 /** Primary CTA label for debt payment orchestration (replaces "Make Payment"). */
@@ -62,16 +62,16 @@ export function paymentToReachUtilization(
   if (limit == null || limit <= 0 || owed == null) return null;
   const target =
     targetPct ??
-    parseMoney(account.target_utilization_percent ?? "70") ??
-    70;
+    parseMoney(account.target_utilization_percent) ??
+    DEFAULT_TARGET_UTILIZATION_PERCENT;
   const targetBalance = (target / 100) * limit;
   const needed = owed - targetBalance;
   return needed > 0 ? Math.round(needed * 100) / 100 : 0;
 }
 
 export function targetUtilizationPercent(account: Account): number {
-  const raw = parseMoney(account.target_utilization_percent ?? "70");
-  return raw != null && raw > 0 ? raw : 70;
+  const raw = parseMoney(account.target_utilization_percent);
+  return raw != null && raw >= 0 ? raw : DEFAULT_TARGET_UTILIZATION_PERCENT;
 }
 
 export function isCreditCardAccount(account: Account): boolean {

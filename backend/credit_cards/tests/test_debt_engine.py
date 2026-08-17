@@ -198,7 +198,8 @@ def test_recommendations_use_opening_high_apr_and_utilization(user, household):
     assert plan["debt_free_possible"] is True
     messages = [r["message"] for r in plan["recommendations"]]
     assert any("Card A" in m and "32.00% APR" in m for m in messages)
-    assert any("Card A" in m and "30% utilization" in m for m in messages)
+    assert any("Card A" in m and "10% utilization target" in m for m in messages)
+    assert not any("30% utilization" in m for m in messages)
     assert not any("Card B" in m and "APR" in m for m in messages)
 
 
@@ -222,12 +223,13 @@ def test_milestones_achieved_from_opening_not_final_zeros(user, household):
     assert plan["debt_free_possible"] is True
     first = _milestone(plan, "first_card_paid")
     util_50 = _milestone(plan, "util_below_50")
-    util_30 = _milestone(plan, "util_below_30")
+    util_target = _milestone(plan, "util_below_target")
     debt_free = _milestone(plan, "debt_free")
     assert first["achieved"] is False
     assert first["month"] is not None
     assert util_50["achieved"] is False
-    assert util_30["achieved"] is False
+    assert util_target["achieved"] is False
+    assert "10%" in util_target["label"]
     assert debt_free["achieved"] is False
     assert debt_free["month"] == plan["months_to_debt_free"]
 

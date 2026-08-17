@@ -113,7 +113,7 @@ describe("attentionCardDisplay", () => {
       account_role: "credit_card",
       account_type: "CREDIT",
       reason: "Utilization is 98%",
-      recommended_action: "Pay $850.00 toward utilization target.",
+      recommended_action: "Pay $850.00 to reach your 10% target.",
       secondary_action: {
         label: "Make payment", // normalized in UI
         type: "make_payment",
@@ -146,7 +146,7 @@ describe("attentionCardDisplay", () => {
         sampleItem({
           account_type: "CREDIT",
           reason: "Utilization is 98%",
-          recommended_action: "Pay $100 toward utilization target.",
+          recommended_action: "Pay $100 to reach your 10% target.",
           secondary_action: {
             label: "Make payment", // normalized in UI
             type: "make_payment",

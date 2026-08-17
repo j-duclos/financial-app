@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getTimelineCalendarChunk,
@@ -13,6 +13,12 @@ import {
   calendarRangeForSelection,
   type CalendarChunkWindow,
 } from "../lib/calendarChunks";
+import {
+  LARGE_RANGE_IDLE_CHUNK_MS,
+  loadCountForVisibleMonth,
+  nextIdleLoadCount,
+  shouldEagerFetchAllChunks,
+} from "../lib/calendarProgressiveLoad";
 import {
   todayIsoDate,
   type TimelineHorizon,
@@ -67,11 +73,12 @@ export function useMoneyFlowCalendar({
     scenarioId,
     householdId,
   };
+  const eagerAll = shouldEagerFetchAllChunks(windows.length);
 
   const [loadCount, setLoadCount] = useState(1);
   useEffect(() => {
-    setLoadCount(1);
-  }, [horizon, lookbackMonths, accountId, scenarioId, householdId]);
+    setLoadCount(eagerAll ? Math.max(1, windows.length) : 1);
+  }, [horizon, lookbackMonths, accountId, scenarioId, householdId, eagerAll, windows.length]);
 
   useEffect(() => {
     void queryClient.cancelQueries({
@@ -96,22 +103,7 @@ export function useMoneyFlowCalendar({
     }
   }, [viewMode, queryClient]);
 
-  const summaryQuery = useQuery({
-    queryKey: ["calendar-summary", horizon, lookbackMonths, accountId, scenarioId, householdId],
-    queryFn: () =>
-      getTimelineCalendarSummary({
-        start: range.start,
-        end: range.end,
-        horizon,
-        lookback_months: lookbackMonths,
-        account_id: accountId || undefined,
-        scenario_id: scenarioId || undefined,
-        household_id: householdId,
-      }),
-    enabled: viewMode === "calendar" && Boolean(householdId),
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
+  const firstChunkReadyRef = useRef(false);
 
   const chunkQueries = useQueries({
     queries: windows.map((window, index) => ({
@@ -125,32 +117,94 @@ export function useMoneyFlowCalendar({
         window.start,
         window.end,
       ],
-      queryFn: () => getTimelineCalendarChunk(chunkParams(filters, window, range)),
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        getTimelineCalendarChunk(chunkParams(filters, window, range), { signal }),
       enabled: viewMode === "calendar" && Boolean(householdId) && index < loadCount,
       staleTime: 60_000,
       refetchOnWindowFocus: false,
     })),
   });
 
-  const lastEnabledSuccess = chunkQueries[loadCount - 1]?.isSuccess;
+  const firstChunkReady = Boolean(chunkQueries[0]?.isSuccess);
+  firstChunkReadyRef.current = firstChunkReady;
+
+  const summaryEnabled =
+    viewMode === "calendar" &&
+    Boolean(householdId) &&
+    (eagerAll || firstChunkReady);
+
+  const summaryQuery = useQuery({
+    queryKey: ["calendar-summary", horizon, lookbackMonths, accountId, scenarioId, householdId],
+    queryFn: ({ signal }) =>
+      getTimelineCalendarSummary(
+        {
+          start: range.start,
+          end: range.end,
+          horizon,
+          lookback_months: lookbackMonths,
+          account_id: accountId || undefined,
+          scenario_id: scenarioId || undefined,
+          household_id: householdId,
+        },
+        { signal }
+      ),
+    enabled: summaryEnabled,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
   useEffect(() => {
-    if (lastEnabledSuccess && loadCount < windows.length) {
-      setLoadCount((count) => Math.min(windows.length, count + 1));
+    if (!summaryQuery.isSuccess || !chunkQueries[0]) return;
+    void chunkQueries[0].refetch();
+    // First-chunk refetch after full-range summary so recovery markers match canonical days.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryQuery.isSuccess]);
+
+  useEffect(() => {
+    if (viewMode !== "calendar" || eagerAll || !firstChunkReady) return;
+    if (loadCount >= windows.length) return;
+    const idle = window.requestIdleCallback;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let idleId: number | null = null;
+    const bump = () => {
+      if (!firstChunkReadyRef.current) return;
+      setLoadCount((count) => nextIdleLoadCount(count, windows.length));
+    };
+    if (typeof idle === "function") {
+      idleId = idle(bump, { timeout: LARGE_RANGE_IDLE_CHUNK_MS });
+    } else {
+      timeoutId = setTimeout(bump, LARGE_RANGE_IDLE_CHUNK_MS);
     }
-  }, [lastEnabledSuccess, loadCount, windows.length]);
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (idleId != null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [viewMode, eagerAll, firstChunkReady, loadCount, windows.length]);
+
+  const ensureMonthLoaded = useCallback(
+    (year: number, month: number) => {
+      setLoadCount((count) => loadCountForVisibleMonth(windows, year, month, count));
+    },
+    [windows]
+  );
 
   const chunkDays = chunkQueries.map((query) => query.data?.days);
 
   const upcomingQuery = useQuery({
     queryKey: ["calendar-timeline-upcoming", accountId, scenarioId, householdId],
-    queryFn: () =>
-      getTimelineCalendarChunk({
-        horizon: "14d",
-        lookback_months: 0,
-        account_id: accountId || undefined,
-        scenario_id: scenarioId || undefined,
-        household_id: householdId,
-      }),
+    queryFn: ({ signal }) =>
+      getTimelineCalendarChunk(
+        {
+          horizon: "14d",
+          lookback_months: 0,
+          account_id: accountId || undefined,
+          scenario_id: scenarioId || undefined,
+          household_id: householdId,
+        },
+        { signal }
+      ),
     enabled: viewMode === "timeline" && Boolean(householdId),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
@@ -194,7 +248,6 @@ export function useMoneyFlowCalendar({
       },
     }));
 
-  const firstChunkReady = Boolean(chunkQueries[0]?.isSuccess);
   const summary = summaryQuery.data as TimelineCalendarSummaryResponse | undefined;
   const loadingInitial =
     viewMode === "calendar" &&
@@ -211,7 +264,7 @@ export function useMoneyFlowCalendar({
     windows,
     days,
     summary: summary?.summary,
-    summaryLoading: summaryQuery.isLoading && !summary,
+    summaryLoading: summaryEnabled && summaryQuery.isFetching && !summary,
     summaryError: summaryQuery.error,
     firstChunkReady,
     loadingInitial,
@@ -220,6 +273,7 @@ export function useMoneyFlowCalendar({
     failedChunks,
     remainingCount: Math.max(0, windows.length - loadCount),
     loadMoreMonths: () => setLoadCount(windows.length),
+    ensureMonthLoaded,
     eagerMonthCount: (() => {
       if (!windows[0]) return 1;
       const start = new Date(`${windows[0].start}T12:00:00`);

@@ -38,6 +38,7 @@ import {
   formatAccountsPageSummaryLine,
 } from "../lib/accountPageSummary";
 import { computePortfolioSummary } from "../lib/portfolioSummary";
+import { invalidateUtilizationPreferenceQueries } from "../lib/financialQueryRefresh";
 import { useAccountOrganizationPreferences } from "../hooks/useAccountOrganizationPreferences";
 import AccountOrganizationToolbar from "../components/accounts/AccountOrganizationToolbar";
 import AccountGroupSection from "../components/accounts/AccountGroupSection";
@@ -327,6 +328,7 @@ export default function Accounts() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["account", variables.id] });
+      invalidateUtilizationPreferenceQueries(queryClient);
       setModalOpen(false);
       setEditing(null);
       setSubmitError(null);

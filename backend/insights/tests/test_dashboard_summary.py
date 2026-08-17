@@ -762,7 +762,7 @@ def test_attention_credit_utilization_action(user, credit_card):
     assert item["secondary_action"]["label"] == "Make payment"
     action = item["recommended_action"] or ""
     assert "Pay $" in action
-    assert "utilization target" in action.lower()
+    assert "10% target" in action.lower()
     assert item["amount"] is not None
 
 

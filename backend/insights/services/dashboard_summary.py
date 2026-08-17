@@ -214,6 +214,8 @@ def _credit_pay_to_target(
     *,
     owed: Decimal | None = None,
 ) -> Decimal | None:
+    from recommendations.services.calculators import payment_to_reach_utilization
+
     if owed is None:
         owed = ledger_owed_balance(account, today)
     limit = _decimal(account.credit_limit or 0)
@@ -223,10 +225,8 @@ def _credit_pay_to_target(
         return (owed - limit).quantize(Decimal("0.01"))
     target_raw = details.get("target_utilization_percent")
     target = _decimal(target_raw) if target_raw is not None else _target_utilization_percent(account)
-    target_balance = (limit * target / Decimal("100")).quantize(Decimal("0.01"))
-    if owed > target_balance:
-        return (owed - target_balance).quantize(Decimal("0.01"))
-    return None
+    pay = payment_to_reach_utilization(owed, limit, target)
+    return pay if pay > 0 else None
 
 
 def _attention_amount(
@@ -299,7 +299,13 @@ def _dashboard_recommended_action(
         if "limit" in reason and amt_str:
             return f"Pay ${amt_str} to get below limit."
         if details.get("utilization_percent") and amt_str:
-            return f"Pay ${amt_str} toward utilization target."
+            target_raw = details.get("target_utilization_percent")
+            target = (
+                _decimal(target_raw)
+                if target_raw is not None
+                else _target_utilization_percent(account)
+            )
+            return f"Pay ${amt_str} to reach your {target:.0f}% target."
         days = details.get("days_until_due")
         if days is not None and 0 <= int(days) <= PAYMENT_DUE_RISK_DAYS:
             if date_label:
@@ -310,7 +316,13 @@ def _dashboard_recommended_action(
         if existing:
             return existing
         if amt_str:
-            return f"Pay ${amt_str} toward utilization target."
+            target_raw = details.get("target_utilization_percent")
+            target = (
+                _decimal(target_raw)
+                if target_raw is not None
+                else _target_utilization_percent(account)
+            )
+            return f"Pay ${amt_str} to reach your {target:.0f}% target."
         return "Review payment and utilization."
 
     is_savings = (

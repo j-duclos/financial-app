@@ -253,11 +253,11 @@ describe("card copy", () => {
         id: "u",
         title: "Pay $851.11 toward Venture",
         why: "Venture is at 98% utilization. (score improvement placeholder)",
-        recommended_action: "Pay $851.11 to bring utilization below 70%.",
+        recommended_action: "Pay $851.11 to reach your 10% target.",
       })
     );
     expect(copy.condition).toBe("Venture is at 98% utilization.");
-    expect(copy.action).toBe("Pay $851.11 to bring utilization below 70%.");
+    expect(copy.action).toBe("Pay $851.11 to reach your 10% target.");
     expect(copy.condition.toLowerCase()).not.toMatch(/placeholder/);
   });
 

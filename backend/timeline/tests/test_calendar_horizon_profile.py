@@ -110,7 +110,10 @@ def test_profile_calendar_horizons(user, household):
         summary_bytes = len(json.dumps(result["summary"], default=str).encode("utf-8"))
         serialize_ms = calendar_ms - timeline_ms
         from timeline.services.calendar import calendar_chunk_payload, calendar_summary_payload
-        from timeline.services.calendar_cache import get_or_build_canonical_calendar
+        from timeline.services.calendar_cache import (
+            get_or_build_calendar_for_chunk,
+            get_or_build_canonical_calendar,
+        )
         from timeline.services.calendar_chunks import calendar_chunk_windows
 
         cache.clear()
@@ -149,6 +152,24 @@ def test_profile_calendar_horizons(user, household):
         if len(windows) > 1:
             later = calendar_chunk_payload(canonical, *windows[1])
             later_chunk_bytes = len(json.dumps(later, default=str).encode("utf-8"))
+        cache.clear()
+        reset_build_timeline_count()
+        t4 = time.perf_counter()
+        with CaptureQueriesContext(connection) as ctx5:
+            near = get_or_build_calendar_for_chunk(
+                user,
+                range_start=AS_OF,
+                range_end=end,
+                chunk_start=windows[0][0],
+                chunk_end=windows[0][1],
+                household_id=household.id,
+                as_of_date=AS_OF,
+                projection_only=True,
+            )
+        near_ms = (time.perf_counter() - t4) * 1000
+        near_sql = len(ctx5.captured_queries)
+        near_builds = get_build_timeline_count()
+        near_days = len(near.get("days") or [])
         print(
             "CALENDAR_HORIZON_PROFILE "
             f"horizon={label} "
@@ -175,6 +196,10 @@ def test_profile_calendar_horizons(user, household):
             f"AFTER_cached_builds={cached_builds} "
             f"AFTER_later_chunk_bytes={later_chunk_bytes} "
             f"AFTER_first_chunk_days={len(first_chunk['days'])} "
-            f"AFTER_windows={len(windows)}"
+            f"AFTER_windows={len(windows)} "
+            f"NEAR_term_ms={near_ms:.0f} "
+            f"NEAR_term_sql={near_sql} "
+            f"NEAR_term_builds={near_builds} "
+            f"NEAR_term_days={near_days}"
         )
     assert True

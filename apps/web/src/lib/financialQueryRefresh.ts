@@ -22,10 +22,26 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["dashboard-summary-details"],
   ["extended-cash-risk"],
   ["recommendations"],
+  ["debt-plan"],
+] as const;
+
+/** Preference-only invalidation when credit utilization target changes (not a ledger mutation). */
+export const UTILIZATION_PREFERENCE_QUERY_PREFIXES = [
+  ["recommendations"],
+  ["dashboard-summary"],
+  ["dashboard-summary-fast"],
+  ["dashboard-summary-details"],
+  ["debt-plan"],
 ] as const;
 
 export function invalidateFinancialQueries(queryClient: QueryClient): void {
   for (const queryKey of FINANCIAL_QUERY_PREFIXES) {
+    void queryClient.invalidateQueries({ queryKey: [...queryKey] });
+  }
+}
+
+export function invalidateUtilizationPreferenceQueries(queryClient: QueryClient): void {
+  for (const queryKey of UTILIZATION_PREFERENCE_QUERY_PREFIXES) {
     void queryClient.invalidateQueries({ queryKey: [...queryKey] });
   }
 }

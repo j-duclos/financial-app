@@ -64,16 +64,25 @@ describe("paymentPlannerDisplay", () => {
     expect(normalizePaymentActionLabel("Pay credit card")).toBe(PAYMENT_PLANNER_LABEL);
   });
 
-  it("paymentToReachUtilization matches target balance math", () => {
+  it("paymentToReachUtilization uses the account target, not a hardcoded percentage", () => {
     const acc = mockAccount({
       balance_owed: "980",
       credit_limit: "1000",
-      target_utilization_percent: "70",
+      target_utilization_percent: "10",
       utilization_percent: "98",
     });
-    expect(paymentToReachUtilization(acc, 70)).toBe(280);
-    expect(targetUtilizationPlanHint(acc)).toContain("280");
-    expect(targetUtilizationPlanHint(acc)).toContain("70%");
+    expect(paymentToReachUtilization(acc)).toBe(880);
+    expect(targetUtilizationPlanHint(acc)).toContain("880");
+    expect(targetUtilizationPlanHint(acc)).toContain("10%");
+    expect(targetUtilizationPlanHint(acc)).not.toContain("70%");
+
+    const at30 = mockAccount({ ...acc, target_utilization_percent: "30" });
+    expect(paymentToReachUtilization(at30)).toBe(680);
+    expect(targetUtilizationPlanHint(at30)).toContain("30%");
+
+    const at50 = mockAccount({ ...acc, target_utilization_percent: "50" });
+    expect(paymentToReachUtilization(at50)).toBe(480);
+    expect(paymentToReachUtilization(at50)).not.toBe(paymentToReachUtilization(acc));
   });
 
   it("strategyRequiresAmountInput for custom and fixed", () => {

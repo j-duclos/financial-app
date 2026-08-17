@@ -1,3 +1,6 @@
+/** Model default when a credit account has no saved utilization preference. */
+export const DEFAULT_TARGET_UTILIZATION_PERCENT = 10;
+
 /** Account types matching backend AccountType enum */
 export type AccountType =
   | "CHECKING"
@@ -66,7 +69,7 @@ export interface Account {
   interest_cycle_end_day?: number | null;
   /** Credit limit for credit cards; used to show available credit. */
   credit_limit?: string | null;
-  /** Target utilization % for credit health scoring (default 10). */
+  /** Target utilization % for credit health scoring (account preference; model default 10). */
   target_utilization_percent?: string | null;
   /** Day of month (1-31) when billing cycle ends; for credit card interest. */
   billing_cycle_end_day?: number | null;

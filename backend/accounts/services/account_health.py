@@ -233,6 +233,7 @@ def _serialize_decimal(val: Decimal | None) -> str | None:
 
 
 def _target_utilization_percent(account: Account) -> Decimal:
+    """Canonical utilization target for this account (user-configured preference)."""
     raw = account.target_utilization_percent
     if raw is None:
         return DEFAULT_TARGET_UTILIZATION_PERCENT
@@ -240,6 +241,11 @@ def _target_utilization_percent(account: Account) -> Decimal:
     if target < Decimal("0"):
         return DEFAULT_TARGET_UTILIZATION_PERCENT
     return min(target, Decimal("100"))
+
+
+def account_target_utilization_percent(account: Account) -> Decimal:
+    """Public alias for the canonical per-account utilization target."""
+    return _target_utilization_percent(account)
 
 
 def _credit_utilization_thresholds(target: Decimal) -> tuple[Decimal, Decimal, Decimal]:

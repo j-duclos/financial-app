@@ -4,8 +4,12 @@ from decimal import Decimal
 SAFE_TO_SPEND_LOW_AMOUNT = Decimal("100")
 SAFE_TO_SPEND_LOW_PERCENT = Decimal("0.10")
 
+# Model default when a credit account has no saved preference.
+# Not a recommendation target — each account's target_utilization_percent is canonical.
 DEFAULT_TARGET_UTILIZATION_PERCENT = Decimal("10")
 
+# Fixed risk-severity floors (independent of the user's utilization target).
+# A 10% target does not make 11% Critical; these classify how stretched a card is.
 CREDIT_UTILIZATION_WATCH = Decimal("50")
 CREDIT_UTILIZATION_RISK = Decimal("70")
 CREDIT_UTILIZATION_CRITICAL = Decimal("90")

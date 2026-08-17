@@ -116,6 +116,9 @@ class TestCalculators:
         limit = Decimal("5000")
         pay = payment_to_reach_utilization(owed, limit, Decimal("70"))
         assert pay == Decimal("500.00")
+        assert payment_to_reach_utilization(owed, limit, Decimal("10")) == Decimal("3500.00")
+        assert payment_to_reach_utilization(owed, limit, Decimal("30")) == Decimal("2500.00")
+        assert payment_to_reach_utilization(owed, limit, Decimal("50")) == Decimal("1500.00")
 
     def test_priority_score_critical_soon(self):
         assert priority_score(severity="critical", days_until=2) > priority_score(
@@ -205,17 +208,20 @@ class TestDetectors:
         assert dets[0].amount and dets[0].amount > 0
 
     @pytest.mark.parametrize(
-        "util,owed,expect_count,target",
+        "util,owed,target,expect_count",
         [
-            ("0", Decimal("0"), 0, None),
-            ("70", Decimal("3500"), 1, Decimal("50")),
-            ("75", Decimal("3750"), 1, Decimal("70")),
-            ("98", Decimal("4900"), 1, Decimal("70")),
-            ("100", Decimal("5000"), 1, Decimal("70")),
-            ("110", Decimal("5500"), 1, Decimal("70")),
+            ("0", Decimal("0"), Decimal("10"), 0),
+            ("10", Decimal("500"), Decimal("10"), 0),
+            ("15", Decimal("750"), Decimal("10"), 1),
+            ("70", Decimal("3500"), Decimal("10"), 1),
+            ("75", Decimal("3750"), Decimal("30"), 1),
+            ("98", Decimal("4900"), Decimal("10"), 1),
+            ("50", Decimal("2500"), Decimal("50"), 0),
+            ("51", Decimal("2550"), Decimal("50"), 1),
         ],
     )
-    def test_utilization_thresholds(self, credit_card, util, owed, expect_count, target):
+    def test_utilization_thresholds(self, credit_card, util, owed, target, expect_count):
+        credit_card.target_utilization_percent = target
         ctx = RecommendationContext(
             user=None,
             today=AS_OF,
@@ -225,7 +231,14 @@ class TestDetectors:
             forecasts={},
             st_aggregate={},
             timeline_rows=[],
-            health_by_id={credit_card.id: {"details": {"utilization_percent": util}}},
+            health_by_id={
+                credit_card.id: {
+                    "details": {
+                        "utilization_percent": util,
+                        "target_utilization_percent": str(target),
+                    }
+                }
+            },
             owed_balances={credit_card.id: owed},
         )
         dets = detect_utilization(ctx)
@@ -233,6 +246,42 @@ class TestDetectors:
         if expect_count:
             assert dets[0].utilization_target == target
             assert dets[0].amount == payment_to_reach_utilization(owed, Decimal("5000"), target)
+            assert "70%" not in (dets[0].projected_improvement or "")
+            assert f"your {target:.0f}% target" in (dets[0].projected_improvement or "")
+
+    def test_changing_target_changes_payment_not_current_utilization(self, credit_card):
+        owed = Decimal("4900")
+        limit = Decimal("5000")
+        current_util = Decimal("98")
+        amounts = {}
+        for target in (Decimal("10"), Decimal("30"), Decimal("50")):
+            credit_card.target_utilization_percent = target
+            ctx = RecommendationContext(
+                user=None,
+                today=AS_OF,
+                days=30,
+                accounts=[credit_card],
+                accounts_by_id={credit_card.id: credit_card},
+                forecasts={},
+                st_aggregate={},
+                timeline_rows=[],
+                health_by_id={
+                    credit_card.id: {
+                        "details": {
+                            "utilization_percent": str(current_util),
+                            "target_utilization_percent": str(target),
+                        }
+                    }
+                },
+                owed_balances={credit_card.id: owed},
+            )
+            dets = detect_utilization(ctx)
+            assert len(dets) == 1
+            assert dets[0].utilization_current == current_util
+            assert dets[0].utilization_target == target
+            amounts[target] = dets[0].amount
+            assert dets[0].amount == payment_to_reach_utilization(owed, limit, target)
+        assert amounts[Decimal("10")] > amounts[Decimal("30")] > amounts[Decimal("50")]
 
     def test_survival_mode_multiple_critical(self, checking, savings):
         ctx = RecommendationContext(
@@ -450,7 +499,8 @@ class TestCopyAndTitles:
         assert "placeholder" not in blob
         assert "todo" not in blob
         assert rec["why"].startswith("Venture is at 98% utilization")
-        assert "bring utilization below 70%" in rec["recommended_action"].lower()
+        assert "reach your 10% target" in rec["recommended_action"].lower()
+        assert "70%" not in rec["recommended_action"]
 
 
 class TestDebtPayoffConsolidation:
@@ -496,8 +546,8 @@ class TestDebtPayoffConsolidation:
                             "id": "utilization",
                             "priority": "medium",
                             "message": (
-                                f"Bring {credit_card.effective_display_name} below 30% utilization "
-                                "to improve your credit profile."
+                                f"Bring {credit_card.effective_display_name} to your "
+                                f"10% utilization target."
                             ),
                         },
                     ],

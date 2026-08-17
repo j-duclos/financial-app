@@ -10,6 +10,8 @@ from decimal import Decimal
 from typing import Any
 
 from accounts.models import Account
+from accounts.services.account_health import _target_utilization_percent
+from accounts.services.account_health_constants import CREDIT_UTILIZATION_CRITICAL
 from accounts.services.available_to_spend import (
     RISK_STATUS_CRITICAL,
     RISK_STATUS_RISK,
@@ -17,7 +19,6 @@ from accounts.services.available_to_spend import (
     _project_balances,
 )
 from recommendations.services.calculators import (
-    UTILIZATION_TARGETS,
     account_available_for_transfer,
     format_money,
     format_short_date,
@@ -188,29 +189,30 @@ def detect_utilization(ctx: RecommendationContext) -> list[Detection]:
         if util is None:
             continue
         util_dec = _decimal(util)
-        if util_dec < Decimal("70"):
+        target_raw = details.get("target_utilization_percent")
+        target = (
+            _decimal(target_raw)
+            if target_raw is not None
+            else _target_utilization_percent(acc)
+        )
+        if util_dec <= target:
             continue
         owed = ctx.owed_for(acc.id)
         limit = _decimal(acc.credit_limit or 0)
-        target = Decimal("70")
-        for t in UTILIZATION_TARGETS:
-            if util_dec > t:
-                target = t
-                break
         payment = payment_to_reach_utilization(owed, limit, target)
         if payment <= 0:
             continue
         out.append(
             Detection(
                 kind="reduce_utilization",
-                severity="high" if util_dec >= Decimal("90") else "medium",
+                severity="high" if util_dec >= CREDIT_UTILIZATION_CRITICAL else "medium",
                 account_id=acc.id,
                 amount=payment,
                 utilization_current=util_dec,
                 utilization_target=target,
                 reason=f"{acc.effective_display_name} is at {util_dec:.0f}% utilization.",
                 projected_improvement=(
-                    f"Pay ${format_money(payment)} to bring utilization below {target:.0f}%."
+                    f"Pay ${format_money(payment)} to reach your {target:.0f}% target."
                 ),
             )
         )

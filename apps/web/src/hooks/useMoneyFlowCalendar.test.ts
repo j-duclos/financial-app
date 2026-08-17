@@ -25,4 +25,16 @@ describe("useMoneyFlowCalendar", () => {
     expect(source).toMatch(/cancelQueries\(\{ queryKey: \["calendar-chunk"\] \}\)/);
     expect(source).toMatch(/cancelQueries\(\{ queryKey: \["calendar-summary"\] \}\)/);
   });
+
+  it("defers full-range summary until the first chunk is ready on large ranges", () => {
+    expect(source).toMatch(/shouldEagerFetchAllChunks/);
+    expect(source).toMatch(/eagerAll \|\| firstChunkReady/);
+    expect(source).not.toMatch(/lastEnabledSuccess && loadCount < windows.length/);
+  });
+
+  it("loads later chunks from idle time or approaching a month, and passes abort signals", () => {
+    expect(source).toMatch(/requestIdleCallback/);
+    expect(source).toMatch(/ensureMonthLoaded/);
+    expect(source).toMatch(/signal/);
+  });
 });

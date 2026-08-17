@@ -1,4 +1,4 @@
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import { DEFAULT_TARGET_UTILIZATION_PERCENT, formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import type { Account, AccountHealthDetails } from "@budget-app/shared";
 import { riskStatusLabel } from "./safeToSpendLabels";
 import { formatDateDisplay } from "./dateDisplay";
@@ -81,7 +81,9 @@ export function buildAccountListHealthReason(
     if (limit > 0 && owed > limit) {
       const payAmount = owed - limit;
       const util = account.utilization_percent;
-      const target = parseAmount(account.target_utilization_percent ?? "10");
+      const target = parseAmount(
+        account.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
+      );
       const utilPart =
         util != null && account.utilization_percent != null
           ? `Utilization is ${parseFloat(account.utilization_percent).toFixed(0)}% (target ${target.toFixed(0)}%)`
@@ -109,7 +111,9 @@ export function buildAccountListHealthReason(
     base.includes("Utilization is") &&
     account.utilization_percent != null
   ) {
-    const target = parseAmount(account.target_utilization_percent ?? "10");
+    const target = parseAmount(
+      account.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
+    );
     const utilPct = parseFloat(account.utilization_percent).toFixed(0);
     const prefix = `Utilization is ${utilPct}% (target ${target.toFixed(0)}%)`;
     const colon = base.indexOf(":");

@@ -26,6 +26,8 @@ from typing import Any
 from django.core.cache import cache
 
 from accounts.models import Account
+from accounts.services.account_health import _target_utilization_percent
+from accounts.services.account_health_constants import DEFAULT_TARGET_UTILIZATION_PERCENT
 from accounts.services.credit_card import ledger_owed_balance
 from common.services.cache import (
     DEBT_PAYOFF_PROJECTION_CACHE_SECONDS,
@@ -40,7 +42,8 @@ from credit_cards.services.payoff import (
 
 DEBT_STRATEGIES = frozenset({"avalanche", "snowball", "utilization_target", "custom"})
 PAYOFF_MODES = frozenset({"survival", "aggressive", "credit_score", "balanced"})
-UTILIZATION_TARGET_PCT = Decimal("30")
+# Industry scoring breakpoint (independent of the user's configured target).
+INDUSTRY_UTILIZATION_50_PCT = Decimal("50")
 MINIMUM_BASELINE_CACHE_VERSION = "v1"
 
 
@@ -190,6 +193,18 @@ def _household_utilization(states: list[CardState]) -> Decimal:
         return Decimal("0")
     owed = sum((s.balance for s in states if s.balance > 0), Decimal("0"))
     return _quantize(owed / limits * Decimal("100"))
+
+
+def _household_utilization_target(states: list[CardState]) -> Decimal:
+    """Limit-weighted average of each card's configured utilization target."""
+    limits = sum((s.credit_limit for s in states if s.credit_limit > 0), Decimal("0"))
+    if limits <= 0:
+        return DEFAULT_TARGET_UTILIZATION_PERCENT
+    weighted = sum(
+        (s.credit_limit * _target_utilization_percent(s.account) for s in states if s.credit_limit > 0),
+        Decimal("0"),
+    )
+    return _quantize(weighted / limits)
 
 
 def _run_payoff_loop(
@@ -432,6 +447,7 @@ def simulate_household_debt(
         loop.payoff_order,
         loop.debt_free_date,
         loop.months,
+        utilization_target=_household_utilization_target(opening_states),
     )
     card_summaries = _build_card_summaries(
         cards,
@@ -497,12 +513,15 @@ def _simulation_events(
     payoff_order: list[int],
     debt_free_date: date | None,
     months: int,
+    *,
+    utilization_target: Decimal | None = None,
 ) -> dict[str, int | None]:
     """Lightweight milestone months from the existing timeline (no extra snapshots)."""
+    target = utilization_target if utilization_target is not None else DEFAULT_TARGET_UTILIZATION_PERCENT
     events: dict[str, int | None] = {
         "first_card_eliminated_month": None,
         "utilization_below_50_month": None,
-        "utilization_below_30_month": None,
+        "utilization_below_target_month": None,
         "debt_free_month": months if debt_free_date is not None else None,
     }
     for row in timeline:
@@ -515,15 +534,15 @@ def _simulation_events(
                     events["first_card_eliminated_month"] = month
                     break
         util = _household_util_from_balances(opening_states, bals)
-        if events["utilization_below_50_month"] is None and util < Decimal("50"):
+        if events["utilization_below_50_month"] is None and util < INDUSTRY_UTILIZATION_50_PCT:
             events["utilization_below_50_month"] = month
-        if events["utilization_below_30_month"] is None and util < Decimal("30"):
-            events["utilization_below_30_month"] = month
+        if events["utilization_below_target_month"] is None and util < target:
+            events["utilization_below_target_month"] = month
     if not timeline and debt_free_date is not None:
         events["debt_free_month"] = 0
         events["first_card_eliminated_month"] = 0
         events["utilization_below_50_month"] = 0
-        events["utilization_below_30_month"] = 0
+        events["utilization_below_target_month"] = 0
     return events
 
 
@@ -623,6 +642,7 @@ def _build_milestones(
     """
     opening_util = _household_utilization(opening_states)
     opening_debt = sum((s.balance for s in opening_states), Decimal("0"))
+    target = _household_utilization_target(opening_states)
     milestones: list[dict[str, Any]] = []
 
     if payoff_order or events.get("first_card_eliminated_month") is not None:
@@ -643,36 +663,38 @@ def _build_milestones(
         )
 
     util_50_month = events.get("utilization_below_50_month")
-    util_50_desc = "Household revolving utilization drops under half of limits."
-    if opening_util >= Decimal("50") and util_50_month:
-        util_50_desc = (
-            f"Household revolving utilization drops under half of limits "
-            f"(month {util_50_month} in this plan)."
+    if target != INDUSTRY_UTILIZATION_50_PCT:
+        util_50_desc = "Household revolving utilization drops under half of limits."
+        if opening_util >= INDUSTRY_UTILIZATION_50_PCT and util_50_month:
+            util_50_desc = (
+                f"Household revolving utilization drops under half of limits "
+                f"(month {util_50_month} in this plan)."
+            )
+        milestones.append(
+            {
+                "id": "util_below_50",
+                "label": "Utilization below 50%",
+                "achieved": opening_util < INDUSTRY_UTILIZATION_50_PCT,
+                "description": util_50_desc,
+                "month": util_50_month,
+            }
         )
-    milestones.append(
-        {
-            "id": "util_below_50",
-            "label": "Utilization below 50%",
-            "achieved": opening_util < Decimal("50"),
-            "description": util_50_desc,
-            "month": util_50_month,
-        }
-    )
 
-    util_30_month = events.get("utilization_below_30_month")
-    util_30_desc = "Strong credit profile territory for most scoring models."
-    if opening_util >= UTILIZATION_TARGET_PCT and util_30_month:
-        util_30_desc = (
-            f"Strong credit profile territory for most scoring models "
-            f"(month {util_30_month} in this plan)."
+    util_target_month = events.get("utilization_below_target_month")
+    target_label = f"{target:.0f}"
+    util_target_desc = f"Household revolving utilization reaches your {target_label}% target."
+    if opening_util >= target and util_target_month:
+        util_target_desc = (
+            f"Household revolving utilization reaches your {target_label}% target "
+            f"(month {util_target_month} in this plan)."
         )
     milestones.append(
         {
-            "id": "util_below_30",
-            "label": "Utilization below 30%",
-            "achieved": opening_util < UTILIZATION_TARGET_PCT,
-            "description": util_30_desc,
-            "month": util_30_month,
+            "id": "util_below_target",
+            "label": f"Utilization below {target_label}%",
+            "achieved": opening_util < target,
+            "description": util_target_desc,
+            "month": util_target_month,
         }
     )
 
@@ -721,15 +743,20 @@ def _build_recommendations(
                 "message": f"This plan saves about ${_money(interest_saved)} vs minimum payments only.",
             }
         )
-    high_util = [s for s in opening_states if s.utilization > UTILIZATION_TARGET_PCT]
+    high_util = [
+        s for s in opening_states if s.utilization > _target_utilization_percent(s.account)
+    ]
     if high_util:
         worst = max(high_util, key=lambda s: s.utilization)
+        card_target = _target_utilization_percent(worst.account)
         recs.append(
             {
                 "id": "utilization",
                 "priority": "medium",
-                "message": f"Bring {worst.account.effective_display_name} below 30% utilization "
-                "to improve your credit profile.",
+                "message": (
+                    f"Bring {worst.account.effective_display_name} to your "
+                    f"{card_target:.0f}% utilization target."
+                ),
             }
         )
     return recs
@@ -771,7 +798,8 @@ def _debt_payoff_projection_fingerprint(
         parts.append(
             f"{card.pk}:{owed}:{_effective_apr(card)}:"
             f"{card.minimum_payment_amount}:{card.credit_limit}:"
-            f"{card.promotional_apr}:{card.promotional_end_date}"
+            f"{card.promotional_apr}:{card.promotional_end_date}:"
+            f"{_target_utilization_percent(card)}"
         )
     digest = hashlib.md5("|".join(parts).encode(), usedforsecurity=False).hexdigest()
     return digest[:16]

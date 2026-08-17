@@ -1033,7 +1033,7 @@ class TimelineCalendarChunkView(APIView):
             from datetime import datetime as dt
 
             from timeline.services.calendar import calendar_chunk_payload
-            from timeline.services.calendar_cache import get_or_build_canonical_calendar
+            from timeline.services.calendar_cache import get_or_build_calendar_for_chunk
 
             start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
                 request
@@ -1057,10 +1057,12 @@ class TimelineCalendarChunkView(APIView):
                     {"detail": "chunk_start must be on or before chunk_end."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            payload = get_or_build_canonical_calendar(
+            payload = get_or_build_calendar_for_chunk(
                 request.user,
-                start_date=start,
-                end_date=end,
+                range_start=start,
+                range_end=end,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
                 scenario_id=scenario_id,
                 account_id=account_id,
                 household_id=household_id,

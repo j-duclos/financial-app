@@ -28,4 +28,9 @@ describe("Calendar page structure", () => {
     expect(timelineSource).toMatch(/parseTimelineViewParam/);
     expect(timelineSource).not.toMatch(/TimelineListView/);
   });
+
+  it("shows calculating placeholders for summary without blocking the calendar grid", () => {
+    expect(timelineSource).toMatch(/Calculating\.\.\./);
+    expect(timelineSource).toMatch(/ensureMonthLoaded/);
+  });
 });

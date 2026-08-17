@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatCurrency, getAccountInstitutionSubtitle, getEffectiveDisplayName } from "@budget-app/shared";
+import { formatCurrency, getAccountInstitutionSubtitle, getEffectiveDisplayName, DEFAULT_TARGET_UTILIZATION_PERCENT } from "@budget-app/shared";
 import type { Account, AccountRole } from "@budget-app/shared";
 import AccountBucketsModal from "../goals/AccountBucketsModal";
 import AccountHealthBadge from "../AccountHealthBadge";
@@ -104,7 +104,9 @@ export default function AccountListItem({
       : "—";
 
   const primaryLabel = isCredit ? (acc.balance_owed != null ? "Owed" : "Available") : "Balance";
-  const targetUtil = parseFloat(acc.target_utilization_percent ?? "10");
+  const targetUtil = parseFloat(
+    acc.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
+  );
   const utilAboveTarget =
     acc.utilization_percent != null && parseFloat(acc.utilization_percent) > targetUtil;
 
@@ -496,7 +498,9 @@ function LifecycleBadge({
 }
 
 function CreditDetails({ acc }: { acc: Account }) {
-  const targetUtil = parseFloat(acc.target_utilization_percent ?? "10");
+  const targetUtil = parseFloat(
+    acc.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
+  );
   const utilAboveTarget =
     acc.utilization_percent != null && parseFloat(acc.utilization_percent) > targetUtil;
   const cycleEnd = acc.billing_cycle_end_date ?? acc.next_statement_date;

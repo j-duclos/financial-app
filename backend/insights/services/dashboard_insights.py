@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from accounts.models import Account
+from accounts.services.account_health import _target_utilization_percent
 from accounts.services.account_health_constants import (
     HEALTH_STATUS_CRITICAL,
     HEALTH_STATUS_RISK,
@@ -127,13 +128,18 @@ def _insights_credit_risk(
         days = details.get("days_until_due")
 
         if util and _decimal(util) >= Decimal("90"):
-            target = details.get("target_utilization_percent") or "30"
+            target_raw = details.get("target_utilization_percent")
+            target = (
+                _decimal(target_raw)
+                if target_raw is not None
+                else _target_utilization_percent(account)
+            )
             out.append(
                 _insight(
                     f"credit_util_{aid}",
                     "warning",
                     f"{account.effective_display_name} utilization high",
-                    f"Utilization is {_decimal(util):.0f}%. Paying down balance helps reach your {target}% target.",
+                    f"Utilization is {_decimal(util):.0f}%. Paying down balance helps reach your {target:.0f}% target.",
                     metric_label="Utilization",
                     metric_value=f"{_decimal(util):.0f}%",
                     action_label="Open ledger",

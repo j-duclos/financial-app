@@ -23,7 +23,7 @@ from timeline.services.calendar import (
     calendar_summary_payload,
     public_calendar_day,
 )
-from timeline.services.calendar_cache import get_or_build_canonical_calendar
+from timeline.services.calendar_cache import get_or_build_calendar_for_chunk, get_or_build_canonical_calendar
 from timeline.services.calendar_chunks import calendar_chunk_windows
 from transactions.models import Transaction
 from transactions.services.posting import create_transfer, post_transaction
@@ -627,3 +627,131 @@ def test_calendar_query_count_does_not_add_per_day_tax(user, household, checking
     delta = len(long_ctx.captured_queries) - len(short_ctx.captured_queries)
     assert extra_days > 0
     assert delta / extra_days < 3
+
+
+def test_near_term_chunk_does_not_build_full_range(user, household, checking, income_category):
+    RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=checking,
+        category=income_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("100"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=10,
+        start_date=date(2025, 1, 1),
+        active=True,
+    )
+    windows = calendar_chunk_windows(AS_OF, END_6M, AS_OF)
+    reset_build_timeline_count()
+    near = get_or_build_calendar_for_chunk(
+        user,
+        range_start=AS_OF,
+        range_end=END_6M,
+        chunk_start=windows[0][0],
+        chunk_end=windows[0][1],
+        account_id=checking.id,
+        household_id=household.id,
+        as_of_date=AS_OF,
+        projection_only=True,
+    )
+    assert get_build_timeline_count() == 1
+    near_days = [d["date"] for d in near["days"]]
+    assert near_days[0] == AS_OF.isoformat()
+    assert near_days[-1] == windows[0][1].isoformat()
+    assert all(d <= windows[0][1].isoformat() for d in near_days)
+
+    reset_build_timeline_count()
+    full = get_or_build_canonical_calendar(
+        user,
+        start_date=AS_OF,
+        end_date=END_6M,
+        account_id=checking.id,
+        household_id=household.id,
+        as_of_date=AS_OF,
+        projection_only=True,
+    )
+    assert get_build_timeline_count() == 1
+    prefix = [d for d in full["days"] if d["date"] <= windows[0][1].isoformat()]
+    assert [_comparable_day(d) for d in near["days"]] == [_comparable_day(d) for d in prefix]
+
+    reset_build_timeline_count()
+    later = get_or_build_calendar_for_chunk(
+        user,
+        range_start=AS_OF,
+        range_end=END_6M,
+        chunk_start=windows[1][0],
+        chunk_end=windows[1][1],
+        account_id=checking.id,
+        household_id=household.id,
+        as_of_date=AS_OF,
+        projection_only=True,
+    )
+    assert get_build_timeline_count() == 0
+    later_payload = calendar_chunk_payload(later, *windows[1])
+    assert later_payload["days"][0]["date"] == windows[1][0].isoformat()
+
+
+def test_first_chunk_api_before_summary_is_near_term(
+    api_client, user, household, checking, income_category
+):
+    RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=checking,
+        category=income_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("100"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=10,
+        start_date=date(2025, 1, 1),
+        active=True,
+    )
+    api_client.force_authenticate(user=user)
+    params = {
+        "start": AS_OF.isoformat(),
+        "end": END_6M.isoformat(),
+        "as_of": AS_OF.isoformat(),
+        "account_id": str(checking.id),
+        "household_id": str(household.id),
+    }
+    windows = calendar_chunk_windows(AS_OF, END_6M, AS_OF)
+    reset_build_timeline_count()
+    chunk_res = api_client.get(
+        "/api/timeline/calendar/chunk/",
+        {
+            **params,
+            "chunk_start": windows[0][0].isoformat(),
+            "chunk_end": windows[0][1].isoformat(),
+        },
+    )
+    assert chunk_res.status_code == 200
+    assert get_build_timeline_count() == 1
+    chunk = chunk_res.json()
+    assert chunk["days"][-1]["date"] <= windows[0][1].isoformat()
+    assert len(chunk["days"]) < (END_6M - AS_OF).days
+
+    reset_build_timeline_count()
+    summary_res = api_client.get("/api/timeline/calendar/summary/", params)
+    assert summary_res.status_code == 200
+    assert get_build_timeline_count() == 1
+    body = summary_res.json()
+    assert body["end_date"] == END_6M.isoformat()
+    assert "lowest_balance" in body["summary"]
+
+    reset_build_timeline_count()
+    later_res = api_client.get(
+        "/api/timeline/calendar/chunk/",
+        {
+            **params,
+            "chunk_start": windows[1][0].isoformat(),
+            "chunk_end": windows[1][1].isoformat(),
+        },
+    )
+    assert later_res.status_code == 200
+    assert get_build_timeline_count() == 0
+

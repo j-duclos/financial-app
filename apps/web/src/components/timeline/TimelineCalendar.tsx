@@ -56,6 +56,7 @@ type Props = {
   loadingRemaining?: boolean;
   onLoadMore?: () => void;
   eagerMonthCount?: number;
+  onMonthVisible?: (year: number, month: number) => void;
 };
 
 const DayCell = memo(function DayCell({
@@ -80,7 +81,26 @@ const DayCell = memo(function DayCell({
   const dayNum = d.getDate();
   const active = Boolean(day && dayHasActivity(day));
 
-  if (!day || !active) {
+  if (!day) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelect(dateIso)}
+        data-timeline-date={dateIso}
+        className={`w-full aspect-square min-h-0 max-h-[5.75rem] sm:max-h-[6.25rem] lg:max-h-[5.5rem] p-0.5 sm:p-1 border border-gray-100 rounded-md text-left bg-white
+          focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-500
+          ${isToday ? "border-2 border-sky-500" : ""}
+          ${isSelected ? "ring-2 ring-indigo-500 ring-offset-1 z-10" : ""}
+        `}
+        aria-label={dateIso}
+        aria-current={isToday ? "date" : isSelected ? "true" : undefined}
+      >
+        <span className="text-[11px] font-semibold text-gray-400 tabular-nums">{dayNum}</span>
+      </button>
+    );
+  }
+
+  if (!active) {
     const severity = day ? determineForecastSeverity(day) : "neutral";
     const tone = day ? calendarCellTone(day) : "empty";
     return (
@@ -320,10 +340,16 @@ const MonthCalendarSection = memo(function MonthCalendarSection({
 function LazyMonthMount({
   eager,
   label,
+  year,
+  month,
+  onVisible,
   children,
 }: {
   eager: boolean;
   label: string;
+  year: number;
+  month: number;
+  onVisible?: (year: number, month: number) => void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -336,17 +362,21 @@ function LazyMonthMount({
     const el = ref.current;
     if (!el || typeof IntersectionObserver === "undefined") {
       setMounted(true);
+      onVisible?.(year, month);
       return;
     }
     const io = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setMounted(true);
+        if (entry.isIntersecting) {
+          setMounted(true);
+          onVisible?.(year, month);
+        }
       },
       { rootMargin: "240px" }
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [mounted]);
+  }, [mounted, year, month, onVisible]);
 
   return (
     <div ref={ref}>
@@ -377,6 +407,7 @@ export default function TimelineCalendar({
   loadingRemaining = false,
   onLoadMore,
   eagerMonthCount = 2,
+  onMonthVisible,
 }: Props) {
   const byDate = useMemo(() => dayMap(days), [days]);
   const months = useMemo(() => monthsInRange(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
@@ -395,6 +426,9 @@ export default function TimelineCalendar({
               key={`${year}-${month}`}
               eager={index < eagerMonthCount}
               label={monthLabelForCalendarSection(year, month)}
+              year={year}
+              month={month}
+              onVisible={onMonthVisible}
             >
               <MonthCalendarSection
                 year={year}

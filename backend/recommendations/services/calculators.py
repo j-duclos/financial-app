@@ -10,8 +10,6 @@ from typing import Any
 from accounts.models import Account
 from accounts.services.available_to_spend import _decimal
 
-UTILIZATION_TARGETS = (Decimal("70"), Decimal("50"), Decimal("30"))
-
 NON_FLEXIBLE_NAME_FRAGMENTS = (
     "mortgage",
     "rent",
