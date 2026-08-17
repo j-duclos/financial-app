@@ -34,7 +34,14 @@ describe("useMoneyFlowCalendar", () => {
 
   it("loads later chunks from idle time or approaching a month, and passes abort signals", () => {
     expect(source).toMatch(/requestIdleCallback/);
+    expect(source).toMatch(/shouldIdlePreloadNextChunk/);
     expect(source).toMatch(/ensureMonthLoaded/);
     expect(source).toMatch(/signal/);
+  });
+
+  it("reuses chunk windows across horizon changes via keys without horizon", () => {
+    expect(source).toMatch(/\["calendar-chunk"/);
+    expect(source).toMatch(/queryKey: \[[\s\S]*?"calendar-chunk"[\s\S]*?lookbackMonths/);
+    expect(source).not.toMatch(/\["calendar-chunk",\s*horizon/);
   });
 });

@@ -77,8 +77,7 @@ const DayCell = memo(function DayCell({
     txn: TimelineCalendarDay["transactions"][number]
   ) => void;
 }) {
-  const d = new Date(`${dateIso}T12:00:00`);
-  const dayNum = d.getDate();
+  const dayNum = Number(dateIso.slice(8, 10));
   const active = Boolean(day && dayHasActivity(day));
 
   if (!day) {
@@ -115,7 +114,7 @@ const DayCell = memo(function DayCell({
           ${isToday ? "border-2 border-sky-500 shadow-sm" : ""}
           ${isSelected ? "ring-2 ring-indigo-500 ring-offset-1 scale-[1.02] z-10" : "hover:scale-[1.01]"}
         `}
-        aria-label={day ? forecastSeverityAriaLabel(day, formatCompactMonthDay(dateIso)) : dateIso}
+        aria-label={day ? forecastSeverityAriaLabel(day, dateIso) : dateIso}
         aria-current={isToday ? "date" : isSelected ? "true" : undefined}
       >
         <div className="flex items-center justify-between gap-0.5 leading-none">
@@ -297,9 +296,10 @@ const MonthCalendarSection = memo(function MonthCalendarSection({
       {pending && !failed ? (
         <div
           className="h-48 rounded-md bg-gray-100 animate-pulse mb-2"
-          aria-hidden
           aria-busy="true"
-        />
+        >
+          <span className="sr-only">Loading {monthLabelForCalendarSection(year, month)}…</span>
+        </div>
       ) : (
         <>
           <div className={`grid grid-cols-7 gap-0.5 sm:gap-1 mb-1 ${CALENDAR_GRID_MAX_CLASS}`}>
@@ -387,6 +387,7 @@ function LazyMonthMount({
           <h2 className="text-[10px] sm:text-xs font-semibold tracking-wide text-gray-500 uppercase px-3 py-2">
             {label}
           </h2>
+          <p className="px-3 pb-2 text-sm text-gray-500">Loading {label}…</p>
           <div className="h-48 rounded-md bg-gray-50" aria-hidden />
         </section>
       )}

@@ -7,6 +7,12 @@ export function shouldEagerFetchAllChunks(windowCount: number): boolean {
   return windowCount <= 1;
 }
 
+/** Idle-preload only the immediate next chunk after the first useful months. */
+export function shouldIdlePreloadNextChunk(loadCount: number, windowCount: number): boolean {
+  if (windowCount <= 1) return false;
+  return loadCount === 1;
+}
+
 export function nextIdleLoadCount(loadCount: number, windowCount: number): number {
   if (windowCount <= 1) return windowCount;
   return Math.min(windowCount, loadCount + 1);

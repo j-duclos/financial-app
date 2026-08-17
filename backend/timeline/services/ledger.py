@@ -76,6 +76,7 @@ from transactions.models import (
     TransferGroup,
 )
 from transactions.services.matching import (
+    SAME_ACCOUNT_DATE_WINDOW_DAYS,
     ledger_visible_transactions,
     shadowed_rule_occurrence_ids,
     try_match_rule_to_pending_imports,
@@ -616,7 +617,7 @@ def _materialized_rule_timeline_row_if_exists(
     """When a rule occurrence is already materialized, return a timeline row with transaction_id."""
     store = get_rule_occurrence_store()
     existing = store.get(rule_id, account_id, d) if store else None
-    if existing is None:
+    if existing is None and store is None:
         existing = (
             Transaction.objects.filter(rule_id=rule_id, account_id=account_id, date=d)
             .select_related("account", "category")
@@ -3079,7 +3080,8 @@ def _build_timeline_impl(
             household__in=households,
             active=True,
         ).select_related("account", "category", "transfer_to_account").prefetch_related(
-            "bucket_allocations"
+            "bucket_allocations",
+            "schedules",
         )
         if scenario_id and scenario:
             rules_qs = rules_qs.prefetch_related("scenario_overrides")
@@ -3140,6 +3142,13 @@ def _build_timeline_impl(
                     return True
             return False
 
+        credit_accounts_for_skip = list(
+            Account.objects.operational().filter(
+                household__in=households,
+                account_type=Account.AccountType.CREDIT,
+            )
+        )
+
         for rule, eff, eff_start, eff_end, occ_dates, _first_occ in rules_with_occ:
             if not _rule_account_forecastable(rule, eff):
                 continue
@@ -3164,9 +3173,12 @@ def _build_timeline_impl(
 
             cat_id = eff.get("category_id")
             cat_name = None
-            if rule.category_id:
+            resolved_cat_id = cat_id or rule.category_id
+            if resolved_cat_id and rule.category_id == resolved_cat_id and getattr(rule, "category", None):
+                cat_name = rule.category.name
+            elif resolved_cat_id:
                 from categories.models import Category
-                c = Category.objects.filter(pk=cat_id or rule.category_id).first()
+                c = Category.objects.filter(pk=resolved_cat_id).first()
                 cat_name = c.name if c else None
 
             use_transfer_branch = bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
@@ -3222,9 +3234,7 @@ def _build_timeline_impl(
                     and "credit" in (cat_name or "").lower()
                 ):
                     rule_name_lower = (getattr(rule, "name", None) or "").lower()
-                    for a in Account.objects.operational().filter(
-                        household__in=households, account_type=Account.AccountType.CREDIT,
-                    ):
+                    for a in credit_accounts_for_skip:
                         an = (a.name or "").strip()
                         if not an:
                             continue
@@ -3260,6 +3270,7 @@ def _build_timeline_impl(
                 start_date=start_date,
                 end_date=end_date,
                 active_bucket_rule_ids=active_bucket_rule_ids,
+                match_window_days=SAME_ACCOUNT_DATE_WINDOW_DAYS,
             )
             activate_rule_occurrence_store(occurrence_store)
             if materialization_active():

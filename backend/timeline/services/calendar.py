@@ -551,9 +551,34 @@ def build_timeline_calendar(
     }
 
 
+_CALENDAR_DAY_REQUIRED = {
+    "date",
+    "income_total",
+    "expense_total",
+    "transfer_total",
+    "net_total",
+    "ending_balance",
+    "lowest_balance",
+    "risk_level",
+    "has_risk",
+    "heat_level",
+    "transactions",
+}
+
+
 def public_calendar_day(day: dict[str, Any]) -> dict[str, Any]:
-    """Drop internal continuation fields before sending a day to the client."""
-    return {key: value for key, value in day.items() if not str(key).startswith("_")}
+    """Drop internal continuation fields and empty optional metadata before sending a day."""
+    out: dict[str, Any] = {}
+    for key, value in day.items():
+        if str(key).startswith("_"):
+            continue
+        if key not in _CALENDAR_DAY_REQUIRED and (
+            value is None or value == [] or value == ""
+        ):
+            continue
+        out[key] = value
+    out.setdefault("transactions", [])
+    return out
 
 
 def public_calendar_payload(full: dict[str, Any]) -> dict[str, Any]:

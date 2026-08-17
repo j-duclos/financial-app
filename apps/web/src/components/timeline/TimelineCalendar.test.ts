@@ -12,6 +12,8 @@ describe("TimelineCalendar progressive mount", () => {
   it("keeps a cheap render path for days with no data", () => {
     expect(source).toMatch(/if \(!day\)/);
     expect(source).toMatch(/onMonthVisible/);
+    expect(source).toMatch(/dateIso\.slice\(8, 10\)/);
+    expect(source).toMatch(/Loading \{label\}/);
     expect(source).not.toMatch(/determineForecastSeverity\(day\)[\s\S]{0,80}if \(!day\)/);
   });
 });

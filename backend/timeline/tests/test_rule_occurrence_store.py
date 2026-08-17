@@ -97,6 +97,55 @@ def test_build_rule_occurrence_store_bulk_loads(checking, expense_category, hous
 
 
 @pytest.mark.django_db
+def test_store_matched_cover_avoids_per_occurrence_lookup(checking, expense_category, household):
+    from datetime import timedelta
+
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("1000"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        day_of_week=4,
+        start_date=AS_OF,
+        active=True,
+    )
+    matched = Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=2),
+        payee="Paycheck",
+        amount=Decimal("1000"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        rule=rule,
+        import_match_status=Transaction.ImportMatchStatus.MATCHED,
+    )
+    store = build_rule_occurrence_store(
+        rule_ids=[rule.pk],
+        account_ids=[checking.pk],
+        start_date=AS_OF,
+        end_date=AS_OF + timedelta(days=90),
+        match_window_days=5,
+    )
+    assert store.matched_loaded is True
+    found = store.find_matched_cover(
+        rule_id=rule.pk,
+        account_id=checking.pk,
+        on_date=AS_OF,
+        amount=Decimal("1000"),
+        window_days=5,
+        amounts_equal=lambda a, b: a == b,
+    )
+    assert found is not None
+    assert found.pk == matched.pk
+
+
+@pytest.mark.django_db
 def test_store_put_makes_new_creates_visible_without_db_query(checking, expense_category, household):
     rule = RecurringRule.objects.create(
         household=household,

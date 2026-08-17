@@ -17,9 +17,11 @@ from common.services.profiler import perf_enabled, perf_print
 from timeline.services.calendar import build_timeline_calendar
 from timeline.services.calendar_chunks import SHORT_RANGE_DAYS, calendar_chunk_windows
 
-CALENDAR_CACHE_VERSION = "v1"
+CALENDAR_CACHE_VERSION = "v2"
 CALENDAR_CACHE_SECONDS = 300
-_LOCK_WAIT_SECONDS = 2.0
+# Wait for an in-progress full-range build instead of starting a second one.
+_LOCK_TIMEOUT_SECONDS = 60
+_LOCK_WAIT_SECONDS = 60.0
 _LOCK_POLL_SECONDS = 0.05
 
 
@@ -76,7 +78,7 @@ def get_or_build_canonical_calendar(
         return cached
 
     lock_key = f"{key}:lock"
-    got_lock = cache.add(lock_key, "1", timeout=60)
+    got_lock = cache.add(lock_key, "1", timeout=_LOCK_TIMEOUT_SECONDS)
     if not got_lock:
         deadline = time.monotonic() + _LOCK_WAIT_SECONDS
         while time.monotonic() < deadline:

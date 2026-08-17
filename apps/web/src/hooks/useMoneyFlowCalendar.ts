@@ -3,6 +3,8 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getTimelineCalendarChunk,
   getTimelineCalendarSummary,
+  isPerfLoggingEnabled,
+  perfLog,
 } from "@budget-app/api-client";
 import type {
   TimelineCalendarDay,
@@ -18,6 +20,7 @@ import {
   loadCountForVisibleMonth,
   nextIdleLoadCount,
   shouldEagerFetchAllChunks,
+  shouldIdlePreloadNextChunk,
 } from "../lib/calendarProgressiveLoad";
 import {
   todayIsoDate,
@@ -81,20 +84,32 @@ export function useMoneyFlowCalendar({
   }, [horizon, lookbackMonths, accountId, scenarioId, householdId, eagerAll, windows.length]);
 
   useEffect(() => {
+    const validChunks = new Set(windows.map((window) => `${window.start}:${window.end}`));
     void queryClient.cancelQueries({
       predicate: (query) => {
         const key = query.queryKey;
-        if (key[0] !== "calendar-chunk" && key[0] !== "calendar-summary") return false;
-        return (
-          key[1] !== horizon ||
-          key[2] !== lookbackMonths ||
-          key[3] !== accountId ||
-          key[4] !== scenarioId ||
-          key[5] !== householdId
-        );
+        if (key[0] === "calendar-summary") {
+          return (
+            key[1] !== horizon ||
+            key[2] !== lookbackMonths ||
+            key[3] !== accountId ||
+            key[4] !== scenarioId ||
+            key[5] !== householdId
+          );
+        }
+        if (key[0] !== "calendar-chunk") return false;
+        if (
+          key[1] !== lookbackMonths ||
+          key[2] !== accountId ||
+          key[3] !== scenarioId ||
+          key[4] !== householdId
+        ) {
+          return true;
+        }
+        return !validChunks.has(`${key[5]}:${key[6]}`);
       },
     });
-  }, [horizon, lookbackMonths, accountId, scenarioId, householdId, queryClient]);
+  }, [horizon, lookbackMonths, accountId, scenarioId, householdId, windows, queryClient]);
 
   useEffect(() => {
     if (viewMode !== "calendar") {
@@ -109,7 +124,6 @@ export function useMoneyFlowCalendar({
     queries: windows.map((window, index) => ({
       queryKey: [
         "calendar-chunk",
-        horizon,
         lookbackMonths,
         accountId,
         scenarioId,
@@ -127,6 +141,15 @@ export function useMoneyFlowCalendar({
 
   const firstChunkReady = Boolean(chunkQueries[0]?.isSuccess);
   firstChunkReadyRef.current = firstChunkReady;
+
+  useEffect(() => {
+    if (!isPerfLoggingEnabled() || !firstChunkReady) return;
+    const firstDays = chunkQueries[0]?.data?.days?.length ?? 0;
+    perfLog(
+      `[PERF] calendar first-useful horizon=${horizon} first_chunk_days=${firstDays} windows=${windows.length} loadCount=${loadCount}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstChunkReady]);
 
   const summaryEnabled =
     viewMode === "calendar" &&
@@ -162,7 +185,8 @@ export function useMoneyFlowCalendar({
 
   useEffect(() => {
     if (viewMode !== "calendar" || eagerAll || !firstChunkReady) return;
-    if (loadCount >= windows.length) return;
+    if (!shouldIdlePreloadNextChunk(loadCount, windows.length)) return;
+    if (!summaryQuery.isSuccess && !summaryQuery.isError) return;
     const idle = window.requestIdleCallback;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let idleId: number | null = null;
@@ -181,7 +205,15 @@ export function useMoneyFlowCalendar({
         window.cancelIdleCallback(idleId);
       }
     };
-  }, [viewMode, eagerAll, firstChunkReady, loadCount, windows.length]);
+  }, [
+    viewMode,
+    eagerAll,
+    firstChunkReady,
+    loadCount,
+    windows.length,
+    summaryQuery.isSuccess,
+    summaryQuery.isError,
+  ]);
 
   const ensureMonthLoaded = useCallback(
     (year: number, month: number) => {

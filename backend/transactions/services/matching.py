@@ -104,6 +104,18 @@ def _matched_rule_occurrence_covers(
     amount: Decimal | None,
 ) -> Transaction | None:
     """Return a matched rule row that already satisfies this pay period (import posted nearby)."""
+    from timeline.services.rule_occurrence_store import get_rule_occurrence_store
+
+    store = get_rule_occurrence_store()
+    if store is not None and store.matched_loaded:
+        return store.find_matched_cover(
+            rule_id=rule_id,
+            account_id=account_id,
+            on_date=on_date,
+            amount=amount,
+            window_days=SAME_ACCOUNT_DATE_WINDOW_DAYS,
+            amounts_equal=_amounts_equal,
+        )
     low = on_date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
     high = on_date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
     for txn in Transaction.objects.filter(

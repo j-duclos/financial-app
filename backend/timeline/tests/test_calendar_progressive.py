@@ -327,6 +327,20 @@ def test_recurring_rules_are_not_duplicated_across_chunks(
     )
     RecurringRule.objects.create(
         household=household,
+        name="Every three weeks",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("40"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=3,
+        day_of_week=5,
+        start_date=date(2025, 1, 1),
+        active=True,
+    )
+    RecurringRule.objects.create(
+        household=household,
         name="Rent",
         account=checking,
         category=expense_category,
@@ -389,6 +403,15 @@ def test_recurring_rules_are_not_duplicated_across_chunks(
             full_txn_ids.append((day["date"], txn.get("id"), txn.get("description"), txn.get("amount")))
     assert merged_txn_ids == full_txn_ids
     assert len(merged_txn_ids) == len(set(merged_txn_ids))
+    three_week_dates = [
+        d for d, _id, desc, _amt in full_txn_ids if desc == "Every three weeks"
+    ]
+    assert three_week_dates
+    gaps = [
+        (date.fromisoformat(three_week_dates[i + 1]) - date.fromisoformat(three_week_dates[i])).days
+        for i in range(len(three_week_dates) - 1)
+    ]
+    assert gaps and all(g == 21 for g in gaps)
 
 
 def test_scenario_chunking_does_not_persist_to_base(
@@ -626,7 +649,7 @@ def test_calendar_query_count_does_not_add_per_day_tax(user, household, checking
     extra_days = (long_end - short_end).days
     delta = len(long_ctx.captured_queries) - len(short_ctx.captured_queries)
     assert extra_days > 0
-    assert delta / extra_days < 3
+    assert delta / extra_days < 0.5
 
 
 def test_near_term_chunk_does_not_build_full_range(user, household, checking, income_category):

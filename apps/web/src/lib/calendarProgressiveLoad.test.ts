@@ -5,6 +5,7 @@ import {
   loadCountForVisibleMonth,
   nextIdleLoadCount,
   shouldEagerFetchAllChunks,
+  shouldIdlePreloadNextChunk,
 } from "./calendarProgressiveLoad";
 
 describe("calendarProgressiveLoad", () => {
@@ -17,6 +18,8 @@ describe("calendarProgressiveLoad", () => {
     const range = calendarRangeForSelection("6m", 0, "2025-08-16");
     const windows = calendarChunkWindows(range.start, range.end, "2025-08-16");
     expect(windows.length).toBeGreaterThan(2);
+    expect(shouldIdlePreloadNextChunk(1, windows.length)).toBe(true);
+    expect(shouldIdlePreloadNextChunk(2, windows.length)).toBe(false);
     expect(nextIdleLoadCount(1, windows.length)).toBe(2);
     expect(nextIdleLoadCount(2, windows.length)).toBe(3);
     expect(nextIdleLoadCount(windows.length, windows.length)).toBe(windows.length);
