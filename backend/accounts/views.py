@@ -245,14 +245,12 @@ class AccountViewSet(ModelViewSet):
                     if cycle_end > window_end:
                         window_end = cycle_end
 
-            from timeline.services.ledger import build_timeline
+            from timeline.services.ledger import build_forecast_projection_timeline
 
-            shared_timeline = build_timeline(
+            shared_timeline = build_forecast_projection_timeline(
                 self.request.user,
-                start_date=today,
+                today=today,
                 end_date=window_end,
-                as_of_date=today,
-                projection_only=True,
                 caller="accounts_list",
             )
             forecast_summaries = None
@@ -359,12 +357,17 @@ class AccountViewSet(ModelViewSet):
     def get_queryset(self):
         qs = self._account_queryset_base()
         visible_txn_q = ledger_visible_account_transactions_q()
+        today = date.today()
+        posted_activity_q = (
+            visible_txn_q
+            & Q(transactions__date__lte=today)
+            & ~Q(transactions__status=Transaction.Status.PLANNED)
+        )
         qs = qs.annotate(
-            last_activity_date=Max("transactions__date", filter=visible_txn_q),
+            last_activity_date=Max("transactions__date", filter=posted_activity_q),
         )
         if self.request.query_params.get("balance") == "true":
             # Balance as of today: only transactions with date <= today (matches timeline/ledger).
-            today = date.today()
             zero = Value(0, output_field=DecimalField())
             qs = qs.annotate(
                 tx_sum=Coalesce(

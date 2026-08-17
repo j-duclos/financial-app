@@ -2503,16 +2503,21 @@ def build_forecast_projection_timeline(
     caller: str,
     scenario_id: Optional[int] = None,
     account_id: Optional[int] = None,
+    start_date: Optional[date] = None,
+    opening_balances: Optional[dict[int, Decimal]] = None,
 ) -> list[dict]:
     """
     Canonical forward forecast timeline for Dashboard, Action Center, and account forecasts.
 
     Matches the Transactions ledger when hide-reconciled-past is enabled: each account
     opens at its latest reconciled balance and reconciled history rows are omitted.
+
+    Pass ``opening_balances`` with ``start_date`` after today to continue from a detailed
+    forecast ending state without replaying days already projected.
     """
     return build_timeline(
         user,
-        start_date=today,
+        start_date=start_date or today,
         end_date=end_date,
         as_of_date=today,
         scenario_id=scenario_id,
@@ -2520,6 +2525,7 @@ def build_forecast_projection_timeline(
         projection_only=True,
         exclude_reconciled_past=True,
         caller=caller,
+        opening_balances=opening_balances,
     )
 
 
@@ -2535,6 +2541,7 @@ def build_timeline(
     projection_only: bool = False,
     exclude_reconciled_past: bool = False,
     caller: str = "unknown",
+    opening_balances: Optional[dict[int, Decimal]] = None,
 ) -> list[dict]:
     """
     Build merged timeline: opening balances, actual transactions, projected rule occurrences,
@@ -2560,6 +2567,7 @@ def build_timeline(
             projection_only=projection_only,
             exclude_reconciled_past=exclude_reconciled_past,
             caller=caller,
+            opening_balances=opening_balances,
         )
     finally:
         exit_build_timeline_context()
@@ -2612,6 +2620,7 @@ def _build_timeline_impl(
     projection_only: bool = False,
     exclude_reconciled_past: bool = False,
     caller: str = "unknown",
+    opening_balances: Optional[dict[int, Decimal]] = None,
 ) -> list[dict]:
     timer = PerfTimer() if perf_enabled() else None
     query_profiler = QueryProfiler() if perf_enabled() else None
@@ -2655,8 +2664,10 @@ def _build_timeline_impl(
         return []
 
     today = as_of_date or timezone.localdate()
-    include_overdue_pending = projection_only and _projection_includes_overdue_pending(
-        start_date, today
+    include_overdue_pending = (
+        opening_balances is None
+        and projection_only
+        and _projection_includes_overdue_pending(start_date, today)
     )
 
     if not projection_only:
@@ -2804,15 +2815,21 @@ def _build_timeline_impl(
 
         # Opening balances (before actual + rule rows) — used with full row ledger when skipping min payments
         opening: dict[int, Decimal] = {}
-        if exclude_reconciled_past:
-            from transactions.services.reconciliation import last_reconciled_balance
-
+        if opening_balances is not None:
+            for aid in account_ids:
+                raw = opening_balances.get(aid, Decimal("0"))
+                opening[aid] = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+        elif exclude_reconciled_past:
             for aid in account_ids:
                 acc = accs.get(aid)
                 if acc is None:
                     opening[aid] = Decimal("0")
                     continue
-                sb = last_reconciled_balance(acc, today)
+                sb = balance_cache.checkpoint_signed_balance(aid)
+                if sb is None:
+                    sb = balance_cache.inception_opening_balance(aid)
+                if sb is None:
+                    sb = Decimal("0")
                 if acc.account_type == Account.AccountType.CREDIT and sb > 0:
                     sb = -sb
                 opening[aid] = sb

@@ -450,8 +450,24 @@ class AccountSerializer(serializers.ModelSerializer):
             data["is_payment_due_soon"] = instance.is_payment_due_soon
             data["days_until_due"] = instance.days_until_due
             data["current_balance"] = str(owed)
-            data["statement_balance"] = str(instance.statement_balance or 0)
-            data["minimum_payment_amount"] = str(instance.minimum_payment_amount or 0)
+            data["statement_balance"] = (
+                str(instance.statement_balance) if instance.statement_balance is not None else None
+            )
+            data["minimum_payment_amount"] = (
+                str(instance.minimum_payment_amount)
+                if instance.minimum_payment_amount is not None
+                else None
+            )
+            from .services.credit_card import credit_payment_due_state
+
+            due_state = credit_payment_due_state(instance)
+            data["payment_due_is_stale"] = due_state["is_stale"]
+            data["payment_due_amount"] = (
+                str(due_state["amount"]) if due_state["amount"] is not None else None
+            )
+            data["payment_due_amount_unavailable"] = (
+                not due_state["amount_known"] and owed > 0
+            )
         elif "balance" in data and data["balance"] is not None:
             data["available_balance"] = data["balance"]
             data["balance_owed"] = None

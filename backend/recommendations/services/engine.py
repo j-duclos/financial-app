@@ -281,6 +281,23 @@ def build_recommendation_context(
 
     timeline_by_account, inflows_by_account_date = index_timeline_rows(timeline_rows)
 
+    from accounts.services.extended_cash_risk import remember_detailed_forecast_for_extended_risk
+    from accounts.services.lowest_projected_cash import get_first_cash_shortfall_from_forecasts
+
+    if scenario_id is None:
+        remember_detailed_forecast_for_extended_risk(
+            user,
+            as_of_date=today,
+            household_ids=household_ids,
+            accounts=accounts,
+            forecasts=forecasts,
+            timeline_rows=timeline_rows,
+            window_days=days,
+            first_cash_shortfall=get_first_cash_shortfall_from_forecasts(
+                accounts_by_id, forecasts
+            ),
+        )
+
     return RecommendationContext(
         user=user,
         today=today,

@@ -7,6 +7,7 @@ from .views import (
     DashboardSummaryView,
     DashboardSummaryFastView,
     DashboardSummaryDetailsView,
+    ExtendedCashRiskView,
     SubscriptionIntelligenceView,
 )
 
@@ -18,5 +19,6 @@ urlpatterns = [
     path("dashboard/summary/", DashboardSummaryView.as_view(), name="dashboard-summary"),
     path("dashboard/summary-fast/", DashboardSummaryFastView.as_view(), name="dashboard-summary-fast"),
     path("dashboard/details/", DashboardSummaryDetailsView.as_view(), name="dashboard-summary-details"),
+    path("extended-cash-risk/", ExtendedCashRiskView.as_view(), name="extended-cash-risk"),
     path("subscriptions/", SubscriptionIntelligenceView.as_view(), name="subscription-intelligence"),
 ]

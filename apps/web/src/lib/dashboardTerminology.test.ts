@@ -5,6 +5,7 @@ import {
   DEPRECATED_DASHBOARD_LABELS,
   FINANCIAL_HEALTH,
   FIRST_CASH_SHORTFALL,
+  LOOKING_AHEAD,
   RESOURCE_BREAKDOWN,
   lowestForecastBalanceLabel,
 } from "./dashboardTerminology";
@@ -39,6 +40,8 @@ describe("dashboardTerminology", () => {
     expect(FIRST_CASH_SHORTFALL.label).toBe("First Cash Shortfall");
     expect(FIRST_CASH_SHORTFALL.help).toMatch(/earliest date/i);
     expect(FIRST_CASH_SHORTFALL.help).toMatch(/below zero/i);
+    expect(LOOKING_AHEAD.label).toBe("Looking ahead");
+    expect(LOOKING_AHEAD.viewExtendedForecast).toBe("View extended forecast");
   });
 
   it("uses resource breakdown labels without net position", () => {

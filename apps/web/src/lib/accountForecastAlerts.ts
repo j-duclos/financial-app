@@ -5,7 +5,7 @@ import {
 } from "@budget-app/shared";
 import type { Account, AccountRole } from "@budget-app/shared";
 import { accountLifecycleStatus } from "./accountOrganization";
-import { formatProjectionDate, lowestProjectedBalance } from "./accountHealthDisplay";
+import { formatProjectionDate, lowestProjectedBalance, lowestProjectedDate } from "./accountHealthDisplay";
 import { safeToSpendLabel } from "./safeToSpendLabels";
 
 export type ForecastAlertKind =
@@ -74,8 +74,8 @@ function bankProjectionAlert(
   const lowNum = parseAmount(lowest);
   if (lowNum >= 0) return null;
 
-  const riskDate = acc.health_risk_date ?? acc.risk_date;
-  const dateSuffix = riskDate ? ` on ${formatProjectionDate(riskDate)}` : "";
+  const lowestDate = lowestProjectedDate(acc);
+  const dateSuffix = lowestDate ? ` on ${formatProjectionDate(lowestDate)}` : "";
 
   return {
     accountId: acc.id,
@@ -84,7 +84,7 @@ function bankProjectionAlert(
     severity: "critical",
     headline: `${name}: Projected overdrawn`,
     detail: `Lowest projected in next ${forecastDays} days: ${formatCurrency(lowest, acc.currency)}${dateSuffix}.`,
-    riskDate,
+    riskDate: lowestDate,
   };
 }
 

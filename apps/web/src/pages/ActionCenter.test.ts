@@ -14,6 +14,10 @@ describe("Action Center page structure", () => {
     expect(actionCenterSource).toMatch(/ForecastWindowSelect/);
     expect(actionCenterSource).toMatch(/\["recommendations", "action-center", forecastDays\]/);
     expect(actionCenterSource).toMatch(/getRecommendations\(\{ days: forecastDays \}\)/);
+    expect(actionCenterSource).toMatch(/LookingAheadBanner/);
+    expect(actionCenterSource).toMatch(/isLookingAheadVisible/);
+    expect(actionCenterSource).toMatch(/useExtendedCashRisk/);
+    expect(actionCenterSource).not.toMatch(/\["extended-cash-risk", forecastDays\]/);
     expect(actionCenterSource).toMatch(/forecastDays=\{forecastDays\}/);
     expect(actionCenterSource).not.toMatch(/updateProfile/);
     expect(actionCenterSource).not.toMatch(/DEFAULT_PASSIVE_FORECAST_DAYS/);

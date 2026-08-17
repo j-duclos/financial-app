@@ -42,7 +42,6 @@ from .services.scenario_comparison import (
     evaluate_affordability,
     serialize_scenario_comparison,
 )
-from .services.calendar import build_timeline_calendar
 from .services.ledger import build_timeline
 from core.timeline_cache import (
     get_cached_timeline_response,
@@ -949,23 +948,37 @@ class ResolveRiskView(APIView):
         return Response(plan)
 
 
+def _calendar_filter_params(request):
+    start, end, as_of_date = _timeline_date_range(request)
+    scenario_id = request.query_params.get("scenario_id")
+    raw_account = request.query_params.get("account_id")
+    household_id = request.query_params.get("household_id")
+    scenario_id = int(scenario_id) if scenario_id else None
+    account_id = None
+    if raw_account and str(raw_account).lower() not in ("all", ""):
+        account_id = int(raw_account)
+    household_id = int(household_id) if household_id else None
+    return start, end, as_of_date, scenario_id, account_id, household_id
+
+
+def _calendar_no_store(payload):
+    resp = Response(payload)
+    resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return resp
+
+
 class TimelineCalendarView(APIView):
     permission_classes = [IsHouseholdMember]
 
     def get(self, request):
         try:
-            start, end, as_of_date = _timeline_date_range(request)
-            scenario_id = request.query_params.get("scenario_id")
-            raw_account = request.query_params.get("account_id")
-            household_id = request.query_params.get("household_id")
+            from timeline.services.calendar import public_calendar_payload
+            from timeline.services.calendar_cache import get_or_build_canonical_calendar
 
-            scenario_id = int(scenario_id) if scenario_id else None
-            account_id = None
-            if raw_account and str(raw_account).lower() not in ("all", ""):
-                account_id = int(raw_account)
-            household_id = int(household_id) if household_id else None
-
-            payload = build_timeline_calendar(
+            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
+                request
+            )
+            payload = get_or_build_canonical_calendar(
                 request.user,
                 start_date=start,
                 end_date=end,
@@ -975,12 +988,94 @@ class TimelineCalendarView(APIView):
                 as_of_date=as_of_date,
                 projection_only=True,
             )
-            resp = Response(payload)
-            resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
-            return resp
+            return _calendar_no_store(public_calendar_payload(payload))
         except Exception as e:
             return Response(
                 {"detail": f"Timeline calendar error: {type(e).__name__}: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class TimelineCalendarSummaryView(APIView):
+    permission_classes = [IsHouseholdMember]
+
+    def get(self, request):
+        try:
+            from timeline.services.calendar import calendar_summary_payload
+            from timeline.services.calendar_cache import get_or_build_canonical_calendar
+
+            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
+                request
+            )
+            payload = get_or_build_canonical_calendar(
+                request.user,
+                start_date=start,
+                end_date=end,
+                scenario_id=scenario_id,
+                account_id=account_id,
+                household_id=household_id,
+                as_of_date=as_of_date,
+                projection_only=True,
+            )
+            return _calendar_no_store(calendar_summary_payload(payload))
+        except Exception as e:
+            return Response(
+                {"detail": f"Timeline calendar summary error: {type(e).__name__}: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class TimelineCalendarChunkView(APIView):
+    permission_classes = [IsHouseholdMember]
+
+    def get(self, request):
+        try:
+            from datetime import datetime as dt
+
+            from timeline.services.calendar import calendar_chunk_payload
+            from timeline.services.calendar_cache import get_or_build_canonical_calendar
+
+            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
+                request
+            )
+            raw_chunk_start = request.query_params.get("chunk_start")
+            raw_chunk_end = request.query_params.get("chunk_end")
+            chunk_start = (
+                dt.strptime(str(raw_chunk_start)[:10], "%Y-%m-%d").date()
+                if raw_chunk_start
+                else start
+            )
+            chunk_end = (
+                dt.strptime(str(raw_chunk_end)[:10], "%Y-%m-%d").date()
+                if raw_chunk_end
+                else end
+            )
+            chunk_start = max(start, chunk_start)
+            chunk_end = min(end, chunk_end)
+            if chunk_start > chunk_end:
+                return Response(
+                    {"detail": "chunk_start must be on or before chunk_end."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            payload = get_or_build_canonical_calendar(
+                request.user,
+                start_date=start,
+                end_date=end,
+                scenario_id=scenario_id,
+                account_id=account_id,
+                household_id=household_id,
+                as_of_date=as_of_date,
+                projection_only=True,
+            )
+            return _calendar_no_store(calendar_chunk_payload(payload, chunk_start, chunk_end))
+        except ValueError:
+            return Response(
+                {"detail": "Invalid chunk_start or chunk_end."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"detail": f"Timeline calendar chunk error: {type(e).__name__}: {e}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

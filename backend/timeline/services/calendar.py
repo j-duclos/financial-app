@@ -445,7 +445,7 @@ def build_timeline_calendar(
                 "transfer_total": str(transfer.quantize(Decimal("0.01"))),
                 "net_total": str(net.quantize(Decimal("0.01"))),
                 "ending_balance": str(ending.quantize(Decimal("0.01"))),
-                "account_balances": account_balance_map,
+                "_account_balances": account_balance_map,
                 "lowest_balance": str((lowest if lowest is not None else ending).quantize(Decimal("0.01"))),
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
@@ -486,8 +486,6 @@ def build_timeline_calendar(
 
     carry_forward_lowest_markers(days_out)
     attach_recovery_to_days(days_out, accounts_by_id=accounts_by_id)
-    for day_payload in days_out:
-        day_payload.pop("account_balances", None)
 
     scenario_name = None
     if scenario_id:
@@ -547,6 +545,107 @@ def build_timeline_calendar(
             "total_expenses": str(total_expenses.quantize(Decimal("0.01"))),
             "total_net": str((total_income - total_expenses).quantize(Decimal("0.01"))),
             "risky_accounts": risky_accounts,
+            "safe_until": _compute_safe_until(days_out, today),
         },
         "days": days_out,
+    }
+
+
+def public_calendar_day(day: dict[str, Any]) -> dict[str, Any]:
+    """Drop internal continuation fields before sending a day to the client."""
+    return {key: value for key, value in day.items() if not str(key).startswith("_")}
+
+
+def public_calendar_payload(full: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **{key: value for key, value in full.items() if key != "days"},
+        "days": [public_calendar_day(day) for day in full.get("days") or []],
+    }
+
+
+def calendar_summary_payload(full: dict[str, Any]) -> dict[str, Any]:
+    """Summary cards only — no detailed day cells."""
+    return {
+        "start_date": full["start_date"],
+        "end_date": full["end_date"],
+        "scenario_id": full.get("scenario_id"),
+        "scenario_name": full.get("scenario_name"),
+        "account_id": full.get("account_id"),
+        "summary": full.get("summary") or {},
+    }
+
+
+def calendar_chunk_payload(
+    full: dict[str, Any],
+    chunk_start: date,
+    chunk_end: date,
+) -> dict[str, Any]:
+    """Slice canonical days for one month chunk, with ending continuation state."""
+    start_iso = chunk_start.isoformat()
+    end_iso = chunk_end.isoformat()
+    days: list[dict[str, Any]] = []
+    last_balances: dict[str, str] = {}
+    last_date = end_iso
+    for day in full.get("days") or []:
+        day_iso = day.get("date") or ""
+        if day_iso < start_iso or day_iso > end_iso:
+            continue
+        last_balances = day.get("_account_balances") or {}
+        last_date = day_iso
+        days.append(public_calendar_day(day))
+    return {
+        "start_date": start_iso,
+        "end_date": end_iso,
+        "range_start": full["start_date"],
+        "range_end": full["end_date"],
+        "scenario_id": full.get("scenario_id"),
+        "scenario_name": full.get("scenario_name"),
+        "account_id": full.get("account_id"),
+        "days": days,
+        "continuation": {
+            "end_date": last_date,
+            "balances_by_account": last_balances,
+        },
+    }
+
+
+def _compute_safe_until(days_out: list[dict[str, Any]], today: date) -> dict[str, Any] | None:
+    """Cash remaining after obligations until the next projected income (matches frontend)."""
+    if not days_out:
+        return None
+    today_iso = today.isoformat()
+    today_day = next((day for day in days_out if day.get("date") == today_iso), None)
+    anchor = today_day or days_out[0]
+    current_balance = _decimal(anchor.get("ending_balance")) - _decimal(anchor.get("net_total"))
+    next_income_date = None
+    for day in days_out:
+        if (day.get("date") or "") < today_iso:
+            continue
+        has_income_txn = any(
+            _decimal(txn.get("amount")) > 0 and not txn.get("is_transfer")
+            for txn in day.get("transactions") or []
+        )
+        if _decimal(day.get("income_total")) > 0 or has_income_txn:
+            next_income_date = day.get("date")
+            break
+    obligations = Decimal("0")
+    running = current_balance
+    unsafe_date = None
+    for day in days_out:
+        day_iso = day.get("date") or ""
+        if day_iso < today_iso:
+            continue
+        if next_income_date and day_iso >= next_income_date:
+            break
+        outflow = max(Decimal("0"), _decimal(day.get("expense_total")))
+        obligations += outflow
+        running -= outflow
+        if unsafe_date is None and running < 0:
+            unsafe_date = day_iso
+    return {
+        "next_income_date": next_income_date,
+        "safe_amount": str((current_balance - obligations).quantize(Decimal("0.01"))),
+        "unsafe_date": unsafe_date,
+        "obligations_before_income": str(obligations.quantize(Decimal("0.01"))),
+        "current_balance": str(current_balance.quantize(Decimal("0.01"))),
     }

@@ -8,6 +8,7 @@ import type {
   DashboardSummaryDetails,
   DashboardSummaryFast,
   DashboardRecommendation,
+  ExtendedCashRiskResponse,
   MonthlyBillChecklist,
   BillsOverviewResponse,
   BillOccurrenceDetail,
@@ -29,6 +30,8 @@ import type {
   ScenarioRuleOverride,
   TimelineResponse,
   TimelineCalendarResponse,
+  TimelineCalendarSummaryResponse,
+  TimelineCalendarChunkResponse,
   StatementTransaction,
   ReconciliationMatch,
   ReconcileSetupResponse,
@@ -1017,6 +1020,10 @@ export async function getDashboardDetails(params?: {
   });
 }
 
+export async function getExtendedCashRisk(): Promise<ExtendedCashRiskResponse> {
+  return requestRequired("/api/insights/extended-cash-risk/");
+}
+
 export async function getSubscriptionIntelligence(): Promise<
   import("@budget-app/shared").SubscriptionIntelligenceResponse
 > {
@@ -1765,6 +1772,32 @@ export async function simulateTransferImpact(data: {
   });
 }
 
+function calendarQueryParams(params: {
+  start?: string;
+  end?: string;
+  as_of?: string;
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  lookback_months?: number;
+  scenario_id?: number | null;
+  account_id?: number | null;
+  household_id?: number | null;
+  chunk_start?: string;
+  chunk_end?: string;
+}): Record<string, string> {
+  const q: Record<string, string> = {};
+  if (params.start) q.start = params.start;
+  if (params.end) q.end = params.end;
+  if (params.as_of) q.as_of = params.as_of;
+  if (params.horizon) q.horizon = params.horizon;
+  if (params.lookback_months != null) q.lookback_months = String(params.lookback_months);
+  if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
+  if (params.account_id != null) q.account_id = String(params.account_id);
+  if (params.household_id != null) q.household_id = String(params.household_id);
+  if (params.chunk_start) q.chunk_start = params.chunk_start;
+  if (params.chunk_end) q.chunk_end = params.chunk_end;
+  return q;
+}
+
 export async function getTimelineCalendar(params: {
   start?: string;
   end?: string;
@@ -1775,17 +1808,41 @@ export async function getTimelineCalendar(params: {
   account_id?: number | null;
   household_id?: number | null;
 }): Promise<TimelineCalendarResponse> {
-  const q: Record<string, string> = {};
-  if (params.start) q.start = params.start;
-  if (params.end) q.end = params.end;
-  if (params.as_of) q.as_of = params.as_of;
-  if (params.horizon) q.horizon = params.horizon;
-  if (params.lookback_months != null) q.lookback_months = String(params.lookback_months);
-  if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
-  if (params.account_id != null) q.account_id = String(params.account_id);
-  if (params.household_id != null) q.household_id = String(params.household_id);
+  const q = calendarQueryParams(params);
   q._ = String(Date.now());
   return requestRequired("/api/timeline/calendar/", { params: q });
+}
+
+export async function getTimelineCalendarSummary(params: {
+  start?: string;
+  end?: string;
+  as_of?: string;
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  lookback_months?: number;
+  scenario_id?: number | null;
+  account_id?: number | null;
+  household_id?: number | null;
+}): Promise<TimelineCalendarSummaryResponse> {
+  return requestRequired("/api/timeline/calendar/summary/", {
+    params: calendarQueryParams(params),
+  });
+}
+
+export async function getTimelineCalendarChunk(params: {
+  start?: string;
+  end?: string;
+  as_of?: string;
+  horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  lookback_months?: number;
+  scenario_id?: number | null;
+  account_id?: number | null;
+  household_id?: number | null;
+  chunk_start?: string;
+  chunk_end?: string;
+}): Promise<TimelineCalendarChunkResponse> {
+  return requestRequired("/api/timeline/calendar/chunk/", {
+    params: calendarQueryParams(params),
+  });
 }
 
 // Reconcile

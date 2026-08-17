@@ -44,7 +44,7 @@ from accounts.services.balances import (
     bulk_signed_ledger_balances,
     credit_owed_from_signed_balance,
 )
-from accounts.services.credit_card import ledger_owed_balance
+from accounts.services.credit_card import credit_payment_due_state, ledger_owed_balance
 from timeline.services.ledger import _balance_at_end_of_date, build_timeline
 from transactions.models import Transaction
 from transactions.services.matching import ledger_visible_transactions
@@ -352,8 +352,10 @@ def _cash_health(
     )
 
     details["lowest_projected_balance"] = forecast.get("lowest_projected_balance")
+    details["lowest_projected_balance_date"] = forecast.get("lowest_projected_balance_date")
     details["available_to_spend"] = forecast.get("available_to_spend")
     details["first_negative_balance"] = forecast.get("first_negative_balance")
+    details["first_negative_date"] = forecast.get("first_negative_date")
     details["first_below_buffer_balance"] = forecast.get("first_below_buffer_balance")
     details["balance_on_risk_date"] = forecast.get("balance_on_risk_date")
     details["bucket_allocation"] = forecast.get("bucket_allocation")
@@ -448,14 +450,21 @@ def _credit_card_health(
     owed = ledger_owed_balance(account, today) if owed_balance is None else owed_balance
     limit = _decimal(account.credit_limit or 0)
     util_dec = _credit_utilization_percent(owed, limit)
-    due = account.next_payment_due_date
-    days_until = (due - today).days if due else None
+    due_state = credit_payment_due_state(account, today)
+    due = due_state["stored_due"]
+    days_until = due_state["days_until"]
+    due_is_stale = bool(due_state["is_stale"])
     payoff = _payoff_to_avoid_interest(
         account, payments_since_statement=payments_since_statement
     )
 
     past_due_amount = Decimal("0")
-    if days_until is not None and days_until < 0 and (payoff > 0 or owed > 0):
+    if (
+        not due_is_stale
+        and days_until is not None
+        and days_until < 0
+        and (payoff > 0 or owed > 0)
+    ):
         past_due_amount = payoff if payoff > 0 else owed
 
     target_util = _target_utilization_percent(account)
@@ -468,6 +477,7 @@ def _credit_card_health(
         "utilization_percent": _serialize_decimal(util_dec),
         "target_utilization_percent": _serialize_decimal(target_util),
         "days_until_due": days_until,
+        "payment_due_is_stale": due_is_stale,
         "past_due_amount": _serialize_decimal(past_due_amount) if past_due_amount > 0 else None,
         "unmatched_import_count": _count_unmatched_imports(
             account, unmatched_import_count=unmatched_import_count
@@ -481,6 +491,9 @@ def _credit_card_health(
     if past_due_amount > 0:
         statuses.append(HEALTH_STATUS_CRITICAL)
         reasons.append("Payment is past due")
+    elif due_is_stale and owed > 0:
+        statuses.append(HEALTH_STATUS_WATCH)
+        reasons.append("Last known due date is outdated")
 
     if util_dec is not None and util_dec >= critical_at:
         statuses.append(HEALTH_STATUS_CRITICAL)
@@ -556,10 +569,16 @@ def _credit_card_health(
         statuses.append(HEALTH_STATUS_WATCH)
         reasons.append("No payment account linked.")
 
-    if account.autopay_enabled and payoff <= 0:
+    due_needs_attention = past_due_amount > 0 or due_is_stale
+    if account.autopay_enabled and payoff <= 0 and not due_needs_attention:
         return HEALTH_STATUS_HEALTHY, None, None, details
 
-    if util_dec is not None and util_dec <= target_util and payoff <= 0:
+    if (
+        util_dec is not None
+        and util_dec <= target_util
+        and payoff <= 0
+        and not due_needs_attention
+    ):
         return HEALTH_STATUS_HEALTHY, None, None, details
 
     if not statuses:
@@ -713,7 +732,9 @@ def _recommended_action(
     if account.is_credit_card():
         util = details.get("utilization_percent")
         if status == HEALTH_STATUS_CRITICAL and details.get("past_due_amount"):
-            return "Schedule a payment immediately to avoid late fees."
+            return None
+        if details.get("payment_due_is_stale"):
+            return "Confirm the current payment due date."
         target = _target_utilization_percent(account)
         _, risk_at, _ = _credit_utilization_thresholds(target)
         if util and _decimal(util) >= risk_at:

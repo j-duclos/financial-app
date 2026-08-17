@@ -55,6 +55,44 @@ def calculate_next_payment_due_date(payment_due_day: int, today: Optional[date] 
     return candidate
 
 
+# A stored due date older than one typical statement cycle is stale metadata, not a live past-due.
+STALE_PAYMENT_DUE_DAYS = 45
+
+
+def credit_payment_due_state(account: Account, today: Optional[date] = None) -> dict:
+    """
+    Interpret stored credit payment-due fields without inventing a future due date.
+
+    ``minimum_payment_amount`` / ``statement_balance`` default to 0 in the schema, so a
+    stored zero while the card still has a balance means the due amount is unavailable
+    rather than a literal $0.00 payment.
+    """
+    today = today or date.today()
+    stored_due = account.next_payment_due_date
+    days_until = (stored_due - today).days if stored_due else None
+    is_stale = days_until is not None and days_until < -STALE_PAYMENT_DUE_DAYS
+
+    min_pay = Decimal(str(account.minimum_payment_amount or 0))
+    statement = Decimal(str(account.statement_balance or 0))
+    if min_pay > 0:
+        amount: Decimal | None = min_pay
+        amount_known = True
+    elif statement > 0:
+        amount = statement
+        amount_known = True
+    else:
+        amount = None
+        amount_known = False
+
+    return {
+        "stored_due": stored_due,
+        "days_until": days_until,
+        "is_stale": is_stale,
+        "amount": amount,
+        "amount_known": amount_known,
+    }
+
+
 def _previous_statement_close(closing_day: int, before: date) -> date:
     """Last statement close strictly before ``before``."""
     closing_day = max(1, min(31, int(closing_day)))

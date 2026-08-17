@@ -77,13 +77,18 @@ export interface Account {
   /** Total amount currently owed (positive). Credit cards only. */
   current_balance?: string;
   /** Amount from last closed statement (positive owed). */
-  statement_balance?: string;
-  minimum_payment_amount?: string;
+  statement_balance?: string | null;
+  minimum_payment_amount?: string | null;
   last_statement_date?: string | null;
   next_statement_date?: string | null;
   /** Next billing cycle close (YYYY-MM-DD); mirrors next_statement_date when closing day is set. */
   billing_cycle_end_date?: string | null;
   next_payment_due_date?: string | null;
+  /** True when stored due date is older than one typical statement cycle. */
+  payment_due_is_stale?: boolean;
+  /** Minimum payment if known, else last statement amount; null when unavailable. */
+  payment_due_amount?: string | null;
+  payment_due_amount_unavailable?: boolean;
   /** Forecasted balance owed at billing_cycle_end_date (ledger + projected activity). */
   projected_statement_balance?: string | null;
   autopay_enabled?: boolean;
@@ -139,6 +144,7 @@ export interface Account {
   lowest_projected_balance_30_days?: string | null;
   lowest_projected_balance_date_30_days?: string | null;
   first_negative_balance?: string | null;
+  first_negative_date?: string | null;
   first_below_buffer_balance?: string | null;
   upcoming_inflows_30_days?: string | null;
   upcoming_outflows_30_days?: string | null;
@@ -355,13 +361,16 @@ export interface AccountRelationship {
 
 export interface AccountHealthDetails {
   lowest_projected_balance?: string | null;
+  lowest_projected_balance_date?: string | null;
   first_negative_balance?: string | null;
+  first_negative_date?: string | null;
   first_below_buffer_balance?: string | null;
   available_to_spend?: string | null;
   minimum_buffer?: string | null;
   utilization_percent?: string | null;
   target_utilization_percent?: string | null;
   days_until_due?: number | null;
+  payment_due_is_stale?: boolean;
   past_due_amount?: string | null;
   unmatched_import_count?: number | null;
 }
@@ -909,6 +918,29 @@ export interface DashboardFirstCashShortfall {
   account_name: string | null;
   date: string | null;
   is_negative: boolean;
+}
+
+/** One additional cash account that also goes negative on the same extended-risk date. */
+export interface ExtendedCashRiskAccount {
+  account_id: number;
+  account_name: string;
+  projected_balance: string;
+}
+
+/** Earliest projected cash-account negative in the application 6-month warning period. */
+export interface ExtendedCashRisk {
+  account_id: number;
+  account_name: string;
+  first_negative_date: string;
+  projected_balance: string;
+  days_from_as_of: number;
+  additional_accounts: ExtendedCashRiskAccount[];
+}
+
+export interface ExtendedCashRiskResponse {
+  as_of: string;
+  horizon_days: number;
+  risk: ExtendedCashRisk | null;
 }
 
 /** Above-the-fold dashboard payload for fast first paint. */
@@ -1786,6 +1818,15 @@ export interface TimelineCalendarSummary {
   total_expenses: string;
   total_net: string;
   risky_accounts: TimelineCalendarRiskyAccount[];
+  safe_until?: CalendarSafeUntil | null;
+}
+
+export interface CalendarSafeUntil {
+  next_income_date: string | null;
+  safe_amount: string;
+  unsafe_date: string | null;
+  obligations_before_income: string;
+  current_balance: string;
 }
 
 export interface TimelineCalendarResponse {
@@ -1796,6 +1837,32 @@ export interface TimelineCalendarResponse {
   account_id: number | null;
   summary: TimelineCalendarSummary;
   days: TimelineCalendarDay[];
+}
+
+export interface TimelineCalendarSummaryResponse {
+  start_date: string;
+  end_date: string;
+  scenario_id: number | null;
+  scenario_name: string | null;
+  account_id: number | null;
+  summary: TimelineCalendarSummary;
+}
+
+export interface CalendarContinuation {
+  end_date: string;
+  balances_by_account: Record<string, string>;
+}
+
+export interface TimelineCalendarChunkResponse {
+  start_date: string;
+  end_date: string;
+  range_start: string;
+  range_end: string;
+  scenario_id: number | null;
+  scenario_name: string | null;
+  account_id: number | null;
+  days: TimelineCalendarDay[];
+  continuation: CalendarContinuation;
 }
 
 export interface StatementTransaction {

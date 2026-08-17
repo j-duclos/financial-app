@@ -739,14 +739,14 @@ export default function Accounts() {
         >
           {accountsEnriching
             ? "Loading forecasts and health scores…"
-            : "Forecasts could not load; balances are shown. "}
+            : "Forecast unavailable — "}
           {accountsEnrichFailed && !accountsEnriching ? (
             <button
               type="button"
               onClick={() => refetchAccounts()}
               className="text-blue-600 hover:underline font-medium"
             >
-              Retry forecasts
+              Retry
             </button>
           ) : null}
         </p>

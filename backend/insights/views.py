@@ -5,8 +5,9 @@ from rest_framework.permissions import IsAuthenticated
 
 from core.utils import get_households_for_user
 from accounts.models import Account
-from common.services.forecast_horizon import parse_forecast_days_param
 from accounts.services.balances import signed_ledger_balance
+from accounts.services.extended_cash_risk import get_extended_cash_risk
+from common.services.forecast_horizon import parse_forecast_days_param
 from .services.dashboard_summary import (
     build_dashboard_summary,
     build_dashboard_summary_details,
@@ -134,6 +135,16 @@ class DashboardSummaryDetailsView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         data = build_dashboard_summary_details(request.user, days=days)
+        return Response(data)
+
+
+class ExtendedCashRiskView(APIView):
+    """Lightweight 6-month first-cash-negative warning, independent of Forecast Window."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        data = get_extended_cash_risk(request.user)
         return Response(data)
 
 

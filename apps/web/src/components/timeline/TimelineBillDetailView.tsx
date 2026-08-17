@@ -157,6 +157,9 @@ export default function TimelineBillDetailView({
     queryClient.invalidateQueries({ queryKey: ["timeline-bill-detail"] });
     queryClient.invalidateQueries({ queryKey: ["bill-detail"] });
     queryClient.invalidateQueries({ queryKey: ["timeline-calendar"] });
+    queryClient.invalidateQueries({ queryKey: ["calendar-summary"] });
+    queryClient.invalidateQueries({ queryKey: ["calendar-chunk"] });
+    queryClient.invalidateQueries({ queryKey: ["calendar-timeline-upcoming"] });
     queryClient.invalidateQueries({ queryKey: ["timeline"] });
     onDataChange?.();
   };

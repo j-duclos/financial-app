@@ -9,8 +9,8 @@ const timelineSource = readFileSync(
 );
 
 describe("Calendar page structure", () => {
-  it("loads calendar data from the calendar endpoint, not the full dashboard summary", () => {
-    expect(timelineSource).toMatch(/getTimelineCalendar/);
+  it("loads calendar summary and month chunks instead of one full-range payload", () => {
+    expect(timelineSource).toMatch(/useMoneyFlowCalendar/);
     expect(timelineSource).toMatch(/buildUpcomingMoneyFlowFromCalendarDays/);
     expect(timelineSource).not.toMatch(/getDashboardSummary/);
     expect(timelineSource).not.toMatch(/getDashboardSummaryFast/);

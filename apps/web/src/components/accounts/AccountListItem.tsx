@@ -19,6 +19,7 @@ import {
   buildAccountListHealthReason,
   formatLowestProjectedWindowLine,
 } from "../../lib/accountHealthDisplay";
+import { formatPaymentDueValue } from "../../lib/paymentDueDisplay";
 import { accountShowsResolveRisk } from "../../lib/resolveRiskDisplay";
 import { formatDateDisplay } from "../transactions/transactionsLedgerUtils";
 
@@ -110,7 +111,8 @@ export default function AccountListItem({
   const listHealthReason =
     healthStatus != null ? buildAccountListHealthReason(healthReason, acc) : null;
   const healthCoversProjection =
-    listHealthReason?.includes("Projected balance drops") ||
+    listHealthReason?.includes("Lowest projected") ||
+    listHealthReason?.includes("First shortfall") ||
     listHealthReason?.includes("Projected balance falls");
   const projectionLineText =
     layoutMode !== "compact" && !healthCoversProjection
@@ -376,12 +378,7 @@ function CreditMetricsGrid({
   acc: Account;
   utilAboveTarget: boolean;
 }) {
-  const paymentDueValue =
-    acc.next_payment_due_date != null
-      ? acc.statement_balance != null
-        ? `${formatDateDisplay(acc.next_payment_due_date)} · ${formatCurrency(acc.statement_balance, acc.currency)}`
-        : formatDateDisplay(acc.next_payment_due_date)
-      : "—";
+  const paymentDueValue = formatPaymentDueValue(acc);
 
   return (
     <div
@@ -434,7 +431,9 @@ function CreditMetricsGrid({
         value={paymentDueValue}
         valueClass={
           acc.next_payment_due_date != null
-            ? acc.is_payment_due_soon
+            ? acc.is_payment_due_soon ||
+              acc.payment_due_is_stale ||
+              acc.payment_due_amount_unavailable
               ? "text-amber-700"
               : "text-gray-800"
             : "text-gray-400"
@@ -509,11 +508,6 @@ function CreditDetails({ acc }: { acc: Account }) {
       {acc.utilization_percent != null ? (
         <div className={utilAboveTarget ? "text-amber-700 font-medium" : ""}>
           Utilization: {acc.utilization_percent}% (target {targetUtil}%)
-        </div>
-      ) : null}
-      {acc.next_payment_due_date && acc.statement_balance != null ? (
-        <div>
-          Due {formatDateDisplay(acc.next_payment_due_date)}: {formatCurrency(acc.statement_balance, acc.currency)}
         </div>
       ) : null}
       {acc.payoff_estimate?.label ? (

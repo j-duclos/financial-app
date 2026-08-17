@@ -12,11 +12,15 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["transactions"],
   ["timeline"],
   ["timeline-calendar"],
+  ["calendar-summary"],
+  ["calendar-chunk"],
+  ["calendar-timeline-upcoming"],
   ["accounts"],
   ["account"],
   ["dashboard-summary"],
   ["dashboard-summary-fast"],
   ["dashboard-summary-details"],
+  ["extended-cash-risk"],
   ["recommendations"],
 ] as const;
 
@@ -49,6 +53,7 @@ export function scheduleAccountsRefresh(
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }, delayMs);
 }
@@ -76,6 +81,7 @@ export function refreshAfterTransactionEdit(
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
+    void queryClient.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }
 }

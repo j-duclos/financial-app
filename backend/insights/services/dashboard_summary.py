@@ -62,6 +62,7 @@ from accounts.services.available_to_spend import (
     cash_account_risk_shortfall,
     normalize_forecast_days,
 )
+from accounts.services.extended_cash_risk import remember_detailed_forecast_for_extended_risk
 from accounts.services.lowest_projected_cash import (
     get_first_cash_shortfall_from_forecasts,
     get_lowest_projected_cash_from_forecasts,
@@ -1939,6 +1940,17 @@ def _build_dashboard_summary(
     attention_all = core["attention_all"]
     attention = core["attention"]
     forecast_risk = core["forecast_risk"]
+    if mode != "details":
+        remember_detailed_forecast_for_extended_risk(
+            user,
+            as_of_date=today,
+            household_ids=_household_ids_from_core(core),
+            accounts=accounts,
+            forecasts=forecasts,
+            timeline_rows=timeline_rows,
+            window_days=days,
+            first_cash_shortfall=first_cash_shortfall,
+        )
     st_aggregate = {
         "total_safe_to_spend": legacy_safe_to_spend.get("amount", "0"),
         "accounts_at_risk_count": 0,

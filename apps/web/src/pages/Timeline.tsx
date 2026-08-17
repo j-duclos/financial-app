@@ -1,16 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
 import { formatDateDisplay } from "../lib/dateDisplay";
-import {
-  getTimelineCalendar,
-  listScenarios,
-  getProfile,
-  listHouseholds,
-} from "@budget-app/api-client";
+import { listScenarios, getProfile, listHouseholds } from "@budget-app/api-client";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
+import { useMoneyFlowCalendar } from "../hooks/useMoneyFlowCalendar";
 import TimelineCalendar from "../components/timeline/TimelineCalendar";
 import TimelineDayPanel from "../components/timeline/TimelineDayPanel";
 import UpcomingMoneyFlowSection from "../components/dashboard/UpcomingMoneyFlowSection";
@@ -30,6 +26,7 @@ import {
   type TimelineHorizon,
   type TimelineLookbackMonths,
   type TimelineViewMode,
+  type SafeUntilSummary,
 } from "../lib/timelineCalendarUtils";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import { CALENDAR_SUMMARY } from "../lib/timelineTerminology";
@@ -80,7 +77,7 @@ function ViewToggle({
 function SummarySkeleton() {
   return (
     <div className={`${METRIC_TILE_GRID_5} mb-4`}>
-      {Array.from({ length: 5 }).map((i) => (
+      {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className={METRIC_TILE_SKELETON_CLASS} aria-hidden />
       ))}
     </div>
@@ -98,6 +95,23 @@ function CalendarSkeleton() {
       </div>
     </div>
   );
+}
+
+function safeUntilFromSummary(
+  summary: { safe_until?: { next_income_date: string | null; safe_amount: string; unsafe_date: string | null; obligations_before_income: string; current_balance: string } | null } | undefined,
+  days: TimelineCalendarDay[]
+): SafeUntilSummary | null {
+  const raw = summary?.safe_until;
+  if (raw) {
+    return {
+      nextIncomeDate: raw.next_income_date,
+      safeAmount: Number(raw.safe_amount),
+      unsafeDate: raw.unsafe_date,
+      obligationsBeforeIncome: Number(raw.obligations_before_income),
+      currentBalance: Number(raw.current_balance),
+    };
+  }
+  return days.length ? computeSafeUntilNextIncome(days) : null;
 }
 
 export default function Timeline() {
@@ -161,33 +175,25 @@ export default function Timeline() {
   const defaultHousehold = profile?.default_household ?? households?.[0]?.id;
   const resolvedHousehold = householdId || defaultHousehold;
 
-  const calendarQuery = useQuery({
-    queryKey: ["timeline-calendar", horizon, lookbackMonths, accountId, scenarioId, resolvedHousehold],
-    queryFn: () =>
-      getTimelineCalendar({
-        horizon,
-        lookback_months: lookbackMonths,
-        account_id: accountId || undefined,
-        scenario_id: scenarioId || undefined,
-        household_id: resolvedHousehold || undefined,
-      }),
-    enabled: Boolean(resolvedHousehold),
-    staleTime: 60_000,
-    placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
+  const calendar = useMoneyFlowCalendar({
+    viewMode,
+    horizon,
+    lookbackMonths,
+    accountId,
+    scenarioId,
+    householdId: resolvedHousehold || undefined,
   });
 
-  const calendarData = calendarQuery.data;
   const upcomingMoneyFlow = useMemo(
     () =>
-      viewMode === "timeline" && calendarData?.days
-        ? buildUpcomingMoneyFlowFromCalendarDays(calendarData.days)
+      viewMode === "timeline" && calendar.upcomingDays.length
+        ? buildUpcomingMoneyFlowFromCalendarDays(calendar.upcomingDays)
         : null,
-    [calendarData, viewMode]
+    [calendar.upcomingDays, viewMode]
   );
   const safeUntil = useMemo(
-    () => (calendarData ? computeSafeUntilNextIncome(calendarData.days) : null),
-    [calendarData]
+    () => (viewMode === "calendar" ? safeUntilFromSummary(calendar.summary, calendar.days) : null),
+    [calendar.summary, calendar.days, viewMode]
   );
 
   const onSelectDay = useCallback((day: TimelineCalendarDay) => {
@@ -203,13 +209,14 @@ export default function Timeline() {
   );
 
   useEffect(() => {
-    if (!isIsoDateString(urlFocusDate) || !calendarData?.days) return;
-    focusCalendarDay(urlFocusDate, calendarData.days);
-  }, [urlFocusDate, calendarData, focusCalendarDay]);
-  const isLoading = calendarQuery.isLoading;
-  const error = calendarQuery.error;
-  const summary = calendarData?.summary;
+    if (!isIsoDateString(urlFocusDate) || !calendar.days.length) return;
+    if (!calendar.days.some((day) => day.date === urlFocusDate)) return;
+    focusCalendarDay(urlFocusDate, calendar.days);
+  }, [urlFocusDate, calendar.days, focusCalendarDay]);
+
+  const summary = calendar.summary;
   const riskyAccounts = summary?.risky_accounts ?? [];
+  const calendarError = viewMode === "calendar" ? calendar.calendarError : calendar.upcomingError;
 
   const changeView = useCallback(
     (mode: TimelineViewMode) => {
@@ -299,9 +306,9 @@ export default function Timeline() {
         </div>
       </div>
 
-      {viewMode === "calendar" && isLoading && <SummarySkeleton />}
+      {viewMode === "calendar" && calendar.summaryLoading && <SummarySkeleton />}
 
-      {viewMode === "calendar" && summary && !isLoading && (
+      {viewMode === "calendar" && summary && !calendar.summaryLoading && (
         <div className={`${METRIC_TILE_GRID_5} mb-4`}>
           <DashboardMetricTile
             label={CALENDAR_SUMMARY.nextRiskDate.label}
@@ -382,7 +389,7 @@ export default function Timeline() {
         </div>
       )}
 
-      {viewMode === "calendar" && !accountId && riskyAccounts.length > 0 && !isLoading && (
+      {viewMode === "calendar" && !accountId && riskyAccounts.length > 0 && !calendar.summaryLoading && (
         <div className="mb-4">
           <p className="text-xs font-medium text-gray-500 mb-1">Accounts to watch</p>
           <div className="flex flex-wrap gap-2">
@@ -401,12 +408,12 @@ export default function Timeline() {
         </div>
       )}
 
-      {error && <p className="text-red-600 text-sm mb-2">{(error as Error).message}</p>}
+      {calendarError && <p className="text-red-600 text-sm mb-2">{(calendarError as Error).message}</p>}
 
-      {viewMode === "timeline" && isLoading && (
+      {viewMode === "timeline" && calendar.upcomingLoading && (
         <div className="mb-6 h-32 rounded-lg bg-white shadow animate-pulse" aria-hidden />
       )}
-      {viewMode === "timeline" && upcomingMoneyFlow && !isLoading && (
+      {viewMode === "timeline" && upcomingMoneyFlow && !calendar.upcomingLoading && (
         <UpcomingMoneyFlowSection
           groups={upcomingMoneyFlow.groups}
           days={upcomingMoneyFlow.days}
@@ -414,31 +421,39 @@ export default function Timeline() {
         />
       )}
 
-      {isLoading && viewMode === "calendar" ? (
+      {viewMode === "calendar" && calendar.loadingInitial ? (
         <div>
           <p className="text-sm text-gray-500 mb-3">Building your financial calendar…</p>
           <CalendarSkeleton />
         </div>
-      ) : viewMode === "calendar" && calendarData ? (
-        hasProjectedActivity(calendarData.days) ? (
+      ) : viewMode === "calendar" && calendar.firstChunkReady ? (
+        hasProjectedActivity(calendar.days) || calendar.loadingRemaining ? (
           <TimelineCalendar
-            data={calendarData}
+            rangeStart={calendar.range.start}
+            rangeEnd={calendar.range.end}
+            days={calendar.days}
             selectedDate={selectedDay?.date ?? null}
             onSelectDay={onSelectDay}
             onSelectTransaction={onSelectTransaction}
+            pendingMonthKeys={calendar.pendingMonthKeys}
+            failedChunks={calendar.failedChunks}
+            remainingCount={calendar.remainingCount}
+            loadingRemaining={calendar.loadingRemaining}
+            onLoadMore={calendar.loadMoreMonths}
+            eagerMonthCount={calendar.eagerMonthCount}
           />
         ) : (
           <p className="text-center text-gray-500 py-12 bg-white border border-gray-200 rounded-lg">
             No projected activity in this horizon.
           </p>
         )
-      ) : viewMode === "timeline" && calendarData && !upcomingMoneyFlow ? (
+      ) : viewMode === "timeline" && !calendar.upcomingLoading && !upcomingMoneyFlow ? (
         <p className="text-center text-gray-500 py-12 bg-white border border-gray-200 rounded-lg">
           No projected activity in this horizon.
         </p>
       ) : null}
 
-      {selectedDay && (
+      {selectedDay && viewMode === "calendar" && (
         <TimelineDayPanel
           day={selectedDay}
           onClose={() => {
@@ -450,9 +465,9 @@ export default function Timeline() {
           horizon={horizon}
           householdId={resolvedHousehold || undefined}
           scenarioId={scenarioId !== "" ? scenarioId : null}
-          calendarDays={calendarData?.days}
+          calendarDays={calendar.days}
           initialBillTxn={initialBillTxn}
-          onCalendarRefresh={() => calendarQuery.refetch()}
+          onCalendarRefresh={() => calendar.refetchCalendar()}
           onCreateTransfer={({
             transferFromAccountId,
             transferToAccountId,
@@ -488,7 +503,7 @@ export default function Timeline() {
         onClose={() => setTransferPreset(null)}
         onSuccess={() => {
           setTransferPreset(null);
-          calendarQuery.refetch();
+          calendar.refetchCalendar();
         }}
       />
     </div>

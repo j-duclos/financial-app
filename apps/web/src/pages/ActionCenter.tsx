@@ -10,6 +10,7 @@ import QuickTransactionModal, {
 } from "../components/quickActions/QuickTransactionModal";
 import ActionToast from "../components/quickActions/ActionToast";
 import ForecastWindowSelect from "../components/forecast/ForecastWindowSelect";
+import LookingAheadBanner from "../components/dashboard/LookingAheadBanner";
 import {
   ACTION_CENTER_PAGE_TITLE,
   dismissRecommendation,
@@ -24,7 +25,9 @@ import {
 } from "../lib/recommendationDisplay";
 import { buildActionCenterView } from "../lib/actionCenterView";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
+import { useExtendedCashRisk } from "../hooks/useExtendedCashRisk";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
+import { isLookingAheadVisible } from "../lib/lookingAhead";
 
 export default function ActionCenter() {
   const queryClient = useQueryClient();
@@ -40,6 +43,9 @@ export default function ActionCenter() {
     staleTime: 60_000,
     enabled: forecastReady,
   });
+
+  const { data: extendedCashRisk } = useExtendedCashRisk(forecastReady && !!data);
+  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "action-center"],
@@ -75,6 +81,7 @@ export default function ActionCenter() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["recommendations"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] }),
+      queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] }),
     ]);
   }
 
@@ -94,6 +101,8 @@ export default function ActionCenter() {
           testId="action-center-forecast-window"
         />
       </div>
+
+      {lookingAhead && <LookingAheadBanner risk={extendedCashRisk.risk} />}
 
       {(isLoading || !forecastReady) && (
         <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2 animate-pulse">

@@ -40,25 +40,40 @@ describe("healthInlineLabel", () => {
 });
 
 describe("buildAccountListHealthReason", () => {
-  it("includes move amount and date for critical cash accounts", () => {
+  it("labels first shortfall separately from the move amount", () => {
     const account = mockAccount();
     expect(
       buildAccountListHealthReason("Projected balance drops below zero on 2026-06-17", account)
-    ).toBe(
-      "Projected balance drops to -$37.06 on 06-17-26: Move $37.06 before 06-17-26"
-    );
+    ).toBe("First shortfall 06-17-26: add $37.06");
   });
 
-  it("shows both projected low and safe-to-spend when they differ", () => {
+  it("does not treat safe-to-spend as interchangeable with lowest projected", () => {
     const account = mockAccount({
       lowest_projected_balance_30_days: "-305.14",
+      lowest_projected_balance_date_30_days: "2026-06-17",
       available_to_spend: "-362.88",
+      first_negative_balance: "-305.14",
+      first_negative_date: "2026-06-17",
       risk_date: "2026-06-17",
     });
     expect(
       buildAccountListHealthReason("Projected balance drops below zero on 2026-06-17", account)
+    ).toBe("First shortfall 06-17-26: add $305.14");
+  });
+
+  it("shows first shortfall and lowest projected when those dates differ", () => {
+    const account = mockAccount({
+      lowest_projected_balance_30_days: "-1691.36",
+      lowest_projected_balance_date_30_days: "2026-09-10",
+      first_negative_balance: "-996.62",
+      first_negative_date: "2026-08-20",
+      available_to_spend: "-1691.36",
+      risk_date: "2026-08-20",
+    });
+    expect(
+      buildAccountListHealthReason("Projected balance drops below zero on 2026-08-20", account)
     ).toBe(
-      "Projected balance drops to -$305.14 on 06-17-26; Safe to spend is -$362.88. Move $362.88 before 06-17-26"
+      "First shortfall 08-20-26: add $996.62. Lowest projected -$1,691.36 on 09-10-26"
     );
   });
 
@@ -66,13 +81,25 @@ describe("buildAccountListHealthReason", () => {
     const account = mockAccount({
       lowest_projected_balance_30_days: "-362.88",
       first_negative_balance: "-305.14",
+      first_negative_date: "2026-05-28",
       available_to_spend: "-362.88",
       risk_date: "2026-05-28",
     });
     expect(
       buildAccountListHealthReason("Projected balance drops below zero on 2026-05-28", account)
-    ).toBe(
-      "Projected balance drops to -$362.88 on 05-28-26: Move $305.14 before 05-28-26"
+    ).toBe("First shortfall 05-28-26: add $305.14");
+  });
+
+  it("compacts credit past-due copy instead of repeating the recommended action", () => {
+    const account = mockAccount({
+      account_type: "CREDIT",
+      role: "credit_card",
+      name: "Care Credit",
+      next_payment_due_date: "2026-07-26",
+      health_recommended_action: "Schedule a payment immediately to avoid late fees.",
+    });
+    expect(buildAccountListHealthReason("Payment is past due", account)).toBe(
+      "Past due since 07-26-26"
     );
   });
 
@@ -115,9 +142,13 @@ describe("accountListHealthDetailLines", () => {
 });
 
 describe("formatLowestProjectedWindowLine", () => {
-  it("uses the selected forecast window in the label", () => {
-    expect(formatLowestProjectedWindowLine("Main", mockAccount(), 60)).toBe(
-      "Main: Lowest projected in next 60 days: -$37.06 on 06-17-26"
-    );
+  it("uses the selected forecast window and lowest-projected date", () => {
+    expect(
+      formatLowestProjectedWindowLine(
+        "Main",
+        mockAccount({ lowest_projected_balance_date_30_days: "2026-06-17" }),
+        60
+      )
+    ).toBe("Main: Lowest projected in next 60 days: -$37.06 on 06-17-26");
   });
 });

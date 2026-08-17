@@ -253,6 +253,14 @@ class TimelineBalanceCache:
         self._opening_balance_cache[key] = total
         return total
 
+    def checkpoint_signed_balance(self, account_id: int) -> Decimal | None:
+        """Preloaded reconciliation checkpoint signed balance, if any."""
+        cp = self._checkpoint_by_account.get(account_id)
+        return cp[1] if cp is not None else None
+
+    def inception_opening_balance(self, account_id: int) -> Decimal | None:
+        return self._inception_opening_by_account.get(account_id)
+
     def balance_at_end_of_date(self, account_id: int, d: date) -> Decimal:
         key = (account_id, d)
         if key in self._balance_end_cache:

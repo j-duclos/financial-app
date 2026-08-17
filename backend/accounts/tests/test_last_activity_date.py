@@ -1,5 +1,5 @@
 """Last activity date on account list/detail."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -100,3 +100,34 @@ def test_last_activity_date_null_when_no_transactions(auth_client, checking):
     r = auth_client.get(f"/api/accounts/{checking.id}/")
     assert r.status_code == 200
     assert r.json()["last_activity_date"] is None
+
+
+def test_last_activity_date_ignores_future_and_planned_transactions(auth_client, checking):
+    today = date.today()
+    Transaction.objects.create(
+        account=checking,
+        date=today - timedelta(days=3),
+        payee="Posted grocery",
+        amount=Decimal("-12.00"),
+        status=Transaction.Status.CLEARED,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today + timedelta(days=10),
+        payee="Future planned bill",
+        amount=Decimal("-200.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today + timedelta(days=5),
+        payee="Future cleared",
+        amount=Decimal("-50.00"),
+        status=Transaction.Status.CLEARED,
+    )
+
+    r = auth_client.get("/api/accounts/")
+    assert r.status_code == 200
+    row = next(x for x in r.json()["results"] if x["id"] == checking.id)
+    assert row["last_activity_date"] == (today - timedelta(days=3)).isoformat()

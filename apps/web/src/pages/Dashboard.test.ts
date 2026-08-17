@@ -19,23 +19,29 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).toMatch(/enabled: forecastReady/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-details", forecastDays\]/);
+    expect(dashboardSource).toMatch(/\["extended-cash-risk"\]/);
+    expect(dashboardSource).not.toMatch(/\["extended-cash-risk", forecastDays\]/);
     expect(dashboardSource).toMatch(/getDashboardSummaryFast\(\{ forecast_days: forecastDays \}\)/);
     expect(dashboardSource).not.toMatch(/updateProfile/);
   });
 
   it("includes action-focused overview sections in priority order", () => {
     expect(dashboardSource).toMatch(/DashboardTopSummaryBar/);
+    expect(dashboardSource).toMatch(/LookingAheadBanner/);
+    expect(dashboardSource).toMatch(/isLookingAheadVisible/);
     expect(dashboardSource).toMatch(/AttentionCardGrid/);
     expect(dashboardSource).toMatch(/first_cash_shortfall/);
     expect(dashboardSource).toMatch(/GoalsPreviewSection/);
 
     const healthIdx = dashboardSource.indexOf("<DashboardTopSummaryBar");
+    const lookingAheadIdx = dashboardSource.indexOf("<LookingAheadBanner");
     const attentionIdx = dashboardSource.indexOf("<AttentionCardGrid");
     const upcomingIdx = dashboardSource.indexOf("<UpcomingMoneyFlowPreviewSection");
     const goalsIdx = dashboardSource.indexOf("<GoalsPreviewSection");
 
     expect(healthIdx).toBeGreaterThan(-1);
-    expect(attentionIdx).toBeGreaterThan(healthIdx);
+    expect(lookingAheadIdx).toBeGreaterThan(healthIdx);
+    expect(attentionIdx).toBeGreaterThan(lookingAheadIdx);
     expect(upcomingIdx).toBeGreaterThan(attentionIdx);
     expect(goalsIdx).toBeGreaterThan(upcomingIdx);
   });

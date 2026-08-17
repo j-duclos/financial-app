@@ -26,7 +26,8 @@ describe("buildAccountForecastAlerts", () => {
         mockAccount({
           id: 1,
           lowest_projected_balance_30_days: "-37.06",
-          risk_date: "2026-06-17",
+          lowest_projected_balance_date_30_days: "2026-06-17",
+          risk_date: "2026-06-10",
         }),
       ],
       30

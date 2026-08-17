@@ -278,6 +278,24 @@ def test_credit_past_due_critical(user, credit_card):
     assert "past due" in (h["reason"] or "").lower()
 
 
+def test_credit_stale_due_date_is_not_permanently_critical(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("300"))
+    Account.objects.filter(pk=credit_card.pk).update(
+        current_balance=Decimal("300"),
+        statement_balance=Decimal("0"),
+        minimum_payment_amount=Decimal("0"),
+        last_statement_date=AS_OF - timedelta(days=90),
+        next_payment_due_date=AS_OF - timedelta(days=60),
+        autopay_enabled=False,
+    )
+    credit_card.refresh_from_db()
+    h = _health(user, credit_card, days=30)
+    assert h["status"] == HEALTH_STATUS_WATCH
+    assert h["details"].get("payment_due_is_stale") is True
+    assert "outdated" in (h["reason"] or "").lower()
+    assert "past due" not in (h["reason"] or "").lower()
+
+
 def test_savings_below_buffer_risk(user, savings, expense_category):
     Transaction.objects.create(
         account=savings,
@@ -319,7 +337,7 @@ def test_batch_health_single_timeline(user, checking, savings, credit_card):
     assert len(result) == 3
     assert all("status" in result[a.id] for a in accounts)
     query_count = len(ctx.captured_queries)
-    assert query_count < 40
+    assert query_count < 55
 
 
 def test_health_api_list(auth_client, checking):

@@ -313,13 +313,14 @@ def test_cached_fast_and_details_reuse_without_rebuild(user, household):
     with CaptureQueriesContext(connection) as cached_fast:
         second = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
     assert second == first
-    assert len(cached_fast.captured_queries) <= 2
+    # Household membership + financial_revision tokens for full/fast cache keys.
+    assert len(cached_fast.captured_queries) <= 3
 
     details = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
     with CaptureQueriesContext(connection) as cached_details:
         details2 = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
     assert details2 == details
-    assert len(cached_details.captured_queries) <= 2
+    assert len(cached_details.captured_queries) <= 3
 
 
 def test_details_works_without_shared_context(user, household):

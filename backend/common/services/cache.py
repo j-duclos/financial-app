@@ -79,6 +79,7 @@ def get_forecast_summary_cache_key(
     account_ids: Iterable[int],
     forecast_days: int,
     as_of_date: date,
+    revision_token: str | None = None,
 ) -> str:
     """
     Stable cache key scoped to one user and one account/household batch.
@@ -87,7 +88,7 @@ def get_forecast_summary_cache_key(
     Household financial_revision makes prior payloads unreachable after mutations.
     """
     ver = get_user_forecast_cache_version(user_id)
-    rev = _household_revision_token(household_ids)
+    rev = revision_token if revision_token is not None else _household_revision_token(household_ids)
     return (
         f"forecast_summary:{FORECAST_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
@@ -186,6 +187,46 @@ def get_dashboard_shared_context_cache_key(
         f"dashboard_shared_ctx:{DASHBOARD_SUMMARY_CACHE_VERSION}:user:{user_id}"
         f":households:{_sorted_scope_ids(household_ids)}"
         f":days:{forecast_days}:asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
+    )
+
+
+EXTENDED_CASH_RISK_CACHE_VERSION = "v1"
+EXTENDED_CASH_RISK_CACHE_SECONDS = 300
+
+
+def get_extended_cash_risk_cache_key(
+    *,
+    user_id: int,
+    household_ids: Iterable[int | None],
+    as_of_date: date,
+) -> str:
+    """
+    Cache key for the 6-month first-cash-negative scan.
+
+    Intentionally omits the selected Forecast Window so 30 → 60 → 90 does not rescan.
+    """
+    ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
+    return (
+        f"extended_cash_risk:{EXTENDED_CASH_RISK_CACHE_VERSION}:user:{user_id}"
+        f":households:{_sorted_scope_ids(household_ids)}"
+        f":asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
+    )
+
+
+def get_extended_cash_risk_seed_cache_key(
+    *,
+    user_id: int,
+    household_ids: Iterable[int | None],
+    as_of_date: date,
+) -> str:
+    """Cache key for detailed-forecast ending balances used to continue the scan."""
+    ver = get_user_dashboard_cache_version(user_id)
+    rev = _household_revision_token(household_ids)
+    return (
+        f"extended_cash_risk_seed:{EXTENDED_CASH_RISK_CACHE_VERSION}:user:{user_id}"
+        f":households:{_sorted_scope_ids(household_ids)}"
+        f":asof:{as_of_date.isoformat()}:ver:{ver}:frev:{rev}"
     )
 
 

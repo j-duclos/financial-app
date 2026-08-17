@@ -122,3 +122,61 @@ def test_forecast_summary_cache_isolated_by_forecast_days(user, spending_account
     assert mock_calc.call_count == 2
     assert first[spending_account.id]["days"] == 30
     assert second[spending_account.id]["days"] == 90
+
+
+@pytest.mark.django_db
+def test_forecast_summary_cache_hit_when_timeline_rows_provided(user, spending_account):
+    accounts = [spending_account]
+    today = date(2026, 6, 2)
+    cache.clear()
+    with patch(
+        "accounts.services.available_to_spend._calculate_forecast_summaries_for_accounts"
+    ) as mock_calc:
+        mock_calc.return_value = (
+            {spending_account.id: {"account_id": spending_account.id, "supports_available_to_spend": True}},
+            [],
+        )
+        first = calculate_forecast_summaries_for_accounts(
+            user, accounts, as_of_date=today, days=30, timeline_rows=[]
+        )
+        second = calculate_forecast_summaries_for_accounts(
+            user, accounts, as_of_date=today, days=30, timeline_rows=[]
+        )
+
+    assert first == second
+    assert mock_calc.call_count == 1
+
+
+@pytest.mark.django_db
+def test_household_forecast_cache_reused_for_overlapping_account_sets(
+    user, spending_account, household
+):
+    today = date(2026, 6, 2)
+    cache.clear()
+    card = Account.objects.create(
+        household=household,
+        name="Visa",
+        account_type=Account.AccountType.CREDIT,
+        role=Account.AccountRole.CREDIT_CARD,
+        currency="USD",
+    )
+    with patch(
+        "accounts.services.available_to_spend._calculate_forecast_summaries_for_accounts"
+    ) as mock_calc:
+        mock_calc.return_value = (
+            {
+                spending_account.id: {
+                    "account_id": spending_account.id,
+                    "supports_available_to_spend": True,
+                }
+            },
+            None,
+        )
+        calculate_forecast_summaries_for_accounts(
+            user, [spending_account], as_of_date=today, days=30
+        )
+        calculate_forecast_summaries_for_accounts(
+            user, [spending_account, card], as_of_date=today, days=30
+        )
+
+    assert mock_calc.call_count == 1

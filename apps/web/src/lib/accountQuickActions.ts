@@ -93,8 +93,12 @@ function parseAmount(raw: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Suggested transfer amount to cover a projected shortfall (e.g. move-before-risk). */
+/** Suggested transfer amount to cover the first projected shortfall. */
 export function inboundTransferAmount(account: Account): string | undefined {
+  const firstNegative = parseAmount(account.first_negative_balance);
+  if (firstNegative != null && firstNegative < 0) {
+    return String(Math.abs(firstNegative).toFixed(2));
+  }
   const lowest = parseAmount(account.lowest_projected_balance_30_days);
   if (lowest != null && lowest < 0) {
     return String(Math.abs(lowest).toFixed(2));

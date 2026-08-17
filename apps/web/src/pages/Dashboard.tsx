@@ -7,6 +7,7 @@ import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
 import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashboard/DashboardSkeleton";
 import { AttentionCardGrid } from "../components/dashboard/AttentionCard";
+import LookingAheadBanner from "../components/dashboard/LookingAheadBanner";
 import { UpcomingMoneyFlowPreviewSection } from "../components/dashboard/UpcomingMoneyFlowPreview";
 import GoalsPreviewSection, {
   GoalsPreviewSectionHeader,
@@ -19,7 +20,9 @@ import { attentionTransferPreset } from "../lib/attentionCardDisplay";
 import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
 import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
+import { useExtendedCashRisk } from "../hooks/useExtendedCashRisk";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
+import { isLookingAheadVisible } from "../lib/lookingAhead";
 
 function DashboardOnboarding() {
   return (
@@ -58,6 +61,9 @@ export default function Dashboard() {
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
     enabled: forecastReady,
   });
+
+  const { data: extendedCashRisk } = useExtendedCashRisk(forecastReady && !!summaryFast);
+  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   const [detailsEnabled, setDetailsEnabled] = useState(false);
   useEffect(() => {
@@ -130,6 +136,8 @@ export default function Dashboard() {
         <>
           {showOnboarding && <DashboardOnboarding />}
 
+          {lookingAhead && <LookingAheadBanner risk={extendedCashRisk.risk} />}
+
           <section>
             <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
               Attention Required
@@ -195,6 +203,7 @@ export default function Dashboard() {
           setToast(message);
           await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
           await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
+          await queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] });
         }}
       />
     </div>

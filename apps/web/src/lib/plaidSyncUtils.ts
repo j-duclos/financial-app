@@ -29,6 +29,7 @@ export async function invalidateQueriesAfterPlaidSync(queryClient: QueryClient):
     queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] }),
+    queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] }),
     queryClient.invalidateQueries({ queryKey: ["recommendations"] }),
     queryClient.invalidateQueries({ queryKey: ["plaid-items"] }),
   ]);

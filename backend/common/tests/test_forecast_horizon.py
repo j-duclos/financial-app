@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from common.services.forecast_horizon import (
+    EXTENDED_CASH_RISK_DAYS,
     PASSIVE_DEFAULT_FORECAST_DAYS,
     normalize_operational_forecast_days,
     parse_forecast_days_param,
@@ -59,3 +60,7 @@ class TestNormalizeOperationalForecastDays:
         assert normalize_operational_forecast_days(60) == 60
         assert normalize_operational_forecast_days(90) == 90
         assert normalize_operational_forecast_days(180) == 180
+
+
+def test_extended_cash_risk_horizon_is_six_months():
+    assert EXTENDED_CASH_RISK_DAYS == 180

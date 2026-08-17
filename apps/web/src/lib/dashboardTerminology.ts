@@ -33,6 +33,11 @@ export const FIRST_CASH_SHORTFALL = {
   amountLabel: "Projected balance",
 } as const;
 
+export const LOOKING_AHEAD = {
+  label: "Looking ahead",
+  viewExtendedForecast: "View extended forecast",
+} as const;
+
 export const RESOURCE_BREAKDOWN = {
   spendingAccounts: {
     label: "Spending Accounts",

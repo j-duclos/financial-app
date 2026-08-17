@@ -1,6 +1,7 @@
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import type { Account, AccountHealthDetails } from "@budget-app/shared";
 import { riskStatusLabel } from "./safeToSpendLabels";
+import { formatDateDisplay } from "./dateDisplay";
 
 function parseAmount(value: string | null | undefined): number {
   if (value == null || value === "") return 0;
@@ -34,8 +35,6 @@ function defaultHealthReason(status: string | null | undefined): string | null {
   }
 }
 
-import { formatDateDisplay } from "./dateDisplay";
-
 export function formatProjectionDate(dateIso: string): string {
   return formatDateDisplay(dateIso);
 }
@@ -43,6 +42,24 @@ export function formatProjectionDate(dateIso: string): string {
 export function lowestProjectedBalance(account: Account): string | null {
   const details = account.health_details;
   return details?.lowest_projected_balance ?? account.lowest_projected_balance_30_days ?? null;
+}
+
+export function lowestProjectedDate(account: Account): string | null {
+  return (
+    account.lowest_projected_balance_date_30_days ??
+    account.health_details?.lowest_projected_balance_date ??
+    null
+  );
+}
+
+export function firstShortfallDate(account: Account): string | null {
+  return (
+    account.first_negative_date ??
+    account.health_details?.first_negative_date ??
+    account.health_risk_date ??
+    account.risk_date ??
+    null
+  );
 }
 
 /** Actionable health line on account cards (projection + what to do). */
@@ -71,6 +88,20 @@ export function buildAccountListHealthReason(
           : "Over credit limit";
       return `${utilPart}: Pay ${formatCurrency(String(payAmount), currency)} toward ${displayName}`;
     }
+
+    if (base.toLowerCase().includes("past due")) {
+      const since = account.next_payment_due_date
+        ? formatProjectionDate(account.next_payment_due_date)
+        : null;
+      return since ? `Past due since ${since}` : "Past due";
+    }
+
+    if (base.toLowerCase().includes("outdated")) {
+      const lastKnown = account.next_payment_due_date
+        ? formatProjectionDate(account.next_payment_due_date)
+        : null;
+      return lastKnown ? `Last known due ${lastKnown}` : base;
+    }
   }
 
   if (
@@ -89,34 +120,26 @@ export function buildAccountListHealthReason(
   }
 
   const lowest = lowestProjectedBalance(account);
-  if (lowest != null && dateFmt) {
+  if (lowest != null && (dateFmt || lowestProjectedDate(account) || firstShortfallDate(account))) {
     const lowestFmt = formatCurrency(lowest, currency);
     const lowNum = parseAmount(lowest);
-    const safeToSpend = parseAmount(
-      account.health_details?.available_to_spend ?? account.available_to_spend
-    );
-    const hasSafeToSpend =
-      account.health_details?.available_to_spend != null ||
-      account.available_to_spend != null;
 
     if (lowNum < 0 && base.includes("drops below zero")) {
       const firstNegative = parseAmount(
         account.health_details?.first_negative_balance ?? account.first_negative_balance
       );
-      const moveAmt =
-        firstNegative < 0
-          ? Math.abs(firstNegative)
-          : hasSafeToSpend
-            ? Math.abs(safeToSpend)
-            : Math.abs(lowNum);
+      const moveAmt = firstNegative < 0 ? Math.abs(firstNegative) : Math.abs(lowNum);
       const moveFmt = formatCurrency(String(moveAmt), currency);
-      const safeFmt = hasSafeToSpend
-        ? formatCurrency(String(safeToSpend), currency)
-        : null;
-      if (safeFmt != null && Math.abs(safeToSpend - lowNum) >= 0.01) {
-        return `Projected balance drops to ${lowestFmt} on ${dateFmt}; Safe to spend is ${safeFmt}. Move ${moveFmt} before ${dateFmt}`;
+      const firstDate = firstShortfallDate(account);
+      const lowestDate = lowestProjectedDate(account);
+      const firstDateFmt = firstDate ? formatProjectionDate(firstDate) : dateFmt;
+      const lowestDateFmt = lowestDate ? formatProjectionDate(lowestDate) : null;
+      const datesDiffer = Boolean(firstDate && lowestDate && firstDate !== lowestDate);
+
+      if (datesDiffer && firstDateFmt && lowestDateFmt) {
+        return `First shortfall ${firstDateFmt}: add ${moveFmt}. Lowest projected ${lowestFmt} on ${lowestDateFmt}`;
       }
-      return `Projected balance drops to ${lowestFmt} on ${dateFmt}: Move ${moveFmt} before ${dateFmt}`;
+      return firstDateFmt ? `First shortfall ${firstDateFmt}: add ${moveFmt}` : `Add ${moveFmt}`;
     }
 
     if (
@@ -127,12 +150,14 @@ export function buildAccountListHealthReason(
         account.health_details?.minimum_buffer ?? account.minimum_buffer ?? "0"
       );
       const moveAmt = Math.max(0, buffer - lowNum);
-      return `Projected balance falls to ${lowestFmt} on ${dateFmt}: Move ${formatCurrency(String(moveAmt), currency)} before ${dateFmt}`;
+      const lowestDate = lowestProjectedDate(account) ?? riskDate;
+      const lowestDateFmt = lowestDate ? formatProjectionDate(lowestDate) : dateFmt;
+      return `Projected balance falls to ${lowestFmt} on ${lowestDateFmt}: Move ${formatCurrency(String(moveAmt), currency)} before ${lowestDateFmt}`;
     }
   }
 
   const recommended = account.health_recommended_action?.trim();
-  if (recommended) {
+  if (recommended && account.account_type !== "CREDIT") {
     if (base.includes(recommended)) return base;
     return `${base}: ${recommended}`;
   }
@@ -165,12 +190,13 @@ export function formatLowestProjectedWindowLine(
   forecastDays: number
 ): string | null {
   const lowest = lowestProjectedBalance(account);
-  const riskDate = account.health_risk_date ?? account.risk_date;
-  if (lowest == null || !riskDate) return null;
+  if (lowest == null) return null;
+  const lowestDate = lowestProjectedDate(account);
+  const datePart = lowestDate ? ` on ${formatProjectionDate(lowestDate)}` : "";
   return `${displayName}: Lowest projected in next ${forecastDays} days: ${formatCurrency(
     lowest,
     account.currency
-  )} on ${formatProjectionDate(riskDate)}`;
+  )}${datePart}`;
 }
 
 export type HealthDetailLines = {
@@ -181,7 +207,6 @@ export type HealthDetailLines = {
 };
 
 export function buildHealthDetailLines(account: Account): HealthDetailLines {
-  const details = account.health_details;
   const currency = account.currency;
   const lines: HealthDetailLines = {};
 
@@ -190,9 +215,9 @@ export function buildHealthDetailLines(account: Account): HealthDetailLines {
     lines.lowestProjected = formatCurrency(lowest, currency);
   }
 
-  const riskDate = account.health_risk_date ?? account.risk_date;
-  if (riskDate) {
-    lines.riskDate = formatDateDisplay(riskDate);
+  const firstDate = firstShortfallDate(account);
+  if (firstDate) {
+    lines.riskDate = formatDateDisplay(firstDate);
   }
 
   if (account.health_recommended_action) {
@@ -216,14 +241,24 @@ export function healthDetailsSummary(
   const d = details ?? account.health_details;
   const currency = account.currency;
 
-  const lowest = d?.lowest_projected_balance ?? account.lowest_projected_balance_30_days;
-  if (lowest != null) {
-    lines.push(`Lowest projected: ${formatCurrency(lowest, currency)}`);
+  const firstDate = firstShortfallDate(account);
+  const firstBal = d?.first_negative_balance ?? account.first_negative_balance;
+  if (firstDate && firstBal != null && parseAmount(firstBal) < 0) {
+    lines.push(
+      `First shortfall: ${formatCurrency(firstBal, currency)} on ${formatHealthRiskDate(firstDate)}`
+    );
   }
 
-  const riskDate = account.health_risk_date ?? account.risk_date;
-  if (riskDate) {
-    lines.push(`Risk date: ${formatHealthRiskDate(riskDate)}`);
+  const lowest = d?.lowest_projected_balance ?? account.lowest_projected_balance_30_days;
+  const lowestDate = lowestProjectedDate(account);
+  if (lowest != null) {
+    const datePart = lowestDate ? ` on ${formatHealthRiskDate(lowestDate)}` : "";
+    lines.push(`Lowest projected: ${formatCurrency(lowest, currency)}${datePart}`);
+  }
+
+  const sts = d?.available_to_spend ?? account.available_to_spend;
+  if (sts != null && Math.abs(parseAmount(sts) - parseAmount(lowest)) >= 0.01) {
+    lines.push(`Safe to spend: ${formatCurrency(sts, currency)}`);
   }
 
   if (account.upcoming_outflows_30_days) {

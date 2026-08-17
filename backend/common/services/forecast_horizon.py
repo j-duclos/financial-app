@@ -20,6 +20,8 @@ OPERATIONAL_FORECAST_WINDOW_DAYS = frozenset({30, 60, 90, 180})
 PASSIVE_DEFAULT_FORECAST_DAYS = DEFAULT_FORECAST_DAYS  # 30
 ADVANCED_DEFAULT_FORECAST_DAYS = 90
 MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS = 365
+# Quiet long-range cash-risk scan. Not a user-facing Forecast Window setting.
+EXTENDED_CASH_RISK_DAYS = 180
 
 
 def parse_forecast_days_param(
