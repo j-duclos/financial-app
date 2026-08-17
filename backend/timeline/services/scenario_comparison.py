@@ -865,6 +865,13 @@ def _compute_risk_explanation(
     if not is_risky:
         first_problem_date = None
 
+    scenario_has_cash_shortfall = bool(
+        scenario_low_num < 0 or scenario_first_problem_date
+    )
+    scenario_problem_account_name = (
+        trigger_account_name if scenario_has_cash_shortfall else None
+    )
+
     return {
         "is_risky": bool(is_risky),
         "impact_scope": impact_scope,
@@ -872,6 +879,8 @@ def _compute_risk_explanation(
         "first_problem_date": first_problem_date,
         "base_first_problem_date": base_first_problem_date,
         "scenario_first_problem_date": scenario_first_problem_date,
+        "scenario_first_problem_account_name": scenario_problem_account_name,
+        "scenario_has_cash_shortfall": scenario_has_cash_shortfall,
         "first_problem_account_id": trigger_account_id if is_risky else None,
         "first_problem_account_name": trigger_account_name if is_risky else None,
         "triggering_event": triggering_event if is_risky else None,

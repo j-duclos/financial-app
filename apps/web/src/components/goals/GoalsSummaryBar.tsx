@@ -26,7 +26,7 @@ export default function GoalsSummaryBar({ summary }: { summary: GoalsAggregateSu
         }
       />
       <DashboardMetricTile label="On track" value={onTrackLabel} />
-      <DashboardMetricTile label="Completion" value={completion ?? "—"} />
+      <DashboardMetricTile label="Projected completion" value={completion ?? "—"} />
     </div>
   );
 }

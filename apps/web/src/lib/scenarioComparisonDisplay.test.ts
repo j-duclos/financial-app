@@ -28,6 +28,11 @@ import {
   shouldShowRiskDaysSummary,
   recurringCostFromGroup,
   horizonToMonths,
+  scenarioHasCashShortfall,
+  formatRemainingIssueLine,
+  baselineAndScenarioSharePeriod,
+  comparisonPeriodMonths,
+  PLAN_SUMMARY_RESULT_LABELS,
 } from "./scenarioComparisonDisplay";
 import type { ScenarioComparisonResponse } from "@budget-app/shared";
 import { planItemChangeImpactLine as planItemChangeImpactLineFn } from "./scenarioPlainLanguage";
@@ -246,7 +251,7 @@ describe("scenarioComparisonDisplay", () => {
     ];
 
     const summary = buildPlanSummary(comparison, planItems);
-    expect(summary?.result).toBe("RISKY");
+    expect(summary?.result).toBe("WORSE");
     expect(summary?.lowestBalance).toContain("0.59");
     expect(summary?.lowestBalance).toContain("-$200.15");
     expect(summary?.recommendation).toContain("200.15");
@@ -257,10 +262,34 @@ describe("scenarioComparisonDisplay", () => {
     expect(why?.bullets.some((b) => b.includes("Chase"))).toBe(true);
   });
 
-  it("maps verdicts to plan summary results", () => {
-    expect(derivePlanSummaryResult("risky")).toBe("RISKY");
-    expect(derivePlanSummaryResult("safe")).toBe("SAFE");
-    expect(derivePlanSummaryResult("neutral")).toBe("NO CHANGE");
+  it("maps comparison metrics to plan summary results", () => {
+    expect(
+      derivePlanSummaryResult({
+        metrics: {
+          risk_days: { base: 0, scenario: 3, delta: "3" },
+          lowest_projected_balance: { base: "100", scenario: "-50", delta: "-150" },
+          first_risk_date: { base: null, scenario: "2026-08-20", delta: null },
+        },
+      } as ScenarioComparisonResponse)
+    ).toBe("WORSE");
+    expect(
+      derivePlanSummaryResult({
+        metrics: {
+          risk_days: { base: 0, scenario: 0, delta: "0" },
+          lowest_projected_balance: { base: "500", scenario: "600", delta: "100" },
+          first_risk_date: { base: null, scenario: null, delta: null },
+        },
+      } as ScenarioComparisonResponse)
+    ).toBe("SAFE");
+    expect(
+      derivePlanSummaryResult({
+        metrics: {
+          risk_days: { base: 1, scenario: 1, delta: "0" },
+          lowest_projected_balance: { base: "-96", scenario: "-96", delta: "0" },
+          first_risk_date: { base: "2026-12-02", scenario: "2026-12-02", delta: null },
+        },
+      } as ScenarioComparisonResponse)
+    ).toBe("NO CHANGE");
   });
 
   it("explains credit-only changes without blaming checking accounts", () => {
@@ -311,7 +340,7 @@ describe("scenarioComparisonDisplay", () => {
     expect(why?.bullets.some((b) => b.includes("$56.88"))).toBe(true);
     expect(why?.bullets.some((b) => b.includes("checking"))).toBe(true);
     expect(why?.bullets.some((b) => b.includes("Chase"))).toBe(false);
-    expect(buildPlanSummary(comparison, planItems)?.result).toBe("SAFE");
+    expect(buildPlanSummary(comparison, planItems)?.result).toBe("NO CHANGE");
     const summary = buildPlanSummary(comparison, planItems);
     expect(summary?.showMetricsFooter).toBe(false);
     expect(summary?.footerLines).toEqual([]);
@@ -370,11 +399,9 @@ describe("scenarioComparisonDisplay", () => {
     const summary = buildPlanSummary(comparison, planItems);
     expect(summary?.result).toBe("SAFE");
     expect(summary?.showMetricsFooter).toBe(false);
-    expect(summary?.footerLines).toEqual([]);
-    expect(summary?.listItems.some((h) => h.includes("shortfall"))).toBe(true);
-    expect(summary?.listStyle).toBe("benefits");
-    expect(summary?.listItems.some((line) => line.includes("lowest balance improves"))).toBe(true);
-    expect(summary?.headline).toContain("bonus");
+    expect(summary?.remainingIssue).toBeNull();
+    expect(summary?.headline).toMatch(/bonus|stays above \$0/i);
+    expect(summary?.comparisonRows.some((row) => row.label === "Lowest projected")).toBe(true);
     expect(shouldShowFirstProblemDaySummary(comparison)).toBe(false);
   });
 
@@ -426,8 +453,8 @@ describe("scenarioComparisonDisplay", () => {
     );
 
     const summary = buildPlanSummary(comparison, planItems);
-    expect(summary?.listItems.some((line) => line.includes("12-02-26"))).toBe(true);
-    expect(summary?.listItems.some((line) => line.includes("06-04-26"))).toBe(true);
+    expect(summary?.comparisonRows.some((row) => row.before.includes("96.26"))).toBe(true);
+    expect(summary?.comparisonRows.some((row) => row.after.includes("0.59"))).toBe(true);
     expect(summary?.showMetricsFooter).toBe(false);
   });
 
@@ -472,7 +499,7 @@ describe("scenarioComparisonDisplay", () => {
       comparison
     );
     expect(headline).toBe(
-      "This change to 2930 JOHN GALT S PAYROLL PPD ID: 14409866 improves your financial outlook."
+      "This change to paycheck improves your financial outlook."
     );
   });
 
@@ -519,8 +546,8 @@ describe("scenarioComparisonDisplay", () => {
     const decision = deriveScenarioDecision(comparison, planItems);
     const summary = buildPlanSummary(comparison, planItems);
 
-    expect(summary?.result).toBe("RISKY");
-    expect(summary?.headline).toBe("This change creates a cash problem.");
+    expect(summary?.result).toBe("WORSE");
+    expect(summary?.headline).toMatch(/worsens your forecast/i);
     expect(summary?.listStyle).toBe("impact");
     expect(summary?.listHeading).toBe("Impact");
     expect(summary?.showMetricsFooter).toBe(false);
@@ -554,11 +581,9 @@ describe("scenarioComparisonDisplay", () => {
     } as ScenarioComparisonResponse;
 
     const summary = buildPlanSummary(comparison, []);
-    expect(summary?.result).toBe("RISKY");
+    expect(summary?.result).toBe("WORSE");
     expect(summary?.showMetricsFooter).toBe(false);
-    expect(summary?.footerLines).toEqual([]);
-    expect(summary?.listItems.some((l) => l.includes("will become negative"))).toBe(true);
-    expect(summary?.listItems.some((l) => l.includes("To make this safe"))).toBe(true);
+    expect(summary?.remainingIssue).toMatch(/Add at least \$50\.00 before Jun 12/);
   });
 
   it("shows plain-english shortfall footer when forecast already dips below zero", () => {
@@ -581,12 +606,10 @@ describe("scenarioComparisonDisplay", () => {
 
     const summary = buildPlanSummary(comparison, []);
     expect(summary?.result).toBe("NO CHANGE");
-    expect(summary?.showMetricsFooter).toBe(true);
-    expect(summary?.footerLines).toEqual([
-      "Your account will become negative on 12-02-26",
-      "Your lowest balance reaches -$96.26 on 12-02-26",
-      "To avoid this: Add at least $96.26 before 12-02-26",
-    ]);
+    expect(summary?.showMetricsFooter).toBe(false);
+    expect(summary?.remainingIssue).toBe(
+      "Add at least $96.26 before Dec 2 to avoid the shortfall."
+    );
   });
 
   it("hides summary first problem day when scenario has no problem even if base did", () => {
@@ -721,7 +744,7 @@ describe("scenarioComparisonDisplay", () => {
 
     const decision = deriveScenarioDecision(comparison, planItems);
     expect(decision?.verdict).not.toBe("risky");
-    expect(buildPlanSummary(comparison, planItems)?.result).toBe("SAFE");
+    expect(buildPlanSummary(comparison, planItems)?.result).toBe("IMPROVED, BUT STILL AT RISK");
     expect(buildPlanSummaryHeadline(decision!, planItems, comparison)).toContain("frees up cash");
   });
 
@@ -849,9 +872,9 @@ describe("scenarioComparisonDisplay", () => {
     const decision = deriveScenarioDecision(comparison, planItems)!;
     const highlights = buildPlanSummaryHighlights(comparison, planItems, decision);
 
-    expect(highlights.some((h) => h.includes("extra") && h.includes("paid off"))).toBe(true);
+    expect(highlights.some((h) => /extra/i.test(h) && h.includes("paid off"))).toBe(true);
     expect(highlights.some((h) => h.includes("Payroll") || h.includes("$2,500"))).toBe(true);
-    expect(highlights.some((h) => h.includes("Transfer from Chase Savings"))).toBe(true);
+    expect(highlights.some((h) => h.includes("Transfer") && h.includes("Chase Savings"))).toBe(true);
     expect(
       highlights.some((h) => h.includes("249.98") && h.includes("Amazon") && h.includes("25%"))
     ).toBe(true);
@@ -859,5 +882,175 @@ describe("scenarioComparisonDisplay", () => {
 
     expect(planItemChangeImpactLine(planItems[3]!, comparison)).toContain("06-19-26");
     expect(planItemChangeImpactLine(planItems[3]!, comparison)).toContain("Amazon");
+  });
+
+  it("A: baseline unsafe, scenario fully fixes shortfall → SAFE", () => {
+    const comparison = {
+      horizon: "12m",
+      start_date: "2026-05-28",
+      end_date: "2027-05-28",
+      metrics: {
+        risk_days: { base: 82, scenario: 0, delta: "-82" },
+        lowest_projected_balance: { base: "-1895.05", scenario: "120.00", delta: "2015.05" },
+        first_risk_date: { base: "2026-08-20", scenario: null, delta: null },
+      },
+      risk_explanation: {
+        is_risky: false,
+        scenario_has_cash_shortfall: false,
+        base_lowest_balance: "-1895.05",
+        scenario_lowest_balance: "120.00",
+        scenario_first_problem_date: null,
+        amount_needed_to_stay_safe: null,
+      },
+    } as ScenarioComparisonResponse;
+
+    expect(baselineAndScenarioSharePeriod(comparison)).toBe(true);
+    expect(comparisonPeriodMonths(comparison)).toBe(12);
+    expect(scenarioHasCashShortfall(comparison)).toBe(false);
+    const summary = buildPlanSummary(comparison, [], [], 12);
+    expect(summary?.result).toBe("SAFE");
+    expect(summary?.periodNote).toBe("Safe within this 12-month forecast");
+    expect(summary?.remainingIssue).toBeNull();
+  });
+
+  it("B: baseline unsafe, scenario improves but still negative → IMPROVED, BUT STILL AT RISK", () => {
+    const comparison = {
+      horizon: "12m",
+      start_date: "2026-05-28",
+      end_date: "2027-05-28",
+      metrics: {
+        risk_days: { base: 82, scenario: 13, delta: "-69" },
+        lowest_projected_balance: { base: "-1895.05", scenario: "-1248.48", delta: "646.57" },
+        first_risk_date: { base: "2026-08-20", scenario: "2026-08-20", delta: null },
+      },
+      risk_explanation: {
+        is_risky: false,
+        scenario_has_cash_shortfall: true,
+        first_problem_account_name: null,
+        scenario_first_problem_account_name: "Main",
+        base_lowest_balance: "-1895.05",
+        scenario_lowest_balance: "-1248.48",
+        scenario_first_problem_date: "2026-08-20",
+        shortfall_amount: "1248.48",
+        amount_needed_to_stay_safe: "1248.48",
+      },
+    } as ScenarioComparisonResponse;
+
+    const summary = buildPlanSummary(comparison, [], [], 12);
+    expect(summary?.result).toBe("IMPROVED, BUT STILL AT RISK");
+    expect(summary?.result).not.toBe("SAFE");
+    expect(PLAN_SUMMARY_RESULT_LABELS[summary!.result]).toBe("Improved, but still at risk");
+    expect(summary?.headline).toContain("Main still falls below $0 on Aug 20");
+    expect(summary?.remainingIssue).toBe(
+      "Add at least $1,248.48 before Aug 20 to avoid the shortfall."
+    );
+    const riskDays = summary?.comparisonRows.find((row) => row.label === "Risk days");
+    expect(riskDays).toEqual({
+      label: "Risk days",
+      before: "82",
+      after: "13",
+      note: "69 fewer",
+    });
+    const lowest = summary?.comparisonRows.find((row) => row.label === "Lowest projected");
+    expect(lowest?.before).toContain("1,895.05");
+    expect(lowest?.after).toContain("1,248.48");
+    expect(lowest?.note).toMatch(/\+\$646\.57/);
+  });
+
+  it("does not label SAFE when risk days fall but a first negative date remains", () => {
+    const comparison = {
+      metrics: {
+        risk_days: { base: 82, scenario: 13, delta: "-69" },
+        lowest_projected_balance: { base: "-1895.05", scenario: "-1248.48", delta: "646.57" },
+        first_risk_date: { base: "2026-08-20", scenario: "2026-08-20", delta: null },
+      },
+      risk_explanation: {
+        is_risky: false,
+        scenario_lowest_balance: "-1248.48",
+        scenario_first_problem_date: "2026-08-20",
+        amount_needed_to_stay_safe: "1248.48",
+      },
+    } as ScenarioComparisonResponse;
+
+    expect(scenarioHasCashShortfall(comparison)).toBe(true);
+    expect(derivePlanSummaryResult(comparison)).toBe("IMPROVED, BUT STILL AT RISK");
+    expect(derivePlanSummaryResult(comparison)).not.toBe("SAFE");
+    expect(formatRemainingIssueLine(comparison)).toContain("$1,248.48");
+  });
+
+  it("C: baseline safe, scenario creates shortfall → WORSE", () => {
+    const comparison = {
+      horizon: "12m",
+      start_date: "2026-05-28",
+      end_date: "2027-05-28",
+      metrics: {
+        risk_days: { base: 0, scenario: 12, delta: "12" },
+        lowest_projected_balance: { base: "500", scenario: "-200", delta: "-700" },
+        first_risk_date: { base: null, scenario: "2026-11-06", delta: null },
+      },
+      risk_explanation: {
+        is_risky: true,
+        scenario_has_cash_shortfall: true,
+        first_problem_date: "2026-11-06",
+        scenario_first_problem_date: "2026-11-06",
+        first_problem_account_name: "Chase",
+        scenario_first_problem_account_name: "Chase",
+        base_lowest_balance: "500",
+        scenario_lowest_balance: "-200",
+        amount_needed_to_stay_safe: "200",
+      },
+    } as ScenarioComparisonResponse;
+
+    const summary = buildPlanSummary(comparison, [], [], 12);
+    expect(summary?.result).toBe("WORSE");
+    expect(summary?.headline).toContain("Chase falls below $0 on Nov 6");
+    expect(summary?.remainingIssue).toContain("$200.00");
+  });
+
+  it("D: baseline unsafe, scenario makes shortfall earlier/deeper → WORSE", () => {
+    const comparison = {
+      metrics: {
+        risk_days: { base: 10, scenario: 40, delta: "30" },
+        lowest_projected_balance: { base: "-100", scenario: "-400", delta: "-300" },
+        first_risk_date: { base: "2026-09-01", scenario: "2026-08-01", delta: null },
+      },
+      risk_explanation: {
+        is_risky: true,
+        scenario_has_cash_shortfall: true,
+        base_first_problem_date: "2026-09-01",
+        scenario_first_problem_date: "2026-08-01",
+        first_problem_date: "2026-08-01",
+        base_lowest_balance: "-100",
+        scenario_lowest_balance: "-400",
+        amount_needed_to_stay_safe: "400",
+      },
+    } as ScenarioComparisonResponse;
+
+    expect(deriveImpactLabel(comparison)).toBe("Worse");
+    expect(derivePlanSummaryResult(comparison)).toBe("WORSE");
+    const first = buildPlanSummary(comparison, [])?.comparisonRows.find(
+      (row) => row.label === "First shortfall"
+    );
+    expect(first?.before).toBe("Sep 1");
+    expect(first?.after).toBe("Aug 1");
+  });
+
+  it("E: scenario changes nothing meaningful → NO CHANGE", () => {
+    const comparison = {
+      metrics: {
+        risk_days: { base: 0, scenario: 0, delta: "0" },
+        lowest_projected_balance: { base: "250", scenario: "250", delta: "0" },
+        first_risk_date: { base: null, scenario: null, delta: null },
+      },
+      risk_explanation: {
+        is_risky: false,
+        scenario_has_cash_shortfall: false,
+        base_lowest_balance: "250",
+        scenario_lowest_balance: "250",
+      },
+    } as ScenarioComparisonResponse;
+
+    expect(derivePlanSummaryResult(comparison)).toBe("NO CHANGE");
+    expect(buildPlanSummary(comparison, [])?.headline).toMatch(/little difference/i);
   });
 });

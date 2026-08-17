@@ -1,5 +1,7 @@
 import type { FinancialGoal, GoalPaceStatus } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
+import { formatMonthYear } from "./dateDisplay";
+import { formatGoalProgressLine, formatMonthlyAmount } from "./goalDisplay";
 
 /** Tailwind classes for pace status (dashboard + cards). */
 export function paceStatusColorClass(pace: GoalPaceStatus | string | undefined): string {
@@ -109,4 +111,169 @@ export function goalFundingLine(
 export function parseProgressForBar(progressPercent: string): number {
   const n = parseFloat(progressPercent);
   return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+}
+
+/** Progress line with funding account, e.g. "Funded from Savings: $1,551.62 / $30,000.00". */
+export function goalFundedProgressLine(goal: FinancialGoal): string {
+  const progress = formatGoalProgressLine(goal);
+  if (goal.is_debt_goal) return progress;
+  const { source } = goalFundingLine(goal);
+  return source ? `${source}: ${progress}` : progress;
+}
+
+/** Configured paycheck deposit, not the suggested amount needed to hit the date. */
+export function goalCurrentDepositValue(goal: FinancialGoal): string | null {
+  const rules = goal.linked_rules ?? [];
+  if (rules.length > 0) {
+    return rules.map((rule) => rule.label).filter(Boolean).join("; ") || null;
+  }
+  const label = goal.automatic_transfer_label?.trim();
+  if (!label) return null;
+  if (/^no automatic funding/i.test(label)) return null;
+  return label.replace(/^Paycheck funding:\s*/i, "").replace(/^Planned:\s*/i, "") || null;
+}
+
+export type GoalCardMetric = {
+  label: string;
+  value: string;
+  emphasize?: boolean;
+};
+
+function parseMoney(value: string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatPaceMonthly(amount: string | null | undefined): string | null {
+  const n = parseMoney(amount);
+  if (n == null || n < 0) return null;
+  return `${formatCurrency(amount as string)}/mo`;
+}
+
+/** Saved vs target line for Goal Details (not the Goals card). */
+export function goalDetailProgressLine(goal: FinancialGoal): string {
+  if (goal.is_debt_goal) {
+    return formatGoalProgressLine(goal);
+  }
+  return `${formatCurrency(goal.current_amount)} of ${formatCurrency(goal.target_amount)}`;
+}
+
+export function goalDetailFunding(goal: FinancialGoal): {
+  account: string | null;
+  automatic: string | null;
+} {
+  const account =
+    goal.funding_account_name ?? goal.funding_account ?? goal.linked_account_name ?? null;
+  let automatic = goalCurrentDepositValue(goal);
+  if (automatic && !/from paycheck/i.test(automatic) && (goal.linked_rules?.length ?? 0) > 0) {
+    automatic = `${automatic} from paycheck`;
+  }
+  if (!automatic && goal.has_automatic_funding === false) {
+    automatic = "Not configured";
+  }
+  return { account, automatic };
+}
+
+/** Per-paycheck needed from the actual paycheck schedule — never a hardcoded biweekly fallback. */
+export function goalPerPaycheckNeeded(goal: FinancialGoal): string | null {
+  const amount = parseMoney(goal.suggested_per_paycheck);
+  if (amount == null || amount <= 0) return null;
+  return formatCurrency(goal.suggested_per_paycheck as string);
+}
+
+export type GoalForecastSummaryMetric = {
+  label: string;
+  value: string;
+  tone?: "shortfall" | "surplus";
+};
+
+/** Compact Goal Details forecast figures from canonical backend fields. */
+export function goalForecastSummary(goal: FinancialGoal): GoalForecastSummaryMetric[] {
+  const rows: GoalForecastSummaryMetric[] = [];
+  const target = formatMonthYear(goal.target_date);
+  if (target) {
+    rows.push({ label: "Target date", value: target });
+  }
+  const projected = formatMonthYear(goal.projected_completion_date);
+  if (projected) {
+    rows.push({ label: "Projected completion", value: projected });
+  }
+
+  const monthlyNeeded = formatMonthlyAmount(goal.monthly_required ?? goal.suggested_monthly);
+  if (monthlyNeeded) {
+    rows.push({ label: "Monthly needed", value: monthlyNeeded });
+  }
+
+  const pace = formatPaceMonthly(
+    goal.current_contribution_rate ?? goal.contribution_pace_monthly
+  );
+  if (pace) {
+    rows.push({ label: "Current pace", value: pace });
+  }
+
+  const needed = parseMoney(goal.monthly_required ?? goal.suggested_monthly) ?? 0;
+  const current = parseMoney(goal.current_contribution_rate ?? goal.contribution_pace_monthly) ?? 0;
+  const backendShortfall = parseMoney(goal.forecast_gap);
+  const backendSurplus = parseMoney(goal.forecast_surplus);
+  const delta = needed - current;
+
+  if (backendSurplus != null && backendSurplus > 0.005) {
+    const surplus = formatPaceMonthly(goal.forecast_surplus);
+    if (surplus) rows.push({ label: "Surplus", value: surplus, tone: "surplus" });
+  } else if (backendShortfall != null && backendShortfall > 0.005) {
+    const shortfall = formatPaceMonthly(goal.forecast_gap);
+    if (shortfall) rows.push({ label: "Shortfall", value: shortfall, tone: "shortfall" });
+  } else if (needed > 0 && delta > 0.005) {
+    const shortfall = formatPaceMonthly(delta.toFixed(2));
+    if (shortfall) rows.push({ label: "Shortfall", value: shortfall, tone: "shortfall" });
+  } else if (needed > 0 && delta < -0.005) {
+    const surplus = formatPaceMonthly((-delta).toFixed(2));
+    if (surplus) rows.push({ label: "Surplus", value: surplus, tone: "surplus" });
+  }
+
+  const perPaycheck = goalPerPaycheckNeeded(goal);
+  if (perPaycheck) {
+    rows.push({ label: "Per paycheck needed", value: perPaycheck });
+  }
+
+  return rows;
+}
+
+/** Forecast figures shown on the main Goals card (no separate forecast modal). */
+export function goalCardMetrics(goal: FinancialGoal): GoalCardMetric[] {
+  const rows: GoalCardMetric[] = [];
+  const target = formatMonthYear(goal.target_date);
+  if (target) {
+    rows.push({ label: "Target completion date", value: target });
+  }
+  const projected = formatMonthYear(goal.projected_completion_date);
+  if (projected) {
+    rows.push({ label: "Projected completion date at current pace", value: projected });
+  }
+  const deposit = goalCurrentDepositValue(goal);
+  if (deposit) {
+    rows.push({ label: "Current deposit per paycheck", value: deposit });
+  }
+  const required = formatMonthlyAmount(goal.monthly_required ?? goal.suggested_monthly);
+  if (required) {
+    rows.push({ label: "Required to meet goal", value: required });
+  }
+  const pace = formatMonthlyAmount(goal.current_contribution_rate ?? goal.contribution_pace_monthly);
+  if (pace) {
+    rows.push({ label: "Current pace", value: pace });
+  }
+  if (goal.suggested_biweekly && parseFloat(goal.suggested_biweekly) > 0) {
+    rows.push({
+      label: "Required per paycheck",
+      value: formatCurrency(goal.suggested_biweekly),
+    });
+  }
+  if (goal.forecast_gap && parseFloat(goal.forecast_gap) > 0) {
+    const gap = formatMonthlyAmount(goal.forecast_gap);
+    if (gap) {
+      rows.push({ label: "Gap", value: gap, emphasize: true });
+    }
+  }
+  return rows;
 }

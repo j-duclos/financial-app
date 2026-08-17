@@ -105,8 +105,8 @@ class HouseholdMembershipSerializer(serializers.ModelSerializer):
 class HouseholdSerializer(serializers.ModelSerializer):
     class Meta:
         model = Household
-        fields = ["id", "name", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = ["id", "name", "financial_revision", "created_at", "updated_at"]
+        read_only_fields = ["id", "financial_revision", "created_at", "updated_at"]
 
 
 class HouseholdDetailSerializer(HouseholdSerializer):

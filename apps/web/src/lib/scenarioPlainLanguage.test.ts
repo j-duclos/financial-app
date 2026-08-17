@@ -5,6 +5,7 @@ import {
   describeCategoryShock,
   buildPlanIncludes,
   isScenarioOnlyRuleAdd,
+  planItemDisplayDetail,
 } from "./scenarioPlainLanguage";
 
 describe("scenarioPlainLanguage", () => {
@@ -119,5 +120,90 @@ describe("scenarioPlainLanguage", () => {
       []
     );
     expect(items[0].sortDate).toBe("2026-04-04");
+  });
+
+  it("titles paycheck increases without the raw bank description", () => {
+    const items = buildPlanIncludes(
+      [
+        {
+          id: 1,
+          scenario: 1,
+          rule: {
+            id: 9,
+            name: "2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount: "1835.52",
+            currency: "USD",
+            direction: "INCOME",
+            frequency: "BIWEEKLY",
+            account: { name: "Chase" },
+          } as never,
+          override_active: true,
+          override_amount: "2500",
+          override_start_date: null,
+          override_end_date: null,
+          override_account: null,
+          override_category: null,
+          notes: "",
+          created_at: "",
+          updated_at: "",
+        },
+      ],
+      [],
+      []
+    );
+    expect(items[0].actionLabel).toBe("Increase paycheck");
+    expect(items[0].title).toContain("JOHN GALT");
+    expect(items[0].detailLabel).toContain("1,835.52");
+    expect(items[0].detailLabel).toContain("2,500.00");
+  });
+
+  it("compacts transfer and extra-payment titles", () => {
+    const items = buildPlanIncludes(
+      [],
+      [
+        {
+          id: 1,
+          scenario: 1,
+          date: "2026-05-30",
+          description: "extra",
+          direction: "TRANSFER",
+          amount: "500",
+          account: { name: "Chase Savings" } as never,
+          transfer_to_account: { name: "Chase" } as never,
+          category: null,
+          notes: "",
+          created_at: "",
+          updated_at: "",
+        },
+      ],
+      [],
+      [
+        {
+          id: 2,
+          scenario: 1,
+          name: "extra",
+          amount: "250",
+          currency: "USD",
+          direction: "TRANSFER",
+          frequency: "MONTHLY_DAY",
+          interval: 1,
+          day_of_week: null,
+          day_of_month: 1,
+          nth_week: null,
+          start_date: "2026-05-01",
+          end_date: null,
+          notes: "what_if_debt_recurring",
+          account: { name: "Chase", account_type: "CHECKING" } as never,
+          transfer_to_account: { name: "Savor", account_type: "CREDIT" } as never,
+          category: null,
+          created_at: "",
+          updated_at: "",
+        } as never,
+      ]
+    );
+    const transfer = items.find((i) => i.kind === "event");
+    expect(transfer?.actionLabel).toBe("Transfer $500.00");
+    expect(planItemDisplayDetail(transfer!)).toContain("Chase Savings → Chase");
+    expect(planItemDisplayDetail(transfer!)).toContain("May 30, 2026");
   });
 });

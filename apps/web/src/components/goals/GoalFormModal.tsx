@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Account, FinancialGoal, FinancialGoalStatus, FinancialGoalType } from "@budget-app/shared";
+import type { Account, FinancialGoal, FinancialGoalStatus, FinancialGoalType, RecurringRule } from "@budget-app/shared";
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import { bucketPriorityToNumber } from "../../lib/bucketGoalTypes";
 import { GOAL_TYPE_OPTIONS, isDebtGoalType } from "../../lib/goalDisplay";
@@ -7,9 +7,12 @@ import GoalFundingSection from "./GoalFundingSection";
 import {
   emptyGoalFundingForm,
   type GoalFundingFormState,
-  validateGoalFundingForm,
 } from "../../lib/goalFundingForm";
-import type { RecurringRule } from "@budget-app/shared";
+import {
+  goalFormHasErrors,
+  validateGoalForm,
+  type GoalFormFieldErrors,
+} from "../../lib/goalFormValidation";
 
 export type GoalFormValues = {
   name: string;
@@ -66,6 +69,17 @@ function formatOwedForInput(owed: number): string {
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
 
+function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 border-b border-gray-100 pb-1">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
 function accountUsedByAnotherGoal(
   accountId: number,
   goals: FinancialGoal[],
@@ -111,6 +125,7 @@ export default function GoalFormModal({
 }: Props) {
   const [form, setForm] = useState<GoalFormValues>(emptyForm);
   const [fundingError, setFundingError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<GoalFormFieldErrors>({});
 
   const isDebt = isDebtGoalType(form.goal_type);
 
@@ -166,6 +181,7 @@ export default function GoalFormModal({
   useEffect(() => {
     if (!open) return;
     setFundingError(null);
+    setErrors({});
     if (initial) {
       setForm({
         name: initial.name,
@@ -220,13 +236,13 @@ export default function GoalFormModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isDebt) {
-      const err = validateGoalFundingForm(form.funding, form.monthly_contribution);
-      if (err) {
-        setFundingError(err);
-        return;
-      }
+    const nextErrors = validateGoalForm(form);
+    if (goalFormHasErrors(nextErrors)) {
+      setErrors(nextErrors);
+      setFundingError(nextErrors.funding ?? null);
+      return;
     }
+    setErrors({});
     setFundingError(null);
     onSubmit({
       ...form,
@@ -234,272 +250,343 @@ export default function GoalFormModal({
     });
   }
 
+  function FieldError({ message }: { message?: string }) {
+    if (!message) return null;
+    return (
+      <p className="mt-1 text-xs text-red-600" role="alert">
+        {message}
+      </p>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6" noValidate>
           <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold">{initial ? "Edit goal bucket" : "Add goal bucket"}</h2>
+            <h2 className="text-lg font-semibold">{initial ? "Edit goal" : "Add goal"}</h2>
             <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-800">
               Close
             </button>
           </div>
 
-          <label className="block text-sm">
-            <span className="text-gray-700">Goal name</span>
-            <input
-              required
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-          </label>
-
-          <label className="block text-sm">
-            <span className="text-gray-700">Goal type</span>
-            <select
-              value={form.goal_type}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  goal_type: e.target.value as FinancialGoalType,
-                  linked_account: "",
-                  linked_credit_account: "",
-                }))
-              }
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            >
-              {GOAL_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {!isDebt && (
+          <FormSection title="Goal">
             <label className="block text-sm">
-              <span className="text-gray-700">Target amount</span>
+              <span className="text-gray-700">Goal name</span>
               <input
-                required
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={form.target_amount}
-                onChange={(e) => setForm((f) => ({ ...f, target_amount: e.target.value }))}
+                value={form.name}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, name: e.target.value }));
+                  if (errors.name) setErrors((err) => ({ ...err, name: undefined }));
+                }}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                aria-invalid={Boolean(errors.name)}
+              />
+              <FieldError message={errors.name} />
+            </label>
+
+            <label className="block text-sm">
+              <span className="text-gray-700">Goal type</span>
+              <select
+                value={form.goal_type}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    goal_type: e.target.value as FinancialGoalType,
+                    linked_account: "",
+                    linked_credit_account: "",
+                  }))
+                }
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              >
+                {GOAL_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {!isDebt && (
+                <label className="block text-sm">
+                  <span className="text-gray-700">Target amount</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={form.target_amount}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, target_amount: e.target.value }));
+                      if (errors.target_amount) {
+                        setErrors((err) => ({ ...err, target_amount: undefined }));
+                      }
+                    }}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    aria-invalid={Boolean(errors.target_amount)}
+                  />
+                  <FieldError message={errors.target_amount} />
+                </label>
+              )}
+
+              {isDebt && (
+                <label className="block text-sm">
+                  <span className="text-gray-700">Payoff target</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={form.target_amount}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, target_amount: e.target.value }));
+                      if (errors.target_amount) {
+                        setErrors((err) => ({ ...err, target_amount: undefined }));
+                      }
+                    }}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    aria-invalid={Boolean(errors.target_amount)}
+                  />
+                  <FieldError message={errors.target_amount} />
+                </label>
+              )}
+
+              <label className="block text-sm">
+                <span className="text-gray-700">Target date (optional)</span>
+                <input
+                  type="date"
+                  value={form.target_date}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, target_date: e.target.value }));
+                    if (errors.target_date) setErrors((err) => ({ ...err, target_date: undefined }));
+                  }}
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  aria-invalid={Boolean(errors.target_date)}
+                />
+                <FieldError message={errors.target_date} />
+              </label>
+            </div>
+
+            {isDebt && (
+              <label className="block text-sm">
+                <span className="text-gray-700">Starting debt amount</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.starting_debt_amount}
+                  onChange={(e) => setForm((f) => ({ ...f, starting_debt_amount: e.target.value }))}
+                  placeholder="Filled from account balance when you select a card"
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                />
+              </label>
+            )}
+
+            <label className="block text-sm">
+              <span className="text-gray-700">Description (optional)</span>
+              <input
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
               />
             </label>
-          )}
+          </FormSection>
 
-          <label className="block text-sm">
-            <span className="text-gray-700">Description (optional)</span>
-            <input
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-          </label>
+          <FormSection title="Funding">
+            {isDebt && (
+              <label className="block text-sm">
+                <span className="text-gray-700">Linked account</span>
+                <select
+                  value={form.linked_credit_account}
+                  onChange={(e) => {
+                    applyDebtAccountSelection(e.target.value ? Number(e.target.value) : "");
+                    if (errors.linked_credit_account) {
+                      setErrors((err) => ({ ...err, linked_credit_account: undefined }));
+                    }
+                  }}
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={accountsLoading}
+                  aria-invalid={Boolean(errors.linked_credit_account)}
+                >
+                  <option value="">
+                    {accountsLoading ? "Loading accounts…" : "Select account"}
+                  </option>
+                  {debtAccounts.map((a) => {
+                    const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
+                    const owed = creditBalanceOwed(a);
+                    const suffix =
+                      owed != null ? ` — ${formatCurrency(String(owed), a.currency)} owed` : "";
+                    return (
+                      <option key={a.id} value={a.id} disabled={usedBy != null}>
+                        {getEffectiveDisplayName(a)}
+                        {suffix}
+                        {usedBy ? ` (used by ${usedBy})` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">Credit card or loan this goal tracks.</p>
+                <FieldError message={errors.linked_credit_account} />
+              </label>
+            )}
 
-          {isDebt && (
+            {isDebt && form.linked_credit_account && (
+              <p className="text-sm rounded-md bg-gray-50 border border-gray-200 px-3 py-2">
+                <span className="text-gray-600">Balance owed as of today: </span>
+                <span className="font-semibold text-gray-900">
+                  {debtBalanceOwedToday != null
+                    ? formatCurrency(String(debtBalanceOwedToday), selectedDebtAccount?.currency)
+                    : "—"}
+                </span>
+              </p>
+            )}
+
+            {!isDebt && (
+              <label className="block text-sm">
+                <span className="text-gray-700">Linked account</span>
+                <select
+                  value={form.linked_account}
+                  onChange={(e) => {
+                    setForm((f) => ({
+                      ...f,
+                      linked_account: e.target.value ? Number(e.target.value) : "",
+                    }));
+                    if (errors.linked_account) {
+                      setErrors((err) => ({ ...err, linked_account: undefined }));
+                    }
+                  }}
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={accountsLoading}
+                  aria-invalid={Boolean(errors.linked_account)}
+                >
+                  <option value="">
+                    {accountsLoading ? "Loading accounts…" : "Select account"}
+                  </option>
+                  {savingsAccounts.map((a) => {
+                    const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
+                    return (
+                      <option key={a.id} value={a.id} disabled={usedBy != null}>
+                        {getEffectiveDisplayName(a)}
+                        {usedBy ? ` (used by ${usedBy})` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Account where this goal&apos;s money is held. Account activity can update goal
+                  progress automatically.
+                </p>
+                <FieldError message={errors.linked_account} />
+              </label>
+            )}
+
             <label className="block text-sm">
-              <span className="text-gray-700">Linked credit card / loan</span>
-              <select
-                required
-                value={form.linked_credit_account}
-                onChange={(e) =>
-                  applyDebtAccountSelection(e.target.value ? Number(e.target.value) : "")
-                }
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                disabled={accountsLoading}
-              >
-                <option value="">
-                  {accountsLoading ? "Loading accounts…" : "Select account"}
-                </option>
-                {debtAccounts.map((a) => {
-                  const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
-                  const owed = creditBalanceOwed(a);
-                  const suffix =
-                    owed != null ? ` — ${formatCurrency(String(owed), a.currency)} owed` : "";
-                  return (
-                    <option key={a.id} value={a.id} disabled={usedBy != null}>
-                      {getEffectiveDisplayName(a)}
-                      {suffix}
-                      {usedBy ? ` (used by ${usedBy})` : ""}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-          )}
-
-          {isDebt && form.linked_credit_account && (
-            <p className="text-sm rounded-md bg-gray-50 border border-gray-200 px-3 py-2">
-              <span className="text-gray-600">Balance owed as of today: </span>
-              <span className="font-semibold text-gray-900">
-                {debtBalanceOwedToday != null
-                  ? formatCurrency(String(debtBalanceOwedToday), selectedDebtAccount?.currency)
-                  : "—"}
-              </span>
-            </p>
-          )}
-
-          {isDebt && (
-            <label className="block text-sm">
-              <span className="text-gray-700">Starting debt amount</span>
+              <span className="text-gray-700">Planned monthly contribution</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={form.starting_debt_amount}
-                onChange={(e) => setForm((f) => ({ ...f, starting_debt_amount: e.target.value }))}
-                placeholder="Filled from account balance when you select a card"
+                value={form.monthly_contribution}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, monthly_contribution: e.target.value }));
+                  if (errors.monthly_contribution) {
+                    setErrors((err) => ({ ...err, monthly_contribution: undefined }));
+                  }
+                }}
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                aria-invalid={Boolean(errors.monthly_contribution)}
               />
-            </label>
-          )}
-
-          {isDebt && (
-            <label className="block text-sm">
-              <span className="text-gray-700">Payoff target</span>
-              <input
-                required
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={form.target_amount}
-                onChange={(e) => setForm((f) => ({ ...f, target_amount: e.target.value }))}
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              />
-            </label>
-          )}
-
-          <label className="block text-sm">
-            <span className="text-gray-700">Target date (optional)</span>
-            <input
-              type="date"
-              value={form.target_date}
-              onChange={(e) => setForm((f) => ({ ...f, target_date: e.target.value }))}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-          </label>
-
-          {!isDebt && (
-            <label className="block text-sm">
-              <span className="text-gray-700">Linked account (where money lives)</span>
-              <select
-                required
-                value={form.linked_account}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    linked_account: e.target.value ? Number(e.target.value) : "",
-                  }))
-                }
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                disabled={accountsLoading}
-              >
-                <option value="">
-                  {accountsLoading ? "Loading accounts…" : "Select account"}
-                </option>
-                {savingsAccounts.map((a) => {
-                  const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, initial?.id);
-                  return (
-                    <option key={a.id} value={a.id} disabled={usedBy != null}>
-                      {getEffectiveDisplayName(a)}
-                      {usedBy ? ` (used by ${usedBy})` : ""}
-                    </option>
-                  );
-                })}
-              </select>
               <p className="mt-1 text-xs text-gray-500">
-                Deposits and withdrawals on this account update goal progress automatically.
+                How much you plan to contribute each month. Used for pacing and forecasts — this
+                does not move money by itself.
               </p>
+              <FieldError message={errors.monthly_contribution} />
             </label>
-          )}
 
-          <label className="block text-sm">
-            <span className="text-gray-700">Monthly target</span>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.monthly_contribution}
-              onChange={(e) => setForm((f) => ({ ...f, monthly_contribution: e.target.value }))}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-            <p className="mt-1 text-xs text-gray-500">Used for forecast pacing and as default transfer amount.</p>
-          </label>
+            {!isDebt && (
+              <GoalFundingSection
+                funding={form.funding}
+                incomeRules={incomeRules}
+                linkedAccountId={form.linked_account}
+                monthlyTarget={form.monthly_contribution}
+                rulesLoading={rulesLoading}
+                onChange={(funding) => {
+                  setForm((f) => ({ ...f, funding }));
+                  if (errors.funding) setErrors((err) => ({ ...err, funding: undefined }));
+                  if (fundingError) setFundingError(null);
+                }}
+              />
+            )}
 
-          {!isDebt && (
-            <GoalFundingSection
-              funding={form.funding}
-              incomeRules={incomeRules}
-              linkedAccountId={form.linked_account}
-              monthlyTarget={form.monthly_contribution}
-              rulesLoading={rulesLoading}
-              onChange={(funding) => setForm((f) => ({ ...f, funding }))}
-            />
-          )}
+            {fundingError && (
+              <p className="text-sm text-red-600" role="alert">
+                {fundingError}
+              </p>
+            )}
+          </FormSection>
 
-          {fundingError && (
-            <p className="text-sm text-red-600" role="alert">
-              {fundingError}
-            </p>
-          )}
+          <FormSection title="Behavior">
+            <label className="block text-sm">
+              <span className="text-gray-700">Priority</span>
+              <select
+                value={form.priority}
+                onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) }))}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value={1}>1 — Highest</option>
+                <option value={2}>2 — High</option>
+                <option value={3}>3 — Medium</option>
+                <option value={4}>4 — Low</option>
+                <option value={5}>5 — Lowest</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">Used when prioritizing competing goals.</p>
+            </label>
 
-          <label className="block text-sm">
-            <span className="text-gray-700">Priority (1 = highest)</span>
-            <select
-              value={form.priority}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, priority: Number(e.target.value) }))
-              }
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            >
-              <option value={1}>1 — Highest</option>
-              <option value={2}>2 — High</option>
-              <option value={3}>3 — Medium</option>
-              <option value={4}>4 — Low</option>
-              <option value={5}>5 — Lowest</option>
-            </select>
-          </label>
-
-          <fieldset className="space-y-2 text-sm border border-gray-200 rounded-md p-3">
-            <legend className="text-gray-700 font-medium px-1">Options</legend>
-            <label className="flex items-center gap-2">
+            <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
+                className="mt-0.5"
                 checked={form.include_in_safe_to_spend}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, include_in_safe_to_spend: e.target.checked }))
                 }
               />
-              <span>Reduce safe-to-spend on linked account</span>
+              <span>
+                <span className="text-gray-800">Reduce safe-to-spend on linked account</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Treat reserved goal money as unavailable for everyday spending.
+                </span>
+              </span>
             </label>
-            <label className="flex items-center gap-2">
+
+            <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
+                className="mt-0.5"
                 checked={form.forecast_enabled}
                 onChange={(e) => setForm((f) => ({ ...f, forecast_enabled: e.target.checked }))}
               />
-              <span>Include in forecast</span>
+              <span>
+                <span className="text-gray-800">Include in forecast</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Include planned goal contributions in future cash-flow projections.
+                </span>
+              </span>
             </label>
-          </fieldset>
 
-          <label className="block text-sm">
-            <span className="text-gray-700">Notes</span>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              rows={2}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-          </label>
+            <label className="block text-sm">
+              <span className="text-gray-700">Notes (optional)</span>
+              <textarea
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                rows={2}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+            </label>
+          </FormSection>
 
           <input type="hidden" value={householdId} readOnly />
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
               onClick={onClose}

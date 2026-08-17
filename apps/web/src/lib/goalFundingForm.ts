@@ -28,6 +28,38 @@ export function formatIncomeRuleOption(rule: RecurringRule): string {
   return `${rule.name} (${amt})`;
 }
 
+function paycheckPeriodLabel(frequency: string): string {
+  if (frequency === "WEEKLY") return "week";
+  if (frequency === "BIWEEKLY") return "paycheck";
+  if (frequency === "YEARLY") return "year";
+  return "month";
+}
+
+/** Summary of the configured auto-transfer using the selected paycheck rule. */
+export function estimatePaycheckContributionLabel(
+  funding: GoalFundingFormState,
+  monthlyContribution: string,
+  rules: RecurringRule[]
+): string | null {
+  if (!funding.enabled || !funding.incomeRuleId) return null;
+  const rule = rules.find((r) => r.id === funding.incomeRuleId);
+  if (!rule) return null;
+  const period = paycheckPeriodLabel(rule.frequency);
+  const currency = rule.currency ?? "USD";
+
+  if (funding.amountMode === "percent") {
+    const pct = parseFloat(funding.percent);
+    const base = parseFloat(String(rule.amount));
+    if (!Number.isFinite(pct) || pct <= 0 || !Number.isFinite(base) || base <= 0) return null;
+    return `${formatCurrency(((base * pct) / 100).toFixed(2), currency)} per ${period}`;
+  }
+
+  const raw = funding.fixedAmount.trim() || monthlyContribution.trim();
+  const amount = parseFloat(raw);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return `${formatCurrency(raw, currency)} per ${period}`;
+}
+
 export function goalFundingFormFromAllocation(
   autoFundEnabled: boolean,
   allocation: {

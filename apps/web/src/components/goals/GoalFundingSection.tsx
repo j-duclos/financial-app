@@ -1,5 +1,6 @@
 import type { RecurringRule } from "@budget-app/shared";
 import {
+  estimatePaycheckContributionLabel,
   formatIncomeRuleOption,
   incomeRulesForFunding,
   type GoalFundingFormState,
@@ -23,18 +24,20 @@ export default function GoalFundingSection({
   onChange,
 }: Props) {
   const paycheckRules = incomeRulesForFunding(incomeRules);
+  const estimate = estimatePaycheckContributionLabel(funding, monthlyTarget, paycheckRules);
 
   function patch(partial: Partial<GoalFundingFormState>) {
     onChange({ ...funding, ...partial });
   }
 
   return (
-    <fieldset className="space-y-3 text-sm border border-indigo-100 rounded-md p-3 bg-indigo-50/40">
-      <legend className="text-indigo-900 font-medium px-1">Paycheck auto-funding</legend>
-      <p className="text-xs text-indigo-900/80 leading-snug">
-        When enabled, each paycheck allocates money to this goal and schedules a transfer into
-        the linked account (when paycheck and goal accounts differ).
-      </p>
+    <div className="space-y-3 text-sm">
+      <div>
+        <p className="text-gray-800 font-medium">Paycheck auto-funding</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Automatically contribute to this goal each payday.
+        </p>
+      </div>
 
       <label className="flex items-start gap-2">
         <input
@@ -45,22 +48,23 @@ export default function GoalFundingSection({
         />
         <span>
           <span className="font-medium text-gray-900">Auto-transfer on payday</span>
-          <span className="block text-xs text-gray-600 mt-0.5">
-            Creates a recurring transfer matched to your paycheck schedule.
+          <span className="block text-xs text-gray-500 mt-0.5">
+            Actually schedules a transfer on your paycheck schedule. This is separate from the
+            planned monthly contribution above.
           </span>
         </span>
       </label>
 
       {funding.enabled && (
-        <div className="space-y-3 pl-1 border-l-2 border-indigo-200 ml-1">
+        <div className="space-y-3 pl-6">
           {!linkedAccountId && (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
-              Link a savings or checking account above before setting up auto-funding.
+            <p className="text-xs text-amber-800">
+              Link an account above before setting up auto-funding.
             </p>
           )}
 
           <label className="block">
-            <span className="text-gray-700">Paycheck / income rule</span>
+            <span className="text-gray-700">Paycheck</span>
             <select
               value={funding.incomeRuleId}
               onChange={(e) =>
@@ -69,7 +73,7 @@ export default function GoalFundingSection({
               disabled={!linkedAccountId || rulesLoading}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
             >
-              <option value="">Select income rule</option>
+              <option value="">Select paycheck</option>
               {paycheckRules.map((rule) => (
                 <option key={rule.id} value={rule.id}>
                   {formatIncomeRuleOption(rule)}
@@ -77,11 +81,11 @@ export default function GoalFundingSection({
               ))}
             </select>
             {rulesLoading && (
-              <p className="mt-1 text-xs text-gray-500">Loading income rules…</p>
+              <p className="mt-1 text-xs text-gray-500">Loading paychecks…</p>
             )}
             {!rulesLoading && paycheckRules.length === 0 && (
               <p className="mt-1 text-xs text-gray-600">
-                No income rules yet. Add a paycheck under Automation → Rules first.
+                No paychecks yet. Add one under Automation → Rules first.
               </p>
             )}
           </label>
@@ -94,8 +98,8 @@ export default function GoalFundingSection({
                 onClick={() => patch({ amountMode: "fixed" })}
                 className={`px-2.5 py-1 text-xs rounded-full border ${
                   funding.amountMode === "fixed"
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "border-gray-300 hover:bg-white"
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "border-gray-300 hover:bg-gray-50"
                 }`}
               >
                 Fixed $
@@ -105,8 +109,8 @@ export default function GoalFundingSection({
                 onClick={() => patch({ amountMode: "percent" })}
                 className={`px-2.5 py-1 text-xs rounded-full border ${
                   funding.amountMode === "percent"
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "border-gray-300 hover:bg-white"
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "border-gray-300 hover:bg-gray-50"
                 }`}
               >
                 % of paycheck
@@ -135,8 +139,14 @@ export default function GoalFundingSection({
               />
             )}
           </div>
+
+          {estimate ? (
+            <p className="text-xs text-gray-700">
+              Estimated contribution: <span className="font-medium">{estimate}</span>
+            </p>
+          ) : null}
         </div>
       )}
-    </fieldset>
+    </div>
   );
 }

@@ -52,8 +52,10 @@ import {
   buildPlanSummary,
   buildDetailedImpactRows,
   PLAN_SUMMARY_RESULT_STYLES,
+  comparisonPeriodMonths,
+  horizonToMonths,
 } from "../lib/scenarioComparisonDisplay";
-import { buildPlanIncludes } from "../lib/scenarioPlainLanguage";
+import { buildPlanIncludes, planItemDisplayTitle, planItemDisplayDetail } from "../lib/scenarioPlainLanguage";
 import {
   isDebtScenarioEvent,
   isDebtPaymentOverride,
@@ -129,21 +131,6 @@ export default function Scenarios() {
   });
   const rules = rulesData?.results ?? [];
 
-  const {
-    data: comparison,
-    isLoading: comparisonLoading,
-    isFetching: comparisonFetching,
-  } = useQuery({
-    queryKey: ["scenario-compare", selectedScenarioId, forecastPeriod, defaultHousehold],
-    queryFn: () =>
-      getScenarioComparison(selectedScenarioId as number, {
-        horizon: forecastPeriod,
-        household_id: defaultHousehold || undefined,
-      }),
-    enabled: !!selectedScenarioId,
-  });
-  const comparisonBusy = comparisonLoading || comparisonFetching;
-
   const { data: overrides } = useQuery({
     queryKey: ["scenario-overrides", selectedScenarioId],
     queryFn: () => listScenarioOverrides(selectedScenarioId as number),
@@ -167,6 +154,48 @@ export default function Scenarios() {
     queryFn: () => listScenarioAddedRecurring(selectedScenarioId as number),
     enabled: !!selectedScenarioId,
   });
+
+  const selectedHousehold = (households ?? []).find((h) => h.id === defaultHousehold);
+  const scenarioInputStamp = [
+    selectedScenario?.updated_at,
+    (overrides ?? []).map((o) => `${o.id}:${o.updated_at}`).join(","),
+    (oneTimeEvents ?? []).map((e) => `${e.id}:${e.updated_at}`).join(","),
+    (categoryShocks ?? []).map((s) => `${s.id}:${s.updated_at}`).join(","),
+    (addedRecurring ?? []).map((r) => `${r.id}:${r.updated_at}`).join(","),
+  ].join("|");
+
+  const {
+    data: comparison,
+    isLoading: comparisonLoading,
+    isFetching: comparisonFetching,
+  } = useQuery({
+    queryKey: [
+      "scenario-compare",
+      selectedScenarioId,
+      forecastPeriod,
+      defaultHousehold,
+      selectedHousehold?.financial_revision,
+      scenarioInputStamp,
+    ],
+    queryFn: () =>
+      getScenarioComparison(selectedScenarioId as number, {
+        horizon: forecastPeriod,
+        household_id: defaultHousehold || undefined,
+      }),
+    enabled:
+      !!selectedScenarioId &&
+      overrides !== undefined &&
+      oneTimeEvents !== undefined &&
+      categoryShocks !== undefined &&
+      addedRecurring !== undefined,
+  });
+  const changesLoading =
+    !!selectedScenarioId &&
+    (overrides === undefined ||
+      oneTimeEvents === undefined ||
+      categoryShocks === undefined ||
+      addedRecurring === undefined);
+  const comparisonBusy = comparisonLoading || comparisonFetching || changesLoading;
 
   useEffect(() => {
     if (selectedScenario?.horizon_months) {
@@ -312,7 +341,7 @@ export default function Scenarios() {
           <div className="text-sm text-indigo-900 bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2 space-y-2">
             <p>
               {contextGoalId
-                ? "Opened from Goals. Model a change here — nothing is saved to your real plan just by opening What-If."
+                ? "Opened from Goals. Changes here are hypothetical until you apply them."
                 : "Opened from Payment Planner. Model a payoff change here — nothing is saved until you add it to a plan."}
             </p>
             {contextDebtId && selectedScenarioId ? (
@@ -400,6 +429,7 @@ export default function Scenarios() {
                 planItems={planIncludes}
                 accounts={accounts as Account[]}
                 loading={comparisonBusy}
+                horizonMonths={comparisonPeriodMonths(comparison, horizonToMonths(forecastPeriod))}
               />
 
               <ChangesInPlanSection
@@ -654,63 +684,64 @@ function PlanSummaryCard({
   planItems,
   accounts,
   loading,
+  horizonMonths,
 }: {
   scenario: Scenario;
   comparison: import("@budget-app/shared").ScenarioComparisonResponse | undefined;
   planItems: ReturnType<typeof buildPlanIncludes>;
   accounts: Account[];
   loading: boolean;
+  horizonMonths: number;
 }) {
   if (loading) {
-    return <div className="h-48 bg-gray-100 animate-pulse rounded-xl mb-6" />;
+    return <div className="h-28 bg-gray-100 animate-pulse rounded-xl mb-6" />;
   }
 
-  const summary = buildPlanSummary(comparison, planItems, accounts);
+  const summary = buildPlanSummary(comparison, planItems, accounts, horizonMonths);
   if (!summary) return null;
 
   return (
     <div
-      className={`mb-6 rounded-xl border-2 px-6 py-5 ${PLAN_SUMMARY_RESULT_STYLES[summary.result]}`}
+      className={`mb-6 rounded-xl border px-4 py-3 ${PLAN_SUMMARY_RESULT_STYLES[summary.result]}`}
     >
-      <h2 className="text-xl font-bold mb-4">{scenario.name}</h2>
-
-      <p className="text-sm font-semibold tracking-widest uppercase mb-2">
-        Result: {summary.result}
+      <p className="text-xs font-semibold tracking-widest uppercase opacity-80">
+        {scenario.name}
       </p>
+      <p className="text-xs font-semibold tracking-widest uppercase mt-2">
+        {summary.result}
+      </p>
+      <h2 className="text-lg font-semibold mt-0.5">{summary.resultLabel}</h2>
+      <p className="text-sm mt-1">{summary.headline}</p>
+      {summary.periodNote && (
+        <p className="text-xs mt-1 opacity-80">{summary.periodNote}</p>
+      )}
 
-      <p className="text-base font-medium mb-4">{summary.headline}</p>
-
-      {summary.listItems.length > 0 && (
-        <div className="mb-5">
-          {summary.listHeading && (
-            <p className="text-sm font-semibold mb-2">{summary.listHeading}</p>
-          )}
-          <ul className="space-y-1.5 text-sm">
-            {summary.listItems.map((line) => (
-              <li key={line} className="flex gap-2">
-                <span
-                  className={`shrink-0 font-semibold ${
-                    summary.listStyle === "impact" ? "opacity-70" : "text-green-700"
-                  }`}
-                  aria-hidden
-                >
-                  {summary.listStyle === "impact" ? "•" : "✓"}
-                </span>
-                <span>{line}</span>
-              </li>
+      {summary.comparisonRows.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-current/10">
+          <p className="text-xs font-semibold tracking-wide uppercase mb-2">Impact</p>
+          <dl className="space-y-1.5 text-sm">
+            {summary.comparisonRows.map((row) => (
+              <div key={row.label} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <dt className="text-sm opacity-80">{row.label}</dt>
+                <dd className="text-right">
+                  <span className="font-medium tabular-nums">
+                    {row.before === row.after ? row.after : `${row.before} → ${row.after}`}
+                  </span>
+                  {row.note && (
+                    <span className="block text-xs opacity-80">{row.note}</span>
+                  )}
+                </dd>
+              </div>
             ))}
-          </ul>
+          </dl>
         </div>
       )}
 
-      {summary.showMetricsFooter && (
-      <div className="space-y-2 text-sm border-t border-current/10 pt-4">
-        {summary.footerLines.map((line) => (
-          <p key={line} className="text-base font-semibold">
-            {line}
-          </p>
-        ))}
-      </div>
+      {summary.remainingIssue && (
+        <div className="mt-3 pt-3 border-t border-current/10">
+          <p className="text-xs font-semibold tracking-wide uppercase mb-1">Remaining issue</p>
+          <p className="text-sm font-medium">{summary.remainingIssue}</p>
+        </div>
       )}
     </div>
   );
@@ -733,34 +764,31 @@ function ChangesInPlanSection({
           No changes yet — add income, expenses, or bill changes to see what happens.
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {items.map((item) => (
             <div
               key={item.id}
-              className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3"
+              className="bg-white border border-gray-200 rounded-lg px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
             >
-              <div>
-                <p className="font-medium text-gray-900">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900">
                   <span className="text-green-600 mr-1.5" aria-hidden>✓</span>
-                  {item.actionLabel}
+                  {planItemDisplayTitle(item)}
                 </p>
-                <p className="text-sm text-gray-700 mt-0.5 pl-5 whitespace-pre-line">{item.detailLabel}</p>
-                {item.accountLabel && (
-                  <p className="text-xs text-gray-500 mt-1 pl-5">{item.accountLabel}</p>
-                )}
+                <p className="text-xs text-gray-500 pl-5">{planItemDisplayDetail(item)}</p>
               </div>
               <div className="flex gap-3 shrink-0 pl-5 sm:pl-0">
                 <button
                   type="button"
                   onClick={() => onEdit(item)}
-                  className="text-blue-600 hover:underline text-xs font-medium"
+                  className="text-gray-500 hover:text-blue-700 text-xs font-medium"
                 >
                   Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => onRemove(item)}
-                  className="text-red-600 hover:underline text-xs font-medium"
+                  className="text-gray-500 hover:text-red-700 text-xs font-medium"
                 >
                   Remove
                 </button>
@@ -793,8 +821,10 @@ function OptionalDetailsSection({
       <button
         type="button"
         onClick={onToggle}
-        className="text-sm text-gray-600 hover:text-gray-900 font-medium"
+        aria-expanded={visible}
+        className="text-sm text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
       >
+        <span aria-hidden>{visible ? "▾" : "▸"}</span>
         {visible ? "Hide detailed impact" : "Show detailed impact"}
       </button>
       {visible && (

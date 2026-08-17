@@ -1,4 +1,4 @@
-import { Archive, BarChart3, CheckCircle, Copy, Edit, Pause, Trash2 } from "lucide-react";
+import { Archive, CheckCircle, Copy, Edit, Pause, Trash2 } from "lucide-react";
 import QuickActionMenu from "../quickActions/QuickActionMenu";
 import type { QuickActionDef, QuickActionId } from "../../lib/accountQuickActions";
 import type { FinancialGoal } from "@budget-app/shared";
@@ -6,7 +6,6 @@ import type { FinancialGoal } from "@budget-app/shared";
 type Props = {
   goal: FinancialGoal;
   onEdit: () => void;
-  onForecast: () => void;
   onDuplicate: () => void;
   onPause: () => void;
   onComplete: () => void;
@@ -17,7 +16,6 @@ type Props = {
 export default function GoalActionMenu({
   goal,
   onEdit,
-  onForecast,
   onDuplicate,
   onPause,
   onComplete,
@@ -29,7 +27,6 @@ export default function GoalActionMenu({
 
   const actions: QuickActionDef[] = [
     { id: "edit" as QuickActionId, label: "Edit", icon: Edit, tier: "secondary" },
-    { id: "forecast" as QuickActionId, label: "Forecast", icon: BarChart3, tier: "secondary" },
     { id: "duplicate" as QuickActionId, label: "Duplicate", icon: Copy, tier: "secondary" },
   ];
 
@@ -54,9 +51,6 @@ export default function GoalActionMenu({
     switch (action.id) {
       case "edit":
         onEdit();
-        break;
-      case "forecast":
-        onForecast();
         break;
       case "duplicate":
         onDuplicate();

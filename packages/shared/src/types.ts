@@ -32,6 +32,8 @@ export type TransactionDirection = "INFLOW" | "OUTFLOW";
 export interface Household {
   id: number;
   name: string;
+  /** Bumped when balances or forecasts change; used to invalidate What-If results. */
+  financial_revision?: number;
   created_at: string;
   updated_at: string;
 }
@@ -681,6 +683,7 @@ export interface GoalForecastDetail {
   monthly_required: string | null;
   current_contribution_rate: string | null;
   forecast_gap: string | null;
+  forecast_surplus?: string | null;
   on_track_status: GoalOnTrackStatus;
   goal_health: GoalHealthStatus;
   forecast_status?: GoalForecastStatus;
@@ -689,6 +692,9 @@ export interface GoalForecastDetail {
   suggested_monthly?: string | null;
   suggested_biweekly?: string | null;
   suggested_weekly?: string | null;
+  suggested_per_paycheck?: string | null;
+  paycheck_frequency?: string | null;
+  paycheck_frequency_label?: string | null;
   automatic_transfer_label?: string | null;
   pace_warnings?: string[];
   recommendation: string | null;
@@ -780,6 +786,7 @@ export interface FinancialGoal {
   monthly_required: string | null;
   current_contribution_rate: string | null;
   forecast_gap: string | null;
+  forecast_surplus?: string | null;
   funding_account: string | null;
   funding_account_id?: number | null;
   funding_account_name?: string | null;
@@ -790,6 +797,9 @@ export interface FinancialGoal {
   suggested_monthly?: string | null;
   suggested_biweekly?: string | null;
   suggested_weekly?: string | null;
+  suggested_per_paycheck?: string | null;
+  paycheck_frequency?: string | null;
+  paycheck_frequency_label?: string | null;
   suggested_contribution_amount?: string | null;
   automatic_transfer_label?: string | null;
   has_automatic_funding?: boolean;
@@ -1571,6 +1581,10 @@ export interface ScenarioRiskExplanation {
   base_lowest_balance_date: string | null;
   base_first_problem_date?: string | null;
   scenario_first_problem_date?: string | null;
+  /** Account that first goes negative in the scenario window, even if the plan improved. */
+  scenario_first_problem_account_name?: string | null;
+  /** True when the scenario still has a cash shortfall in the selected period. */
+  scenario_has_cash_shortfall?: boolean;
   scenario_lowest_balance: string | null;
   scenario_lowest_balance_date: string | null;
   shortfall_amount: string | null;

@@ -7,7 +7,7 @@ import type {
   ScenarioCategoryShock,
   RecurringRuleFrequency,
 } from "@budget-app/shared";
-import { formatDateDisplay } from "./dateDisplay";
+import { formatDateDisplay, formatLongDate } from "./dateDisplay";
 import {
   isDebtScenarioEvent,
   isDebtPaymentOverride,
@@ -162,6 +162,29 @@ function accountLabelFrom(
   return `Paid from ${name}`;
 }
 
+function looksLikePaycheckName(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    n.includes("payroll") ||
+    n.includes("paycheck") ||
+    n.includes("salary") ||
+    n.includes("direct dep") ||
+    n.includes("ppd id")
+  );
+}
+
+function isGenericChangeName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n === "extra" || n === "extra payment" || n === "extra income";
+}
+
+function incomeAmountActionLabel(name: string, increased: boolean, direction?: string | null): string {
+  if (direction === "INCOME" || looksLikePaycheckName(name)) {
+    return increased ? "Increase paycheck" : "Decrease paycheck";
+  }
+  return increased ? `Increased ${name}` : `Decreased ${name}`;
+}
+
 function overrideChangeCard(ov: ScenarioRuleOverride): {
   title: string;
   costLabel: string;
@@ -275,7 +298,9 @@ function overrideChangeCard(ov: ScenarioRuleOverride): {
         return {
           title: name,
           costLabel: signedRecurringCostLabel(delta, currency, frequency, "+"),
-          actionLabel: isDebt ? `Increase ${name} payment` : `Increased ${name}`,
+          actionLabel: isDebt
+            ? `Increase ${name} payment`
+            : incomeAmountActionLabel(name, true, ov.rule?.direction),
           detailLabel: baseFormatted ? `${baseFormatted} → ${newFormatted}` : signedRecurringCostLabel(delta, currency, frequency, "+"),
           changePhrase: `This increases ${name} to ${newFormatted}.`,
           whyBullet: isDebt
@@ -292,7 +317,7 @@ function overrideChangeCard(ov: ScenarioRuleOverride): {
         return {
           title: name,
           costLabel: signedRecurringCostLabel(-delta, currency, frequency, "-"),
-          actionLabel: `Decreased ${name}`,
+          actionLabel: incomeAmountActionLabel(name, false, ov.rule?.direction),
           detailLabel: baseFormatted ? `${baseFormatted} → ${newFormatted}` : signedRecurringCostLabel(-delta, currency, frequency, "-"),
           changePhrase: `This reduces ${name} to ${newFormatted}.`,
           whyBullet: `${name} drops by ${formatCurrency(String(delta), currency)}${freqSuffix}.`,
@@ -403,7 +428,7 @@ function oneTimeChangeCard(ev: ScenarioOneTimeEvent): {
     return {
       title: label !== "One-time change" ? label : "Transfer",
       costLabel: `${amt} transfer`,
-      actionLabel: `Transfer from ${fromName} to ${toName}`,
+      actionLabel: `Transfer ${amt}`,
       detailLabel: `${amt} on ${dateLabel}`,
       changePhrase: `This moves ${amt} from ${fromName} to ${toName} on ${dateLabel}.`,
       whyBullet: `${amt} moves from ${fromName} to ${toName} on ${dateLabel}.`,
@@ -503,13 +528,14 @@ function addedRecurringChangeCard(added: ScenarioAddedRecurring): {
     const toName = added.transfer_to_account?.name ?? "Debt";
     const freqLabel = recurringDebtFrequencyLabel(added.frequency, added.notes);
     const route = `${fromName} → ${toName}`;
+    const extraTitle = isGenericChangeName(name) ? `Extra ${amtLabel}/${freqLabel.replace(/^per\s+/i, "")}` : name;
     return {
       title: name,
       costLabel: `${amtLabel} ${freqLabel}`,
-      actionLabel: name,
+      actionLabel: isGenericChangeName(name) ? `Extra ${amtLabel}` : name,
       detailLabel: `${amtLabel} ${freqLabel}\n${route}`,
       changePhrase: `This adds ${amtLabel} ${freqLabel} from ${fromName} to ${toName} in this plan only.`,
-      whyBullet: `${name}: ${amtLabel} ${freqLabel} (${route}) — reduces debt, not spending.`,
+      whyBullet: `${extraTitle}: ${amtLabel} ${freqLabel} (${route}) — reduces debt, not spending.`,
       impactKind: "debt",
       impactAmount: Number.isNaN(amountNum) ? null : amountNum,
       dateLabel: formatDateDisplay(added.start_date),
@@ -523,11 +549,15 @@ function addedRecurringChangeCard(added: ScenarioAddedRecurring): {
   const isIncome = added.direction === "INCOME";
   const signedLabel = isIncome ? `+${monthlyLabel}` : monthlyLabel;
   const accountLabel = accountLabelFrom(added.account);
+  const generic = isGenericChangeName(name);
+  const actionLabel = generic
+    ? `Extra ${monthlyLabel}`
+    : `Added ${name}`;
 
   return {
     title: name,
     costLabel: signedLabel,
-    actionLabel: `Added ${name}`,
+    actionLabel,
     detailLabel: signedLabel,
     changePhrase: isIncome
       ? `This adds ${monthlyLabel} income in this plan only.`
@@ -635,6 +665,33 @@ export function buildPlanIncludes(
   return items.sort((a, b) => a.sortDate.localeCompare(b.sortDate));
 }
 
+export function planItemDisplayTitle(item: PlanIncludeItem): string {
+  return item.actionLabel;
+}
+
+/** Compact secondary line for the Changes in this plan list. */
+export function planItemDisplayDetail(item: PlanIncludeItem): string {
+  const longDate =
+    item.sortDate && item.sortDate !== "9999-12-31" ? formatLongDate(item.sortDate) : null;
+  const detailOneLine = item.detailLabel.replace(/\n/g, " · ").replace(/\s+/g, " ").trim();
+
+  if (item.impactKind === "transfer" && item.accountLabel) {
+    return [item.accountLabel, longDate].filter(Boolean).join(" · ");
+  }
+
+  let detail = detailOneLine;
+  if (item.dateLabel && longDate && detail.includes(item.dateLabel)) {
+    detail = detail.replace(item.dateLabel, longDate).replace(/\s+on\s+/i, " · ");
+  }
+
+  const parts: string[] = [];
+  if (detail) parts.push(detail);
+  if (item.accountLabel && !parts.some((p) => p.includes(item.accountLabel as string))) {
+    parts.push(item.accountLabel);
+  }
+  return parts.join(" · ");
+}
+
 /** e.g. "$1,835.52 → $2,500.00" → "Changes PAYROLL from $1,835.52 to $2,500.00" */
 function recurringOverrideChangeLine(title: string, detail: string): string {
   const arrow = detail.indexOf("→");
@@ -681,6 +738,7 @@ export function planItemRiskImpactLine(item: PlanIncludeItem): string | null {
       if (amt) return `Adds ${amt} expense`;
       return item.detailLabel.replace(/^-\s*/, "Adds ");
     case "transfer":
+      if (amt && item.accountLabel) return `Transfer ${amt} · ${item.accountLabel}`;
       return item.actionLabel;
     case "recurring": {
       const monthlyMatch = detail.match(/^\+?([^+]+?\/month)/i);
@@ -752,6 +810,7 @@ export function planItemSummaryHighlight(item: PlanIncludeItem): string | null {
       if (amt && date) return `Costs ${amt} on ${date}`;
       return item.detailLabel.replace(/^-\s*/, "Costs ");
     case "transfer":
+      if (amt && item.accountLabel) return `Transfer ${amt} · ${item.accountLabel}`;
       return item.actionLabel;
     case "recurring": {
       const detail = item.detailLabel.trim();

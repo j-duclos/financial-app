@@ -1,14 +1,9 @@
 import { Link } from "react-router-dom";
 import type { FinancialGoal } from "@budget-app/shared";
+import { GOAL_TYPE_ICONS, GOAL_TYPE_LABELS, parseProgressPercent } from "../../lib/goalDisplay";
 import {
-  GOAL_TYPE_ICONS,
-  GOAL_TYPE_LABELS,
-  formatGoalProgressLine,
-  parseProgressPercent,
-} from "../../lib/goalDisplay";
-import {
-  goalFundingLine,
-  goalProjectionLine,
+  goalCardMetrics,
+  goalFundedProgressLine,
   goalSuggestionLine,
   paceStatusBadgeClass,
   paceStatusLabel,
@@ -18,7 +13,6 @@ import { whatIfGoalPath } from "../../lib/whatIfContext";
 
 type Props = {
   goal: FinancialGoal;
-  onForecast: () => void;
   onEdit?: () => void;
   onDuplicate?: () => void;
   onPause?: () => void;
@@ -30,7 +24,6 @@ type Props = {
 
 export default function GoalCard({
   goal,
-  onForecast,
   onEdit,
   onDuplicate,
   onPause,
@@ -41,10 +34,10 @@ export default function GoalCard({
 }: Props) {
   const showMenu = variant === "page" && onEdit && onDelete;
   const pct = parseProgressPercent(goal.progress_percent);
-  const projection = goalProjectionLine(goal);
   const suggestion = goalSuggestionLine(goal);
-  const { source, transfer } = goalFundingLine(goal);
+  const metrics = goalCardMetrics(goal);
   const paceLabel = paceStatusLabel(goal.pace_status);
+  const warnings = goal.pace_warnings ?? [];
 
   return (
     <article className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
@@ -72,7 +65,6 @@ export default function GoalCard({
             <GoalActionMenu
               goal={goal}
               onEdit={onEdit!}
-              onForecast={onForecast}
               onDuplicate={onDuplicate!}
               onPause={onPause!}
               onComplete={onComplete!}
@@ -84,28 +76,41 @@ export default function GoalCard({
       </div>
 
       <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-        <div
-          className="h-full rounded-full bg-blue-600"
-          style={{ width: `${pct}%` }}
-        />
+        <div className="h-full rounded-full bg-blue-600" style={{ width: `${pct}%` }} />
       </div>
 
-      <p className="text-sm font-medium text-gray-800">{formatGoalProgressLine(goal)}</p>
+      <p className="text-sm font-medium text-gray-800">{goalFundedProgressLine(goal)}</p>
 
-      {projection ? (
-        <p className="text-sm text-gray-700">{projection}</p>
+      {metrics.length > 0 ? (
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          {metrics.map((row) => (
+            <div key={row.label}>
+              <dt className="text-xs text-gray-500">{row.label}</dt>
+              <dd
+                className={
+                  row.emphasize ? "font-medium text-amber-800" : "font-medium text-gray-900"
+                }
+              >
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
 
       {suggestion ? (
-        <p className="text-xs text-blue-800">{suggestion}</p>
+        <p className="text-sm text-blue-800">
+          <span className="font-medium text-gray-700">Recommendation: </span>
+          {suggestion}
+        </p>
       ) : null}
 
-      {source ? <p className="text-xs text-gray-500">{source}</p> : null}
-
-      {transfer ? (
-        <p className="text-xs text-gray-500 truncate" title={transfer}>
-          {transfer}
-        </p>
+      {warnings.length > 0 ? (
+        <ul className="text-xs text-amber-800 space-y-0.5">
+          {warnings.map((warning) => (
+            <li key={warning}>• {warning}</li>
+          ))}
+        </ul>
       ) : null}
 
       {goal.milestones && goal.milestones.length > 0 && (
@@ -126,13 +131,6 @@ export default function GoalCard({
           >
             Details
           </Link>
-          <button
-            type="button"
-            onClick={onForecast}
-            className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            Quick forecast
-          </button>
           <Link
             to={whatIfGoalPath(goal.id)}
             className="px-3 py-1.5 text-sm font-medium text-blue-700 hover:underline"

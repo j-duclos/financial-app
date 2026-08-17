@@ -205,13 +205,36 @@ export const EFFECT_KIND_LABELS: Record<string, string> = {
 export type ScenarioVerdict = "safe" | "tight" | "risky" | "better" | "neutral";
 
 /** User-facing result shown in the plan summary card. */
-export type PlanSummaryResult = "SAFE" | "RISKY" | "NO CHANGE";
+export type PlanSummaryResult =
+  | "SAFE"
+  | "IMPROVED, BUT STILL AT RISK"
+  | "WORSE"
+  | "NO CHANGE";
+
+export const PLAN_SUMMARY_RESULT_LABELS: Record<PlanSummaryResult, string> = {
+  SAFE: "Safe",
+  "IMPROVED, BUT STILL AT RISK": "Improved, but still at risk",
+  WORSE: "Worse",
+  "NO CHANGE": "No material change",
+};
 
 export type PlanSummaryListStyle = "benefits" | "impact";
 
+export interface PlanComparisonRow {
+  label: string;
+  before: string;
+  after: string;
+  note: string | null;
+}
+
 export interface PlanSummary {
   result: PlanSummaryResult;
+  resultLabel: string;
   headline: string;
+  periodNote: string | null;
+  comparisonRows: PlanComparisonRow[];
+  remainingIssue: string | null;
+  changeSummaryLines: string[];
   listStyle: PlanSummaryListStyle;
   listHeading: string | null;
   listItems: string[];
@@ -383,6 +406,91 @@ function parseScenarioLowestBalance(
   if (raw == null || raw === "") return null;
   const n = parseFloat(String(raw));
   return Number.isNaN(n) ? null : n;
+}
+
+function parseBaseLowestBalance(
+  comparison: ScenarioComparisonResponse | undefined
+): number | null {
+  const fromMetrics = parseMetricNumber(comparison, "lowest_projected_balance", "base");
+  if (fromMetrics != null) return fromMetrics;
+  const raw = comparison?.risk_explanation?.base_lowest_balance;
+  if (raw == null || raw === "") return null;
+  const n = parseFloat(String(raw));
+  return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * Canonical cash shortfall in the selected What-If period.
+ * Matches Dashboard / Action Center / Accounts: negative lowest cash or a first-negative date.
+ */
+export function scenarioHasCashShortfall(
+  comparison: ScenarioComparisonResponse | undefined
+): boolean {
+  if (!comparison) return false;
+  if (comparison.risk_explanation?.scenario_has_cash_shortfall === true) return true;
+  const lowest = parseScenarioLowestBalance(comparison);
+  if (lowest != null && lowest < -0.005) return true;
+  if (parseRiskDays(comparison, "scenario") > 0) return true;
+  return resolveFirstProblemDateRaw(comparison, "scenario") != null;
+}
+
+export function comparisonPeriodMonths(
+  comparison: ScenarioComparisonResponse | undefined,
+  horizonMonths?: number
+): number {
+  if (horizonMonths && horizonMonths > 0) return horizonMonths;
+  const horizon = comparison?.horizon;
+  if (horizon === "3m" || horizon === "6m" || horizon === "12m" || horizon === "24m") {
+    return horizonToMonths(horizon);
+  }
+  return 12;
+}
+
+/** Baseline and scenario metrics in one compare payload always share this window. */
+export function baselineAndScenarioSharePeriod(
+  comparison: ScenarioComparisonResponse | undefined
+): boolean {
+  if (!comparison?.start_date || !comparison?.end_date || !comparison?.horizon) return false;
+  return comparison.metrics?.lowest_projected_balance != null;
+}
+
+function remainingShortfallAmount(
+  comparison: ScenarioComparisonResponse | undefined
+): number | null {
+  const risk = comparison?.risk_explanation;
+  const raw = risk?.amount_needed_to_stay_safe ?? risk?.shortfall_amount;
+  if (raw == null || raw === "") return null;
+  const n = parseFloat(String(raw));
+  if (Number.isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+function scenarioShortfallAccountName(
+  comparison: ScenarioComparisonResponse | undefined
+): string | null {
+  const risk = comparison?.risk_explanation;
+  return (
+    risk?.scenario_first_problem_account_name ??
+    risk?.first_problem_account_name ??
+    null
+  );
+}
+
+/** Remaining cash needed to avoid the first shortfall — canonical amount only, never guessed. */
+export function formatRemainingIssueLine(
+  comparison: ScenarioComparisonResponse | undefined
+): string | null {
+  if (!scenarioHasCashShortfall(comparison)) return null;
+  const needed = remainingShortfallAmount(comparison);
+  if (needed == null) return null;
+  const problemDate =
+    comparison?.risk_explanation?.scenario_first_problem_date ??
+    comparison?.risk_explanation?.first_problem_date ??
+    comparison?.metrics?.first_risk_date?.scenario ??
+    null;
+  const date = formatShortMonthDay(problemDate != null ? String(problemDate) : null);
+  if (date === "None") return null;
+  return `Add at least ${formatCurrency(String(needed), "USD")} before ${date} to avoid the shortfall.`;
 }
 
 /** Summary card: only when this plan still dips below zero ahead. */
@@ -602,7 +710,19 @@ export function deriveImpactLabel(
     parseMetricNumber(comparison, "lowest_projected_balance", "scenario") ??
     parseFloat(comparison.risk_explanation?.scenario_lowest_balance ?? "0");
 
-  if (riskDelta > 0 || (scenarioLowest < 0 && baseLowest >= 0) || scenarioLowest < baseLowest - 0.005) {
+  const baseFirst = resolveFirstProblemDateRaw(comparison, "base");
+  const scenarioFirst = resolveFirstProblemDateRaw(comparison, "scenario");
+  const newShortfall = Boolean(scenarioFirst) && !baseFirst;
+  const firstShortfallEarlier =
+    Boolean(baseFirst && scenarioFirst && String(scenarioFirst) < String(baseFirst));
+
+  if (
+    riskDelta > 0 ||
+    (scenarioLowest < 0 && baseLowest >= 0) ||
+    scenarioLowest < baseLowest - 0.005 ||
+    newShortfall ||
+    firstShortfallEarlier
+  ) {
     return "Worse";
   }
   if (riskDelta < 0 || scenarioLowest > baseLowest + 0.005) {
@@ -721,14 +841,23 @@ function buildExplanations(
   return lines.slice(0, 4);
 }
 
-export function derivePlanSummaryResult(verdict: ScenarioVerdict): PlanSummaryResult {
-  if (verdict === "risky") return "RISKY";
-  if (verdict === "neutral") return "NO CHANGE";
-  if (verdict === "better" || verdict === "safe" || verdict === "tight") return "SAFE";
-  return "SAFE";
+export function derivePlanSummaryResult(
+  comparison: ScenarioComparisonResponse | undefined
+): PlanSummaryResult {
+  const impact = deriveImpactLabel(comparison);
+  const hasShortfall = scenarioHasCashShortfall(comparison);
+
+  if (impact === "No meaningful change") return "NO CHANGE";
+  if (hasShortfall) {
+    return impact === "Worse" ? "WORSE" : "IMPROVED, BUT STILL AT RISK";
+  }
+  return impact === "Worse" ? "WORSE" : "SAFE";
 }
 
 function planItemHeadlineLabel(item: PlanIncludeItem): string {
+  if (item.ruleDirection === "INCOME" || /payroll|paycheck|ppd id/i.test(item.title)) {
+    return "paycheck";
+  }
   const title = item.title.trim();
   if (title && title.toLowerCase() !== "one-time change") return title;
   if (item.impactKind === "one_time_income") return "income";
@@ -946,29 +1075,147 @@ export function buildPlanSummaryHighlights(
   return [...new Set(lines)];
 }
 
+export function buildPlanComparisonRows(
+  comparison: ScenarioComparisonResponse | undefined,
+  decision: ScenarioDecision
+): PlanComparisonRow[] {
+  if (!comparison?.metrics) return [];
+
+  const rows: PlanComparisonRow[] = [];
+  const baseRisk = parseRiskDays(comparison, "base");
+  const scenarioRisk = parseRiskDays(comparison, "scenario");
+  if (baseRisk > 0 || scenarioRisk > 0) {
+    const removed = baseRisk - scenarioRisk;
+    rows.push({
+      label: "Risk days",
+      before: String(baseRisk),
+      after: String(scenarioRisk),
+      note:
+        removed > 0
+          ? `${removed} fewer`
+          : removed < 0
+            ? `${Math.abs(removed)} more`
+            : null,
+    });
+  }
+
+  const baseLow = parseBaseLowestBalance(comparison);
+  const scenarioLow = parseScenarioLowestBalance(comparison);
+  if (baseLow != null && scenarioLow != null) {
+    const delta = scenarioLow - baseLow;
+    const material = Math.abs(delta) > 0.005 || scenarioLow < -0.005 || baseLow < -0.005;
+    if (material) {
+      rows.push({
+        label: "Lowest projected",
+        before: decision.before.lowestBalance,
+        after: decision.after.lowestBalance,
+        note:
+          Math.abs(delta) < 0.005
+            ? null
+            : `${formatSignedCurrency(delta)} ${delta > 0 ? "improvement" : "decline"}`,
+      });
+    }
+  }
+
+  const baseFirst = resolveFirstProblemDateRaw(comparison, "base");
+  const scenarioFirst = resolveFirstProblemDateRaw(comparison, "scenario");
+  if (baseFirst || scenarioFirst) {
+    const before = baseFirst ? formatShortMonthDay(baseFirst) : "None";
+    const after = scenarioFirst ? formatShortMonthDay(scenarioFirst) : "None";
+    rows.push({
+      label: "First shortfall",
+      before,
+      after,
+      note: null,
+    });
+  }
+
+  return rows;
+}
+
+function buildPlanOutcomeHeadline(
+  result: PlanSummaryResult,
+  comparison: ScenarioComparisonResponse | undefined,
+  planItems: PlanIncludeItem[],
+  months: number
+): string {
+  const account = scenarioShortfallAccountName(comparison);
+  const firstIso = resolveFirstProblemDateRaw(comparison, "scenario");
+  const date = formatShortMonthDay(firstIso);
+  const period = `${months}-month`;
+
+  if (result === "SAFE") {
+    const flavor = buildPlanSummaryHeadline(
+      deriveScenarioDecision(comparison, planItems)!,
+      planItems,
+      comparison
+    );
+    if (flavor && !/improves your financial outlook/i.test(flavor) && planItems.length === 1) {
+      return `${flavor.replace(/\.$/, "")} — safe within this ${period} forecast.`;
+    }
+    return `This plan stays above $0 within this ${period} forecast.`;
+  }
+
+  if (result === "IMPROVED, BUT STILL AT RISK") {
+    if (account && date !== "None") {
+      return `This plan improves your forecast, but ${account} still falls below $0 on ${date}.`;
+    }
+    if (date !== "None") {
+      return `This plan improves your forecast, but an account still falls below $0 on ${date}.`;
+    }
+    return "This plan improves your forecast, but a cash shortfall remains.";
+  }
+
+  if (result === "WORSE") {
+    if (scenarioHasCashShortfall(comparison) && date !== "None") {
+      return account
+        ? `This plan worsens your forecast. ${account} falls below $0 on ${date}.`
+        : `This plan worsens your forecast. An account falls below $0 on ${date}.`;
+    }
+    return "This plan worsens your financial position in this forecast period.";
+  }
+
+  return "This plan makes little difference in this period.";
+}
+
 export function buildPlanSummary(
   comparison: ScenarioComparisonResponse | undefined,
   planItems: PlanIncludeItem[] = [],
-  accounts: import("@budget-app/shared").Account[] = []
+  accounts: import("@budget-app/shared").Account[] = [],
+  horizonMonths?: number
 ): PlanSummary | null {
   const decision = deriveScenarioDecision(comparison, planItems);
   if (!decision) return null;
 
-  const isRisky = decision.verdict === "risky";
-  const footerLines = isRisky ? [] : buildPlanSummaryFooterLines(comparison, decision);
+  const result = derivePlanSummaryResult(comparison);
+  const months = comparisonPeriodMonths(comparison, horizonMonths);
+  const remainingIssue = formatRemainingIssueLine(comparison);
+  const comparisonRows = buildPlanComparisonRows(comparison, decision);
+  const changeSummaryLines = planItems
+    .map((item) => item.actionLabel)
+    .filter((line) => line.trim().length > 0)
+    .slice(0, 4);
+
+  const isWorse = result === "WORSE";
+  const periodNote = result === "SAFE" ? `Safe within this ${months}-month forecast` : null;
 
   return {
-    result: derivePlanSummaryResult(decision.verdict),
-    headline: buildPlanSummaryHeadline(decision, planItems, comparison),
-    listStyle: isRisky ? "impact" : "benefits",
-    listHeading: isRisky ? "Impact" : null,
-    listItems: isRisky
+    result,
+    resultLabel: PLAN_SUMMARY_RESULT_LABELS[result],
+    headline: buildPlanOutcomeHeadline(result, comparison, planItems, months),
+    periodNote,
+    comparisonRows,
+    remainingIssue,
+    changeSummaryLines,
+    listStyle: isWorse ? "impact" : "benefits",
+    listHeading: isWorse ? "Impact" : comparisonRows.length > 0 ? "Impact" : null,
+    listItems: isWorse
       ? buildPlanSummaryImpactLines(comparison, planItems, decision)
       : buildPlanSummaryHighlights(comparison, planItems, decision, accounts),
-    showMetricsFooter: footerLines.length > 0,
-    footerLines,
+    showMetricsFooter: false,
+    footerLines: remainingIssue ? [remainingIssue] : [],
     lowestBalance: formatPlanSummaryLowestBalance(comparison, decision),
-    recommendation: decision.recommendation,
+    recommendation: remainingIssue ?? decision.recommendation,
   };
 }
 
@@ -1331,7 +1578,8 @@ export function timelineUrlWithScenario(scenarioId: number, horizon?: string): s
 
 export const PLAN_SUMMARY_RESULT_STYLES: Record<PlanSummaryResult, string> = {
   SAFE: "border-green-300 bg-green-50 text-green-950",
-  RISKY: "border-red-300 bg-red-50 text-red-950",
+  "IMPROVED, BUT STILL AT RISK": "border-amber-300 bg-amber-50 text-amber-950",
+  WORSE: "border-red-300 bg-red-50 text-red-950",
   "NO CHANGE": "border-gray-200 bg-gray-50 text-gray-900",
 };
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { FinancialGoal } from "@budget-app/shared";
 import {
+  goalCardMetrics,
+  goalCurrentDepositValue,
+  goalDetailFunding,
+  goalDetailProgressLine,
+  goalForecastSummary,
+  goalFundedProgressLine,
   goalFundingLine,
+  goalPerPaycheckNeeded,
   goalProjectionLine,
   goalSuggestionLine,
   paceStatusLabel,
@@ -66,5 +73,125 @@ describe("goalInsights", () => {
   it("labels pace status", () => {
     expect(paceStatusLabel("stalled")).toBe("Stalled");
     expect(paceStatusLabel("on_track")).toBe("On track");
+  });
+
+  it("combines funding account with progress on the card", () => {
+    expect(
+      goalFundedProgressLine(
+        goal({
+          funding_account_name: "Savings",
+          current_amount: "1551.62",
+          target_amount: "30000",
+        })
+      )
+    ).toBe("Funded from Savings: $1,551.62 / $30,000.00");
+  });
+
+  it("uses configured paycheck deposit, not suggested biweekly", () => {
+    expect(
+      goalCurrentDepositValue(
+        goal({
+          automatic_transfer_label: "Paycheck funding: $183.55/week",
+          suggested_biweekly: "3282.51",
+        })
+      )
+    ).toBe("$183.55/week");
+  });
+
+  it("surfaces forecast figures on the main card", () => {
+    const rows = goalCardMetrics(
+      goal({
+        target_date: "2026-12-01",
+        projected_completion_date: "2029-08-17",
+        automatic_transfer_label: "Paycheck funding: $183.55/week",
+        monthly_required: "7112.10",
+        current_contribution_rate: "795.39",
+        suggested_biweekly: "3282.51",
+        forecast_gap: "6316.71",
+      })
+    );
+    const byLabel = Object.fromEntries(rows.map((row) => [row.label, row.value]));
+    expect(byLabel["Target completion date"]).toBe("Dec 2026");
+    expect(byLabel["Projected completion date at current pace"]).toBe("Aug 2029");
+    expect(byLabel["Current deposit per paycheck"]).toBe("$183.55/week");
+    expect(byLabel["Required to meet goal"]).toBe("$7,112.10/mo");
+    expect(byLabel["Current pace"]).toBe("$795.39/mo");
+    expect(byLabel["Required per paycheck"]).toBe("$3,282.51");
+    expect(byLabel.Gap).toBe("$6,316.71/mo");
+  });
+
+  it("builds a compact Goal Details forecast summary from backend fields", () => {
+    const rows = goalForecastSummary(
+      goal({
+        target_date: "2026-12-01",
+        projected_completion_date: "2029-08-17",
+        monthly_required: "7112.10",
+        current_contribution_rate: "795.39",
+        forecast_gap: "6316.71",
+        suggested_per_paycheck: "3282.51",
+        suggested_biweekly: "9999.00",
+      })
+    );
+    const byLabel = Object.fromEntries(rows.map((row) => [row.label, row.value]));
+    expect(byLabel["Target date"]).toBe("Dec 2026");
+    expect(byLabel["Projected completion"]).toBe("Aug 2029");
+    expect(byLabel["Monthly needed"]).toBe("$7,112.10/mo");
+    expect(byLabel["Current pace"]).toBe("$795.39/mo");
+    expect(byLabel.Shortfall).toBe("$6,316.71/mo");
+    expect(byLabel["Per paycheck needed"]).toBe("$3,282.51");
+    expect(byLabel.Surplus).toBeUndefined();
+    expect(Object.keys(byLabel)).not.toContain("Completion");
+  });
+
+  it("shows surplus instead of a negative shortfall when ahead of pace", () => {
+    const rows = goalForecastSummary(
+      goal({
+        monthly_required: "400.00",
+        current_contribution_rate: "500.00",
+        forecast_gap: "0.00",
+        forecast_surplus: "100.00",
+        pace_status: "ahead",
+      })
+    );
+    const byLabel = Object.fromEntries(rows.map((row) => [row.label, row.value]));
+    expect(byLabel.Surplus).toBe("$100.00/mo");
+    expect(byLabel.Shortfall).toBeUndefined();
+  });
+
+  it("does not treat hardcoded biweekly as per-paycheck needed", () => {
+    expect(
+      goalPerPaycheckNeeded(
+        goal({
+          suggested_biweekly: "3282.51",
+          suggested_per_paycheck: null,
+        })
+      )
+    ).toBeNull();
+  });
+
+  it("formats Goal Details progress and funding copy", () => {
+    expect(
+      goalDetailProgressLine(
+        goal({ current_amount: "1551.62", target_amount: "30000" })
+      )
+    ).toBe("$1,551.62 of $30,000.00");
+    const funding = goalDetailFunding(
+      goal({
+        funding_account_name: "Savings",
+        automatic_transfer_label: "Paycheck funding: $183.55/week",
+        linked_rules: [
+          {
+            rule_id: 1,
+            rule_name: "Paycheck",
+            amount: "183.55",
+            frequency: "WEEKLY",
+            frequency_label: "week",
+            label: "$183.55/week",
+          },
+        ],
+      })
+    );
+    expect(funding.account).toBe("Savings");
+    expect(funding.automatic).toBe("$183.55/week from paycheck");
   });
 });

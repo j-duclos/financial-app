@@ -33,7 +33,7 @@ export default function DashboardMetricTile({
 
   const labelClass = hero
     ? "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-600 line-clamp-2"
-    : "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-500 truncate";
+    : "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-gray-500 line-clamp-2";
 
   const valueClass = `text-base sm:text-lg md:text-xl lg:text-2xl font-bold tabular-nums leading-tight ${valueClassName}`;
 

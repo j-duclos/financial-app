@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FinancialGoal } from "@budget-app/shared";
@@ -32,7 +32,6 @@ import {
 } from "../components/dashboard/metricTileLayout";
 import CollapsibleGoalSection from "../components/goals/CollapsibleGoalSection";
 import GoalCard from "../components/goals/GoalCard";
-import ForecastModal from "../components/goals/ForecastModal";
 
 function buildPayload(householdId: number, values: GoalFormValues) {
   const isDebt = values.goal_type === "debt_payoff";
@@ -63,7 +62,7 @@ export default function Goals() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<FinancialGoal | null>(null);
-  const [forecastGoal, setForecastGoal] = useState<FinancialGoal | null>(null);
+  const editIdParam = searchParams.get("edit");
   const modalOpen = searchParams.get("new") === "1" || editing != null;
 
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
@@ -76,6 +75,14 @@ export default function Goals() {
   });
   const allGoals = overview?.goals ?? [];
   const summary = overview?.summary;
+
+  useEffect(() => {
+    if (!editIdParam) return;
+    const id = Number(editIdParam);
+    if (!Number.isFinite(id)) return;
+    const match = allGoals.find((g) => g.id === id);
+    if (match) setEditing(match);
+  }, [editIdParam, allGoals]);
 
   const { data: accountsData, isLoading: accountsLoading } = useQuery({
     queryKey: ["accounts", "goals"],
@@ -175,7 +182,6 @@ export default function Goals() {
             <GoalCard
               key={g.id}
               goal={g}
-              onForecast={() => setForecastGoal(g)}
               onEdit={() => setEditing(g)}
               onDuplicate={() => duplicateMu.mutate(g.id)}
               onPause={() => pauseMu.mutate(g.id)}
@@ -216,7 +222,7 @@ export default function Goals() {
             onClick={() => setSearchParams({ new: "1" })}
             className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
-            Add goal bucket
+            Add goal
           </button>
         </div>
       </div>
@@ -225,7 +231,7 @@ export default function Goals() {
 
       {!isLoading && goals.length === 0 && (
         <div className="bg-white rounded-lg shadow p-8 text-center space-y-3 w-full">
-          <p className="text-gray-600">Create your first goal bucket</p>
+          <p className="text-gray-600">Create your first goal</p>
           <p className="text-sm text-gray-500">
             Examples: emergency fund, vacation, house down payment, credit card payoff
           </p>
@@ -234,7 +240,7 @@ export default function Goals() {
             onClick={() => setSearchParams({ new: "1" })}
             className="text-blue-600 hover:underline text-sm font-medium"
           >
-            Add goal bucket
+            Add goal
           </button>
         </div>
       )}
@@ -268,9 +274,6 @@ export default function Goals() {
         />
       )}
 
-      {forecastGoal && (
-        <ForecastModal open goal={forecastGoal} onClose={() => setForecastGoal(null)} />
-      )}
     </div>
   );
 }

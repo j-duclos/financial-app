@@ -16,8 +16,10 @@ from goals.forecast_insights import (
     contribution_pace_monthly,
     enrich_goal_forecast,
     projection_headline,
+    suggested_per_paycheck_amount,
 )
-from goals.models import GoalBucket, GoalContribution
+from goals.models import GoalBucket, GoalContribution, RuleAllocation
+from timeline.models import RecurringRule, Scenario, ScenarioRuleOverride
 from transactions.services.posting import post_transaction
 
 User = get_user_model()
@@ -137,3 +139,144 @@ def test_goal_detail_endpoint(auth_client, bucket):
     assert "forecast_scenarios" in data
     assert len(data["forecast_scenarios"]) == 3
     assert data["goal"]["pace_status"] == PACE_STALLED
+    assert data["goal"]["name"] == bucket.name
+    assert data["goal"]["id"] == bucket.id
+    assert len(data["contribution_history"]) <= 100
+
+
+def test_per_paycheck_uses_weekly_schedule_not_biweekly(household, savings, bucket):
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.SPENDING,
+        name="Checking",
+        starting_balance=Decimal("2000"),
+        currency="USD",
+    )
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Weekly pay",
+        account=checking,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("1000"),
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        start_date=AS_OF - timedelta(days=30),
+        active=True,
+    )
+    RuleAllocation.objects.create(rule=rule, bucket=bucket, fixed_amount=Decimal("183.55"), active=True)
+    progress = {
+        "remaining_amount": "28448.38",
+        "progress_percent": "5.17",
+        "current_amount": "1551.62",
+        "target_amount": "30000.00",
+        "on_track_status": "behind",
+        "monthly_required": "7112.10",
+    }
+    enriched = enrich_goal_forecast(bucket, progress, today=AS_OF)
+    weekly = (Decimal("7112.10") * Decimal("12") / Decimal("52")).quantize(Decimal("0.01"))
+    biweekly = (Decimal("7112.10") * Decimal("12") / Decimal("26")).quantize(Decimal("0.01"))
+    assert Decimal(enriched["suggested_per_paycheck"]) == weekly
+    assert Decimal(enriched["suggested_per_paycheck"]) != biweekly
+    assert enriched["paycheck_frequency"] == RecurringRule.Frequency.WEEKLY
+
+
+def test_per_paycheck_hidden_without_paycheck_schedule(bucket):
+    result = suggested_per_paycheck_amount(Decimal("7112.10"), [])
+    assert result["suggested_per_paycheck"] is None
+    progress = {
+        "remaining_amount": "18000.00",
+        "progress_percent": "40.00",
+        "current_amount": "12000.00",
+        "target_amount": "30000.00",
+        "on_track_status": "behind",
+        "monthly_required": "7112.10",
+    }
+    enriched = enrich_goal_forecast(bucket, progress, today=AS_OF)
+    assert enriched["suggested_per_paycheck"] is None
+
+
+def test_surplus_when_current_pace_exceeds_needed(bucket):
+    bucket.monthly_target = Decimal("900")
+    bucket.save(update_fields=["monthly_target"])
+    progress = {
+        "remaining_amount": "18000.00",
+        "progress_percent": "40.00",
+        "current_amount": "12000.00",
+        "target_amount": "30000.00",
+        "on_track_status": "ahead",
+        "monthly_required": "500.00",
+    }
+    enriched = enrich_goal_forecast(bucket, progress, today=AS_OF)
+    assert Decimal(enriched["current_contribution_rate"]) == Decimal("900.00")
+    assert Decimal(enriched["forecast_gap"]) == Decimal("0.00")
+    assert Decimal(enriched["forecast_surplus"]) == Decimal("400.00")
+
+
+def test_forecast_growth_matches_pace_and_includes_target_month(bucket):
+    bucket.monthly_target = Decimal("500")
+    bucket.save(update_fields=["monthly_target"])
+    progress = {
+        "remaining_amount": "18000.00",
+        "progress_percent": "40.00",
+        "current_amount": "12000.00",
+        "target_amount": "30000.00",
+        "on_track_status": "behind",
+        "monthly_required": "2571.43",
+    }
+    enriched = enrich_goal_forecast(bucket, progress, today=AS_OF)
+    growth = enriched["forecast_growth"]
+    assert growth[0]["amount"] == "12000.00"
+    assert Decimal(growth[1]["amount"]) == Decimal("12500.00")
+    assert any(point["month"] == "2026-12" for point in growth)
+    projected = enriched["projected_completion_date"]
+    assert projected is not None
+    last_at_target = next(
+        (point for point in growth if Decimal(point["amount"]) >= Decimal("30000.00")),
+        None,
+    )
+    assert last_at_target is not None
+    assert last_at_target["month"] == projected[:7]
+
+
+def test_scenario_changes_projection_without_mutating_goal(user, household, savings, bucket):
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.SPENDING,
+        name="Checking",
+        starting_balance=Decimal("3000"),
+        currency="USD",
+    )
+    paycheck = RecurringRule.objects.create(
+        household=household,
+        name="Paycheck",
+        account=checking,
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("2000"),
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=1,
+        start_date=AS_OF - timedelta(days=30),
+        active=True,
+    )
+    RuleAllocation.objects.create(
+        rule=paycheck, bucket=bucket, percent=Decimal("10"), active=True
+    )
+    scenario = Scenario.objects.create(household=household, name="Raise")
+    ScenarioRuleOverride.objects.create(
+        scenario=scenario, rule=paycheck, override_amount=Decimal("4000")
+    )
+    from goals.forecast_insights import build_goal_detail
+
+    before_target = bucket.monthly_target
+    before_allocated = bucket.allocated_amount
+    base = build_goal_detail(bucket, user=user, today=AS_OF)
+    what_if = build_goal_detail(bucket, user=user, scenario_id=scenario.id, today=AS_OF)
+    bucket.refresh_from_db()
+    assert bucket.monthly_target == before_target
+    assert bucket.allocated_amount == before_allocated
+    assert Decimal(what_if["goal"]["current_contribution_rate"]) > Decimal(
+        base["goal"]["current_contribution_rate"]
+    )
+    assert what_if["goal"]["projected_completion_date"] < base["goal"]["projected_completion_date"]
+    assert what_if["goal"]["id"] == bucket.id

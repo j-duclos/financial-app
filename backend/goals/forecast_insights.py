@@ -50,6 +50,51 @@ def _rule_amount_to_monthly(amount: Decimal, frequency: str) -> Decimal:
     return amount
 
 
+def _monthly_to_period_amount(monthly: Decimal, frequency: str) -> Decimal:
+    """Convert a monthly required amount onto the actual paycheck/rule schedule."""
+    if frequency == RecurringRule.Frequency.WEEKLY:
+        return _quantize_money(monthly * Decimal("12") / Decimal("52"))
+    if frequency == RecurringRule.Frequency.BIWEEKLY:
+        return _quantize_money(monthly * Decimal("12") / Decimal("26"))
+    if frequency in (
+        RecurringRule.Frequency.MONTHLY_DAY,
+        RecurringRule.Frequency.MONTHLY_NTH_WEEKDAY,
+    ):
+        return _quantize_money(monthly)
+    if frequency == RecurringRule.Frequency.YEARLY:
+        return _quantize_money(monthly * Decimal("12"))
+    return _quantize_money(monthly)
+
+
+def suggested_per_paycheck_amount(
+    monthly_required: Decimal | None,
+    linked_rules: list[dict[str, Any]],
+) -> dict[str, str | None]:
+    """Per-paycheck needed from monthly_required and the actual funding schedule.
+
+    Hidden when frequency cannot be determined uniquely (no hardcoded biweekly fallback).
+    """
+    empty = {
+        "suggested_per_paycheck": None,
+        "paycheck_frequency": None,
+        "paycheck_frequency_label": None,
+    }
+    if not monthly_required or monthly_required <= 0:
+        return empty
+    freqs = [rule.get("frequency") for rule in linked_rules if rule.get("frequency")]
+    if not freqs:
+        return empty
+    unique = set(freqs)
+    if len(unique) != 1:
+        return empty
+    freq = freqs[0]
+    return {
+        "suggested_per_paycheck": _serialize_decimal(_monthly_to_period_amount(monthly_required, freq)),
+        "paycheck_frequency": freq,
+        "paycheck_frequency_label": FREQ_LABELS.get(freq, "period"),
+    }
+
+
 def _months_between(start: date, end: date) -> int:
     if end <= start:
         return 1
@@ -391,13 +436,31 @@ def build_forecast_growth(
     monthly_pace: Decimal,
     today: date | None = None,
     months: int = 12,
+    max_months: int = 60,
 ) -> list[dict[str, str]]:
-    """Monthly projected balance points for charting."""
+    """Monthly projected balance points for charting.
+
+    Horizon covers projected completion (same months_needed formula as
+    calculate_projected_completion) and the target date when in range.
+    """
     today = today or date.today()
+    start = today.replace(day=1)
+    horizon = months
+    if monthly_pace > 0 and current < target:
+        remaining = target - current
+        months_needed = max(1, int((remaining + monthly_pace - Decimal("0.01")) / monthly_pace))
+        horizon = max(horizon, min(months_needed, max_months))
+    if bucket.target_date:
+        target_start = bucket.target_date.replace(day=1)
+        months_to_target = (target_start.year - start.year) * 12 + (target_start.month - start.month)
+        if 0 <= months_to_target <= max_months:
+            horizon = max(horizon, months_to_target)
+    horizon = min(horizon, max_months)
+
     points: list[dict[str, str]] = []
     balance = current
-    for i in range(months + 1):
-        d = _add_months(today.replace(day=1), i)
+    for i in range(horizon + 1):
+        d = _add_months(start, i)
         if i > 0 and monthly_pace > 0:
             balance = min(target, balance + monthly_pace)
         points.append(
@@ -407,7 +470,9 @@ def build_forecast_growth(
                 "amount": _serialize_decimal(_quantize_money(balance)) or "0",
             }
         )
-        if balance >= target:
+        reached_target = balance >= target
+        past_target_date = not bucket.target_date or d >= bucket.target_date.replace(day=1)
+        if reached_target and past_target_date and i >= min(months, horizon):
             break
     return points
 
@@ -529,12 +594,18 @@ def enrich_goal_forecast(
         monthly_required = _quantize_money(remaining / Decimal(months))
 
     forecast_gap = None
+    forecast_surplus = None
     if monthly_required and monthly_required > 0:
         gap = monthly_required - monthly_pace
-        forecast_gap = gap if gap > Decimal("0") else Decimal("0")
+        if gap > Decimal("0"):
+            forecast_gap = gap
+        else:
+            forecast_gap = Decimal("0")
+            forecast_surplus = -gap if gap < Decimal("0") else Decimal("0")
 
     suggestions = suggested_contributions(remaining, bucket.target_date, today=today)
     funding = build_funding_info(bucket, context=context)
+    per_paycheck = suggested_per_paycheck_amount(monthly_required, funding["linked_rules"])
     warnings = pace_warnings(
         pace_status,
         monthly_pace,
@@ -570,9 +641,13 @@ def enrich_goal_forecast(
         "monthly_required": _serialize_decimal(monthly_required) if monthly_required else progress.get("monthly_required"),
         "current_contribution_rate": _serialize_decimal(monthly_pace) if monthly_pace > 0 else None,
         "forecast_gap": _serialize_decimal(forecast_gap) if forecast_gap is not None else None,
+        "forecast_surplus": _serialize_decimal(forecast_surplus) if forecast_surplus is not None else None,
         "suggested_monthly": suggestions["suggested_monthly"],
         "suggested_biweekly": suggestions["suggested_biweekly"],
         "suggested_weekly": suggestions["suggested_weekly"],
+        "suggested_per_paycheck": per_paycheck["suggested_per_paycheck"],
+        "paycheck_frequency": per_paycheck["paycheck_frequency"],
+        "paycheck_frequency_label": per_paycheck["paycheck_frequency_label"],
         "suggested_contribution_amount": suggestions["suggested_monthly"],
         "contribution_recommendation": recommendation,
         "pace_warnings": warnings,
@@ -599,7 +674,12 @@ def build_goal_detail(
     scenario_id: int | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
-    from goals.bucket_services import calculate_bucket_progress, enrich_bucket  # noqa: PLC0415
+    from goals.bucket_services import (
+        bucket_to_api_dict,
+        build_goal_calculation_context,
+        calculate_bucket_progress,
+        enrich_bucket,
+    )
 
     today = today or date.today()
     scenario = None
@@ -608,9 +688,6 @@ def build_goal_detail(
 
         households = get_households_for_user(user)
         scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
-
-    context = None
-    from goals.bucket_services import build_goal_calculation_context
 
     context = build_goal_calculation_context(
         [bucket], today=today, as_of=today, user=user, scenario=scenario
@@ -680,7 +757,7 @@ def build_goal_detail(
     ]
 
     return {
-        "goal": forecast,
+        "goal": bucket_to_api_dict(bucket, forecast),
         "contribution_history": history,
         "linked_rules": forecast.get("linked_rules", []),
         "forecast_growth": forecast.get("forecast_growth", []),
