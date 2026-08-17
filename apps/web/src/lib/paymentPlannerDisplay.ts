@@ -280,7 +280,7 @@ export function defaultPaymentAmountForStrategy(account: Account, strategy: Payo
 export function payoffSummaryLine(projection: PayoffProjection | null | undefined): string | null {
   if (!projection) return null;
   if (!projection.payoff_possible) {
-    return projection.message ?? "Payment is too low to reduce balance.";
+    return projection.message ?? "Planned payment may not be enough to reduce the balance.";
   }
   if (projection.months_to_payoff <= 0) {
     return "Already paid off";
@@ -297,7 +297,7 @@ export function payoffSummaryLine(projection: PayoffProjection | null | undefine
 
 export function payoffImpossibleWarning(projection: PayoffProjection | null | undefined): string | null {
   if (!projection || projection.payoff_possible !== false) return null;
-  return projection.message ?? "Payment is too low to reduce balance.";
+  return projection.message ?? "Planned payment may not be enough to reduce the balance.";
 }
 
 export function utilizationPercent(account: Account): number | null {

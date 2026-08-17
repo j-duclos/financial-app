@@ -1,31 +1,30 @@
 import { useMemo } from "react";
 import type { Account } from "@budget-app/shared";
 import type { PassiveForecastDays } from "../../lib/safeToSpendLabels";
-import {
-  buildAccountForecastAlerts,
-  type AccountForecastAlert,
-} from "../../lib/accountForecastAlerts";
+import { buildPortfolioForecastAlert } from "../../lib/accountForecastAlerts";
 
 type Props = {
   accounts: Account[];
   forecastDays: PassiveForecastDays;
   onViewAccount: (accountId: number) => void;
+  onResolveRisk?: (account: Account) => void;
 };
 
-/** Compact forecast alerts (no large section header). */
+/** Compact portfolio-level forecast alert (not a per-account Action Center). */
 export default function AccountsForecastAlertsPanel({
   accounts,
   forecastDays,
   onViewAccount,
+  onResolveRisk,
 }: Props) {
-  const alerts = useMemo(
-    () => buildAccountForecastAlerts(accounts, forecastDays),
+  const alert = useMemo(
+    () => buildPortfolioForecastAlert(accounts, forecastDays),
     [accounts, forecastDays]
   );
 
   if (accounts.length === 0) return null;
 
-  if (alerts.length === 0) {
+  if (!alert) {
     return (
       <p
         className="mb-4 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2"
@@ -36,41 +35,30 @@ export default function AccountsForecastAlertsPanel({
     );
   }
 
-  return (
-    <ul
-      className="mb-4 rounded-lg border border-amber-200 bg-amber-50/90 divide-y divide-amber-200/80 overflow-hidden"
-      data-testid="accounts-forecast-alerts"
-      aria-label="Forecast alerts"
-    >
-      {alerts.map((alert) => (
-        <AlertRow key={`${alert.accountId}-${alert.kind}`} alert={alert} onView={onViewAccount} />
-      ))}
-    </ul>
-  );
-}
+  const earliest = accounts.find((a) => a.id === alert.earliestAccountId);
+  const handleAction = () => {
+    if (alert.resolveSpendingRisk && earliest && onResolveRisk) {
+      onResolveRisk(earliest);
+      return;
+    }
+    onViewAccount(alert.earliestAccountId);
+  };
 
-function AlertRow({
-  alert,
-  onView,
-}: {
-  alert: AccountForecastAlert;
-  onView: (accountId: number) => void;
-}) {
   return (
-    <li>
+    <div
+      className="mb-4 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2"
+      data-testid="accounts-forecast-alerts"
+      aria-label="Portfolio forecast alert"
+    >
+      <p className="text-sm font-semibold text-red-900">{alert.headline}</p>
+      <p className="text-xs text-amber-950/90 mt-0.5">{alert.earliestLine}</p>
       <button
         type="button"
-        onClick={() => onView(alert.accountId)}
-        className="w-full text-left px-3 py-2 hover:bg-amber-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-600"
+        onClick={handleAction}
+        className="mt-1 text-xs text-blue-800 font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 rounded"
       >
-        <span className="text-sm font-semibold text-red-900">{alert.headline}</span>
-        <span className="text-xs text-amber-950/90 block sm:inline sm:ml-2 sm:mt-0 mt-0.5">
-          {alert.detail}
-        </span>
-        <span className="text-xs text-blue-800 font-medium block sm:inline sm:ml-2 mt-1 sm:mt-0">
-          View account →
-        </span>
+        {alert.resolveSpendingRisk ? "Resolve risk →" : "View account →"}
       </button>
-    </li>
+    </div>
   );
 }

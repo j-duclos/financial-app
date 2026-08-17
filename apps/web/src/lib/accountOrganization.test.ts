@@ -73,7 +73,7 @@ describe("filterAccounts", () => {
 });
 
 describe("sortAccounts", () => {
-  it("sorts by health severity then name", () => {
+  it("sorts by health severity then nearest risk date", () => {
     const accounts = [
       mockAccount({ id: 1, display_name: "Zebra", health_status: "healthy" }),
       mockAccount({ id: 2, display_name: "Alpha", health_status: "critical" }),
@@ -81,6 +81,27 @@ describe("sortAccounts", () => {
     ];
     const sorted = sortAccounts(accounts, "health_worst_first");
     expect(sorted.map((a) => a.id)).toEqual([2, 3, 1]);
+  });
+
+  it("uses nearest risk date then utilization within the same severity", () => {
+    const accounts = [
+      mockAccount({
+        id: 1,
+        display_name: "Later",
+        health_status: "risk",
+        health_risk_date: "2026-09-10",
+        utilization_percent: "90",
+      }),
+      mockAccount({
+        id: 2,
+        display_name: "Sooner",
+        health_status: "risk",
+        health_risk_date: "2026-08-20",
+        utilization_percent: "70",
+      }),
+    ];
+    const sorted = sortAccounts(accounts, "health_worst_first");
+    expect(sorted.map((a) => a.id)).toEqual([2, 1]);
   });
 
   it("sorts by custom position", () => {
@@ -138,12 +159,14 @@ describe("computeGroupSummary", () => {
     expect(summary.avgUtilization).toBe(50);
   });
 
-  it("counts at-risk accounts", () => {
+  it("counts at-risk accounts as At Risk plus Critical, not Watch", () => {
     const accounts = [
       mockAccount({ id: 1, health_status: "risk" }),
       mockAccount({ id: 2, health_status: "healthy" }),
+      mockAccount({ id: 3, health_status: "watch" }),
+      mockAccount({ id: 4, health_status: "critical" }),
     ];
-    expect(computeGroupSummary(accounts).riskCount).toBe(1);
+    expect(computeGroupSummary(accounts).riskCount).toBe(2);
   });
 });
 

@@ -277,7 +277,7 @@ def test_fixed_insurance_no_phantom_pacing(user, household, checking):
         target_amount=Decimal("404"),
         period=SpendingTarget.Period.MONTHLY,
         target_type=SpendingTarget.TargetType.FIXED,
-        warning_threshold_percent=Decimal("100"),
+        warning_threshold_percent=Decimal("80"),
     )
     Transaction.objects.create(
         account=checking,
@@ -323,7 +323,7 @@ def test_fixed_insurance_no_double_count_after_midmonth_payment(user, household,
         target_amount=Decimal("404"),
         period=SpendingTarget.Period.MONTHLY,
         target_type=SpendingTarget.TargetType.FIXED,
-        warning_threshold_percent=Decimal("100"),
+        warning_threshold_percent=Decimal("80"),
     )
     Transaction.objects.create(
         account=checking,
@@ -714,3 +714,104 @@ def test_posted_planned_and_rule_projection_combine(
     assert Decimal(metrics["scheduled_in_period"]) == Decimal("55.00")
     assert rule.id
     assert metrics["status"] == STATUS_WITHIN
+
+
+@pytest.mark.django_db
+def test_zero_spent_and_upcoming_keeps_full_remaining(
+    user, household, checking, expense_category, target
+):
+    target.target_amount = Decimal("550")
+    target.save(update_fields=["target_amount"])
+    metrics = calculate_target_metrics(target, anchor=AS_OF, today=AS_OF)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("0.00")
+    assert Decimal(metrics["scheduled_in_period"]) == Decimal("0.00")
+    assert Decimal(metrics["remaining_to_target"]) == Decimal("550.00")
+    assert Decimal(metrics["percent_used"]) == Decimal("0.0")
+    assert metrics["status"] == STATUS_WITHIN
+
+
+@pytest.mark.django_db
+def test_upcoming_only_insurance_counts_toward_progress_and_warning(user, household, checking):
+    insurance = Category.objects.get(
+        household=household,
+        name="Auto Insurance",
+        category_type=Category.CategoryType.EXPENSE,
+    )
+    ins_target = SpendingTarget.objects.create(
+        household=household,
+        category=insurance,
+        target_amount=Decimal("404"),
+        period=SpendingTarget.Period.MONTHLY,
+        target_type=SpendingTarget.TargetType.FIXED,
+        warning_threshold_percent=Decimal("80"),
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 24),
+        payee="Geico",
+        amount=Decimal("-403.43"),
+        category=insurance,
+        status=Transaction.Status.PLANNED,
+    )
+    metrics = calculate_target_metrics(ins_target, anchor=AS_OF, today=AS_OF)
+    assert Decimal(metrics["spent_so_far"]) == Decimal("0.00")
+    assert Decimal(metrics["scheduled_in_period"]) == Decimal("403.43")
+    assert Decimal(metrics["remaining_to_target"]) == Decimal("0.57")
+    assert Decimal(metrics["percent_used"]) == Decimal("99.9")
+    assert metrics["status"] == STATUS_APPROACHING
+
+
+@pytest.mark.django_db
+def test_warning_threshold_uses_committed_spend_and_per_target_percent(
+    user, household, checking, expense_category, target
+):
+    target.warning_threshold_percent = Decimal("90")
+    target.save(update_fields=["warning_threshold_percent"])
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF,
+        payee="Shop",
+        amount=Decimal("-580"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    metrics = calculate_target_metrics(target, anchor=AS_OF, today=AS_OF, include_scheduled=False)
+    # 580 / 700 ≈ 82.9% is approaching at the default 80%, but within at 90%.
+    assert metrics["status"] == STATUS_WITHIN
+
+    target.warning_threshold_percent = Decimal("80")
+    target.save(update_fields=["warning_threshold_percent"])
+    metrics = calculate_target_metrics(target, anchor=AS_OF, today=AS_OF, include_scheduled=False)
+    assert metrics["status"] == STATUS_APPROACHING
+
+
+@pytest.mark.django_db
+def test_action_center_budget_recs_use_same_status_as_metrics(user, household, checking):
+    insurance = Category.objects.get(
+        household=household,
+        name="Auto Insurance",
+        category_type=Category.CategoryType.EXPENSE,
+    )
+    ins_target = SpendingTarget.objects.create(
+        household=household,
+        category=insurance,
+        target_amount=Decimal("404"),
+        period=SpendingTarget.Period.MONTHLY,
+        target_type=SpendingTarget.TargetType.FIXED,
+        warning_threshold_percent=Decimal("80"),
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 5, 24),
+        payee="Geico",
+        amount=Decimal("-403.43"),
+        category=insurance,
+        status=Transaction.Status.PLANNED,
+    )
+    metrics = calculate_target_metrics(ins_target, anchor=AS_OF, today=AS_OF)
+    recs = recommendations_from_spending_targets(user, anchor=AS_OF)
+    assert metrics["status"] == STATUS_APPROACHING
+    matching = [r for r in recs if r["id"] == f"spending-target-{ins_target.id}"]
+    assert matching
+    assert "approaching" in matching[0]["why"].lower()
+    assert matching[0]["primary_action_url"] == "/spending-goals"

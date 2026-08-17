@@ -30,8 +30,25 @@ export const SPENDING_TARGET_STATUS_LABELS: Record<SpendingTargetStatus, string>
 
 export const SPENDING_TARGET_TYPE_LABELS: Record<SpendingTargetType, string> = {
   fixed: "Fixed / scheduled",
-  variable: "Variable",
+  variable: "Variable spending",
 };
+
+/** Always-visible Budget card rows, including $0.00 Upcoming. */
+export const SPENDING_TARGET_CARD_ROW_LABELS = ["Limit", "Spent", "Upcoming", "Remaining"] as const;
+
+export type SpendingTargetCardRow = {
+  label: (typeof SPENDING_TARGET_CARD_ROW_LABELS)[number];
+  amount: string;
+};
+
+export function spendingTargetCardRows(metrics: SpendingTargetMetrics): SpendingTargetCardRow[] {
+  return [
+    { label: "Limit", amount: metrics.target_amount },
+    { label: "Spent", amount: metrics.spent_so_far },
+    { label: "Upcoming", amount: metrics.scheduled_in_period ?? "0" },
+    { label: "Remaining", amount: metrics.remaining_to_target },
+  ];
+}
 
 export function spendingTargetStatusClass(status: SpendingTargetStatus): string {
   switch (status) {

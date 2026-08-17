@@ -336,7 +336,7 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
     try:
         summary = ctx.spending_targets_summary or {}
         for row in summary.get("targets", []):
-            if row["status"] not in ("above_target", "risky", "approaching"):
+            if row["status"] not in ("above_target", "risky", "approaching_target"):
                 continue
             cat = row.get("category_name") or "Spending"
             if not is_category_discretionary(cat):

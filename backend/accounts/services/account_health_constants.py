@@ -1,4 +1,13 @@
-"""Configurable thresholds for account health indicators."""
+"""Configurable thresholds for account health indicators.
+
+Severity, user targets, and recommended actions are separate:
+
+- USER TARGET: per-account optimization goal (e.g. 10% utilization).
+  Used by Action Center / Payment Planner to compute the payment to reach the goal.
+- HEALTH SEVERITY: how serious the current condition is (Watch / At Risk / Critical).
+  Missing a utilization *target* is not a financial emergency.
+- RECOMMENDED ACTION: what to do about it (still aims at the user target).
+"""
 from decimal import Decimal
 
 SAFE_TO_SPEND_LOW_AMOUNT = Decimal("100")
@@ -8,10 +17,12 @@ SAFE_TO_SPEND_LOW_PERCENT = Decimal("0.10")
 # Not a recommendation target — each account's target_utilization_percent is canonical.
 DEFAULT_TARGET_UTILIZATION_PERCENT = Decimal("10")
 
-# Fixed risk-severity floors (independent of the user's utilization target).
-# A 10% target does not make 11% Critical; these classify how stretched a card is.
+# Absolute utilization floors for health severity. Independent of the user's target.
+# High utilization is Watch / At Risk; it is never Critical by itself.
+# Critical is reserved for over-limit, past-due required payments, and cash overdraft.
 CREDIT_UTILIZATION_WATCH = Decimal("50")
 CREDIT_UTILIZATION_RISK = Decimal("70")
+# Recommendation-priority floor only (Action Center "high" vs "medium"). Not account-health Critical.
 CREDIT_UTILIZATION_CRITICAL = Decimal("90")
 
 PAYMENT_DUE_WATCH_DAYS = 7

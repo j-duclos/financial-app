@@ -6,9 +6,9 @@ import pytest
 
 from accounts.models import Account
 from credit_cards.services.payoff import (
-    IMPOSSIBLE_MESSAGE,
     calculate_monthly_interest,
     compare_payment_strategies,
+    format_payment_below_interest_message,
     project_credit_card_payoff,
     resolve_strategy_payment_amount,
 )
@@ -52,6 +52,13 @@ class TestMonthlyInterest:
     def test_zero_balance_no_interest(self, credit_card):
         assert calculate_monthly_interest(credit_card, Decimal("0")) == Decimal("0")
 
+    def test_payment_below_interest_message_is_actionable(self):
+        msg = format_payment_below_interest_message(Decimal("25"), Decimal("63.42"))
+        assert "25" in msg
+        assert "63" in msg
+        assert "64" in msg
+        assert "principal" in msg.lower() or "interest" in msg.lower()
+
 
 def _seed_card_debt(credit_card, user, amount: Decimal):
     post_transaction(
@@ -86,7 +93,9 @@ class TestPayoffProjection:
             custom_amount=Decimal("10"),
         )
         assert result["payoff_possible"] is False
-        assert result["message"] == IMPOSSIBLE_MESSAGE
+        assert "interest" in result["message"].lower()
+        assert result.get("estimated_monthly_interest") is not None
+        assert Decimal(result["estimated_monthly_interest"]) > Decimal("10")
 
     def test_total_interest_accumulates(self, credit_card, user):
         _seed_card_debt(credit_card, user, Decimal("1000"))

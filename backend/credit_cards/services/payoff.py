@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any, Optional
 
 from accounts.models import Account
@@ -16,7 +16,8 @@ PAYOFF_STRATEGIES = frozenset({
     "custom_amount",
 })
 
-IMPOSSIBLE_MESSAGE = "Payment is too low to reduce balance."
+# Used only when APR / interest cannot be computed reliably.
+IMPOSSIBLE_MESSAGE = "Planned payment may not be enough to reduce the balance."
 
 
 def _quantize_money(value: Decimal) -> Decimal:
@@ -37,13 +38,64 @@ def _effective_apr(card: Account) -> Decimal:
 
 
 def calculate_monthly_interest(card: Account, balance: Decimal) -> Decimal:
-    """MVP: balance * (apr / 100 / 12)."""
+    """MVP: balance * (apr / 100 / 12). Canonical monthly-interest formula."""
     if balance <= 0:
         return Decimal("0")
     apr_val = _effective_apr(card)
     if apr_val <= 0:
         return Decimal("0")
     return _quantize_money(balance * apr_val / Decimal("100") / Decimal("12"))
+
+
+def min_payment_to_reduce_principal(monthly_interest: Decimal) -> Decimal:
+    """Smallest whole-dollar payment that begins reducing principal."""
+    if monthly_interest <= 0:
+        return Decimal("0.01")
+    next_dollar = monthly_interest.to_integral_value(rounding=ROUND_UP)
+    if next_dollar <= monthly_interest:
+        next_dollar += Decimal("1")
+    return next_dollar
+
+
+def format_payment_below_interest_message(
+    payment: Decimal,
+    monthly_interest: Decimal,
+) -> str:
+    """Compact actionable copy when a planned payment cannot cover monthly interest."""
+    if monthly_interest <= 0:
+        return IMPOSSIBLE_MESSAGE
+    min_pay = min_payment_to_reduce_principal(monthly_interest)
+    interest_approx = monthly_interest.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    pay_approx = payment.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return (
+        f"Planned ${pay_approx:.0f} payment may not cover ~${interest_approx:.0f}/mo interest. "
+        f"Increase to at least ~${min_pay:.0f}/mo to begin reducing principal."
+    )
+
+
+def payment_below_interest_details(
+    card: Account,
+    payment_amount: Decimal,
+    balance: Decimal,
+) -> dict[str, Any] | None:
+    """
+    If APR is known and payment cannot reduce principal, return warning details.
+    Returns None when the calculation is not reliable or the payment is sufficient.
+    """
+    if payment_amount <= 0 or balance <= 0:
+        return None
+    if _effective_apr(card) <= 0:
+        return None
+    interest = calculate_monthly_interest(card, balance)
+    if interest <= 0 or payment_amount > interest:
+        return None
+    min_reduce = min_payment_to_reduce_principal(interest)
+    return {
+        "payment_amount": _quantize_money(payment_amount),
+        "estimated_monthly_interest": interest,
+        "min_payment_to_reduce_principal": min_reduce,
+        "message": format_payment_below_interest_message(payment_amount, interest),
+    }
 
 
 def _starting_balance(card: Account, as_of: date) -> Decimal:
@@ -330,11 +382,15 @@ def payoff_estimate_summary(
         card, strategy, custom_amount=custom_amount, starting_balance=owed
     )
     if not proj.get("payoff_possible"):
+        if payment <= 0:
+            return None
         return {
             "label": proj.get("message", IMPOSSIBLE_MESSAGE),
             "payoff_possible": False,
             "months_to_payoff": None,
             "payment_amount": _money_str(payment),
+            "estimated_monthly_interest": proj.get("estimated_monthly_interest"),
+            "min_payment_to_reduce_principal": proj.get("min_payment_to_reduce_principal"),
         }
     months = proj.get("months_to_payoff", 0)
     if months <= 0:
@@ -381,9 +437,18 @@ def _impossible_projection(
     partial_schedule: list | None = None,
     months_so_far: int = 0,
 ) -> dict[str, Any]:
+    details = payment_below_interest_details(card, payment_amount, starting_balance)
+    if details:
+        message = details["message"]
+        interest_str = _money_str(details["estimated_monthly_interest"])
+        min_reduce_str = _money_str(details["min_payment_to_reduce_principal"])
+    else:
+        message = IMPOSSIBLE_MESSAGE
+        interest_str = None
+        min_reduce_str = None
     return {
         "payoff_possible": False,
-        "message": IMPOSSIBLE_MESSAGE,
+        "message": message,
         "starting_balance": _money_str(starting_balance),
         "apr": _money_str(apr_val),
         "monthly_interest_rate": _money_str(monthly_rate * Decimal("100")),
@@ -393,6 +458,8 @@ def _impossible_projection(
         "total_interest": "0.00",
         "total_paid": "0.00",
         "schedule": partial_schedule or [],
+        "estimated_monthly_interest": interest_str,
+        "min_payment_to_reduce_principal": min_reduce_str,
     }
 
 

@@ -215,16 +215,12 @@ class AccountSerializer(serializers.ModelSerializer):
             payoff = max(Decimal("0"), stmt - paid)
         else:
             payoff = instance.payoff_to_avoid_interest
-        apr_val = Decimal(str(instance.apr or 0))
+        from credit_cards.services.payoff import calculate_monthly_interest
+
         unpaid = payoff
         if unpaid <= 0:
             unpaid = Decimal(str(instance.statement_balance or 0))
-        if apr_val > 0 and unpaid > 0:
-            interest = (unpaid * apr_val / Decimal("100") / Decimal("12")).quantize(
-                Decimal("0.01")
-            )
-        else:
-            interest = Decimal("0")
+        interest = calculate_monthly_interest(instance, unpaid)
         cache = {
             "payoff_to_avoid_interest": str(payoff),
             "estimated_monthly_interest": str(interest),

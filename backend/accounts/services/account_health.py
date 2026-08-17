@@ -15,7 +15,6 @@ from django.db.models import Count
 from accounts.models import Account
 from accounts.relationship_models import AccountRelationship
 from accounts.services.account_health_constants import (
-    CREDIT_UTILIZATION_CRITICAL,
     CREDIT_UTILIZATION_RISK,
     CREDIT_UTILIZATION_WATCH,
     DEFAULT_TARGET_UTILIZATION_PERCENT,
@@ -201,15 +200,12 @@ def _payoff_to_avoid_interest(
 
 
 def _projected_interest_from_payoff(account: Account, payoff: Decimal) -> Decimal:
-    apr_val = _decimal(account.apr or 0)
-    if apr_val <= 0:
-        return Decimal("0")
+    from credit_cards.services.payoff import calculate_monthly_interest
+
     unpaid = payoff
     if unpaid <= 0:
         unpaid = _decimal(account.statement_balance or 0)
-    if unpaid <= 0:
-        return Decimal("0")
-    return (unpaid * apr_val / Decimal("100") / Decimal("12")).quantize(Decimal("0.01"))
+    return calculate_monthly_interest(account, unpaid)
 
 
 def _worst_status(*statuses: str) -> str:
@@ -250,13 +246,16 @@ def account_target_utilization_percent(account: Account) -> Decimal:
 
 def _credit_utilization_thresholds(target: Decimal) -> tuple[Decimal, Decimal, Decimal]:
     """
-    Watch / risk / critical lower bounds from target utilization.
-    Default target 10% → 50% / 70% / 90% (same as legacy fixed thresholds).
+    Watch / risk / over-limit floors for utilization *severity*.
+
+    Independent of the user's optimization target. Missing a 10% (or 30%) target
+    is not Critical. Over-limit (100%+) is the utilization-related Critical case;
+    past-due and cash overdraft are handled separately.
+
+    ``target`` is accepted for call-site compatibility and is not used for floors.
     """
-    watch_at = max(target + Decimal("40"), CREDIT_UTILIZATION_WATCH)
-    risk_at = max(target + Decimal("60"), CREDIT_UTILIZATION_RISK)
-    critical_at = max(target + Decimal("80"), CREDIT_UTILIZATION_CRITICAL)
-    return watch_at, risk_at, critical_at
+    del target
+    return CREDIT_UTILIZATION_WATCH, CREDIT_UTILIZATION_RISK, Decimal("100")
 
 
 def _utilization_reason(util_dec: Decimal, target: Decimal) -> str:
@@ -474,7 +473,7 @@ def _credit_card_health(
         past_due_amount = payoff if payoff > 0 else owed
 
     target_util = _target_utilization_percent(account)
-    watch_at, risk_at, critical_at = _credit_utilization_thresholds(target_util)
+    watch_at, risk_at, _over_limit_at = _credit_utilization_thresholds(target_util)
 
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
@@ -501,13 +500,16 @@ def _credit_card_health(
         statuses.append(HEALTH_STATUS_WATCH)
         reasons.append("Last known due date is outdated")
 
-    if util_dec is not None and util_dec >= critical_at:
-        statuses.append(HEALTH_STATUS_CRITICAL)
-        reasons.append(_utilization_reason(util_dec, target_util))
-
     if limit > 0 and owed > limit:
         statuses.append(HEALTH_STATUS_CRITICAL)
         reasons.append("Balance exceeds credit limit")
+
+    if util_dec is not None and util_dec >= risk_at:
+        statuses.append(HEALTH_STATUS_RISK)
+        reasons.append(_utilization_reason(util_dec, target_util))
+    elif util_dec is not None and util_dec >= watch_at:
+        statuses.append(HEALTH_STATUS_WATCH)
+        reasons.append(_utilization_reason(util_dec, target_util))
 
     if (
         days_until is not None
@@ -527,11 +529,6 @@ def _credit_card_health(
             statuses.append(HEALTH_STATUS_WATCH)
             reasons.append(f"Payment due in {days_until} day{'s' if days_until != 1 else ''}")
 
-    if util_dec is not None and util_dec >= risk_at:
-        statuses.append(HEALTH_STATUS_RISK)
-        if not any("Utilization" in r for r in reasons):
-            reasons.append(_utilization_reason(util_dec, target_util))
-
     projected_interest = _projected_interest_from_payoff(account, payoff)
     if (
         payoff > 0
@@ -542,22 +539,20 @@ def _credit_card_health(
         statuses.append(HEALTH_STATUS_RISK)
         reasons.append("Projected interest if statement balance remains unpaid")
 
-    if util_dec is not None and util_dec > target_util and util_dec < risk_at:
-        if not any("Utilization" in r for r in reasons):
-            statuses.append(HEALTH_STATUS_WATCH)
-            reasons.append(_utilization_reason(util_dec, target_util))
-
     min_pay = _decimal(account.minimum_payment_amount or 0)
-    if owed > 0 and min_pay > 0 and _decimal(account.apr or 0) > 0:
-        from credit_cards.services.payoff import IMPOSSIBLE_MESSAGE, project_credit_card_payoff
+    if owed > 0 and min_pay > 0:
+        from credit_cards.services.payoff import payment_below_interest_details
 
-        min_proj = project_credit_card_payoff(
-            account, "minimum_payment", start_date=today, starting_balance=owed
-        )
-        if not min_proj.get("payoff_possible"):
-            statuses.append(HEALTH_STATUS_CRITICAL)
-            reasons.append(min_proj.get("message") or IMPOSSIBLE_MESSAGE)
+        below = payment_below_interest_details(account, min_pay, owed)
+        if below:
+            statuses.append(HEALTH_STATUS_RISK)
+            reasons.append(below["message"])
             details["payoff_impossible"] = True
+            details["estimated_monthly_interest"] = str(below["estimated_monthly_interest"])
+            details["min_payment_to_reduce_principal"] = str(
+                below["min_payment_to_reduce_principal"]
+            )
+            details["planned_payment_amount"] = str(below["payment_amount"])
 
     apr = _decimal(account.apr or 0)
     if apr >= HIGH_APR_THRESHOLD and owed > 0 and payoff > 0:
@@ -584,6 +579,7 @@ def _credit_card_health(
         and util_dec <= target_util
         and payoff <= 0
         and not due_needs_attention
+        and not details.get("payoff_impossible")
     ):
         return HEALTH_STATUS_HEALTHY, None, None, details
 
@@ -592,7 +588,7 @@ def _credit_card_health(
 
     status = _worst_status(*statuses)
     reason = reasons[0]
-    priority_phrases = ("past due", "Payment due", "Utilization", "limit", "interest")
+    priority_phrases = ("past due", "limit", "Payment due", "Utilization", "interest")
     for phrase in priority_phrases:
         for r in reasons:
             if phrase.lower() in r.lower():
@@ -742,8 +738,18 @@ def _recommended_action(
         if details.get("payment_due_is_stale"):
             return "Confirm the current payment due date."
         target = _target_utilization_percent(account)
-        _, risk_at, _ = _credit_utilization_thresholds(target)
-        if util and _decimal(util) >= risk_at:
+        util_dec = _decimal(util) if util is not None else None
+        if details.get("payoff_impossible") and (
+            util_dec is None or util_dec < CREDIT_UTILIZATION_RISK
+        ):
+            min_reduce = details.get("min_payment_to_reduce_principal")
+            if min_reduce:
+                return (
+                    f"Increase the planned payment to at least "
+                    f"${_decimal(min_reduce):.0f}/mo to begin reducing principal."
+                )
+            return "Increase the planned payment so it covers monthly interest."
+        if util_dec is not None and util_dec > target:
             return f"Reduce card utilization toward your {target:.0f}% target."
         days = details.get("days_until_due")
         if days is not None and days >= 0:

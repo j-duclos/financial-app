@@ -159,7 +159,7 @@ export default function AccountHealthBadge({
     return (
       <div
         ref={anchorRef}
-        className={`relative flex flex-col items-start gap-1 w-full min-w-0 ${className}`}
+        className={`relative flex flex-col items-start gap-0.5 w-full min-w-0 ${className}`}
       >
         <div className="flex flex-wrap items-start gap-x-1.5 gap-y-1 w-full min-w-0">
           {badge}

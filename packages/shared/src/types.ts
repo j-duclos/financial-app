@@ -176,6 +176,8 @@ export interface PayoffEstimateSummary {
   payment_amount?: string;
   payoff_date?: string | null;
   total_interest?: string;
+  estimated_monthly_interest?: string | null;
+  min_payment_to_reduce_principal?: string | null;
 }
 
 export type PayoffStrategy =
@@ -207,6 +209,8 @@ export interface PayoffProjection {
   total_interest: string;
   total_paid: string;
   schedule: PayoffScheduleRow[];
+  estimated_monthly_interest?: string;
+  min_payment_to_reduce_principal?: string;
   /** @deprecated Legacy field; use starting_balance */
   current_balance?: string;
 }
@@ -376,6 +380,10 @@ export interface AccountHealthDetails {
   payment_due_is_stale?: boolean;
   past_due_amount?: string | null;
   unmatched_import_count?: number | null;
+  payoff_impossible?: boolean;
+  estimated_monthly_interest?: string | null;
+  min_payment_to_reduce_principal?: string | null;
+  planned_payment_amount?: string | null;
 }
 
 export interface AccountForecastSummary {

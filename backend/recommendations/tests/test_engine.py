@@ -22,6 +22,7 @@ from recommendations.services.detectors import (
     Detection,
     detect_debt_payoff,
     detect_move_money_opportunities,
+    detect_spending_reduction,
     detect_survival_mode,
     detect_utilization,
 )
@@ -686,4 +687,35 @@ class TestSurvivalExcludedFromActionLimit:
         types = [r["type"] for r in recs]
         assert types.count("survival_mode") == 1
         assert "move_money" in types
+
+
+class TestSpendingReductionUsesBudgetStatus:
+    def test_approaching_target_status_is_recognized(self):
+        ctx = RecommendationContext(
+            user=None,
+            today=AS_OF,
+            days=30,
+            accounts=[],
+            accounts_by_id={},
+            forecasts={},
+            st_aggregate={"total_safe_to_spend": "-100"},
+            timeline_rows=[],
+            health_by_id={},
+            spending_targets_summary={
+                "targets": [
+                    {
+                        "target_id": 1,
+                        "status": "approaching_target",
+                        "category_name": "Dining",
+                        "period_total": "360",
+                        "spent_so_far": "0",
+                        "target_amount": "400",
+                    }
+                ]
+            },
+        )
+        dets = detect_spending_reduction(ctx)
+        assert dets
+        assert dets[0].category_name == "Dining"
+        assert dets[0].extra["target_id"] == 1
 

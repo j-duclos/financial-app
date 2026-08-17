@@ -14,7 +14,6 @@ from accounts.services.account_health import (
     calculate_account_health_for_accounts,
 )
 from accounts.services.account_health_constants import (
-    CREDIT_UTILIZATION_WATCH,
     HEALTH_STATUS_CRITICAL,
     HEALTH_STATUS_HEALTHY,
     HEALTH_STATUS_RISK,
@@ -187,15 +186,16 @@ def test_credit_healthy_at_or_below_target_utilization(user, credit_card):
     assert h["reason"] is None
 
 
-def test_credit_custom_target_utilization(user, credit_card):
+def test_credit_custom_target_utilization_does_not_create_watch(user, credit_card):
+    """Exceeding the user target is not itself a health severity."""
     credit_card.target_utilization_percent = Decimal("20")
     credit_card.save(update_fields=["target_utilization_percent"])
     _set_credit_owed(user, credit_card, Decimal("1000"))
-    assert _health(user, credit_card, days=30)["status"] == HEALTH_STATUS_HEALTHY
+    assert _health(user, credit_card, days=30, has_payment_link=True)["status"] == HEALTH_STATUS_HEALTHY
     _set_credit_owed(user, credit_card, Decimal("1100"))
-    h = _health(user, credit_card, days=30)
-    assert h["status"] == HEALTH_STATUS_WATCH
-    assert "target 20" in (h["reason"] or "").lower()
+    h = _health(user, credit_card, days=30, has_payment_link=True)
+    assert h["status"] == HEALTH_STATUS_HEALTHY
+    assert Decimal(h["details"]["target_utilization_percent"]) == Decimal("20")
 
 
 def test_credit_utilization_watch(user, credit_card):
@@ -210,14 +210,26 @@ def test_credit_utilization_watch(user, credit_card):
 def test_credit_utilization_risk(user, credit_card):
     _set_credit_owed(user, credit_card, Decimal("3600"))
     h = _health(user, credit_card, days=30)
-    assert h["status"] in (HEALTH_STATUS_RISK, HEALTH_STATUS_CRITICAL)
+    assert h["status"] == HEALTH_STATUS_RISK
     assert "72" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
 
 
-def test_credit_utilization_critical(user, credit_card):
-    _set_credit_owed(user, credit_card, Decimal("4600"))
+def test_credit_high_utilization_is_not_critical(user, credit_card):
+    """98% utilization vs a 10% target is At Risk, not Critical."""
+    _set_credit_owed(user, credit_card, Decimal("4900"))
     h = _health(user, credit_card, days=30)
-    assert h["status"] == HEALTH_STATUS_CRITICAL
+    assert h["status"] == HEALTH_STATUS_RISK
+    assert h["status"] != HEALTH_STATUS_CRITICAL
+    assert "target 10" in (h["reason"] or "").lower()
+    assert "98" in (h["reason"] or "")
+
+
+def test_credit_utilization_watch_at_absolute_floor(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("3400"))
+    h = _health(user, credit_card, days=30)
+    assert h["status"] == HEALTH_STATUS_WATCH
+    assert "68" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
+    assert "target 10" in (h["reason"] or "").lower()
 
 
 def test_credit_health_uses_ledger_not_stale_db_balance(user, credit_card):
@@ -229,6 +241,69 @@ def test_credit_health_uses_ledger_not_stale_db_balance(user, credit_card):
     assert "50" in (h["reason"] or "")
     assert "92" not in (h["reason"] or "")
     assert h["details"]["utilization_percent"] == "50.00"
+
+
+def test_credit_over_limit_is_critical(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("5200"))
+    h = _health(user, credit_card, days=30)
+    assert h["status"] == HEALTH_STATUS_CRITICAL
+    assert "limit" in (h["reason"] or "").lower()
+
+
+def test_credit_target_change_does_not_make_utilization_critical(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("3600"))
+    credit_card.target_utilization_percent = Decimal("10")
+    credit_card.save(update_fields=["target_utilization_percent"])
+    h10 = _health(user, credit_card, days=30)
+    credit_card.target_utilization_percent = Decimal("30")
+    credit_card.save(update_fields=["target_utilization_percent"])
+    h30 = _health(user, credit_card, days=30)
+    assert h10["status"] == HEALTH_STATUS_RISK
+    assert h30["status"] == HEALTH_STATUS_RISK
+    assert h10["status"] != HEALTH_STATUS_CRITICAL
+    assert "target 10" in (h10["reason"] or "").lower()
+    assert "target 30" in (h30["reason"] or "").lower()
+    assert "Reduce card utilization toward your 10% target." in (h10["recommended_action"] or "")
+    assert "Reduce card utilization toward your 30% target." in (h30["recommended_action"] or "")
+
+
+def test_credit_planned_payment_below_interest_is_actionable_not_critical(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("2000"))
+    Account.objects.filter(pk=credit_card.pk).update(
+        current_balance=Decimal("2000"),
+        minimum_payment_amount=Decimal("25"),
+        statement_balance=Decimal("0"),
+        apr=Decimal("24"),
+        next_payment_due_date=AS_OF + timedelta(days=20),
+        autopay_enabled=False,
+    )
+    credit_card.refresh_from_db()
+    h = _health(user, credit_card, days=30)
+    assert h["status"] != HEALTH_STATUS_CRITICAL
+    assert h["details"].get("payoff_impossible") is True
+    assert h["details"].get("estimated_monthly_interest") is not None
+    assert Decimal(h["details"]["estimated_monthly_interest"]) > Decimal("25")
+    reason = h["reason"] or ""
+    action = h["recommended_action"] or ""
+    blob = f"{reason} {action}"
+    assert "interest" in blob.lower() or "principal" in blob.lower()
+    assert "25" in blob or "~$" in blob or "at least" in blob.lower()
+
+
+def test_forecast_window_changes_projected_overdraft(user, checking, expense_category):
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=20),
+        payee="Rent",
+        amount=Decimal("-1500"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    near = _health(user, checking, days=7)
+    far = _health(user, checking, days=30)
+    assert near["status"] == HEALTH_STATUS_HEALTHY
+    assert far["status"] == HEALTH_STATUS_CRITICAL
 
 
 def test_credit_due_within_7_days_watch(user, credit_card):

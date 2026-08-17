@@ -101,7 +101,7 @@ export function drawerPayoffImpossibleMessage(
   if (payment > 0 && interest > 0 && payment <= interest) {
     return `At ${formatCurrency(projection.payment_amount)}/mo, payments don't cover ~${formatCurrency(planCard.interest_this_month)}/mo in interest. Pay above ${formatCurrency(planCard.interest_this_month)}/mo to shrink this balance.`;
   }
-  return projection.message ?? "Payment is too low to reduce balance.";
+  return projection.message ?? "Planned payment may not be enough to reduce the balance.";
 }
 
 function timelineLabel(projection: PayoffProjection): string {

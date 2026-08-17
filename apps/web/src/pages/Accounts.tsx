@@ -701,6 +701,7 @@ export default function Accounts() {
         accounts={accounts}
         forecastDays={forecastDays}
         onViewAccount={focusAccount}
+        onResolveRisk={setResolveRiskAccount}
       />
 
       {!accountsLoading && filteredAccounts.length > 0 ? (

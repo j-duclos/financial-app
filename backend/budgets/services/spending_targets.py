@@ -359,13 +359,19 @@ def _target_status(
     *,
     committed_amount: Decimal,
     target_amount: Decimal,
+    warning_threshold_percent: Decimal | None = None,
 ) -> str:
     if target_amount <= 0:
         return STATUS_WITHIN
     if committed_amount > target_amount:
         return STATUS_ABOVE
+    threshold = (
+        warning_threshold_percent
+        if warning_threshold_percent is not None
+        else APPROACHING_THRESHOLD_PERCENT
+    )
     pct = (committed_amount / target_amount * Decimal("100")) if target_amount else Decimal("0")
-    if pct >= APPROACHING_THRESHOLD_PERCENT:
+    if pct >= threshold:
         return STATUS_APPROACHING
     return STATUS_WITHIN
 
@@ -525,6 +531,7 @@ def calculate_target_metrics(
     status = _target_status(
         committed_amount=committed_amount,
         target_amount=target_amount,
+        warning_threshold_percent=_decimal(target.warning_threshold_percent),
     )
     cat_name = target.name or (target.category.name if target.category else "Category")
     recommendation = _recommendation_for_target(

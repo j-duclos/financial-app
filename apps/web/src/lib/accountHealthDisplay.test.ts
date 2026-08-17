@@ -114,6 +114,20 @@ describe("buildAccountListHealthReason", () => {
     ).toBe("Utilization is 54% (target 10%): Reduce card utilization");
   });
 
+  it("keeps an actionable low-payment warning compact", () => {
+    const account = mockAccount({
+      account_type: "CREDIT",
+      role: "credit_card",
+      name: "Savor",
+    });
+    expect(
+      buildAccountListHealthReason(
+        "Planned $25 payment may not cover ~$63/mo interest. Increase to at least ~$64/mo to begin reducing principal.",
+        account
+      )
+    ).toContain("Planned $25");
+  });
+
   it("suggests payment toward card when over the limit", () => {
     const account = mockAccount({
       id: 2,

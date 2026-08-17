@@ -128,7 +128,7 @@ export default function SpendingTargetFormModal({
           </select>
         </label>
         <fieldset className="text-sm space-y-2">
-          <legend className="text-gray-600">Limit behavior</legend>
+          <legend className="text-gray-600">Spending type</legend>
           <label className="flex items-start gap-2 cursor-pointer">
             <input
               type="radio"
@@ -141,7 +141,7 @@ export default function SpendingTargetFormModal({
             <span>
               <span className="font-medium text-gray-900">Fixed / scheduled</span>
               <span className="block text-xs text-gray-500">
-                Use known bills and scheduled payments only.
+                Known bills and scheduled payments.
               </span>
             </span>
           </label>
@@ -155,9 +155,9 @@ export default function SpendingTargetFormModal({
               className="mt-1"
             />
             <span>
-              <span className="font-medium text-gray-900">Variable</span>
+              <span className="font-medium text-gray-900">Variable spending</span>
               <span className="block text-xs text-gray-500">
-                For discretionary spending — counts posted transactions plus known future ones only.
+                Posted spending plus known upcoming transactions.
               </span>
             </span>
           </label>

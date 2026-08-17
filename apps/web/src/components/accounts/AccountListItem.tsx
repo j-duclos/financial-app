@@ -91,7 +91,7 @@ export default function AccountListItem({
   const healthReason = acc.health_reason ?? acc.risk_reason;
   const showSafe = showSafeToSpendForRole(role, acc.account_type);
   const padding =
-    layoutMode === "compact" ? "px-3 py-2" : layoutMode === "detailed" ? "px-4 py-4" : "px-4 py-3";
+    layoutMode === "compact" ? "px-3 py-1.5" : layoutMode === "detailed" ? "px-4 py-3" : "px-4 py-2";
 
   const primaryBalance = isCredit
     ? acc.balance_owed != null
@@ -170,7 +170,7 @@ export default function AccountListItem({
       data-testid={`account-row-${acc.id}`}
       data-highlighted={isHighlighted ? "true" : undefined}
     >
-      <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 min-w-0">
         {showReorder ? (
           <div className="flex sm:flex-col items-center gap-0.5 shrink-0 order-first sm:order-none">
             <button
@@ -194,7 +194,7 @@ export default function AccountListItem({
           </div>
         ) : null}
 
-        <div className="flex-1 min-w-0 flex flex-col gap-2">
+        <div className="flex-1 min-w-0 flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 w-full min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
               <h3 className="font-medium text-gray-900 truncate">{getEffectiveDisplayName(acc)}</h3>
@@ -236,7 +236,7 @@ export default function AccountListItem({
             </p>
           ) : null}
 
-          <div className="space-y-1 min-w-0">
+          <div className="space-y-0.5 min-w-0">
             {healthStatus ? (
               <div className="flex flex-wrap items-start gap-2">
                 <AccountHealthBadge
@@ -263,7 +263,9 @@ export default function AccountListItem({
               <p className="text-xs text-gray-600">{projectionLineText}</p>
             ) : null}
 
-            {isCredit && acc.payoff_estimate?.label ? (
+            {isCredit &&
+            acc.payoff_estimate?.label &&
+            !listHealthReason?.includes(acc.payoff_estimate.label) ? (
               <p className="text-xs text-indigo-700" data-testid="credit-payoff-estimate">
                 {acc.payoff_estimate.label}
               </p>
@@ -312,8 +314,8 @@ export default function AccountListItem({
 
       {quickActionsContext && onQuickAction ? (
         <div
-          className={`flex flex-wrap items-end justify-between gap-x-3 gap-y-2 ${
-            layoutMode === "compact" ? "mt-2" : "mt-3 pt-3 border-t border-gray-100"
+          className={`flex flex-wrap items-end justify-between gap-x-3 gap-y-1 ${
+            layoutMode === "compact" ? "mt-1.5" : "mt-2 pt-2 border-t border-gray-100"
           }`}
         >
           <div className="min-w-0 flex-1">
@@ -351,7 +353,7 @@ export default function AccountListItem({
       ) : acc.last_activity_date ? (
         <div
           className={`flex justify-end ${
-            layoutMode === "compact" ? "mt-2" : "mt-3 pt-3 border-t border-gray-100"
+            layoutMode === "compact" ? "mt-1.5" : "mt-2 pt-2 border-t border-gray-100"
           }`}
         >
           <div className="text-right" data-testid="account-last-activity">
@@ -384,7 +386,7 @@ function CreditMetricsGrid({
 
   return (
     <div
-      className="grid grid-cols-[4.25rem_4.25rem_4.5rem_5rem_6.75rem] sm:grid-cols-[4.75rem_4.75rem_5rem_5.5rem_7.25rem] gap-x-3 gap-y-1 items-end"
+      className="grid grid-cols-[4.25rem_4.25rem_4.5rem_5rem_7.5rem] sm:grid-cols-[4.75rem_4.75rem_5rem_5.5rem_8.75rem] gap-x-3 gap-y-0.5 items-end"
       data-testid="credit-metrics-grid"
     >
       <MetricBlock
@@ -429,7 +431,7 @@ function CreditMetricsGrid({
         testId="credit-projected-statement"
       />
       <MetricBlock
-        label="Payment due"
+        label="Payment info"
         value={paymentDueValue}
         valueClass={
           acc.next_payment_due_date != null
@@ -438,7 +440,9 @@ function CreditMetricsGrid({
               acc.payment_due_amount_unavailable
               ? "text-amber-700"
               : "text-gray-800"
-            : "text-gray-400"
+            : paymentDueValue === "No payment data"
+              ? "text-gray-400"
+              : "text-amber-700"
         }
         compactValue
         testId="credit-payment-due"
@@ -464,7 +468,7 @@ function MetricBlock({
     <div data-testid={testId}>
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
       <div
-        className={`font-semibold tabular-nums ${compactValue ? "text-xs" : "text-sm"} ${valueClass}`}
+        className={`font-semibold tabular-nums leading-tight ${compactValue ? "text-xs" : "text-sm"} ${valueClass}`}
       >
         {value}
       </div>

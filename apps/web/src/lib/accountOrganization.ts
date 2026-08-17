@@ -180,6 +180,7 @@ export function healthSeverity(acc: Account): number {
 }
 
 export function isAtRisk(acc: Account): boolean {
+  /** At Risk + Critical. Watch is not counted as "at risk". */
   const s = accountHealthStatus(acc);
   return s === "risk" || s === "critical";
 }
@@ -325,9 +326,21 @@ export function sortAccounts(accounts: Account[], sortBy: AccountSortBy): Accoun
       );
     case "health_worst_first":
     default:
-      return list.sort(
-        (a, b) => healthSeverity(b) - healthSeverity(a) || tieBreak(a, b)
-      );
+      return list.sort((a, b) => {
+        const sev = healthSeverity(b) - healthSeverity(a);
+        if (sev !== 0) return sev;
+        const dateA =
+          a.health_risk_date ?? a.first_negative_date ?? a.risk_date ?? "9999-12-31";
+        const dateB =
+          b.health_risk_date ?? b.first_negative_date ?? b.risk_date ?? "9999-12-31";
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+        const util = parseAmount(b.utilization_percent) - parseAmount(a.utilization_percent);
+        if (util !== 0) return util;
+        const shortA = parseAmount(a.lowest_projected_balance_30_days);
+        const shortB = parseAmount(b.lowest_projected_balance_30_days);
+        if (shortA !== shortB) return shortA - shortB;
+        return tieBreak(a, b);
+      });
   }
 }
 

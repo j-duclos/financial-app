@@ -1,6 +1,6 @@
 import { formatCurrency } from "@budget-app/shared";
 import type { Account } from "@budget-app/shared";
-import { formatDateDisplay } from "./dateDisplay";
+import { formatShortMonthDay } from "./dateDisplay";
 
 const STALE_PAYMENT_DUE_DAYS = 45;
 
@@ -17,6 +17,11 @@ function daysUntilDue(iso: string | null | undefined, today = new Date()): numbe
   const start = new Date(today);
   start.setHours(0, 0, 0, 0);
   return Math.round((due.getTime() - start.getTime()) / 86_400_000);
+}
+
+function formatPaymentInfoDate(iso: string): string | null {
+  const label = formatShortMonthDay(iso);
+  return label === "None" ? null : label;
 }
 
 export function paymentDueIsStale(account: Account, today = new Date()): boolean {
@@ -43,19 +48,37 @@ export function paymentDueAmountUnavailable(account: Account): boolean {
   return paymentDueAmount(account) == null && owed > 0;
 }
 
-export function formatPaymentDueValue(account: Account): string {
+function amountPart(account: Account): string {
+  const amount = paymentDueAmount(account);
+  const unavailable = paymentDueAmountUnavailable(account);
+  if (unavailable || amount == null) return "Amount unavailable";
+  return formatCurrency(amount, account.currency);
+}
+
+/**
+ * Payment Info column: distinguish upcoming due dates from last-known historical dates.
+ * Never treats a past date as an upcoming due date. Never presents $0.00 as a required payment
+ * unless a positive amount is actually known.
+ */
+export function formatPaymentDueValue(account: Account, today = new Date()): string {
   const due = account.next_payment_due_date;
-  if (!due) return "—";
-  const dateLabel = formatDateDisplay(due);
-  const stale = paymentDueIsStale(account);
   const amount = paymentDueAmount(account);
   const unavailable = paymentDueAmountUnavailable(account);
 
-  if (stale) {
-    if (unavailable || amount == null) return `Last known ${dateLabel} · Amount unavailable`;
-    return `Last known ${dateLabel} · ${formatCurrency(amount, account.currency)}`;
+  if (!due) {
+    if (amount != null && !unavailable) {
+      return `Amount ${formatCurrency(amount, account.currency)} · Due date unavailable`;
+    }
+    return "No payment data";
   }
-  if (unavailable) return `${dateLabel} · Amount unavailable`;
-  if (amount != null) return `${dateLabel} · ${formatCurrency(amount, account.currency)}`;
-  return dateLabel;
+
+  const dateLabel = formatPaymentInfoDate(due) ?? due;
+  const stale = paymentDueIsStale(account, today);
+  const days = daysUntilDue(due, today);
+  const money = amountPart(account);
+
+  if (stale || (days != null && days < 0)) {
+    return `Last known ${dateLabel} · ${money}`;
+  }
+  return `Due ${dateLabel} · ${money}`;
 }
