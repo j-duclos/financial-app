@@ -123,7 +123,7 @@ export default function SpendingTargets() {
       <div>
         <h1 className="text-lg font-semibold text-gray-900">Budget</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Monthly category budget from posted spending plus known upcoming scheduled amounts.
+          Set and track monthly spending by category.
         </p>
       </div>
       {isLoading ? (
@@ -161,8 +161,7 @@ export default function SpendingTargets() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
         <p className="flex-1 min-w-0 text-sm text-gray-600">
-          Set a monthly budget per category. Progress uses posted spending plus known future scheduled
-          transactions only.
+          Progress uses posted spending plus known future scheduled transactions only.
         </p>
         <button
           type="button"
@@ -172,14 +171,14 @@ export default function SpendingTargets() {
           }}
           className="shrink-0 self-end sm:self-auto rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Add limit
+          Add spending limit
         </button>
       </div>
 
       {targets.length === 0 && !isLoading && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-600">
           <p className="font-medium text-gray-900">No category budgets yet</p>
-          <p className="mt-1">Use Add limit to create one for an expense category.</p>
+          <p className="mt-1">Use Add spending limit to create one for an expense category.</p>
         </div>
       )}
 

@@ -28,4 +28,13 @@ describe("Budget page", () => {
     expect(source).not.toMatch(/sortBy/);
     expect(source).not.toMatch(/filterCategory/);
   });
+
+  it("uses a short subtitle, keeps progress copy, and labels the add CTA", () => {
+    expect(source).toMatch(/Set and track monthly spending by category\./);
+    expect(source).toMatch(/Progress uses posted spending plus known future scheduled transactions only\./);
+    expect(source).not.toMatch(/Monthly category budget from posted spending/);
+    expect(source).not.toMatch(/Set a monthly budget per category\./);
+    expect(source).toMatch(/Add spending limit/);
+    expect(source).not.toMatch(/>\s*Add limit\s*</);
+  });
 });
