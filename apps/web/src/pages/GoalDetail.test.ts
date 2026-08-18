@@ -10,8 +10,9 @@ const source = readFileSync(
 
 describe("Goal Details page", () => {
   it("shows a compact forecast summary with distinct target and projected dates", () => {
-    expect(source).toMatch(/goalForecastSummary/);
+    expect(source).toMatch(/goalDetailForecastTable/);
     expect(source).toMatch(/goalDetailProgressLine/);
+    expect(source).toMatch(/text-center/);
     expect(source).not.toMatch(/label="Completion"/);
     expect(source).not.toMatch(/goalProjectionLine/);
     expect(source).not.toMatch(/goalSuggestionLine/);
@@ -22,11 +23,13 @@ describe("Goal Details page", () => {
   it("uses canonical backend forecast fields for summary, chart, and status", () => {
     expect(source).toMatch(/getBucketDetail/);
     expect(source).toMatch(/\["bucket-detail", goalId, scenarioId\]/);
-    expect(source).toMatch(/goal\.monthly_required|goalForecastSummary/);
-    expect(source).toMatch(/current_contribution_rate|goalForecastSummary/);
+    expect(source).toMatch(/goalDetailForecastTable/);
+    expect(source).toMatch(/goalPerPaycheckNeeded/);
     expect(source).toMatch(/paceStatusLabel\(goal\?\.pace_status\)/);
     expect(source).toMatch(/data!\.forecast_growth/);
     expect(source).toMatch(/targetDate=\{goal\.target_date\}/);
+    expect(source).toMatch(/Projected balance/);
+    expect(source).toMatch(/Target amount/);
     expect(source).not.toMatch(/getBucketForecast/);
     expect(source).not.toMatch(/updateBucket/);
     expect(source).not.toMatch(/patchBucket/);
@@ -35,6 +38,8 @@ describe("Goal Details page", () => {
   it("moves scenario selection into the header and does not mutate the real goal", () => {
     expect(source).toMatch(/>Scenario</);
     expect(source).toMatch(/Current plan \(no scenario\)/);
+    expect(source).toMatch(/Per paycheck needed/);
+    expect(source).toMatch(/<table/);
     expect(source).toMatch(/scenario: scenarioId === "" \? undefined : Number\(scenarioId\)/);
     expect(source).not.toMatch(/Scenario impact/i);
     expect(source).not.toMatch(/forecast_scenarios/);

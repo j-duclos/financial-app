@@ -240,40 +240,43 @@ export function goalForecastSummary(goal: FinancialGoal): GoalForecastSummaryMet
   return rows;
 }
 
+/** Monthly gap for the Goals list card (shown beside the recommendation). */
+export function goalCardGapValue(goal: FinancialGoal): string | null {
+  if (goal.forecast_gap && parseFloat(goal.forecast_gap) > 0) {
+    return formatMonthlyAmount(goal.forecast_gap);
+  }
+  const needed = parseMoney(goal.monthly_required ?? goal.suggested_monthly) ?? 0;
+  const current = parseMoney(goal.current_contribution_rate ?? goal.contribution_pace_monthly) ?? 0;
+  const delta = needed - current;
+  if (needed > 0 && delta > 0.005) {
+    return formatMonthlyAmount(delta.toFixed(2));
+  }
+  return null;
+}
+
 /** Forecast figures shown on the main Goals card (no separate forecast modal). */
 export function goalCardMetrics(goal: FinancialGoal): GoalCardMetric[] {
   const rows: GoalCardMetric[] = [];
   const target = formatMonthYear(goal.target_date);
   if (target) {
-    rows.push({ label: "Target completion date", value: target });
+    rows.push({ label: "Target date", value: target });
   }
   const projected = formatMonthYear(goal.projected_completion_date);
   if (projected) {
-    rows.push({ label: "Projected completion date at current pace", value: projected });
-  }
-  const deposit = goalCurrentDepositValue(goal);
-  if (deposit) {
-    rows.push({ label: "Current deposit per paycheck", value: deposit });
-  }
-  const required = formatMonthlyAmount(goal.monthly_required ?? goal.suggested_monthly);
-  if (required) {
-    rows.push({ label: "Required to meet goal", value: required });
+    rows.push({ label: "Projected date", value: projected });
   }
   const pace = formatMonthlyAmount(goal.current_contribution_rate ?? goal.contribution_pace_monthly);
   if (pace) {
-    rows.push({ label: "Current pace", value: pace });
+    rows.push({ label: "Current monthly pace", value: pace });
   }
-  if (goal.suggested_biweekly && parseFloat(goal.suggested_biweekly) > 0) {
-    rows.push({
-      label: "Required per paycheck",
-      value: formatCurrency(goal.suggested_biweekly),
-    });
-  }
-  if (goal.forecast_gap && parseFloat(goal.forecast_gap) > 0) {
-    const gap = formatMonthlyAmount(goal.forecast_gap);
-    if (gap) {
-      rows.push({ label: "Gap", value: gap, emphasize: true });
-    }
+  const required = formatMonthlyAmount(goal.monthly_required ?? goal.suggested_monthly);
+  if (required) {
+    rows.push({ label: "Monthly needed", value: required });
   }
   return rows;
+}
+
+/** Goal Details header table — excludes per-paycheck (shown below the table). */
+export function goalDetailForecastTable(goal: FinancialGoal): GoalForecastSummaryMetric[] {
+  return goalForecastSummary(goal).filter((row) => row.label !== "Per paycheck needed");
 }

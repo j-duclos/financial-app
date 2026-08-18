@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import type { FinancialGoal } from "@budget-app/shared";
-import { GOAL_TYPE_ICONS, GOAL_TYPE_LABELS, parseProgressPercent } from "../../lib/goalDisplay";
+import { GOAL_TYPE_ICONS, parseProgressPercent } from "../../lib/goalDisplay";
 import {
+  goalCardGapValue,
   goalCardMetrics,
   goalFundedProgressLine,
   goalSuggestionLine,
@@ -36,23 +37,20 @@ export default function GoalCard({
   const pct = parseProgressPercent(goal.progress_percent);
   const suggestion = goalSuggestionLine(goal);
   const metrics = goalCardMetrics(goal);
+  const gap = goalCardGapValue(goal);
   const paceLabel = paceStatusLabel(goal.pace_status);
-  const warnings = goal.pace_warnings ?? [];
 
   return (
     <article className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-      <div className="flex justify-between gap-2 items-start">
-        <div className="min-w-0 flex-1">
-          <Link to={`/goals/${goal.id}`} className="group">
-            <h3 className="font-semibold text-gray-900 truncate group-hover:text-blue-700">
-              <span className="mr-1.5" aria-hidden>
-                {GOAL_TYPE_ICONS[goal.goal_type]}
-              </span>
-              {goal.name}
-            </h3>
-          </Link>
-          <p className="text-xs text-gray-500">{GOAL_TYPE_LABELS[goal.goal_type]}</p>
-        </div>
+      <div className="flex items-start justify-between gap-3">
+        <Link to={`/goals/${goal.id}`} className="group min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 truncate group-hover:text-blue-700">
+            <span className="mr-1.5" aria-hidden>
+              {GOAL_TYPE_ICONS[goal.goal_type]}
+            </span>
+            {goal.name}
+          </h3>
+        </Link>
         <div className="flex items-center gap-1 shrink-0">
           {paceLabel ? (
             <span
@@ -82,39 +80,30 @@ export default function GoalCard({
       <p className="text-sm font-medium text-gray-800">{goalFundedProgressLine(goal)}</p>
 
       {metrics.length > 0 ? (
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
           {metrics.map((row) => (
-            <div key={row.label}>
+            <div key={row.label} className="flex flex-col sm:block">
               <dt className="text-xs text-gray-500">{row.label}</dt>
-              <dd
-                className={
-                  row.emphasize ? "font-medium text-amber-800" : "font-medium text-gray-900"
-                }
-              >
-                {row.value}
-              </dd>
+              <dd className="font-medium text-gray-900">{row.value}</dd>
             </div>
           ))}
         </dl>
       ) : null}
 
-      {suggestion ? (
-        <p className="text-sm text-blue-800">
-          <span className="font-medium text-gray-700">Recommendation: </span>
-          {suggestion}
-        </p>
-      ) : null}
-
-      {warnings.length > 0 ? (
-        <ul className="text-xs text-amber-800 space-y-0.5">
-          {warnings.map((warning) => (
-            <li key={warning}>• {warning}</li>
-          ))}
-        </ul>
-      ) : null}
+      {(gap || suggestion) && (
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+          {gap ? <p className="font-medium text-amber-800">Gap: {gap}</p> : <span />}
+          {suggestion ? (
+            <p className="text-blue-800 sm:text-right">
+              <span className="font-medium text-gray-700">Recommendation: </span>
+              {suggestion}
+            </p>
+          ) : null}
+        </div>
+      )}
 
       {goal.milestones && goal.milestones.length > 0 && (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
+        <ul className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-gray-600">
           {goal.milestones.map((m) => (
             <li key={m.percent}>
               <span aria-hidden>{m.achieved ? "✔" : "○"}</span> {m.label}

@@ -9,9 +9,10 @@ import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { whatIfGoalPath } from "../lib/whatIfContext";
 import PlanningSubnav from "../components/PlanningSubnav";
 import {
+  goalDetailForecastTable,
   goalDetailFunding,
   goalDetailProgressLine,
-  goalForecastSummary,
+  goalPerPaycheckNeeded,
   paceStatusBadgeClass,
   paceStatusLabel,
 } from "../lib/goalInsights";
@@ -44,7 +45,7 @@ function GrowthChart({
   const targetCoord = targetMonth ? coords.find((c) => c.month === targetMonth) : undefined;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto text-blue-600" aria-hidden>
         <line
           x1={pad}
@@ -73,8 +74,36 @@ function GrowthChart({
         <span>{points[0]?.label}</span>
         <span>{points[points.length - 1]?.label}</span>
       </div>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+        <li className="flex items-center gap-1.5">
+          <span className="inline-block w-5 h-0.5 bg-blue-600 rounded" aria-hidden />
+          Projected balance
+        </li>
+        <li className="flex items-center gap-1.5">
+          <span
+            className="inline-block w-5 border-t border-dashed border-gray-400"
+            aria-hidden
+          />
+          Target amount
+        </li>
+        {targetCoord ? (
+          <li className="flex items-center gap-1.5">
+            <span
+              className="inline-block w-3 h-3 border-l border-dashed border-amber-500"
+              aria-hidden
+            />
+            Target date
+          </li>
+        ) : null}
+      </ul>
     </div>
   );
+}
+
+function forecastCellClass(tone?: "shortfall" | "surplus"): string {
+  if (tone === "shortfall") return "text-amber-800";
+  if (tone === "surplus") return "text-emerald-800";
+  return "text-gray-900";
 }
 
 export default function GoalDetail() {
@@ -100,7 +129,8 @@ export default function GoalDetail() {
 
   const goal = data?.goal;
   const pct = goal ? parseProgressPercent(goal.progress_percent) : 0;
-  const summary = goal ? goalForecastSummary(goal) : [];
+  const tableMetrics = goal ? goalDetailForecastTable(goal) : [];
+  const perPaycheckNeeded = goal ? goalPerPaycheckNeeded(goal) : null;
   const { account: fundingAccount, automatic: automaticFunding } = goal
     ? goalDetailFunding(goal)
     : { account: null, automatic: null };
@@ -143,47 +173,43 @@ export default function GoalDetail() {
       {goal && (
         <div className="space-y-4">
           <header className="bg-white rounded-lg border border-gray-200 p-4 sm:p-5 space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{goal.name}</h1>
-                  {paceLabel ? (
-                    <span
-                      className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${paceStatusBadgeClass(goal.pace_status)}`}
-                    >
-                      {paceLabel}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
-                  <div className="h-full rounded-full bg-blue-600" style={{ width: `${pct}%` }} />
-                </div>
-
-                <p className="text-base font-medium text-gray-800">{goalDetailProgressLine(goal)}</p>
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{goal.name}</h1>
+              {paceLabel ? (
+                <span
+                  className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${paceStatusBadgeClass(goal.pace_status)}`}
+                >
+                  {paceLabel}
+                </span>
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              {scenarios.length > 0 ? (
-                <label className="flex flex-col gap-1 text-sm min-w-[12rem]">
-                  <span className="text-xs text-gray-500">Scenario</span>
-                  <select
-                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"
-                    value={scenarioId}
-                    onChange={(e) =>
-                      setScenarioId(e.target.value === "" ? "" : Number(e.target.value))
-                    }
-                  >
-                    <option value="">Current plan (no scenario)</option>
-                    {scenarios.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+            <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+              <div className="h-full rounded-full bg-blue-600" style={{ width: `${pct}%` }} />
+            </div>
+
+            <p className="text-base font-medium text-gray-800 text-center">
+              {goalDetailProgressLine(goal)}
+            </p>
+
+            <div className="flex flex-wrap items-end justify-between gap-3 pt-1">
+              <label className="flex flex-col gap-1 text-sm min-w-[12rem]">
+                <span className="text-xs font-medium text-gray-700">Scenario</span>
+                <select
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"
+                  value={scenarioId}
+                  onChange={(e) =>
+                    setScenarioId(e.target.value === "" ? "" : Number(e.target.value))
+                  }
+                >
+                  <option value="">Current plan (no scenario)</option>
+                  {scenarios.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="flex flex-wrap gap-2 ml-auto">
                 <button
                   type="button"
@@ -201,25 +227,39 @@ export default function GoalDetail() {
               </div>
             </div>
 
-            {summary.length > 0 ? (
-              <dl className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-6 gap-y-3">
-                {summary.map((row) => (
-                  <div key={row.label}>
-                    <dt className="text-xs text-gray-500">{row.label}</dt>
-                    <dd
-                      className={
-                        row.tone === "shortfall"
-                          ? "text-sm font-medium text-amber-800"
-                          : row.tone === "surplus"
-                            ? "text-sm font-medium text-emerald-800"
-                            : "text-sm font-medium text-gray-900"
-                      }
-                    >
-                      {row.value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+            {tableMetrics.length > 0 ? (
+              <div className="overflow-x-auto border-t border-gray-100 pt-3">
+                <table className="w-full min-w-[32rem] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-500">
+                      {tableMetrics.map((row) => (
+                        <th key={row.label} className="pb-2 pr-4 font-normal whitespace-nowrap">
+                          {row.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      {tableMetrics.map((row) => (
+                        <td
+                          key={row.label}
+                          className={`pb-1 pr-4 font-medium whitespace-nowrap ${forecastCellClass(row.tone)}`}
+                        >
+                          {row.value}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {perPaycheckNeeded ? (
+              <div className="border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-500">Per paycheck needed</p>
+                <p className="text-lg font-semibold text-gray-900">{perPaycheckNeeded}</p>
+              </div>
             ) : null}
 
             {(fundingAccount || automaticFunding) && (
@@ -231,7 +271,7 @@ export default function GoalDetail() {
                   </div>
                 ) : null}
                 {automaticFunding ? (
-                  <div>
+                  <div className="sm:text-right">
                     <dt className="text-xs text-gray-500">Automatic funding</dt>
                     <dd className="font-medium text-gray-900">{automaticFunding}</dd>
                   </div>

@@ -11,11 +11,14 @@ const source = readFileSync(
 describe("GoalCard", () => {
   it("shows forecast metrics on the card instead of a Quick forecast action", () => {
     expect(source).toMatch(/goalCardMetrics/);
+    expect(source).toMatch(/goalCardGapValue/);
     expect(source).toMatch(/goalFundedProgressLine/);
     expect(source).toMatch(/Recommendation:/);
+    expect(source).toMatch(/Gap:/);
     expect(source).toMatch(/Try in What-If/);
     expect(source).toMatch(/Details/);
     expect(source).not.toMatch(/Quick forecast/);
     expect(source).not.toMatch(/onForecast/);
+    expect(source).not.toMatch(/pace_warnings/);
   });
 });

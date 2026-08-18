@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from django.utils import timezone
+
 from goals.models import GoalBucket, GoalContribution
 from goals.services import _decimal, _quantize_money
+from transactions.models import Transaction
 
 ACTIVE_BUCKET_STATUSES = (GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED)
 
@@ -48,8 +51,21 @@ def clear_goal_contribution_for_transaction(txn) -> None:
         sync_bucket_allocated_amount(bucket)
 
 
+def _eligible_for_linked_contribution(txn: Transaction) -> bool:
+    """Only posted history counts — not forecast/planned rows scheduled for later."""
+    today = timezone.localdate()
+    if txn.date > today:
+        return False
+    if txn.status == Transaction.Status.PLANNED:
+        return False
+    return True
+
+
 def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | None:
     """Mirror eligible ledger rows on the goal's linked account as contributions."""
+    if not _eligible_for_linked_contribution(txn):
+        clear_goal_contribution_for_transaction(txn)
+        return None
     bucket = active_bucket_for_linked_account(txn.account_id)
     if bucket is None:
         clear_goal_contribution_for_transaction(txn)

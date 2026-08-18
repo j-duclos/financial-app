@@ -739,7 +739,7 @@ def build_goal_detail(
             }
 
     contributions = (
-        GoalContribution.objects.filter(bucket=bucket)
+        GoalContribution.objects.filter(bucket=bucket, date__lte=today)
         .select_related("account", "transaction")
         .order_by("-date", "-id")[:100]
     )

@@ -20,6 +20,7 @@ from goals.forecast_insights import (
 )
 from goals.models import GoalBucket, GoalContribution, RuleAllocation
 from timeline.models import RecurringRule, Scenario, ScenarioRuleOverride
+from transactions.models import Transaction
 from transactions.services.posting import post_transaction
 
 User = get_user_model()
@@ -142,6 +143,38 @@ def test_goal_detail_endpoint(auth_client, bucket):
     assert data["goal"]["name"] == bucket.name
     assert data["goal"]["id"] == bucket.id
     assert len(data["contribution_history"]) <= 100
+
+
+def test_contribution_history_omits_future_planned_rows(user, savings, bucket, auth_client):
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    past = post_transaction(user, savings.id, today - timedelta(days=10), "Save", Decimal("200"))
+    record_contribution(
+        bucket,
+        transaction=past,
+        account_id=savings.id,
+        amount=Decimal("200"),
+        contrib_date=today - timedelta(days=10),
+        source=GoalContribution.Source.MANUAL,
+    )
+    future_date = today + timedelta(days=14)
+    future = post_transaction(user, savings.id, future_date, "Future save", Decimal("183.55"))
+    future.status = Transaction.Status.PLANNED
+    future.save(update_fields=["status", "updated_at"])
+    record_contribution(
+        bucket,
+        transaction=future,
+        account_id=savings.id,
+        amount=Decimal("183.55"),
+        contrib_date=future_date,
+        source=GoalContribution.Source.RULE,
+    )
+
+    data = auth_client.get(f"/api/buckets/{bucket.id}/detail/").json()
+    history_dates = {row["date"] for row in data["contribution_history"]}
+    assert (today - timedelta(days=10)).isoformat() in history_dates
+    assert future_date.isoformat() not in history_dates
 
 
 def test_per_paycheck_uses_weekly_schedule_not_biweekly(household, savings, bucket):

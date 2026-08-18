@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { FinancialGoal } from "@budget-app/shared";
 import {
+  goalCardGapValue,
   goalCardMetrics,
   goalCurrentDepositValue,
+  goalDetailForecastTable,
   goalDetailFunding,
   goalDetailProgressLine,
   goalForecastSummary,
@@ -111,17 +113,21 @@ describe("goalInsights", () => {
       })
     );
     const byLabel = Object.fromEntries(rows.map((row) => [row.label, row.value]));
-    expect(byLabel["Target completion date"]).toBe("Dec 2026");
-    expect(byLabel["Projected completion date at current pace"]).toBe("Aug 2029");
-    expect(byLabel["Current deposit per paycheck"]).toBe("$183.55/week");
-    expect(byLabel["Required to meet goal"]).toBe("$7,112.10/mo");
-    expect(byLabel["Current pace"]).toBe("$795.39/mo");
-    expect(byLabel["Required per paycheck"]).toBe("$3,282.51");
-    expect(byLabel.Gap).toBe("$6,316.71/mo");
+    expect(byLabel["Target date"]).toBe("Dec 2026");
+    expect(byLabel["Projected date"]).toBe("Aug 2029");
+    expect(byLabel["Current monthly pace"]).toBe("$795.39/mo");
+    expect(byLabel["Monthly needed"]).toBe("$7,112.10/mo");
+    expect(byLabel["Current deposit per paycheck"]).toBeUndefined();
+    expect(byLabel["Required per paycheck"]).toBeUndefined();
+    expect(byLabel.Gap).toBeUndefined();
+  });
+
+  it("formats gap for the card footer row", () => {
+    expect(goalCardGapValue(goal({ forecast_gap: "6316.71" }))).toBe("$6,316.71/mo");
   });
 
   it("builds a compact Goal Details forecast summary from backend fields", () => {
-    const rows = goalForecastSummary(
+    const rows = goalDetailForecastTable(
       goal({
         target_date: "2026-12-01",
         projected_completion_date: "2029-08-17",
@@ -138,7 +144,7 @@ describe("goalInsights", () => {
     expect(byLabel["Monthly needed"]).toBe("$7,112.10/mo");
     expect(byLabel["Current pace"]).toBe("$795.39/mo");
     expect(byLabel.Shortfall).toBe("$6,316.71/mo");
-    expect(byLabel["Per paycheck needed"]).toBe("$3,282.51");
+    expect(byLabel["Per paycheck needed"]).toBeUndefined();
     expect(byLabel.Surplus).toBeUndefined();
     expect(Object.keys(byLabel)).not.toContain("Completion");
   });
