@@ -270,6 +270,101 @@ def get_transfer_group_sibling(txn: Transaction) -> Transaction | None:
     )
 
 
+def resolve_transfer_sibling(
+    txn: Transaction, *, lookup_date: date | None = None
+) -> Transaction | None:
+    """Other leg of a Transfer, TransferGroup, or recurring-rule payment pair."""
+    try:
+        tr = txn.transfer_out
+        if tr.to_transaction_id and tr.to_transaction_id != txn.pk:
+            return tr.to_transaction
+    except Transfer.DoesNotExist:
+        pass
+    try:
+        tr = txn.transfer_in
+        if tr.from_transaction_id and tr.from_transaction_id != txn.pk:
+            return tr.from_transaction
+    except Transfer.DoesNotExist:
+        pass
+    sibling = get_transfer_group_sibling(txn)
+    if sibling is not None:
+        return sibling
+    if txn.rule_id is None:
+        return None
+    return find_rule_transfer_counterpart_txn(
+        rule_id=txn.rule_id,
+        exclude_txn_pk=txn.pk,
+        old_date=lookup_date or txn.date,
+        old_amount=txn.amount,
+        old_account_id=txn.account_id,
+        transfer_group_id=txn.transfer_group_id,
+    )
+
+
+def sync_transfer_pair_date(
+    txn: Transaction,
+    new_date: date,
+    *,
+    lookup_date: date | None = None,
+) -> Transaction | None:
+    """
+    Move the paired transfer/payment leg (and Transfer / TransferGroup) to ``new_date``.
+
+    A card payment is one event: changing Main's date must change Care Credit's date,
+    including when Plaid matching updates the bank-side posted date.
+    """
+    if new_date is None:
+        return None
+    sibling = resolve_transfer_sibling(txn, lookup_date=lookup_date)
+    if sibling is None:
+        return None
+    updates: dict = {}
+    if sibling.date != new_date:
+        updates["date"] = new_date
+    if sibling.planned_date != new_date:
+        updates["planned_date"] = new_date
+    if updates:
+        updates["updated_at"] = timezone.now()
+        Transaction.objects.filter(pk=sibling.pk).update(**updates)
+        sibling.date = new_date
+        sibling.planned_date = new_date
+    Transfer.objects.filter(
+        Q(from_transaction_id=txn.pk)
+        | Q(to_transaction_id=txn.pk)
+        | Q(from_transaction_id=sibling.pk)
+        | Q(to_transaction_id=sibling.pk)
+    ).update(date=new_date)
+    tg_ids = {tid for tid in (txn.transfer_group_id, sibling.transfer_group_id) if tid}
+    if tg_ids:
+        TransferGroup.objects.filter(pk__in=tg_ids).update(scheduled_date=new_date)
+    return sibling
+
+
+def align_linked_transfer_pair_dates(
+    *,
+    account_id: int | None = None,
+    account_ids: Iterable[int] | None = None,
+) -> int:
+    """Set every linked pair to the paying (outflow) leg's date. Returns pairs aligned."""
+    qs = Transaction.objects.filter(transfer_group_id__isnull=False, amount__lt=0)
+    ids = [i for i in (list(account_ids or []) + ([account_id] if account_id else [])) if i]
+    if ids:
+        qs = qs.filter(Q(account_id__in=ids) | Q(transfer_group__to_account_id__in=ids))
+    aligned = 0
+    seen: set[int] = set()
+    for out_leg in qs.select_related("transfer_group").iterator():
+        tg_id = out_leg.transfer_group_id
+        if tg_id in seen:
+            continue
+        seen.add(tg_id)
+        sibling = get_transfer_group_sibling(out_leg)
+        if sibling is None or sibling.date == out_leg.date:
+            continue
+        sync_transfer_pair_date(out_leg, out_leg.date)
+        aligned += 1
+    return aligned
+
+
 def _txn_has_transfer_bridge(txn: Transaction) -> bool:
     try:
         txn.transfer_out
@@ -774,15 +869,23 @@ def link_in_leg_from_existing_out_leg(
     payee_text = (payee if payee is not None else "").strip() or out_txn.payee or "Transfer"
     memo = (out_txn.memo or "")[:2000]
 
-    # Recurring rule materializations already have a +amount row on the card (same rule_id/date).
-    # Wire that row instead of INSERTing a second leg when the user PATCHes payment-to from Chase.
+    # Recurring rule materializations already have a +amount row on the card (same rule_id).
+    # Reuse that row even when the dates already drifted (Plaid posted a day or two later).
     reuse_in: Transaction | None = None
     if out_txn.rule_id:
-        for cand in Transaction.objects.filter(
-            account=to_account,
-            rule_id=out_txn.rule_id,
-            date=pay_dt,
-        ).exclude(pk=out_txn.pk):
+        cands = list(
+            Transaction.objects.filter(
+                account=to_account,
+                rule_id=out_txn.rule_id,
+                amount=amount,
+            ).exclude(pk=out_txn.pk)
+        )
+        same_day = [c for c in cands if c.date == pay_dt]
+        near = sorted(
+            [c for c in cands if abs((c.date - pay_dt).days) <= 7],
+            key=lambda c: abs((c.date - pay_dt).days),
+        )
+        for cand in same_day or near:
             try:
                 cand.transfer_in
             except Transfer.DoesNotExist:
@@ -805,6 +908,7 @@ def link_in_leg_from_existing_out_leg(
         if reuse_in is not None:
             Transaction.objects.filter(pk=reuse_in.pk).update(
                 amount=amount,
+                date=pay_dt,
                 payee=payee_text[:255],
                 memo=memo,
                 category_id=out_txn.category_id,
@@ -890,11 +994,19 @@ def link_out_leg_from_existing_in_leg(
 
     reuse_out: Transaction | None = None
     if in_txn.rule_id:
-        for cand in Transaction.objects.filter(
-            account=from_account,
-            rule_id=in_txn.rule_id,
-            date=pay_dt,
-        ).exclude(pk=in_txn.pk):
+        cands = list(
+            Transaction.objects.filter(
+                account=from_account,
+                rule_id=in_txn.rule_id,
+                amount=out_amount,
+            ).exclude(pk=in_txn.pk)
+        )
+        same_day = [c for c in cands if c.date == pay_dt]
+        near = sorted(
+            [c for c in cands if abs((c.date - pay_dt).days) <= 7],
+            key=lambda c: abs((c.date - pay_dt).days),
+        )
+        for cand in same_day or near:
             try:
                 cand.transfer_out
             except Transfer.DoesNotExist:
@@ -920,6 +1032,7 @@ def link_out_leg_from_existing_in_leg(
         if reuse_out is not None:
             Transaction.objects.filter(pk=reuse_out.pk).update(
                 amount=out_amount,
+                date=pay_dt,
                 payee=payee_text[:255],
                 memo=memo,
                 category_id=in_txn.category_id,

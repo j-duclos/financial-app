@@ -165,14 +165,22 @@ export function transactionAlreadyInCheckpoint(
   return txn.date === checkpointPeriodEnd && Boolean(txn.reconciled);
 }
 
-/** Drop unreconciled rows inside a closed reconcile period — already in opening bank balance. */
+/**
+ * Hide reconciled history through the last close.
+ * Keep unreconciled rows on the close date (same-day activity added after reconcile).
+ * Rows before the close are already in the checkpoint opening balance.
+ */
 export function filterPastTransactionsAfterReconcileClose(
   txns: Transaction[],
   lastReconcilePeriodEnd: string | null | undefined,
   _reconcileFloor?: string | null | undefined
 ): Transaction[] {
   if (!lastReconcilePeriodEnd) return txns;
-  return txns.filter((t) => t.date > lastReconcilePeriodEnd);
+  return txns.filter((t) => {
+    if (t.date > lastReconcilePeriodEnd) return true;
+    if (t.date < lastReconcilePeriodEnd) return false;
+    return !t.reconciled;
+  });
 }
 
 /** Upcoming projection window: today through today + selected forecast range (canonical day counts). */
@@ -824,7 +832,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   options?: {
     pastOpeningOverride?: number | null;
     todayBalanceOverride?: number | null;
-    /** When set, omit unreconciled rows on/before this date (hide-reconciled ledger only). */
+    /** When set, omit reconciled history on/before this date (hide-reconciled ledger only). */
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
     /**

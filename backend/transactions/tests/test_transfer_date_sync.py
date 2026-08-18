@@ -1019,3 +1019,128 @@ def test_patch_card_leg_date_moves_existing_bank_leg(auth_client, household):
     assert bank_leg.date == date(2026, 7, 30)
     assert bank_leg.transfer_group_id == card_leg.transfer_group_id
     assert bank_leg.transfer_group_id is not None
+
+
+@pytest.mark.django_db
+def test_patch_bank_date_moves_already_drifted_card_leg(auth_client, household):
+    """If Plaid already moved Chase, editing Main again must still drag Care Credit with it."""
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    out_leg = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 7, 27),
+        payee="Synchrony Bank CC PYMT",
+        amount=Decimal("-100.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 7, 25),
+        payee="Care Credit Pmt",
+        amount=Decimal("100.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("100.00"),
+        date=date(2026, 7, 25),
+        memo="",
+    )
+    from transactions.models import TransferGroup
+
+    tg = TransferGroup.objects.create(
+        household=household,
+        from_account=bank,
+        to_account=card,
+        amount=Decimal("100.00"),
+        scheduled_date=date(2026, 7, 25),
+        status=TransferGroup.Status.CLEARED,
+    )
+    Transaction.objects.filter(pk__in=[out_leg.pk, in_leg.pk]).update(transfer_group=tg)
+
+    r = auth_client.patch(
+        f"/api/transactions/{out_leg.id}/",
+        {"date": "2026-07-30"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    assert r.data.get("synced_to_account_id") == card.id
+
+    out_leg.refresh_from_db()
+    in_leg.refresh_from_db()
+    assert out_leg.date == date(2026, 7, 30)
+    assert in_leg.date == date(2026, 7, 30)
+
+
+@pytest.mark.django_db
+def test_align_linked_transfer_pair_dates_uses_bank_leg(household):
+    from transactions.models import TransferGroup
+    from transactions.services.posting import align_linked_transfer_pair_dates
+
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        currency="USD",
+    )
+    out_leg = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 7, 27),
+        payee="Synchrony",
+        amount=Decimal("-100.00"),
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 7, 25),
+        payee="Care Credit Pmt",
+        amount=Decimal("100.00"),
+        source=Transaction.Source.ACTUAL,
+    )
+    tg = TransferGroup.objects.create(
+        household=household,
+        from_account=bank,
+        to_account=card,
+        amount=Decimal("100.00"),
+        scheduled_date=date(2026, 7, 25),
+        status=TransferGroup.Status.CLEARED,
+    )
+    Transaction.objects.filter(pk__in=[out_leg.pk, in_leg.pk]).update(transfer_group=tg)
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("100.00"),
+        date=date(2026, 7, 25),
+        memo="",
+    )
+
+    assert align_linked_transfer_pair_dates(account_id=bank.id) == 1
+    in_leg.refresh_from_db()
+    out_leg.refresh_from_db()
+    assert out_leg.date == date(2026, 7, 27)
+    assert in_leg.date == date(2026, 7, 27)

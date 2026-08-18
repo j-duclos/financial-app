@@ -1487,6 +1487,7 @@ def repair_broken_transfer_payment_wiring(
         _create_missing_transfer_leg_for_group,
         _txn_has_transfer_bridge,
         _wire_transfer_legs,
+        align_linked_transfer_pair_dates,
     )
 
     if account_ids is not None:
@@ -1710,7 +1711,14 @@ def repair_broken_transfer_payment_wiring(
                         source_legs_created += 1
                         touched_households.add(tg.household_id)
 
-    if (rewired or source_legs_created or merged) and not dry_run:
+    aligned = 0
+    if not dry_run:
+        aligned = align_linked_transfer_pair_dates(account_ids=ids)
+        if aligned:
+            hid_qs = Account.objects.filter(pk__in=ids).values_list("household_id", flat=True)
+            touched_households.update(hid_qs)
+
+    if (rewired or source_legs_created or merged or aligned) and not dry_run:
         from common.services.cache import invalidate_financial_cache_for_household
         from core.timeline_cache import bump_timeline_cache_for_household
 
@@ -1722,6 +1730,7 @@ def repair_broken_transfer_payment_wiring(
         "rewired": rewired,
         "merged": merged,
         "source_legs_created": source_legs_created,
+        "dates_aligned": aligned,
     }
 
 
@@ -1805,8 +1814,13 @@ def apply_bank_fields_to_planned_from_import(planned: Transaction, imported: Tra
     update_fields: list[str] = []
     bank_date = imported.posted_date or imported.date
     if bank_date and planned.date != bank_date:
+        original_date = planned.date
         planned.date = bank_date
         update_fields.append("date")
+        if planned.pk:
+            from transactions.services.posting import sync_transfer_pair_date
+
+            sync_transfer_pair_date(planned, bank_date, lookup_date=original_date)
     if imported.posted_date or imported.date:
         posted = imported.posted_date or imported.date
         if planned.posted_date != posted:

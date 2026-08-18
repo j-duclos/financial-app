@@ -495,14 +495,25 @@ class TransactionViewSet(ModelViewSet):
             instance = Transaction.objects.select_related("account", "category").get(pk=instance.pk)
             other.refresh_from_db()
 
+        if (
+            "date" in serializer.validated_data
+            and old_date != serializer.validated_data["date"]
+        ):
+            from timeline.models import RecurringRuleSkip
+            from transactions.services.posting import sync_transfer_pair_date
+
+            skip_from = other
+            if skip_from is not None and skip_from.rule_id is not None:
+                RecurringRuleSkip.objects.get_or_create(rule_id=skip_from.rule_id, date=skip_from.date)
+            synced = sync_transfer_pair_date(
+                instance,
+                serializer.validated_data["date"],
+                lookup_date=old_date,
+            )
+            if synced is not None:
+                other = synced
+
         if other is not None:
-            if (
-                "date" in serializer.validated_data
-                and getattr(other, "rule_id", None) is not None
-                and other.date != serializer.validated_data["date"]
-            ):
-                from timeline.models import RecurringRuleSkip
-                RecurringRuleSkip.objects.get_or_create(rule_id=other.rule_id, date=other.date)
             if transfer_to_account_id is not None and transfer is None:
                 from timeline.models import RecurringRule
                 rule = RecurringRule.objects.filter(pk=instance.rule_id).first()
@@ -521,8 +532,6 @@ class TransactionViewSet(ModelViewSet):
                 if new_to.pk != instance.account_id and new_to.household_id == instance.account.household_id:
                     Transaction.objects.filter(pk=transfer.to_transaction_id).update(account=new_to)
             sync_fields = {}
-            if "date" in serializer.validated_data:
-                sync_fields["date"] = serializer.validated_data["date"]
             if "payee" in serializer.validated_data:
                 sync_fields["payee"] = serializer.validated_data["payee"]
             if "memo" in serializer.validated_data:
@@ -531,13 +540,10 @@ class TransactionViewSet(ModelViewSet):
                 sync_fields["amount"] = -serializer.validated_data["amount"]
             if sync_fields:
                 Transaction.objects.filter(pk=other.pk).update(**sync_fields)
-                if transfer is not None:
-                    if "date" in sync_fields:
-                        Transfer.objects.filter(pk=transfer.pk).update(date=sync_fields["date"])
-                    if "amount" in sync_fields:
-                        Transfer.objects.filter(pk=transfer.pk).update(
-                            amount=abs(serializer.validated_data["amount"])
-                        )
+                if transfer is not None and "amount" in sync_fields:
+                    Transfer.objects.filter(pk=transfer.pk).update(
+                        amount=abs(serializer.validated_data["amount"])
+                    )
             if (
                 "date" in serializer.validated_data
                 and old_date != serializer.validated_data["date"]

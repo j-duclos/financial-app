@@ -167,19 +167,19 @@ def _sync_planned_fields_to_counterpart(
     cleared: bool | None = None,
 ) -> None:
     counterpart = _find_rule_counterpart(txn)
-    if counterpart is None:
+    if counterpart is None and date_value is None:
         return
     updates: dict = {}
-    if date_value is not None:
-        updates["date"] = date_value
     if status is not None:
         updates["status"] = status
     if cleared is not None:
         updates["cleared"] = cleared
-    if updates:
+    if counterpart is not None and updates:
         Transaction.objects.filter(pk=counterpart.pk).update(**updates)
-    if txn.transfer_group_id and date_value is not None:
-        TransferGroup.objects.filter(pk=txn.transfer_group_id).update(scheduled_date=date_value)
+    if date_value is not None:
+        from transactions.services.posting import sync_transfer_pair_date
+
+        sync_transfer_pair_date(txn, date_value)
 
 
 def _invalidate_household_cache(txn: Transaction) -> None:
@@ -266,9 +266,11 @@ def move_scheduled_date(txn: Transaction, new_date: date, *, user=None) -> Trans
         txn.status = new_status
         txn.cleared = new_cleared
         txn.save(update_fields=["date", "planned_date", "status", "cleared", "updated_at"])
+        from transactions.services.posting import sync_transfer_pair_date
+
+        sync_transfer_pair_date(txn, new_date, lookup_date=old_date)
         _sync_planned_fields_to_counterpart(
             txn,
-            date_value=new_date,
             status=new_status,
             cleared=new_cleared,
         )

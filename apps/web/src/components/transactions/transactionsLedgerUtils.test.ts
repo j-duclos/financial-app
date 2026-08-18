@@ -136,14 +136,25 @@ describe("ledgerPastTransactionStart", () => {
 });
 
 describe("filterPastTransactionsAfterReconcileClose", () => {
-  it("does not re-walk statement rows already in opening bank balance", () => {
+  it("hides reconciled history through the close, not later activity", () => {
     const periodEnd = "2026-06-02";
     const txns = [
-      { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08" },
-      { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87" },
-      { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52" },
+      { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08", reconciled: true },
+      { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87", reconciled: true },
+      { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", reconciled: false },
     ] as never[];
     const kept = filterPastTransactionsAfterReconcileClose(txns, periodEnd, "2026-05-05");
+    expect(kept.map((t) => t.id)).toEqual([3]);
+  });
+
+  it("keeps unreconciled same-day rows added after reconciling through that date", () => {
+    const periodEnd = "2026-08-17";
+    const txns = [
+      { id: 1, date: "2026-08-16", payee: "Old", amount: "-10.00", reconciled: true },
+      { id: 2, date: "2026-08-17", payee: "Reconciled today", amount: "-20.00", reconciled: true },
+      { id: 3, date: "2026-08-17", payee: "Added after reconcile", amount: "-5.00", reconciled: false },
+    ] as never[];
+    const kept = filterPastTransactionsAfterReconcileClose(txns, periodEnd, periodEnd);
     expect(kept.map((t) => t.id)).toEqual([3]);
   });
 });
@@ -441,13 +452,13 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.future[0].balance).toBeCloseTo(-142.18, 2);
   });
 
-  it("does not double-count unreconciled rows inside a closed reconcile period", () => {
+  it("does not double-count reconciled rows inside a closed reconcile period", () => {
     const periodEnd = "2026-06-02";
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [
-        { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08", status: "CLEARED" } as never,
-        { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87", status: "CLEARED" } as never,
-        { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", status: "CLEARED" } as never,
+        { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08", status: "CLEARED", reconciled: true } as never,
+        { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87", status: "CLEARED", reconciled: true } as never,
+        { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", status: "CLEARED", reconciled: false } as never,
       ],
       [],
       "2026-06-27",
@@ -462,6 +473,33 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const sections = splitLedgerSections(rows);
     expect(sections.past).toHaveLength(1);
     expect(sections.past[0].balance).toBeCloseTo(-824.83, 2);
+  });
+
+  it("shows an unreconciled transaction added on the last reconcile date", () => {
+    const periodEnd = "2026-08-17";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        { id: 1, date: "2026-08-17", payee: "Coffee", amount: "-4.50", status: "CLEARED", reconciled: false } as never,
+      ],
+      [],
+      periodEnd,
+      0,
+      false,
+      {
+        pastOpeningOverride: 100,
+        lastReconcilePeriodEnd: periodEnd,
+        reconcileFloor: periodEnd,
+        checkpointPeriodEnd: periodEnd,
+      }
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.past).toHaveLength(1);
+    expect(sections.past[0].type).toBe("transaction");
+    if (sections.past[0].type === "transaction") {
+      expect(sections.past[0].txn.payee).toBe("Coffee");
+    }
+    expect(sections.past[0].balance).toBeCloseTo(95.5, 2);
+    expect(sections.today?.balance).toBeCloseTo(95.5, 2);
   });
 
   it("hide-reconciled credit opening preserves signed reconcile balance", () => {

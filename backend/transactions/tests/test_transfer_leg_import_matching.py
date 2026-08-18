@@ -120,6 +120,23 @@ class TransferLegImportMatchingTestCase(TestCase):
         self.assertEqual(visible_checking.count(), 1)
         self.assertEqual(visible_checking.first().pk, out_leg.pk)
 
+    def test_source_import_on_later_date_moves_card_leg(self):
+        """Chase posting a day later must move the Care Credit / card leg with it."""
+        out_leg, in_leg = self._create_payment()
+        posted = self.pay_date + timedelta(days=2)
+        src_imp = self._plaid_import(
+            account=self.checking,
+            amount=-self.amount,
+            plaid_id="pl-chase-later",
+            on_date=posted,
+        )
+        match_imported_transaction(src_imp)
+        out_leg.refresh_from_db()
+        in_leg.refresh_from_db()
+        self.assertEqual(out_leg.date, posted)
+        self.assertEqual(in_leg.date, posted)
+        self.assertEqual(out_leg.transfer_group.scheduled_date, posted)
+
     def test_source_import_second_matches_source_leg(self):
         out_leg, in_leg = self._create_payment()
         dest_imp = self._plaid_import(account=self.savor, amount=self.amount, plaid_id="pl-savor-2")
