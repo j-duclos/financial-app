@@ -209,7 +209,7 @@ export default function ForecastCardsSection({
                       currency={currency}
                       isCredit={isCredit}
                       rowSurface={forecastRowSeverityClasses({
-                        balance: row.balance,
+                        balance: row.balance ?? 0,
                         rowDate: row.txn.date,
                         minimumBuffer,
                         isCredit,

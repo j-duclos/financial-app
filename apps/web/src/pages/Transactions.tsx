@@ -1148,6 +1148,8 @@ export default function Transactions() {
       openingBalance,
       isCreditAccount,
       {
+        // Open at last checkpoint for both modes. Hide-reconciled omits sealed rows;
+        // show-reconciled keeps them with Balance "—" (no replay of sealed amounts).
         pastOpeningOverride: hasPastOpeningOverride ? pastOpeningOverride : null,
         lastReconcilePeriodEnd: hideReconciledPast
           ? reconcileSetupData?.last_reconcile_period_end ?? null
@@ -1155,7 +1157,9 @@ export default function Transactions() {
         reconcileFloor: hideReconciledPast
           ? reconcileSetupData?.min_start_date ?? null
           : null,
-        checkpointPeriodEnd: reconcileSetupData?.last_reconcile_period_end ?? null,
+        checkpointPeriodEnd: hasPastOpeningOverride
+          ? reconcileSetupData?.last_reconcile_period_end ?? null
+          : null,
       }
     );
   }, [

@@ -13,7 +13,8 @@ export type TransactionRowData = {
   payee: string;
   category: string;
   amount: number;
-  balance: number;
+  /** Null = sealed/reconciled history; display as — */
+  balance: number | null;
   isOutflow: boolean;
   source: { source?: string; rule_id?: number | null; type?: string; direction?: string; category_name?: string | null; description?: string };
   reconciled?: boolean;
@@ -67,7 +68,7 @@ type Props = {
 
 export function timelineRowToData(
   row: TimelineRow,
-  balance: number,
+  balance: number | null,
   keyPrefix: string
 ): TransactionRowData {
   const amt = parseFloat(row.amount);
@@ -98,7 +99,7 @@ export function timelineRowToData(
   };
 }
 
-export function transactionToData(txn: Transaction, balance: number): TransactionRowData {
+export function transactionToData(txn: Transaction, balance: number | null): TransactionRowData {
   const amt = parseFloat(txn.amount);
   return {
     id: `txn-${txn.id}`,
@@ -147,7 +148,8 @@ export default function TransactionRow({
   scheduleHighlightTitle,
 }: Props) {
   const fmtBal = (bal: number) => formatCurrency(bal, currency);
-  const creditClass = creditBalanceColorClass(isCredit, row.balance);
+  const creditClass =
+    row.balance == null ? "text-gray-400" : creditBalanceColorClass(isCredit, row.balance);
   const abs = Math.abs(row.amount);
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);
   const clickable = Boolean(onEdit) && !row.readOnly;
@@ -243,7 +245,9 @@ export default function TransactionRow({
       >
         {amountStr}
       </span>
-      <span className={`text-right font-medium tabular-nums text-xs ${creditClass}`}>{fmtBal(row.balance)}</span>
+      <span className={`text-right font-medium tabular-nums text-xs ${creditClass}`}>
+        {row.balance == null ? "—" : fmtBal(row.balance)}
+      </span>
       <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
         <TransactionContextMenu
           variant={variant}

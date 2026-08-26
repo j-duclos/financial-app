@@ -502,6 +502,91 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.today?.balance).toBeCloseTo(95.5, 2);
   });
 
+  it("show-reconciled displays sealed history with no balance and opens at checkpoint", () => {
+    const periodEnd = "2026-08-17";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 1,
+          date: "2026-08-13",
+          payee: "Papa Johns",
+          amount: "-27.13",
+          status: "RECONCILED",
+          reconciled: true,
+        } as never,
+        {
+          id: 2,
+          date: "2026-08-14",
+          payee: "Netflix",
+          amount: "-21.21",
+          status: "RECONCILED",
+          reconciled: true,
+        } as never,
+        {
+          id: 3,
+          date: "2026-08-18",
+          payee: "Sam's Club",
+          amount: "-10.01",
+          status: "CLEARED",
+          reconciled: false,
+        } as never,
+      ],
+      [],
+      "2026-08-25",
+      1855.53,
+      false,
+      {
+        pastOpeningOverride: 1828.4,
+        lastReconcilePeriodEnd: null,
+        checkpointPeriodEnd: periodEnd,
+      }
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.start?.balance).toBeCloseTo(1828.4, 2);
+    expect(sections.past).toHaveLength(3);
+    expect(sections.past[0].balance).toBeNull();
+    expect(sections.past[1].balance).toBeNull();
+    expect(sections.past[2].balance).toBeCloseTo(1818.39, 2);
+    expect(sections.today?.balance).toBeCloseTo(1818.39, 2);
+  });
+
+  it("hide-reconciled omits sealed rows and continues from checkpoint", () => {
+    const periodEnd = "2026-08-17";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 1,
+          date: "2026-08-13",
+          payee: "Papa Johns",
+          amount: "-27.13",
+          status: "RECONCILED",
+          reconciled: true,
+        } as never,
+        {
+          id: 2,
+          date: "2026-08-18",
+          payee: "Sam's Club",
+          amount: "-10.01",
+          status: "CLEARED",
+          reconciled: false,
+        } as never,
+      ],
+      [],
+      "2026-08-25",
+      0,
+      false,
+      {
+        pastOpeningOverride: 1828.4,
+        lastReconcilePeriodEnd: periodEnd,
+        checkpointPeriodEnd: periodEnd,
+      }
+    );
+    const sections = splitLedgerSections(rows);
+    // Sealed history omitted; only post-close activity applies on top of checkpoint.
+    expect(sections.past).toHaveLength(1);
+    expect(sections.past[0].balance).toBeCloseTo(1818.39, 2);
+  });
+
   it("hide-reconciled credit opening preserves signed reconcile balance", () => {
     expect(hideReconciledOpeningBalance(-1301.96, true)).toBeCloseTo(-1301.96, 2);
     expect(hideReconciledOpeningBalance(759.31, true)).toBeCloseTo(-759.31, 2);

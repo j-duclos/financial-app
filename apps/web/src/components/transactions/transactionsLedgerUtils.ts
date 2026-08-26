@@ -267,7 +267,8 @@ export function hintDateWithinLedgerRange(
 
 export type LedgerRow =
   | { type: "starting_balance"; balance: number }
-  | { type: "transaction"; txn: Transaction; balance: number }
+  /** `balance` is null for sealed/reconciled history shown with Show reconciled (display as —). */
+  | { type: "transaction"; txn: Transaction; balance: number | null }
   | { type: "today_balance"; balance: number }
   | { type: "transaction_from_timeline"; row: TimelineRow; balance: number }
   | { type: "recurring"; row: TimelineRow; balance: number };
@@ -836,8 +837,9 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     lastReconcilePeriodEnd?: string | null;
     reconcileFloor?: string | null;
     /**
-     * Completed reconciliation period end. Reconciled rows on/before this date are
-     * shown when requested but must not be added on top of the checkpoint opening.
+     * Completed reconciliation period end. Rows already sealed into that checkpoint
+     * are listed when Show reconciled is on, but Balance shows "—" and their amounts
+     * are not reapplied on top of pastOpeningOverride.
      */
     checkpointPeriodEnd?: string | null;
   }
@@ -868,10 +870,13 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   for (const txn of pastTxns) {
     const amt = signedTransactionLedgerAmount(txn);
     if (Number.isNaN(amt)) continue;
-    if (!transactionAlreadyInCheckpoint(txn, checkpointPeriodEnd)) {
+    const sealed = transactionAlreadyInCheckpoint(txn, checkpointPeriodEnd);
+    if (!sealed) {
       running = applyTimelineAmountToBalance(running, amt, isCredit);
     }
-    rows.push({ type: "transaction", txn, balance: running });
+    // Sealed history is already inside the checkpoint opening — show "—" instead of
+    // replaying or freezing a running total through those rows.
+    rows.push({ type: "transaction", txn, balance: sealed ? null : running });
   }
 
   const todayBalance =
@@ -942,7 +947,7 @@ export function lowestProjectedFromLedgerFuture(
     } else if (row.type === "transaction") {
       rowDate = row.txn.date;
     }
-    if (!rowDate) continue;
+    if (!rowDate || row.balance == null) continue;
     if (result === null || row.balance < result.balance) {
       result = { balance: row.balance, date: rowDate };
     }
@@ -965,7 +970,7 @@ export function firstNegativeFromLedgerFuture(
   future: LedgerRow[]
 ): { balance: number; date: string } | null {
   for (const row of future) {
-    if (row.balance >= 0) continue;
+    if (row.balance == null || row.balance >= 0) continue;
     const rowDate = ledgerFutureRowDate(row);
     if (!rowDate) continue;
     return { balance: row.balance, date: rowDate };

@@ -1344,6 +1344,33 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
     return best
 
 
+def _confirm_transfer_counterpart_after_leg_match(leg: Transaction) -> None:
+    """
+    When one side of a card payment is bank-confirmed, move and clear the other leg.
+
+    Otherwise Chase stays PLANNED on the schedule date while Quicksilver shows the
+    posted payment — the Main debit never appears in Recent Transactions.
+    """
+    from django.utils import timezone
+
+    from transactions.services.posting import get_transfer_group_sibling, sync_transfer_pair_date
+
+    sync_transfer_pair_date(leg, leg.date)
+    sibling = get_transfer_group_sibling(leg)
+    if sibling is None:
+        return
+    updates: dict = {}
+    if sibling.date != leg.date:
+        updates["date"] = leg.date
+        updates["planned_date"] = leg.date
+    if sibling.status == Transaction.Status.PLANNED:
+        updates["status"] = Transaction.Status.CLEARED
+        updates["cleared"] = True
+    if updates:
+        updates["updated_at"] = timezone.now()
+        Transaction.objects.filter(pk=sibling.pk).update(**updates)
+
+
 def apply_import_fields_to_transfer_leg(leg: Transaction, imported: Transaction) -> list[str]:
     """Copy bank/Plaid metadata onto the surviving transfer/payment leg."""
     update_fields = apply_bank_fields_to_planned_from_import(leg, imported)
@@ -1376,6 +1403,7 @@ def merge_import_into_transfer_payment_leg(imported: Transaction, leg: Transacti
         if imported.pk == leg.pk:
             update_fields = apply_import_fields_to_transfer_leg(leg, imported)
             leg.save(update_fields=[*update_fields, "updated_at"])
+            _confirm_transfer_counterpart_after_leg_match(leg)
             tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
             if tg:
                 _refresh_transfer_group_status(tg)
@@ -1398,6 +1426,7 @@ def merge_import_into_transfer_payment_leg(imported: Transaction, leg: Transacti
             if "plaid_transaction_id" not in update_fields:
                 update_fields.append("plaid_transaction_id")
         leg.save(update_fields=[*update_fields, "updated_at"])
+        _confirm_transfer_counterpart_after_leg_match(leg)
         if imported.source == Transaction.Source.ACTUAL and imported.pk != leg.pk:
             from transactions.services.posting import _delete_transaction_cascade
 

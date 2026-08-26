@@ -137,6 +137,35 @@ class TransferLegImportMatchingTestCase(TestCase):
         self.assertEqual(in_leg.date, posted)
         self.assertEqual(out_leg.transfer_group.scheduled_date, posted)
 
+    def test_dest_import_moves_and_clears_source_leg(self):
+        """Card-side Capital One credit must clear the Chase paying leg into Recent."""
+        from transactions.models import Transaction as Txn
+
+        out_leg, in_leg = self._create_payment()
+        # Simulate a still-scheduled Chase leg after the card credit already posted.
+        Transaction.objects.filter(pk=out_leg.pk).update(
+            status=Txn.Status.PLANNED,
+            cleared=False,
+            date=self.pay_date + timedelta(days=2),
+            planned_date=self.pay_date + timedelta(days=2),
+        )
+        out_leg.refresh_from_db()
+        self.assertEqual(out_leg.status, Txn.Status.PLANNED)
+        posted = self.pay_date
+        dest_imp = self._plaid_import(
+            account=self.savor,
+            amount=self.amount,
+            plaid_id="pl-savor-posted-early",
+            on_date=posted,
+        )
+        match_imported_transaction(dest_imp)
+        out_leg.refresh_from_db()
+        in_leg.refresh_from_db()
+        self.assertEqual(in_leg.date, posted)
+        self.assertEqual(out_leg.date, posted)
+        self.assertEqual(out_leg.status, Txn.Status.CLEARED)
+        self.assertTrue(out_leg.cleared)
+
     def test_source_import_second_matches_source_leg(self):
         out_leg, in_leg = self._create_payment()
         dest_imp = self._plaid_import(account=self.savor, amount=self.amount, plaid_id="pl-savor-2")
