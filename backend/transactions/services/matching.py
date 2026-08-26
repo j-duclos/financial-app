@@ -1344,12 +1344,20 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
     return best
 
 
+def _leg_is_bank_confirmed(leg: Transaction) -> bool:
+    """True when this transfer leg was confirmed by a bank/Plaid import."""
+    if (leg.plaid_transaction_id or "").strip():
+        return True
+    return leg.import_match_status == Transaction.ImportMatchStatus.MATCHED
+
+
 def _confirm_transfer_counterpart_after_leg_match(leg: Transaction) -> None:
     """
     When one side of a card payment is bank-confirmed, move and clear the other leg.
 
     Otherwise Chase stays PLANNED on the schedule date while Quicksilver shows the
-    posted payment — the Main debit never appears in Recent Transactions.
+    posted payment — the Main debit never appears in Recent Transactions, or it
+    stays marked as a bare scheduled rule (calendar icon) instead of imported.
     """
     from django.utils import timezone
 
@@ -1366,6 +1374,15 @@ def _confirm_transfer_counterpart_after_leg_match(leg: Transaction) -> None:
     if sibling.status == Transaction.Status.PLANNED:
         updates["status"] = Transaction.Status.CLEARED
         updates["cleared"] = True
+    if not sibling.cleared:
+        updates["cleared"] = True
+    # Card credit confirmations often arrive without a Chase debit import. Mark the
+    # paying leg MATCHED so the ledger shows Imported, not Scheduled automation.
+    if (
+        _leg_is_bank_confirmed(leg)
+        and sibling.import_match_status != Transaction.ImportMatchStatus.MATCHED
+    ):
+        updates["import_match_status"] = Transaction.ImportMatchStatus.MATCHED
     if updates:
         updates["updated_at"] = timezone.now()
         Transaction.objects.filter(pk=sibling.pk).update(**updates)

@@ -1,31 +1,34 @@
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
-import { useAuth } from "@/context/AuthContext";
+import { ActivityIndicator, View } from "react-native";
+import { useAuth } from "@/features/auth";
+import { useTheme } from "@/theme";
 
 export default function Index() {
   const { auth } = useAuth();
   const router = useRouter();
+  const theme = useTheme();
 
   useEffect(() => {
-    if (auth.loading) return;
-    if (auth.access) {
-      router.replace("/(tabs)");
+    if (auth.initializing) return;
+    if (auth.isAuthenticated) {
+      router.replace("/(app)/(tabs)");
     } else {
       router.replace("/(auth)/login");
     }
-  }, [auth.loading, auth.access]);
+  }, [auth.initializing, auth.isAuthenticated, router]);
 
-  if (auth.loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
-  return null;
+  return (
+    <View
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.colors.background,
+      }}
+      accessibilityLabel="Loading"
+    >
+      <ActivityIndicator size="large" color={theme.colors.tint} />
+    </View>
+  );
 }
-
-const styles = StyleSheet.create({
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-});

@@ -105,7 +105,7 @@ async function requestInner<T>(
       callerSignal.addEventListener("abort", () => controller.abort(), { once: true });
     }
   }
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const method = (init.method ?? "GET").toUpperCase();
   const perfOn = isPerfLoggingEnabled();
   const perfStarted = perfOn ? performance.now() : 0;
@@ -129,7 +129,7 @@ async function requestInner<T>(
     }
     throw err;
   } finally {
-    window.clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
 
   if (perfOn) {

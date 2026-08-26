@@ -5,3 +5,5 @@ backend/.env.render
 backend/.venv
 backend/test_db.sqlite3
 scripts/.render-env-export
+apps/mobile/.env
+apps/mobile/.env.local

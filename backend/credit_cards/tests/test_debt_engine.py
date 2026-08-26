@@ -86,6 +86,33 @@ def test_simulate_snowball_order(user, card_a, card_b):
 
 
 @pytest.mark.django_db
+def test_card_priority_reason_metadata(user, card_a, card_b):
+    _debt(card_a, user, Decimal("2000"))
+    _debt(card_b, user, Decimal("300"))
+    avalanche = simulate_household_debt(
+        [card_a, card_b],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("100"),
+    )
+    first = next(c for c in avalanche["cards"] if c["payoff_order"] == 1)
+    assert first["priority_reason"]["code"] == "highest_apr"
+    assert "APR" in first["priority_reason"]["label"]
+
+    snowball = simulate_household_debt(
+        [card_a, card_b],
+        strategy="snowball",
+        mode="aggressive",
+        extra_monthly=Decimal("100"),
+    )
+    snow_first = next(c for c in snowball["cards"] if c["payoff_order"] == 1)
+    assert snow_first["priority_reason"]["code"] == "lowest_balance"
+
+    second = next(c for c in avalanche["cards"] if c["payoff_order"] == 2)
+    assert second["priority_reason"]["code"] == "next_in_plan"
+
+
+@pytest.mark.django_db
 def test_empty_when_no_debt(user, card_a):
     plan = simulate_household_debt([card_a], strategy="avalanche", mode="survival")
     assert plan["total_debt"] == "0.00"

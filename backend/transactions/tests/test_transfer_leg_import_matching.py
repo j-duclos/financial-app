@@ -107,12 +107,14 @@ class TransferLegImportMatchingTestCase(TestCase):
         self.assertEqual(visible.count(), 1)
         self.assertEqual(visible.first().pk, in_leg.pk)
 
-    def test_source_leg_remains_pending_when_dest_imports_first(self):
+    def test_source_leg_marked_matched_when_dest_imports_first(self):
+        """Card-side import confirms the Chase paying leg without a Chase debit import."""
         out_leg, in_leg = self._create_payment()
         imp = self._plaid_import(account=self.savor, amount=self.amount, plaid_id="pl-savor-only")
         match_imported_transaction(imp)
         out_leg.refresh_from_db()
-        self.assertNotEqual(out_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertEqual(out_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        # Plaid id stays on the card account — do not copy across accounts.
         self.assertEqual(out_leg.plaid_transaction_id or "", "")
         visible_checking = ledger_visible_transactions(
             Transaction.objects.filter(account=self.checking, amount=-self.amount)
@@ -165,6 +167,8 @@ class TransferLegImportMatchingTestCase(TestCase):
         self.assertEqual(out_leg.date, posted)
         self.assertEqual(out_leg.status, Txn.Status.CLEARED)
         self.assertTrue(out_leg.cleared)
+        self.assertEqual(out_leg.import_match_status, Txn.ImportMatchStatus.MATCHED)
+        self.assertEqual(out_leg.plaid_transaction_id or "", "")
 
     def test_source_import_second_matches_source_leg(self):
         out_leg, in_leg = self._create_payment()
@@ -188,7 +192,8 @@ class TransferLegImportMatchingTestCase(TestCase):
             self._plaid_import(account=self.savor, amount=self.amount, plaid_id="pl-in-both")
         )
         tg = TransferGroup.objects.get(pk=tg_id)
-        self.assertEqual(tg.status, TransferGroup.Status.PARTIALLY_MATCHED)
+        # Dest import also marks the source leg MATCHED (counterpart confirm).
+        self.assertEqual(tg.status, TransferGroup.Status.MATCHED)
         match_imported_transaction(
             self._plaid_import(account=self.checking, amount=-self.amount, plaid_id="pl-out-both")
         )

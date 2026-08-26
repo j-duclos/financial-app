@@ -333,7 +333,7 @@ class TransactionViewSet(ModelViewSet):
     permission_classes = [IsHouseholdMember]
     pagination_class = TransactionPagination
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["account", "category"]
+    filterset_fields = ["account", "category", "rule_id"]
     ordering_fields = ["date", "id", "amount"]
     ordering = ["-date", "-id"]
 
@@ -370,6 +370,10 @@ class TransactionViewSet(ModelViewSet):
         show_reconciled = (self.request.query_params.get("show_reconciled") or "").lower()
         include_reconciled_after = self.request.query_params.get("include_reconciled_after")
         reconciled = self.request.query_params.get("reconciled")
+        search = (self.request.query_params.get("search") or "").strip()
+
+        if search:
+            qs = qs.filter(Q(payee__icontains=search) | Q(memo__icontains=search))
 
         if show_reconciled in ("true", "1", "yes"):
             rec_after = include_reconciled_after or date_after

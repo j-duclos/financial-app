@@ -1,58 +1,70 @@
 import { useState } from "react";
+import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
 import { router } from "expo-router";
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { useAuth } from "@/context/AuthContext";
+import { Button, Screen, TextField } from "@/components/ui";
+import { useAuth } from "@/features/auth";
+import { describeApiError } from "@/services/api";
+import { useTheme } from "@/theme";
 
-export default function Register() {
+export default function RegisterScreen() {
+  const theme = useTheme();
+  const { register } = useAuth();
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const { register } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit() {
+    if (submitting) return;
     setError("");
+    if (!username.trim() || !password) {
+      setError("Username and password are required.");
+      return;
+    }
+    setSubmitting(true);
     try {
-      await register(username, password);
-      router.replace("/(tabs)");
+      await register(username, password, email.trim() || undefined);
+      router.replace("/(app)/(tabs)");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Registration failed");
+      setError(describeApiError(e));
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Sign up</Text>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <TextInput
-        style={styles.input}
-        placeholder="Username"
-        value={username}
-        onChangeText={setUsername}
-        autoCapitalize="none"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <TouchableOpacity style={styles.button} onPress={handleSubmit}>
-        <Text style={styles.buttonText}>Sign up</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={() => router.back()}>
-        <Text style={styles.link}>Back to login</Text>
-      </TouchableOpacity>
-    </View>
+    <Screen>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1, justifyContent: "center" }}
+      >
+        <Text style={{ color: theme.colors.text, ...theme.typography.title, textAlign: "center", marginBottom: 16 }}>
+          Create account
+        </Text>
+        {error ? (
+          <Text style={{ color: theme.colors.critical, marginBottom: 12, textAlign: "center" }}>{error}</Text>
+        ) : null}
+        <TextField
+          label="Username"
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <TextField
+          label="Email (optional)"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+        <TextField label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+        <Button label="Sign up" onPress={() => void handleSubmit()} loading={submitting} />
+        <View style={{ marginTop: 16 }}>
+          <Button label="Back to sign in" variant="ghost" onPress={() => router.back()} />
+        </View>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", padding: 24 },
-  title: { fontSize: 24, fontWeight: "bold", marginBottom: 24, textAlign: "center" },
-  error: { color: "red", marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 12, marginBottom: 12 },
-  button: { backgroundColor: "#2563eb", padding: 14, borderRadius: 8, marginTop: 8 },
-  buttonText: { color: "#fff", textAlign: "center", fontWeight: "600" },
-  link: { color: "#2563eb", textAlign: "center", marginTop: 16 },
-});

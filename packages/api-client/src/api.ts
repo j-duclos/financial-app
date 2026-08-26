@@ -609,23 +609,27 @@ export async function deleteCategory(id: number): Promise<void> {
 export async function listTransactions(params?: {
   account?: number;
   category?: number;
+  rule_id?: number;
   date_after?: string;
   date_before?: string;
   reconciled?: boolean;
   show_reconciled?: boolean;
   include_reconciled_after?: string;
+  search?: string;
   page?: number;
   page_size?: number;
 }): Promise<PaginatedResponse<Transaction>> {
   const q: Record<string, string> = {};
   if (params?.account != null) q.account = String(params.account);
   if (params?.category != null) q.category = String(params.category);
+  if (params?.rule_id != null) q.rule_id = String(params.rule_id);
   if (params?.date_after) q.date_after = params.date_after;
   if (params?.date_before) q.date_before = params.date_before;
   if (params?.reconciled === true) q.reconciled = "true";
   if (params?.reconciled === false) q.reconciled = "false";
   if (params?.show_reconciled === true) q.show_reconciled = "true";
   if (params?.include_reconciled_after) q.include_reconciled_after = params.include_reconciled_after;
+  if (params?.search?.trim()) q.search = params.search.trim();
   if (params?.page != null) q.page = String(params.page);
   if (params?.page_size != null) q.page_size = String(params.page_size);
   q._ = String(Date.now());

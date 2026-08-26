@@ -5,13 +5,21 @@
     "apps/*",
     "packages/*"
   ],
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
   "scripts": {
     "postinstall": "node scripts/patch-react-plaid-link.mjs",
-  "dev:web": "npm run dev -w @budget-app/web",
-  "build:web": "npm run build:deploy -w @budget-app/web",
-  "build:django-static": "npm run build:deploy -w @budget-app/web && rm -rf backend/frontend_dist && mkdir -p backend/frontend_dist && cp -r apps/web/dist/* backend/frontend_dist/",
-  "serve:web": "npm run build:web && npm run preview -w @budget-app/web",
-    "dev:mobile": "npm run start -w @budget-app/mobile",
+    "dev:web": "npm run dev -w @budget-app/web",
+    "build:web": "npm run build:deploy -w @budget-app/web",
+    "build:django-static": "npm run build:deploy -w @budget-app/web && rm -rf backend/frontend_dist && mkdir -p backend/frontend_dist && cp -r apps/web/dist/* backend/frontend_dist/",
+    "serve:web": "npm run build:web && npm run preview -w @budget-app/web",
+    "dev:mobile": "npm run start -w @budget-app/mobile -- --clear",
     "generate:api": "npm run generate -w @budget-app/api-client"
   }
 }

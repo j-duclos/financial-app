@@ -455,6 +455,7 @@ def simulate_household_debt(
         loop.payoff_order,
         today,
         loop.debt_free_date,
+        strategy=strategy,
         planned_monthly_payments=loop.first_month_planned,
         balance_by_account=balance_by_account,
     )
@@ -561,6 +562,43 @@ def _household_util_from_balances(
     return _quantize(owed / limits * Decimal("100"))
 
 
+def _card_priority_reason(
+    strategy: str,
+    payoff_order_rank: int | None,
+    opening: "CardState | None",
+) -> dict[str, str] | None:
+    """Canonical prioritization explanation for mobile/web clients."""
+    if payoff_order_rank is None or opening is None:
+        return None
+    if payoff_order_rank == 1:
+        if strategy == "snowball":
+            return {
+                "code": "lowest_balance",
+                "label": "Smallest balance — snowball strategy pays this first",
+            }
+        if strategy == "utilization_target":
+            util = _money(opening.utilization)
+            return {
+                "code": "highest_utilization",
+                "label": (
+                    f"Highest utilization ({util}%) — credit score strategy pays this first"
+                ),
+            }
+        if strategy == "custom":
+            return {
+                "code": "custom_priority",
+                "label": "Your top priority in custom order",
+            }
+        return {
+            "code": "highest_apr",
+            "label": f"Highest APR ({_money(opening.apr)}%) — avalanche strategy pays this first",
+        }
+    return {
+        "code": "next_in_plan",
+        "label": "Next in payoff order after higher-priority debts",
+    }
+
+
 def _build_card_summaries(
     all_cards: list[Account],
     opening_states: list[CardState],
@@ -568,6 +606,7 @@ def _build_card_summaries(
     today: date,
     debt_free_date: date | None,
     *,
+    strategy: str = "avalanche",
     planned_monthly_payments: dict[int, Decimal] | None = None,
     balance_by_account: dict | None = None,
 ) -> list[dict[str, Any]]:
@@ -600,6 +639,8 @@ def _build_card_summaries(
             starting_balance=owed,
         )
         months_remaining = single.get("months_to_payoff") if single.get("payoff_possible") else None
+        rank = order_rank.get(card.pk)
+        priority_reason = _card_priority_reason(strategy, rank, opening)
 
         summaries.append(
             {
@@ -615,7 +656,8 @@ def _build_card_summaries(
                 "months_remaining": months_remaining,
                 "total_projected_interest": single.get("total_interest"),
                 "interest_this_month": _money(calculate_monthly_interest(card, owed)),
-                "payoff_order": order_rank.get(card.pk),
+                "payoff_order": rank,
+                "priority_reason": priority_reason,
                 "promotional_apr": (
                     str(card.promotional_apr) if card.promotional_apr is not None else None
                 ),

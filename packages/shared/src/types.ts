@@ -226,6 +226,18 @@ export interface PayoffStrategyComparison {
 export type DebtPayoffStrategy = "avalanche" | "snowball" | "utilization_target" | "custom";
 export type DebtPayoffMode = "survival" | "aggressive" | "credit_score" | "balanced";
 
+export type DebtPayoffPriorityReasonCode =
+  | "highest_apr"
+  | "lowest_balance"
+  | "highest_utilization"
+  | "custom_priority"
+  | "next_in_plan";
+
+export interface DebtPayoffCardPriorityReason {
+  code: DebtPayoffPriorityReasonCode;
+  label: string;
+}
+
 export interface DebtPayoffCardSummary {
   account_id: number;
   name: string;
@@ -240,6 +252,7 @@ export interface DebtPayoffCardSummary {
   total_projected_interest: string | null;
   interest_this_month: string;
   payoff_order: number | null;
+  priority_reason?: DebtPayoffCardPriorityReason | null;
   promotional_apr: string | null;
   promotional_end_date: string | null;
   autopay_enabled: boolean;
