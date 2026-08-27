@@ -29,10 +29,12 @@ type Options = {
   forecastReady: boolean;
   /** Account posted/available balance — anchors Pending/Upcoming when Recent has no Bal. */
   postedLedgerAnchor?: number | null;
+  /** Aligns canonical forecast cache key with Home when present. */
+  householdId?: number | null;
 };
 
 export function useTransactionsData(filters: TransactionFilters, options: Options) {
-  const { forecastDays, forecastReady, postedLedgerAnchor = null } = options;
+  const { forecastDays, forecastReady, postedLedgerAnchor = null, householdId = null } = options;
   const debouncedSearch = useDebouncedValue(filters.search, 350);
   const hideReconciledPast = !filters.showReconciled;
   const wantsTimeline = needsTimelineProjection(filters);
@@ -105,13 +107,41 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     staleTime: 30_000,
   });
 
+  const historyTransactions = useMemo(
+    () => historyQuery.data?.pages.flatMap((p) => p.results) ?? [],
+    [historyQuery.data?.pages]
+  );
+
+  /** Posted Recent ending Bal — passed to timeline as ledger_anchor for backend balance_after. */
+  const ledgerAnchor = useMemo(() => {
+    for (let i = historyTransactions.length - 1; i >= 0; i--) {
+      const txn = historyTransactions[i];
+      if (txn.running_balance != null && String(txn.running_balance).trim() !== "") {
+        return String(txn.running_balance);
+      }
+    }
+    if (postedLedgerAnchor != null && Number.isFinite(postedLedgerAnchor)) {
+      return postedLedgerAnchor.toFixed(2);
+    }
+    return null;
+  }, [historyTransactions, postedLedgerAnchor]);
+
+  const historySettled = historyQuery.isFetched || historyQuery.isError;
+  const timelineEnabled =
+    forecastReady &&
+    wantsTimeline &&
+    filters.accountId != null &&
+    (historySettled || postedLedgerAnchor != null);
+
   const timelineQuery = useQuery({
     queryKey: transactionQueryKeys.timeline(
       timelineQueryParams({
         start: projectionRange.start,
         end: projectionRange.end,
         accountId: filters.accountId,
+        householdId,
         hideReconciledPast,
+        ledgerAnchor,
       })
     ),
     queryFn: () =>
@@ -120,16 +150,13 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
         end: projectionRange.end,
         as_of: todayStr(),
         account_id: filters.accountId ?? undefined,
+        household_id: householdId ?? undefined,
         exclude_reconciled_past: hideReconciledPast,
+        ledger_anchor: ledgerAnchor,
       }),
-    enabled: forecastReady && wantsTimeline && filters.accountId != null,
+    enabled: timelineEnabled,
     staleTime: 60_000,
   });
-
-  const historyTransactions = useMemo(
-    () => historyQuery.data?.pages.flatMap((p) => p.results) ?? [],
-    [historyQuery.data?.pages]
-  );
 
 
   const balanceMap = useMemo(
@@ -191,7 +218,6 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
         isSearchMode,
         recentRangeLabel: recentRangeLabel(filters.timeFilter),
         upcomingRangeLabel: upcomingRangeLabel(forecastDays),
-        postedLedgerAnchor,
       }),
     [
       upcoming,
@@ -204,7 +230,6 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
       isSearchMode,
       filters.timeFilter,
       forecastDays,
-      postedLedgerAnchor,
     ]
   );
 

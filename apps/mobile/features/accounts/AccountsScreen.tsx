@@ -86,7 +86,7 @@ export function AccountsScreen() {
         >
           <StatusChip label="Needs attention" tone="warning" />
           <Pressable
-            onPress={() => router.replace("/accounts")}
+            onPress={() => router.replace("/(app)/(tabs)/accounts")}
             accessibilityRole="button"
             accessibilityLabel="Clear attention filter"
           >
@@ -112,7 +112,9 @@ export function AccountsScreen() {
           }
           actionLabel={attentionFilterActive ? "Clear filter" : "Add account"}
           onAction={() =>
-            attentionFilterActive ? router.replace("/accounts") : router.push("/account/new")
+            attentionFilterActive
+              ? router.replace("/(app)/(tabs)/accounts")
+              : router.push("/account/new")
           }
         />
       ) : (

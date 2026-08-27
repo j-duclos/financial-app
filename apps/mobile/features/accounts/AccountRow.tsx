@@ -96,6 +96,11 @@ export const AccountRow = React.memo(function AccountRow({ account, onPress }: P
           <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
             {primary.amount != null ? formatCurrency(primary.amount, account.currency) : "—"}
           </Text>
+          {primary.afterPending != null ? (
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+              After pending {formatCurrency(primary.afterPending, account.currency)}
+            </Text>
+          ) : null}
           {isCredit && account.available_credit != null ? (
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
               Avail {formatCurrency(account.available_credit, account.currency)}

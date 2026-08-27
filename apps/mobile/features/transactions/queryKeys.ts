@@ -39,13 +39,17 @@ export function timelineQueryParams(input: {
   start: string;
   end: string;
   accountId: number | null;
+  householdId?: number | null;
   hideReconciledPast: boolean;
+  ledgerAnchor?: string | null;
 }): Record<string, unknown> {
   return {
     start: input.start,
     end: input.end,
     account_id: input.accountId ?? undefined,
+    household_id: input.householdId ?? undefined,
     exclude_reconciled_past: input.hideReconciledPast,
+    ledger_anchor: input.ledgerAnchor ?? undefined,
   };
 }
 

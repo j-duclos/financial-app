@@ -9,6 +9,8 @@ import {
 } from "@budget-app/shared";
 import {
   accountDetailPath,
+  getRecommendationDestination,
+  getRecommendationSecondaryActions,
   openLedgerNavigation,
   openPaymentPlannerNavigation,
   recommendationActions,
@@ -17,14 +19,12 @@ import {
 } from "./navigation";
 import { actionCenterQueryKeys } from "./queryKeys";
 
-const actionCenterSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "ActionCenterScreen.tsx"),
-  "utf8"
-);
-const routeSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../app/(app)/action-center.tsx"),
-  "utf8"
-);
+const dir = dirname(fileURLToPath(import.meta.url));
+const actionCenterSource = readFileSync(join(dir, "ActionCenterScreen.tsx"), "utf8");
+const cardSource = readFileSync(join(dir, "RecommendationCard.tsx"), "utf8");
+const survivalSource = readFileSync(join(dir, "SurvivalModeBanner.tsx"), "utf8");
+const overflowSource = readFileSync(join(dir, "RecommendationOverflowSheet.tsx"), "utf8");
+const routeSource = readFileSync(join(dir, "../../app/(app)/action-center.tsx"), "utf8");
 
 function utilizationRec(): DashboardRecommendation {
   return {
@@ -104,7 +104,136 @@ describe("Action Center presentation", () => {
   });
 });
 
-describe("Action Center navigation", () => {
+describe("mobile recommendation card UX", () => {
+  it("normal cards have no multi-button action rows", () => {
+    expect(cardSource).not.toMatch(/ActionButton/);
+    expect(cardSource).not.toMatch(/actions\.map\(/);
+    expect(cardSource).not.toMatch(/flexWrap:\s*"wrap",\s*gap:\s*8/);
+    expect(cardSource).toMatch(/getRecommendationDestination/);
+    expect(cardSource).toMatch(/RecommendationOverflowSheet/);
+    expect(cardSource).toMatch(/ellipsis-h/);
+  });
+
+  it("does not permanently show Snooze/Dismiss under every card", () => {
+    expect(cardSource).not.toMatch(/accessibilityLabel="Snooze recommendation"/);
+    expect(cardSource).not.toMatch(/accessibilityLabel="Dismiss recommendation"/);
+    expect(cardSource).toMatch(/includeSnoozeDismiss/);
+    expect(overflowSource).toMatch(/Snooze|Dismiss|action\.label/);
+  });
+
+  it("whole-card tap uses primary destination helper", () => {
+    expect(cardSource).toMatch(/onPrimaryPress/);
+    expect(cardSource).toMatch(/getRecommendationDestination/);
+  });
+
+  it("Survival card has only one primary button", () => {
+    expect(survivalSource).toMatch(/Review survival plan/);
+    expect(survivalSource).toMatch(/<Button/);
+    expect(survivalSource.match(/<Button/g)?.length).toBe(1);
+    expect(survivalSource).not.toMatch(/Snooze/);
+    expect(survivalSource).not.toMatch(/Dismiss/);
+    expect(survivalSource).not.toMatch(/ellipsis/);
+  });
+});
+
+describe("primary destination mapping", () => {
+  it("cash shortfall opens account ledger", () => {
+    const dest = getRecommendationDestination(cashShortfallRec());
+    expect(dest?.kind).toBe("open_ledger");
+    expect(dest?.accountId).toBe(1);
+  });
+
+  it("credit utilization opens account detail", () => {
+    const dest = getRecommendationDestination(utilizationRec());
+    expect(dest?.kind).toBe("view_account");
+    expect(dest?.accountId).toBe(5);
+    expect(accountDetailPath(5)).toBe("/account/5");
+  });
+
+  it("goal recommendation opens goal detail", () => {
+    const dest = getRecommendationDestination({
+      ...utilizationRec(),
+      primary_action_label: "Open goal",
+      primary_action_url: "/goals/42",
+      goal_id: 42,
+      account_id: null,
+      type: "goal_progress",
+    });
+    expect(dest).toEqual({
+      kind: "navigate",
+      label: "Open goal",
+      href: "/goal/42",
+    });
+  });
+
+  it("spending recommendation opens spending limits", () => {
+    const dest = getRecommendationDestination({
+      ...utilizationRec(),
+      primary_action_label: "View budget",
+      primary_action_url: "/spending-goals",
+      account_id: null,
+      type: "spending_limit",
+    });
+    expect(dest?.kind).toBe("navigate");
+    expect(dest?.href).toBe("/spending-limits");
+  });
+
+  it("forecast secondary stays available in overflow for cash shortfall", () => {
+    const forecastRec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      primary_action_type: "move_money",
+      secondary_action_label: "View forecast",
+      secondary_action_url: "/timeline?date=2026-08-27",
+      secondary_action_type: "navigate",
+    };
+    const actions = getRecommendationSecondaryActions(forecastRec, { includeSnoozeDismiss: true });
+    expect(actions.some((a) => a.kind === "transfer")).toBe(true);
+    expect(
+      actions.some(
+        (a) =>
+          a.kind === "navigate" &&
+          typeof a.href === "object" &&
+          a.href.pathname === "/(app)/(tabs)/calendar"
+      )
+    ).toBe(true);
+    expect(actions.some((a) => a.kind === "snooze")).toBe(true);
+    expect(actions.some((a) => a.kind === "dismiss")).toBe(true);
+    expect(actions.some((a) => a.kind === "open_ledger")).toBe(false);
+  });
+});
+
+describe("overflow secondary actions", () => {
+  it("keeps Payment Planner for credit recommendations", () => {
+    const secondary = getRecommendationSecondaryActions(utilizationRec(), {
+      includeSnoozeDismiss: true,
+    });
+    expect(secondary.some((a) => a.kind === "payment_planner")).toBe(true);
+    expect(secondary.some((a) => a.kind === "open_ledger")).toBe(true);
+    expect(secondary.some((a) => a.kind === "view_account")).toBe(false);
+    expect(secondary.some((a) => a.kind === "snooze")).toBe(true);
+    expect(secondary.some((a) => a.kind === "dismiss")).toBe(true);
+  });
+
+  it("keeps Transfer for cash shortfall", () => {
+    const secondary = getRecommendationSecondaryActions(cashShortfallRec(), {
+      includeSnoozeDismiss: true,
+    });
+    const transfer = secondary.find((a) => a.kind === "transfer");
+    expect(transfer).toBeTruthy();
+    expect(transferPresetPath(transfer!.transferPreset!)).toEqual({
+      pathname: "/transaction/new",
+      params: {
+        mode: "transfer",
+        from: "2",
+        to: "1",
+        amount: "1406.40",
+        date: "2026-08-27",
+      },
+    });
+  });
+});
+
+describe("Action Center navigation helpers", () => {
   it("open ledger filters transactions by account", () => {
     expect(openLedgerNavigation(1)).toEqual({
       pathname: "/(app)/(tabs)/transactions",
@@ -141,10 +270,6 @@ describe("Action Center navigation", () => {
     });
   });
 
-  it("card tap path goes to account details", () => {
-    expect(accountDetailPath(5)).toBe("/account/5");
-  });
-
   it("does not route actions back to action center", () => {
     const actions = recommendationActions(utilizationRec());
     expect(actions.every((a) => a.href !== "/action-center")).toBe(true);
@@ -152,25 +277,29 @@ describe("Action Center navigation", () => {
 
   it("maps recurring primary URL to recurring list", () => {
     const rec: DashboardRecommendation = {
-      ...utilizationRec(),
+      id: "bill-1",
+      severity: "watch",
+      title: "Rent",
+      why: "Due soon",
+      recommended_action: "Review schedule",
+      impact_label: null,
+      impact_value: null,
       primary_action_label: "View bills",
       primary_action_url: "/recurring",
+      primary_action_type: "navigate",
+      secondary_action_label: null,
+      secondary_action_url: null,
+      secondary_action_type: null,
+      type: "upcoming_bill",
       account_id: 5,
+      impact_type: null,
     };
     expect(resolveRecommendationWebUrl("/recurring", rec)).toBe("/recurring");
-    expect(recommendationActions(rec).some((a) => a.kind === "navigate" && a.href === "/recurring")).toBe(
-      true
-    );
+    expect(getRecommendationDestination(rec)?.href).toBe("/recurring");
   });
 
-  it("maps spending-goals primary URL to budget tab", () => {
-    const rec: DashboardRecommendation = {
-      ...utilizationRec(),
-      primary_action_label: "View budget",
-      primary_action_url: "/spending-goals",
-      account_id: null,
-    };
-    expect(resolveRecommendationWebUrl("/spending-goals", rec)).toBe("/(app)/(tabs)/budget");
+  it("maps spending-goals primary URL to spending limits", () => {
+    expect(resolveRecommendationWebUrl("/spending-goals", utilizationRec())).toBe("/spending-limits");
   });
 
   it("maps goal primary URL using goal_id", () => {

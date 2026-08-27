@@ -186,6 +186,7 @@ export function TransactionsScreen() {
     forecastDays,
     forecastReady,
     postedLedgerAnchor,
+    householdId: defaultHouseholdId,
   });
 
   const ledgerListKey = `${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`;
@@ -277,8 +278,17 @@ export function TransactionsScreen() {
   useEffect(() => {
     if (hasActivity) {
       markAttentionNavigation("transactions-first-rows");
+      if (__DEV__) {
+        const activityCount = listRows.filter(
+          (r) => r.kind === "history" || r.kind === "pending" || r.kind === "upcoming"
+        ).length;
+        console.debug(
+          `[PERF] transactions first_rows_visible count=${activityCount} ` +
+            `timeline_status=${timelineQuery.fetchStatus} timeline_fetched=${timelineQuery.isFetched}`
+        );
+      }
     }
-  }, [hasActivity]);
+  }, [hasActivity, listRows, timelineQuery.fetchStatus, timelineQuery.isFetched]);
 
   useEffect(() => {
     if (historyQuery.isFetched) {

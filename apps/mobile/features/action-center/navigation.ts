@@ -21,7 +21,9 @@ export type RecommendationActionKind =
   | "transfer"
   | "resolve_risk"
   | "navigate"
-  | "view_account";
+  | "view_account"
+  | "snooze"
+  | "dismiss";
 
 export type RecommendationAction = {
   kind: RecommendationActionKind;
@@ -68,14 +70,14 @@ export function resolveRecommendationWebUrl(
   }
 
   if (trimmed.startsWith("/spending-goals") || trimmed.startsWith("/budget")) {
-    return "/(app)/(tabs)/budget";
+    return "/spending-limits";
   }
 
   const goalMatch = trimmed.match(/^\/goals\/(\d+)/);
   if (goalMatch) {
     return goalDetailPath(Number(goalMatch[1]));
   }
-  if (rec.goal_id != null && rec.goal_id > 0) {
+  if (rec.goal_id != null && rec.goal_id > 0 && trimmed.startsWith("/goals")) {
     return goalDetailPath(rec.goal_id);
   }
 
@@ -89,7 +91,7 @@ export function resolveRecommendationWebUrl(
 
   if (trimmed.startsWith("/accounts")) {
     const accountId = recommendationAccountId(rec);
-    return accountId != null ? accountDetailPath(accountId) : "/accounts";
+    return accountId != null ? accountDetailPath(accountId) : "/(app)/(tabs)/accounts";
   }
 
   if (trimmed.startsWith("/goals")) {
@@ -146,6 +148,7 @@ export function survivalModePlannerPath(): {
   };
 }
 
+/** All valid navigation actions for a recommendation (legacy multi-CTA list). */
 export function recommendationActions(rec: DashboardRecommendation): RecommendationAction[] {
   const accountId = recommendationAccountId(rec);
   const actions: RecommendationAction[] = [];
@@ -212,11 +215,144 @@ export function recommendationActions(rec: DashboardRecommendation): Recommendat
   return dedupeActions(actions);
 }
 
+function hrefKey(
+  href: RecommendationAction["href"]
+): string {
+  if (href == null) return "";
+  if (typeof href === "string") return href;
+  const params = href.params
+    ? Object.entries(href.params)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&")
+    : "";
+  return `${href.pathname}?${params}`;
+}
+
+function actionIdentity(action: RecommendationAction): string {
+  return [
+    action.kind,
+    action.accountId ?? "",
+    hrefKey(action.href),
+    action.transferPreset?.transferToAccountId ?? "",
+  ].join(":");
+}
+
+function destinationsOverlap(a: RecommendationAction, b: RecommendationAction): boolean {
+  if (a.kind === b.kind) {
+    if (a.kind === "navigate") return hrefKey(a.href) === hrefKey(b.href);
+    if (a.accountId != null && b.accountId != null) return a.accountId === b.accountId;
+    return true;
+  }
+  // Ledger and account detail are different destinations — keep both when one is primary.
+  return false;
+}
+
+/**
+ * Whole-card primary destination for Action Center rows.
+ * Secondary CTAs (transfer, planner, snooze, …) live in overflow.
+ */
+export function getRecommendationDestination(
+  rec: DashboardRecommendation
+): RecommendationAction | null {
+  const accountId = recommendationAccountId(rec);
+  const primaryUrl = (rec.primary_action_url ?? "").trim();
+
+  if (rec.goal_id != null && rec.goal_id > 0) {
+    return { kind: "navigate", label: "Open goal", href: goalDetailPath(rec.goal_id) };
+  }
+  const goalMatch = primaryUrl.match(/^\/goals\/(\d+)/);
+  if (goalMatch) {
+    return {
+      kind: "navigate",
+      label: "Open goal",
+      href: goalDetailPath(Number(goalMatch[1])),
+    };
+  }
+
+  if (primaryUrl.startsWith("/spending-goals") || primaryUrl.startsWith("/budget")) {
+    return {
+      kind: "navigate",
+      label: recommendationPrimaryCtaLabel(rec),
+      href: "/spending-limits",
+    };
+  }
+
+  if (primaryUrl.startsWith("/timeline")) {
+    const href = resolveRecommendationWebUrl(primaryUrl, rec);
+    if (href) {
+      return {
+        kind: "navigate",
+        label: recommendationSecondaryCtaLabel(rec, "View forecast", primaryUrl) ?? "View forecast",
+        href,
+      };
+    }
+  }
+
+  if (recommendationIsCreditPayment(rec) && accountId != null) {
+    return { kind: "view_account", label: "View account", accountId };
+  }
+
+  if (recommendationOpensTransfer(rec) && accountId != null) {
+    return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
+  }
+
+  if (primaryUrl.includes("/transactions") && accountId != null) {
+    return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
+  }
+
+  if (primaryUrl.includes("/credit-cards") && accountId != null) {
+    return { kind: "view_account", label: "View account", accountId };
+  }
+
+  if (primaryUrl) {
+    const href = resolveRecommendationWebUrl(primaryUrl, rec);
+    if (href) {
+      return {
+        kind: "navigate",
+        label: recommendationPrimaryCtaLabel(rec),
+        href,
+      };
+    }
+  }
+
+  if (accountId != null) {
+    if ((rec.id ?? "").startsWith("attention-") || rec.type === "move_money") {
+      return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
+    }
+    return { kind: "view_account", label: "View account", accountId };
+  }
+
+  return null;
+}
+
+/** Overflow menu actions — excludes the primary destination; optional Snooze/Dismiss. */
+export function getRecommendationSecondaryActions(
+  rec: DashboardRecommendation,
+  opts?: { includeSnoozeDismiss?: boolean }
+): RecommendationAction[] {
+  const primary = getRecommendationDestination(rec);
+  const secondary = recommendationActions(rec).filter((action) => {
+    if (!primary) return true;
+    return !destinationsOverlap(action, primary);
+  });
+
+  if (opts?.includeSnoozeDismiss) {
+    secondary.push({ kind: "snooze", label: "Snooze" });
+    secondary.push({ kind: "dismiss", label: "Dismiss" });
+  }
+
+  return dedupeActions(secondary);
+}
+
 function dedupeActions(actions: RecommendationAction[]): RecommendationAction[] {
   const seen = new Set<string>();
   const out: RecommendationAction[] = [];
   for (const action of actions) {
-    const key = `${action.kind}:${action.label}:${action.accountId ?? ""}`;
+    const key =
+      action.kind === "snooze" || action.kind === "dismiss"
+        ? action.kind
+        : `${actionIdentity(action)}:${action.label}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(action);

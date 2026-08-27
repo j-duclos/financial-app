@@ -117,7 +117,7 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm }}>
         <Pressable
           style={{ flex: 1, minWidth: "46%" }}
-          onPress={() => router.push("/accounts")}
+          onPress={() => router.push("/(app)/(tabs)/accounts")}
           accessibilityRole="button"
           accessibilityLabel="View accounts for available credit"
         >

@@ -302,7 +302,7 @@ export function DashboardScreen() {
             title="Get started with your financial command center"
             message="Connect an account, add recurring bills and income, or create a savings goal."
             actionLabel="Accounts"
-            onAction={() => router.push("/accounts")}
+            onAction={() => router.push("/(app)/(tabs)/accounts")}
           />
         </View>
       ) : null}

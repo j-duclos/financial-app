@@ -1,5 +1,5 @@
 import { AccountsScreen } from "@/features/accounts";
 
-export default function AccountsRoute() {
+export default function AccountsTab() {
   return <AccountsScreen />;
 }

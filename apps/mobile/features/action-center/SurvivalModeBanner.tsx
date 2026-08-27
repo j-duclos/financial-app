@@ -3,12 +3,13 @@ import { Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
   recommendationCardCopy,
-  recommendationPrimaryCtaLabel,
   type RecommendationListEntry,
 } from "@budget-app/shared";
 import { Card, Button } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { survivalModePlannerPath } from "./navigation";
+
+const SURVIVAL_PRIMARY_LABEL = "Review survival plan";
 
 type Props = {
   entry: RecommendationListEntry;
@@ -34,7 +35,7 @@ export const SurvivalModeBanner = memo(function SurvivalModeBanner({ entry }: Pr
       ) : null}
       <View style={{ marginTop: 12 }}>
         <Button
-          label={recommendationPrimaryCtaLabel(rec)}
+          label={SURVIVAL_PRIMARY_LABEL}
           onPress={() => router.push(survivalModePlannerPath())}
         />
       </View>

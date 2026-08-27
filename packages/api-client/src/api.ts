@@ -1698,6 +1698,8 @@ export async function getTimeline(params: {
   account_id?: number | null;
   household_id?: number | null;
   exclude_reconciled_past?: boolean;
+  /** Posted Recent ending balance — backend continues Pending/Upcoming Bal from this. */
+  ledger_anchor?: string | number | null;
 }): Promise<TimelineResponse> {
   const q: Record<string, string> = {};
   if (params.start) q.start = params.start;
@@ -1709,6 +1711,9 @@ export async function getTimeline(params: {
   if (params.account_id != null) q.account_id = String(params.account_id);
   if (params.household_id != null) q.household_id = String(params.household_id);
   if (params.exclude_reconciled_past) q.exclude_reconciled_past = "true";
+  if (params.ledger_anchor != null && String(params.ledger_anchor).trim() !== "") {
+    q.ledger_anchor = String(params.ledger_anchor);
+  }
   return requestRequired("/api/timeline/", { params: q });
 }
 

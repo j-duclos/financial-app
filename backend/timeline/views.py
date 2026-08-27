@@ -43,6 +43,8 @@ from .services.scenario_comparison import (
     serialize_scenario_comparison,
 )
 from .services.ledger import build_timeline
+from .services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
+from .services.ledger_section_balances import annotate_transactions_ledger_balance_after
 from core.timeline_cache import (
     get_cached_timeline_response,
     set_cached_timeline_response,
@@ -697,6 +699,11 @@ class TimelineView(APIView):
     permission_classes = [IsHouseholdMember]
 
     def get(self, request):
+        import copy
+        import time
+
+        from common.services.profiler import perf_enabled, perf_print
+
         try:
             start, end, as_of_date, _forecast_days = _timeline_date_range(request)
             today = timezone.localdate()
@@ -729,7 +736,18 @@ class TimelineView(APIView):
                 "1",
                 "yes",
             )
+            ledger_anchor_raw = request.query_params.get("ledger_anchor")
+            ledger_anchor: Decimal | None = None
+            if ledger_anchor_raw is not None and str(ledger_anchor_raw).strip() != "":
+                try:
+                    ledger_anchor = Decimal(str(ledger_anchor_raw))
+                except Exception:
+                    return Response(
+                        {"detail": "ledger_anchor must be a decimal."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
+            as_of = as_of_date or today
             cache_key = timeline_response_cache_key(
                 household_id=household_id,
                 user_id=request.user.pk,
@@ -740,57 +758,113 @@ class TimelineView(APIView):
                 as_of_date=as_of_date,
                 exclude_reconciled_past=exclude_reconciled_past,
             )
-            cached = get_cached_timeline_response(cache_key)
-            if cached is not None:
-                if (
-                    exclude_reconciled_past
-                    and account_id is not None
-                    and "past_opening_balance" not in cached
-                ):
-                    from accounts.models import Account
-                    from transactions.services.reconciliation import past_ledger_opening_balance
+            # ledger_anchor changes balance_after — do not serve shared HTTP cache for it.
+            if ledger_anchor is None:
+                cached = get_cached_timeline_response(cache_key)
+                if cached is not None:
+                    if (
+                        exclude_reconciled_past
+                        and account_id is not None
+                        and "past_opening_balance" not in cached
+                    ):
+                        from accounts.models import Account
+                        from transactions.services.reconciliation import past_ledger_opening_balance
 
-                    households = get_households_for_user(request.user)
-                    acc = Account.objects.filter(pk=account_id, household__in=households).first()
-                    if acc is not None:
-                        cached = dict(cached)
-                        cached["past_opening_balance"] = str(
-                            past_ledger_opening_balance(acc, as_of_date)
-                        )
-                resp = Response(cached)
-                resp["Cache-Control"] = "private, max-age=60"
-                resp["X-Timeline-Cache"] = "hit"
-                resp["X-Timeline-Skip-Logic"] = "1"
-                return resp
+                        households = get_households_for_user(request.user)
+                        acc = Account.objects.filter(pk=account_id, household__in=households).first()
+                        if acc is not None:
+                            cached = dict(cached)
+                            cached["past_opening_balance"] = str(
+                                past_ledger_opening_balance(acc, as_of)
+                            )
+                    resp = Response(cached)
+                    resp["Cache-Control"] = "private, max-age=60"
+                    resp["X-Timeline-Cache"] = "hit"
+                    resp["X-Timeline-Skip-Logic"] = "1"
+                    resp["X-Canonical-Timeline"] = "http-cache"
+                    return resp
 
-            rows = build_timeline(
-                request.user,
-                start_date=start,
-                end_date=end,
-                scenario_id=scenario_id,
-                account_id=account_id,
-                household_id=household_id,
-                as_of_date=as_of_date,
-                projection_only=True,
-                exclude_reconciled_past=exclude_reconciled_past,
-                caller="timeline_page",
+            t0 = time.perf_counter()
+            canonical_hit = False
+            used_canonical = False
+            rows: list
+
+            # Forecast-only window aligned with Dashboard/Calendar: reuse shared cache.
+            can_use_canonical = (
+                exclude_reconciled_past
+                and start >= as_of
+                and end >= as_of
             )
+            if can_use_canonical:
+                forecast_days = (end - as_of).days
+                if forecast_days < 0:
+                    forecast_days = 0
+                raw_rows, canonical_hit = get_or_build_canonical_forecast_timeline(
+                    request.user,
+                    today=as_of,
+                    forecast_days=forecast_days,
+                    household_id=household_id,
+                    scenario_id=scenario_id,
+                    caller="timeline_page",
+                )
+                used_canonical = True
+                # Never mutate the cached list in place.
+                rows = copy.deepcopy(raw_rows)
+
+                def _row_date(r):
+                    d = r.get("date")
+                    if isinstance(d, date):
+                        return d
+                    return date.fromisoformat(str(d)[:10])
+
+                rows = [r for r in rows if start <= _row_date(r) <= end]
+                if account_id is not None:
+                    rows = [r for r in rows if int(r.get("account_id") or 0) == account_id]
+            else:
+                rows = build_timeline(
+                    request.user,
+                    start_date=start,
+                    end_date=end,
+                    scenario_id=scenario_id,
+                    account_id=account_id,
+                    household_id=household_id,
+                    as_of_date=as_of_date,
+                    projection_only=True,
+                    exclude_reconciled_past=exclude_reconciled_past,
+                    caller="timeline_page",
+                )
+
+            annotate_transactions_ledger_balance_after(
+                rows,
+                account_id=account_id,
+                as_of=as_of,
+                posted_ending_balance=ledger_anchor,
+            )
+
             # Serialize dates and decimals for JSON
             for r in rows:
                 r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])
                 r["amount"] = str(r["amount"])
                 r["running_balance"] = str(r["running_balance"])
+                if r.get("balance_after") is not None:
+                    r["balance_after"] = str(r["balance_after"])
             account_balances = {}
             for r in rows:
                 aid = r["account_id"]
                 if aid not in account_balances:
-                    account_balances[aid] = {"account_id": aid, "account_name": r.get("account_name", ""), "ending_balance": r["running_balance"]}
+                    account_balances[aid] = {
+                        "account_id": aid,
+                        "account_name": r.get("account_name", ""),
+                        "ending_balance": r.get("balance_after") or r["running_balance"],
+                    }
                 else:
-                    account_balances[aid]["ending_balance"] = r["running_balance"]
-            resp = Response({
+                    account_balances[aid]["ending_balance"] = (
+                        r.get("balance_after") or r["running_balance"]
+                    )
+            payload = {
                 "timeline": rows,
                 "account_summary": list(account_balances.values()),
-            })
+            }
             if exclude_reconciled_past and account_id is not None:
                 from accounts.models import Account
                 from transactions.services.reconciliation import past_ledger_opening_balance
@@ -798,13 +872,33 @@ class TimelineView(APIView):
                 households = get_households_for_user(request.user)
                 acc = Account.objects.filter(pk=account_id, household__in=households).first()
                 if acc is not None:
-                    resp.data["past_opening_balance"] = str(
-                        past_ledger_opening_balance(acc, as_of_date)
+                    payload["past_opening_balance"] = str(
+                        past_ledger_opening_balance(acc, as_of)
                     )
-            set_cached_timeline_response(cache_key, resp.data)
-            resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if perf_enabled():
+                perf_print(
+                    f"[PERF] timeline_endpoint elapsed_ms={elapsed_ms:.0f} "
+                    f"canonical={'HIT' if canonical_hit else ('MISS' if used_canonical else 'n/a')} "
+                    f"rows={len(rows)} account_id={account_id} "
+                    f"ledger_anchor={'1' if ledger_anchor is not None else '0'}"
+                )
+
+            resp = Response(payload)
+            if ledger_anchor is None:
+                set_cached_timeline_response(cache_key, resp.data)
+                resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            else:
+                resp["Cache-Control"] = "no-store"
+            # This path only runs on HTTP-cache miss (or ledger_anchor requests that skip it).
             resp["X-Timeline-Cache"] = "miss"
+            if used_canonical:
+                resp["X-Canonical-Timeline"] = "hit" if canonical_hit else "miss"
+            else:
+                resp["X-Canonical-Timeline"] = "bypass"
             resp["X-Timeline-Skip-Logic"] = "1"
+            resp["X-Timeline-Elapsed-Ms"] = f"{elapsed_ms:.0f}"
             return resp
         except Exception as e:
             return Response(

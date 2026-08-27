@@ -1,5 +1,6 @@
-import React, { memo } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import type { Account, DashboardRecommendation } from "@budget-app/shared";
 import {
   ACCOUNT_TYPE_LABELS,
@@ -8,16 +9,18 @@ import {
   recommendationSeverityLabel,
   type RecommendationDisplayState,
 } from "@budget-app/shared";
-import { Card, StatusChip } from "@/components/ui";
+import { Card, IconButton, StatusChip } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
   accountDetailPath,
+  getRecommendationDestination,
+  getRecommendationSecondaryActions,
   openLedgerNavigation,
   openPaymentPlannerNavigation,
-  recommendationActions,
   transferPresetPath,
   type RecommendationAction,
 } from "./navigation";
+import { RecommendationOverflowSheet } from "./RecommendationOverflowSheet";
 import type { Router } from "expo-router";
 
 function severityTone(severity: string): "positive" | "warning" | "critical" | "neutral" {
@@ -34,57 +37,11 @@ function severityTone(severity: string): "positive" | "warning" | "critical" | "
   }
 }
 
-function ActionButton({
-  label,
-  primary,
-  onPress,
-}: {
-  label: string;
-  primary?: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.85 : 1,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: theme.radius.sm,
-        borderWidth: primary ? 0 : 1,
-        borderColor: theme.colors.border,
-        backgroundColor: primary ? theme.colors.tint : theme.colors.surface,
-      })}
-    >
-      <Text
-        style={{
-          color: primary ? "#fff" : theme.colors.text,
-          fontSize: 13,
-          fontWeight: "600",
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-type Props = {
-  rec: DashboardRecommendation;
-  displayState?: RecommendationDisplayState;
-  account?: Account | null;
-  router: Router;
-  onResolveRisk?: (accountId: number) => void;
-  onSnooze?: () => void;
-  onDismiss?: () => void;
-  onRestore?: () => void;
-  onUnsnooze?: () => void;
-};
-
-function runAction(action: RecommendationAction, router: Router, onResolveRisk?: (id: number) => void) {
+function runAction(
+  action: RecommendationAction,
+  router: Router,
+  onResolveRisk?: (id: number) => void
+): void {
   switch (action.kind) {
     case "open_ledger":
       if (action.accountId != null) router.push(openLedgerNavigation(action.accountId));
@@ -110,6 +67,18 @@ function runAction(action: RecommendationAction, router: Router, onResolveRisk?:
   }
 }
 
+type Props = {
+  rec: DashboardRecommendation;
+  displayState?: RecommendationDisplayState;
+  account?: Account | null;
+  router: Router;
+  onResolveRisk?: (accountId: number) => void;
+  onSnooze?: () => void;
+  onDismiss?: () => void;
+  onRestore?: () => void;
+  onUnsnooze?: () => void;
+};
+
 export const RecommendationCard = memo(function RecommendationCard({
   rec,
   displayState = "active",
@@ -122,72 +91,138 @@ export const RecommendationCard = memo(function RecommendationCard({
   onUnsnooze,
 }: Props) {
   const theme = useTheme();
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const { condition, action } = recommendationCardCopy(rec);
   const inactive = displayState !== "active";
-  const actions = recommendationActions(rec);
+  const destination = useMemo(() => getRecommendationDestination(rec), [rec]);
+  const overflowActions = useMemo(
+    () =>
+      getRecommendationSecondaryActions(rec, {
+        includeSnoozeDismiss: Boolean(onSnooze || onDismiss),
+      }),
+    [rec, onSnooze, onDismiss]
+  );
+
   const accountType = account?.account_type
     ? ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type
     : null;
-  const accountId = rec.account_id ?? account?.id ?? null;
-
-  const openAccount = () => {
-    if (accountId != null) router.push(accountDetailPath(accountId));
-  };
+  const contextLine =
+    account?.effective_display_name ||
+    account?.name ||
+    (accountType ?? null);
 
   const stateLabel =
     displayState === "snoozed" ? "Snoozed" : displayState === "dismissed" ? "Dismissed" : null;
 
+  const onPrimaryPress = useCallback(() => {
+    if (!destination) return;
+    runAction(destination, router, onResolveRisk);
+  }, [destination, router, onResolveRisk]);
+
+  const onOverflowSelect = useCallback(
+    (item: RecommendationAction) => {
+      setOverflowOpen(false);
+      if (item.kind === "snooze") {
+        onSnooze?.();
+        return;
+      }
+      if (item.kind === "dismiss") {
+        onDismiss?.();
+        return;
+      }
+      runAction(item, router, onResolveRisk);
+    },
+    [onDismiss, onResolveRisk, onSnooze, router]
+  );
+
+  const showOverflow = !inactive && overflowActions.length > 0;
+
   return (
     <Card style={inactive ? { opacity: 0.75 } : undefined}>
-      <Pressable
-        onPress={accountId != null ? openAccount : undefined}
-        accessibilityRole={accountId != null ? "button" : undefined}
-        accessibilityLabel={rec.title}
-      >
-        <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>{rec.title}</Text>
-            {accountType ? (
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 2 }}>
-                {accountType}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 4 }}>
+        <Pressable
+          onPress={inactive || !destination ? undefined : onPrimaryPress}
+          accessibilityRole={destination && !inactive ? "button" : undefined}
+          accessibilityLabel={rec.title}
+          disabled={inactive || !destination}
+          style={{ flex: 1 }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+            <View style={{ flex: 1, paddingRight: 4 }}>
+              <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
+                {rec.title}
               </Text>
-            ) : null}
+              {contextLine ? (
+                <Text
+                  style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 2 }}
+                >
+                  {contextLine}
+                </Text>
+              ) : null}
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 4 }}>
+              {stateLabel ? (
+                <Text
+                  style={{
+                    color: theme.colors.textMuted,
+                    ...theme.typography.caption,
+                    fontWeight: "600",
+                    marginTop: 6,
+                  }}
+                >
+                  {stateLabel}
+                </Text>
+              ) : null}
+              <StatusChip
+                label={recommendationSeverityLabel(rec.severity).toUpperCase()}
+                tone={severityTone(rec.severity)}
+              />
+            </View>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            {stateLabel ? (
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, fontWeight: "600" }}>
-                {stateLabel}
+
+          {condition ? (
+            <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 10 }}>
+              {condition}
+            </Text>
+          ) : null}
+
+          {!inactive && (action || destination) ? (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                marginTop: 10,
+              }}
+            >
+              <Text
+                style={{
+                  flex: 1,
+                  color: theme.colors.text,
+                  ...theme.typography.caption,
+                  fontWeight: "600",
+                }}
+                numberOfLines={2}
+              >
+                {action ?? destination?.label ?? "View details"}
               </Text>
-            ) : null}
-            <StatusChip
-              label={recommendationSeverityLabel(rec.severity).toUpperCase()}
-              tone={severityTone(rec.severity)}
-            />
-          </View>
-        </View>
-      </Pressable>
+              <FontAwesome name="chevron-right" size={12} color={theme.colors.textMuted} />
+            </View>
+          ) : null}
+        </Pressable>
 
-      {condition ? (
-        <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 10 }}>{condition}</Text>
-      ) : null}
-      {action ? (
-        <Text style={{ color: theme.colors.text, ...theme.typography.caption, marginTop: 6, fontWeight: "600" }}>
-          {action}
-        </Text>
-      ) : null}
+        {showOverflow ? (
+          <IconButton
+            name="ellipsis-h"
+            accessibilityLabel="More recommendation actions"
+            size={18}
+            onPress={() => setOverflowOpen(true)}
+          />
+        ) : null}
+      </View>
 
-      {!inactive ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-          {actions.map((item, index) => (
-            <ActionButton
-              key={`${item.kind}-${item.label}`}
-              label={item.label}
-              primary={index === actions.length - 1 && item.kind !== "open_ledger"}
-              onPress={() => runAction(item, router, onResolveRisk)}
-            />
-          ))}
-        </View>
-      ) : (
+      {inactive ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
           {displayState === "snoozed" && onUnsnooze ? (
             <Pressable onPress={onUnsnooze} accessibilityRole="button" accessibilityLabel="Unsnooze">
@@ -200,22 +235,15 @@ export const RecommendationCard = memo(function RecommendationCard({
             </Pressable>
           ) : null}
         </View>
-      )}
-
-      {!inactive && (onSnooze || onDismiss) ? (
-        <View style={{ flexDirection: "row", gap: 16, marginTop: 10 }}>
-          {onSnooze ? (
-            <Pressable onPress={onSnooze} accessibilityRole="button" accessibilityLabel="Snooze recommendation">
-              <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Snooze</Text>
-            </Pressable>
-          ) : null}
-          {onDismiss ? (
-            <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="Dismiss recommendation">
-              <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Dismiss</Text>
-            </Pressable>
-          ) : null}
-        </View>
       ) : null}
+
+      <RecommendationOverflowSheet
+        visible={overflowOpen}
+        title={rec.title}
+        actions={overflowActions}
+        onClose={() => setOverflowOpen(false)}
+        onSelect={onOverflowSelect}
+      />
     </Card>
   );
 });

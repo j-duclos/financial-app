@@ -47,10 +47,10 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="budget"
+        name="accounts"
         options={{
-          title: "Budget",
-          tabBarIcon: ({ color }) => <TabBarIcon name="pie-chart" color={color} />,
+          title: "Accounts",
+          tabBarIcon: ({ color }) => <TabBarIcon name="university" color={color} />,
         }}
       />
       <Tabs.Screen
@@ -58,6 +58,13 @@ export default function TabLayout() {
         options={{
           title: "More",
           tabBarIcon: ({ color }) => <TabBarIcon name="ellipsis-h" color={color} />,
+        }}
+      />
+      {/* Legacy Budget tab route — keep file for deep links, hide from bar. */}
+      <Tabs.Screen
+        name="budget"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

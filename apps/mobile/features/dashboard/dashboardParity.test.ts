@@ -173,7 +173,7 @@ describe("Dashboard attention parity", () => {
 
   it("view all routes to accounts attention filter", () => {
     expect(accountsAttentionFilterPath()).toEqual({
-      pathname: "/accounts",
+      pathname: "/(app)/(tabs)/accounts",
       params: { attention: "1" },
     });
   });

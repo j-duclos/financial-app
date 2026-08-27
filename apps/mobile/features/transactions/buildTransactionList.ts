@@ -137,74 +137,27 @@ function compareTimelineAsc(a: TimelineRow, b: TimelineRow): number {
   return String(a.description).localeCompare(String(b.description));
 }
 
-function timelineRowFlowDirection(row: TimelineRow): "INFLOW" | "OUTFLOW" | null {
-  const t = (row.type || "").toUpperCase();
-  if (t === "OUTFLOW" || t === "EXPENSE") return "OUTFLOW";
-  if (t === "INFLOW" || t === "INCOME") return "INFLOW";
+/**
+ * Canonical Bal for Pending/Upcoming rows — backend `balance_after` (ledger-section
+ * continuation from posted Recent ending). Falls back to running_balance only when
+ * the API omitted balance_after (older responses).
+ *
+ * React Native must not recompute these values from amounts.
+ */
+export function timelineRowLedgerBalance(row: TimelineRow): string | null {
+  if (row.balance_after != null && String(row.balance_after).trim() !== "") {
+    return String(row.balance_after);
+  }
+  if (row.running_balance != null && String(row.running_balance).trim() !== "") {
+    return String(row.running_balance);
+  }
   return null;
 }
 
-/** Signed amount for sectioned ledger continuation (matches web). */
-export function signedTimelineLedgerAmount(row: TimelineRow): number {
-  const raw = parseFloat(row.amount);
-  if (Number.isNaN(raw)) return 0;
-  const flow = timelineRowFlowDirection(row);
-  if (flow === "OUTFLOW") return -Math.abs(raw);
-  if (flow === "INFLOW") return Math.abs(raw);
-  return raw;
-}
-
-/**
- * Continue the ledger balance through pending then upcoming.
- * Anchor = end of posted Recent (last history running_balance).
- * Do NOT use timeline running_balance for these sections — those are chronological
- * full-timeline values and break the Recent → Pending → Upcoming section layout.
- */
-export function continueLedgerBalances(input: {
-  postedEndingBalance: number | null;
-  pending: TimelineRow[];
-  upcoming: TimelineRow[];
-}): { pendingBalances: string[]; upcomingBalances: string[]; endingBalance: number | null } {
-  let running = input.postedEndingBalance;
-  const pendingBalances: string[] = [];
-  const upcomingBalances: string[] = [];
-
-  for (const row of input.pending) {
-    if (running == null || !Number.isFinite(running)) {
-      pendingBalances.push(row.running_balance ?? "");
-      continue;
-    }
-    running = running + signedTimelineLedgerAmount(row);
-    pendingBalances.push(running.toFixed(2));
-  }
-
-  for (const row of input.upcoming) {
-    if (running == null || !Number.isFinite(running)) {
-      upcomingBalances.push(row.running_balance ?? "");
-      continue;
-    }
-    running = running + signedTimelineLedgerAmount(row);
-    upcomingBalances.push(running.toFixed(2));
-  }
-
-  return {
-    pendingBalances,
-    upcomingBalances,
-    endingBalance: running != null && Number.isFinite(running) ? running : null,
-  };
-}
-
-function parseBalance(raw: string | null | undefined): number | null {
-  if (raw == null || String(raw).trim() === "") return null;
-  const n = parseFloat(String(raw));
-  return Number.isFinite(n) ? n : null;
-}
-
-/** Last upcoming row's balance for header — prefer section-continued value when provided. */
+/** Last upcoming row's balance for header — prefers balance_after. */
 export function forecastBalanceFromUpcoming(upcoming: TimelineRow[]): string | null {
   if (upcoming.length === 0) return null;
-  const last = upcoming[upcoming.length - 1];
-  return last.running_balance ?? null;
+  return timelineRowLedgerBalance(upcoming[upcoming.length - 1]);
 }
 
 export function buildTransactionListRows(input: {
@@ -225,19 +178,12 @@ export function buildTransactionListRows(input: {
   isSearchMode?: boolean;
   recentRangeLabel?: string;
   upcomingRangeLabel?: string;
-  /**
-   * Posted ledger anchor when Recent is empty — account current/posted balance.
-   * Pending/Upcoming continue from end of Recent (or this anchor).
-   */
-  postedLedgerAnchor?: number | null;
 }): TransactionListRow[] {
   const rows: TransactionListRow[] = [];
   const showRecent = input.filters.forecast !== "forecast";
   const showPendingUpcoming = input.filters.forecast !== "posted" && !input.isSearchMode;
 
   // --- Recent (posted / historical) — API already returns ascending ledger order ---
-  let postedEndingBalance: number | null = null;
-
   if (showRecent) {
     if (input.recentLoading && input.history.length === 0) {
       rows.push({
@@ -273,19 +219,12 @@ export function buildTransactionListRows(input: {
             txn,
             runningBalance: bal,
           });
-          const parsed = parseBalance(bal);
-          if (parsed != null) postedEndingBalance = parsed;
         }
       }
     }
   }
 
-  // Fallback anchor when Recent is empty: use account posted balance if provided.
-  if (postedEndingBalance == null && input.postedLedgerAnchor != null) {
-    postedEndingBalance = input.postedLedgerAnchor;
-  }
-
-  // --- Pending then Upcoming: ONE continuous chain from end of Recent ---
+  // --- Pending then Upcoming: Bal from backend balance_after (ledger_anchor) ---
   if (showPendingUpcoming) {
     if (input.timelineLoading) {
       rows.push({ kind: "section", id: "section-pending", title: "Pending" });
@@ -309,22 +248,16 @@ export function buildTransactionListRows(input: {
         .slice()
         .sort(compareTimelineAsc);
 
-      const continued = continueLedgerBalances({
-        postedEndingBalance,
-        pending,
-        upcoming,
-      });
-
       if (pending.length > 0) {
         rows.push({ kind: "section", id: "section-pending", title: "Pending" });
-        pending.forEach((row, i) => {
+        for (const row of pending) {
           rows.push({
             kind: "pending",
             id: `pending-${row.transaction_id ?? row.date}-${row.description}-${row.amount}`,
             row,
-            runningBalance: continued.pendingBalances[i] || null,
+            runningBalance: timelineRowLedgerBalance(row),
           });
-        });
+        }
       }
 
       if (upcoming.length > 0 || input.upcomingRangeLabel) {
@@ -335,14 +268,14 @@ export function buildTransactionListRows(input: {
           rangeLabel: input.upcomingRangeLabel,
           rangeKind: "upcoming",
         });
-        upcoming.forEach((row, i) => {
+        for (const row of upcoming) {
           rows.push({
             kind: "upcoming",
             id: `upcoming-${row.transaction_id ?? row.date}-${row.description}-${row.amount}`,
             row,
-            runningBalance: continued.upcomingBalances[i] || null,
+            runningBalance: timelineRowLedgerBalance(row),
           });
-        });
+        }
       }
     }
   }

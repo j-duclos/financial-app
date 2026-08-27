@@ -1,18 +1,25 @@
 import type { Account } from "@budget-app/shared";
 
 /**
- * Mobile account balance label helpers.
+ * Canonical balance label semantics (Accounts list + Account Detail).
  *
- * Semantics follow the backend / web financial model — this module only chooses
- * which canonical fields to display and how to label them. No local math.
+ * | Label            | Field / meaning                                              |
+ * |------------------|--------------------------------------------------------------|
+ * | Current          | Posted / before-pending: `forecast_summary.current_balance`  |
+ * |                  | when enrichment is present; else ledger EOD fallback         |
+ * | After pending    | Ledger EOD (`available_balance`/`balance`) when it differs   |
+ * |                  | from Current (unresolved same-day PLANNED still on ledger)   |
+ * | Safe to spend    | Backend `available_to_spend` (forecast)                      |
+ * | Forecast balance | `projected_balance_30_days` — never labeled Current          |
+ * | Bank available   | Not a separate RN Accounts field; cash `available_balance`   |
+ * |                  | is app ledger EOD, not a second pending adjustment           |
  *
- * - Current (cash): posted / ledger-today-before-pending when forecast summary
- *   provides it; otherwise the list `available_balance`/`balance` field
- *   (same as Transactions ledger header / `?balance=true`).
- * - After pending: ledger end-of-day (`available_balance`/`balance`) when it
- *   differs from Current (typically unresolved same-day PLANNED still visible).
- * - Safe to spend: `available_to_spend` from forecast_summary (backend only).
- * - Credit: Owed / Available credit / Limit / Utilization — never cash labels.
+ * Credit uses Owed / Available credit — never cash Current labels.
+ *
+ * Transactions ledger header "Current Balance" (pending-section ending) is a
+ * separate product invariant — see workspace rule / ForecastSummaryBar.
+ *
+ * No local financial math — only field selection and labeling.
  */
 
 export type CashBalanceDisplay = {
@@ -35,6 +42,13 @@ export type CreditBalanceDisplay = {
 };
 
 export type AccountBalanceDisplay = CashBalanceDisplay | CreditBalanceDisplay;
+
+export type ListPrimaryBalance = {
+  label: "Current" | "Owed";
+  amount: string | null;
+  /** Ledger EOD when it differs from Current (cash only). */
+  afterPending: string | null;
+};
 
 function parseMoney(raw: string | null | undefined): string | null {
   if (raw == null || String(raw).trim() === "") return null;
@@ -68,13 +82,21 @@ export function resolveLedgerEndOfDayBalance(account: Account): string | null {
 
 /**
  * Posted / before-pending current when forecast enrichment is present;
- * otherwise the canonical list ledger balance.
+ * otherwise the canonical list ledger balance (same fallback as Detail).
  */
 export function resolvePostedCurrentBalance(account: Account): string | null {
   if (account.account_type === "CREDIT") {
     return parseMoney(account.balance_owed ?? account.current_balance);
   }
   return forecastCurrentBalance(account) ?? resolveLedgerEndOfDayBalance(account);
+}
+
+/** After-pending (ledger EOD) only when it differs from posted Current. */
+export function resolveAfterPendingBalance(account: Account): string | null {
+  if (account.account_type === "CREDIT") return null;
+  const current = resolvePostedCurrentBalance(account);
+  const ledger = resolveLedgerEndOfDayBalance(account);
+  return amountsDiffer(current, ledger) && ledger != null ? ledger : null;
 }
 
 /** Build labeled balance card fields for Account Detail. */
@@ -91,34 +113,31 @@ export function resolveAccountBalanceDisplay(account: Account): AccountBalanceDi
     };
   }
 
-  const current = resolvePostedCurrentBalance(account);
-  const ledger = resolveLedgerEndOfDayBalance(account);
-  const afterPending =
-    amountsDiffer(current, ledger) && ledger != null ? ledger : null;
-
   return {
     kind: "cash",
-    primary: current,
+    primary: resolvePostedCurrentBalance(account),
     primaryLabel: "Current balance",
-    afterPending,
+    afterPending: resolveAfterPendingBalance(account),
     safeToSpend: parseMoney(account.available_to_spend),
   };
 }
 
-/** Single primary amount for Accounts list cash rows — never forecast/STS. */
-export function resolveListPrimaryBalance(account: Account): {
-  label: string;
-  amount: string | null;
-} {
+/**
+ * Accounts list primary — same Current meaning as Account Detail.
+ * Never uses forecast ending / STS as Current.
+ */
+export function resolveListPrimaryBalance(account: Account): ListPrimaryBalance {
   if (account.account_type === "CREDIT") {
     return {
       label: "Owed",
       amount: parseMoney(account.balance_owed ?? account.current_balance),
+      afterPending: null,
     };
   }
   return {
     label: "Current",
-    amount: resolveLedgerEndOfDayBalance(account),
+    amount: resolvePostedCurrentBalance(account),
+    afterPending: resolveAfterPendingBalance(account),
   };
 }
 

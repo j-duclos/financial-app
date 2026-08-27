@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { Transaction, TimelineRow } from "@budget-app/shared";
 import {
   buildTransactionListRows,
-  continueLedgerBalances,
   partitionTimelineForLedger,
+  timelineRowLedgerBalance,
 } from "@/features/transactions/buildTransactionList";
 import {
   DEFAULT_TRANSACTION_FILTERS,
   TRANSACTIONS_LEDGER_ORDERING,
 } from "@/features/transactions/types";
 import { DEFAULT_TIME_FILTER, pastTransactionsRange } from "@/lib/transactionsLedger";
-import { addDaysToIsoDate } from "@/lib/dates";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const txn = (
   partial: Partial<Transaction> & Pick<Transaction, "id" | "payee" | "amount" | "date">
@@ -101,7 +103,6 @@ describe("Recent chronological order", () => {
       "484.04",
       "79.04",
     ]);
-    // Uncleared posted activity must not show as Pending section items.
     expect(rows.some((r) => r.kind === "pending")).toBe(false);
   });
 
@@ -128,6 +129,7 @@ describe("Recent chronological order", () => {
           source: "rule",
           rule_id: 3,
           running_balance: "40.00",
+          balance_after: "31.15",
         }),
       ],
       upcoming: [],
@@ -189,8 +191,8 @@ describe("Pending and Upcoming ascending order", () => {
   });
 });
 
-describe("continuous ledger balance chain", () => {
-  it("continues Pending and Upcoming from end of Recent, not timeline running_balance", () => {
+describe("backend-owned Pending/Upcoming Bal", () => {
+  it("renders balance_after from the API and ignores chronological running_balance", () => {
     const history = [
       txn({
         id: 1,
@@ -213,7 +215,8 @@ describe("continuous ledger balance chain", () => {
         date: "2026-08-21",
         description: "Chewy",
         amount: "-79.46",
-        running_balance: "703.72", // misleading timeline value — must be ignored
+        running_balance: "703.72", // chronological — must not display
+        balance_after: "1.69",
         status: "PLANNED",
         source: "rule",
         type: "expense",
@@ -223,6 +226,7 @@ describe("continuous ledger balance chain", () => {
         description: "Geico",
         amount: "-403.43",
         running_balance: "300.29",
+        balance_after: "-401.74",
         status: "PLANNED",
         source: "rule",
         type: "expense",
@@ -232,6 +236,7 @@ describe("continuous ledger balance chain", () => {
         description: "Venture C/C Payment",
         amount: "-100.00",
         running_balance: "200.29",
+        balance_after: "-501.74",
         status: "PLANNED",
         source: "rule",
         type: "expense",
@@ -243,6 +248,7 @@ describe("continuous ledger balance chain", () => {
         description: "Move to Savings",
         amount: "-497.00",
         running_balance: "-1406.40",
+        balance_after: "-998.74",
         type: "expense",
       }),
     ];
@@ -259,31 +265,46 @@ describe("continuous ledger balance chain", () => {
     const pendingRows = rows.filter((r) => r.kind === "pending");
     const upcomingRows = rows.filter((r) => r.kind === "upcoming");
 
-    // 81.15 - 79.46 = 1.69
     expect(pendingRows[0].kind === "pending" && pendingRows[0].runningBalance).toBe("1.69");
-    // 1.69 - 403.43 = -401.74
     expect(pendingRows[1].kind === "pending" && pendingRows[1].runningBalance).toBe("-401.74");
-    // -401.74 - 100 = -501.74
     expect(pendingRows[2].kind === "pending" && pendingRows[2].runningBalance).toBe("-501.74");
-    // -501.74 - 497 = -998.74
     expect(upcomingRows[0].kind === "upcoming" && upcomingRows[0].runningBalance).toBe("-998.74");
   });
-});
 
-describe("continueLedgerBalances", () => {
-  it("chains from posted ending through pending then upcoming", () => {
-    const result = continueLedgerBalances({
-      postedEndingBalance: 81.15,
-      pending: [
-        timelineRow({ date: "2026-08-21", description: "Chewy", amount: "-79.46", type: "expense" }),
-        timelineRow({ date: "2026-08-26", description: "Pay", amount: "-100", type: "expense" }),
-      ],
-      upcoming: [
-        timelineRow({ date: "2026-08-27", description: "Move", amount: "-497", type: "expense" }),
-      ],
-    });
-    expect(result.pendingBalances).toEqual(["1.69", "-98.31"]);
-    expect(result.upcomingBalances).toEqual(["-595.31"]);
+  it("prefers balance_after over running_balance", () => {
+    expect(
+      timelineRowLedgerBalance(
+        timelineRow({
+          date: "2026-08-27",
+          description: "X",
+          amount: "-1",
+          running_balance: "999",
+          balance_after: "12.34",
+        })
+      )
+    ).toBe("12.34");
   });
 });
 
+describe("no client-side ledger balance math", () => {
+  it("buildTransactionList source does not sum amounts for Bal", () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "buildTransactionList.ts"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/continueLedgerBalances/);
+    expect(src).not.toMatch(/signedTimelineLedgerAmount/);
+    expect(src).not.toMatch(/running\s*=\s*running\s*\+/);
+    expect(src).toMatch(/timelineRowLedgerBalance/);
+    expect(src).toMatch(/balance_after/);
+  });
+
+  it("useTransactionsData passes ledger_anchor to getTimeline", () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "useTransactionsData.ts"),
+      "utf8"
+    );
+    expect(src).toMatch(/ledger_anchor/);
+    expect(src).toMatch(/getTimeline/);
+  });
+});

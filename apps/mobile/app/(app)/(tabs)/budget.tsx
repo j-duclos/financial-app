@@ -1,5 +1,6 @@
-import { BudgetScreen } from "@/features/budget";
+import { Redirect } from "expo-router";
 
-export default function BudgetTab() {
-  return <BudgetScreen />;
+/** Hidden legacy tab route — Budget moved to More → Spending Limits. */
+export default function BudgetTabRedirect() {
+  return <Redirect href="/spending-limits" />;
 }

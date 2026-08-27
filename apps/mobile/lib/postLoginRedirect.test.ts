@@ -10,8 +10,9 @@ describe("postLoginRedirect", () => {
     expect(sanitizePostLoginRedirect("/transaction/42")).toBe("/transaction/42");
     expect(sanitizePostLoginRedirect("/(app)/(tabs)")).toBe("/(app)/(tabs)");
     expect(sanitizePostLoginRedirect("/accounts")).toBe("/accounts");
-    expect(sanitizePostLoginRedirect("/goal/7")).toBe("/goal/7");
-    expect(sanitizePostLoginRedirect("/profile")).toBe("/profile");
+    expect(sanitizePostLoginRedirect("/budget")).toBe("/budget");
+    expect(sanitizePostLoginRedirect("/spending-limits")).toBe("/spending-limits");
+    expect(sanitizePostLoginRedirect("/(app)/(tabs)/accounts")).toBe("/(app)/(tabs)/accounts");
   });
 
   it("rejects external and traversal paths", () => {

@@ -58,12 +58,17 @@ export function attentionCardAccessibilityLabel(item: DashboardAttentionItem): s
     .join(". ");
 }
 
+/** Accounts tab root (not a secondary stack push). */
+export function accountsTabPath(): "/(app)/(tabs)/accounts" {
+  return "/(app)/(tabs)/accounts";
+}
+
 export function accountsAttentionFilterPath(): {
-  pathname: "/accounts";
+  pathname: "/(app)/(tabs)/accounts";
   params: { attention: string };
 } {
   return {
-    pathname: "/accounts",
+    pathname: "/(app)/(tabs)/accounts",
     params: { attention: "1" },
   };
 }

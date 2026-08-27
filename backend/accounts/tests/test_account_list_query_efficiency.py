@@ -236,6 +236,7 @@ def _capture(auth_client, url: str, monkeypatch):
         response = auth_client.get(url)
     elapsed_ms = (time.perf_counter() - start) * 1000
     assert response.status_code == 200, response.content
+    payload_bytes = len(response.content)
     return {
         "response": response,
         "sql": len(ctx.captured_queries),
@@ -243,6 +244,7 @@ def _capture(auth_client, url: str, monkeypatch):
         "elapsed_ms": elapsed_ms,
         "timeline_builds": get_build_timeline_count(),
         "writes": _financial_writes(ctx.captured_queries),
+        "payload_bytes": payload_bytes,
         **counters,
     }
 
@@ -264,12 +266,14 @@ def test_profile_account_list_query_counts(user, household, auth_client, monkeyp
         "\nACCOUNTS_LIST_QUERY_PROFILE "
         f"light_sql={light['sql']} "
         f"light_ms={light['elapsed_ms']:.0f} "
+        f"light_bytes={light['payload_bytes']} "
         f"light_account_qs={light['account_annotated_fetches']} "
         f"light_timeline={light['timeline_builds']} "
         f"light_forecast_batch={light['forecast_batch']} "
         f"light_health={light['health_batch']} "
         f"enriched_sql={enriched['sql']} "
         f"enriched_ms={enriched['elapsed_ms']:.0f} "
+        f"enriched_bytes={enriched['payload_bytes']} "
         f"enriched_account_qs={enriched['account_annotated_fetches']} "
         f"enriched_timeline={enriched['timeline_builds']} "
         f"enriched_forecast_account={enriched['forecast_account']} "

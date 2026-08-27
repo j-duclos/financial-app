@@ -11,16 +11,20 @@ import {
 import { useAuth } from "@/features/auth";
 import { useTheme } from "@/theme";
 
-const PRIMARY_LINKS = [
-  { title: "Accounts", href: "/accounts", subtitle: "Balances and account health" },
-  { title: "Recurring", href: "/recurring", subtitle: "Income, bills, and transfers" },
+/** Planning tools — Accounts lives on the bottom tab bar. */
+const PLANNING_LINKS = [
   { title: "Goals", href: "/goals", subtitle: "Savings and debt goals" },
-  { title: "Action Center", href: "/action-center", subtitle: "Recommendations and alerts" },
   { title: "Payment Planner", href: "/payment-planner", subtitle: "Credit payment strategies" },
-  { title: "What-If Plan", href: "/what-if", subtitle: "Scenario comparisons" },
+  { title: "What-If", href: "/what-if", subtitle: "Scenario comparisons" },
+  { title: "Spending Limits", href: "/spending-limits", subtitle: "Category spending targets" },
 ] as const;
 
-const SECONDARY_LINKS = [
+const MONEY_LINKS = [
+  { title: "Recurring", href: "/recurring", subtitle: "Income, bills, and transfers" },
+  { title: "Action Center", href: "/action-center", subtitle: "Recommendations and alerts" },
+] as const;
+
+const SETUP_LINKS = [
   { title: "Reports", href: "/reports", subtitle: "Monthly insights" },
   { title: "Automation", href: "/automation", subtitle: "Rules & recurring automation" },
   { title: "Categories", href: "/categories", subtitle: "Income and expense categories" },
@@ -42,8 +46,18 @@ export function MoreScreen() {
         {auth.user?.displayName ? `Signed in as ${auth.user.displayName}` : "Secondary tools"}
       </Text>
 
+      <SectionHeader title="Planning" />
+      {PLANNING_LINKS.map((link) => (
+        <ListRow
+          key={link.href}
+          title={link.title}
+          subtitle={link.subtitle}
+          onPress={() => router.push(link.href as never)}
+        />
+      ))}
+
       <SectionHeader title="Money tools" />
-      {PRIMARY_LINKS.map((link) => (
+      {MONEY_LINKS.map((link) => (
         <ListRow
           key={link.href}
           title={link.title}
@@ -53,7 +67,7 @@ export function MoreScreen() {
       ))}
 
       <SectionHeader title="Setup" />
-      {SECONDARY_LINKS.map((link) => (
+      {SETUP_LINKS.map((link) => (
         <ListRow
           key={link.href}
           title={link.title}

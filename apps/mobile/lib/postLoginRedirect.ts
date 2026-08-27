@@ -8,7 +8,7 @@ const ALLOWED_PREFIXES = [
   "/accounts",
   "/recurring/",
   "/automation/",
-  "/budget/",
+  "/budget",
   "/reports",
   "/what-if",
   "/payment-planner",

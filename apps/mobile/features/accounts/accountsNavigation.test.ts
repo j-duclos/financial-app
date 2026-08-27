@@ -12,11 +12,17 @@ const accountsList = readFileSync(join(dir, "useAccountsList.ts"), "utf8");
 const accountRow = readFileSync(join(dir, "AccountRow.tsx"), "utf8");
 
 describe("Accounts screen navigation", () => {
-  it("does not show Back on Accounts root (bottom nav / More is the way out)", () => {
+  it("does not show Back on Accounts tab root (bottom nav is the way out)", () => {
     expect(accountsSource).toMatch(/<AppHeader/);
     expect(accountsSource).toMatch(/title="Accounts"/);
     expect(accountsSource).not.toMatch(/showBack/);
+    expect(accountsSource).not.toMatch(/onBack=/);
     expect(accountsSource).toMatch(/accessibilityLabel="Add account"/);
+  });
+
+  it("clears attention filter on the Accounts tab (not a stack /accounts push)", () => {
+    expect(accountsSource).toMatch(/\/\(app\)\/\(tabs\)\/accounts/);
+    expect(accountsSource).not.toMatch(/replace\("\/accounts"\)/);
   });
 
   it("routes every account row tap to account detail (no separate View button)", () => {

@@ -99,9 +99,9 @@ describe("Dashboard progressive loading architecture", () => {
 });
 
 describe("Dashboard navigation fixes", () => {
-  it("routes view-all attention to stack accounts screen with filter param", () => {
+  it("routes view-all attention to Accounts tab with filter param", () => {
     expect(accountsAttentionFilterPath()).toEqual({
-      pathname: "/accounts",
+      pathname: "/(app)/(tabs)/accounts",
       params: { attention: "1" },
     });
   });

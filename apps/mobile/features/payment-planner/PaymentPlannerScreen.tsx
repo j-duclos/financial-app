@@ -131,7 +131,7 @@ export function PaymentPlannerScreen() {
           title="No credit cards"
           message="Add a credit card account to build a debt payoff plan."
           actionLabel="Add account"
-          onAction={() => router.push("/accounts")}
+          onAction={() => router.push("/(app)/(tabs)/accounts")}
         />
       </Screen>
     );

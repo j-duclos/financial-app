@@ -1774,6 +1774,11 @@ export interface TimelineRow {
   rule_id: number | null;
   transaction_id: number | null;
   running_balance: string;
+  /**
+   * Transactions-ledger Bal for Pending/Upcoming when `ledger_anchor` is supplied
+   * (continues from posted Recent ending). Otherwise mirrors running_balance.
+   */
+  balance_after?: string | null;
   /** Whether this transaction has been reconciled. */
   reconciled?: boolean;
   /** Running balance stored when this row was reconciled (signed; credit = negative debt). */

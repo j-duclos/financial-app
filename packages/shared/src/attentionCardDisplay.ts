@@ -10,7 +10,7 @@ export const ATTENTION_FIX_SHORTFALL_LABEL = "Fix Shortfall";
 
 export const ATTENTION_MAX_CARDS = 3;
 
-/** Web path; mobile uses `/accounts?attention=1` via expo-router. */
+/** Web path; mobile opens Accounts tab via `accountsAttentionFilterPath()`. */
 export const ATTENTION_VIEW_ALL_PATH = "/accounts?attention=1";
 
 const ACTIONABLE_STATUSES = new Set<DashboardAttentionItem["status"]>([

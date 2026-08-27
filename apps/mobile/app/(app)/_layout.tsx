@@ -27,7 +27,6 @@ export default function AppLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="accounts" />
       <Stack.Screen name="account/[id]" />
       <Stack.Screen name="account/new" />
       <Stack.Screen name="account/edit/[id]" />
@@ -38,6 +37,7 @@ export default function AppLayout() {
       <Stack.Screen name="recurring/[id]" />
       <Stack.Screen name="recurring/new" />
       <Stack.Screen name="recurring/edit/[id]" />
+      <Stack.Screen name="budget/index" />
       <Stack.Screen name="budget/[targetId]" />
       <Stack.Screen name="spending-limits" />
       <Stack.Screen name="spending-limits/new" />

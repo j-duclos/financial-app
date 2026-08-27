@@ -152,9 +152,13 @@ async function requestInner<T>(
       res.headers.get("X-Timeline-Cache") ??
       res.headers.get("X-Dashboard-Cache") ??
       res.headers.get("X-Cache");
+    const canonicalTimeline = res.headers.get("X-Canonical-Timeline");
+    const timelineElapsed = res.headers.get("X-Timeline-Elapsed-Ms");
     const extra = [
       bytesHeader ? `bytes=${bytesHeader}` : "",
-      cacheHint ? `cache=${cacheHint}` : "",
+      cacheHint ? `http_cache=${cacheHint}` : "",
+      canonicalTimeline ? `canonical_timeline=${canonicalTimeline}` : "",
+      timelineElapsed ? `timeline_elapsed_ms=${timelineElapsed}` : "",
     ]
       .filter(Boolean)
       .join(" ");
