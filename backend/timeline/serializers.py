@@ -114,6 +114,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
     )
     scheduled_change = serializers.SerializerMethodField()
     next_occurrence_date = serializers.SerializerMethodField()
+    estimated_monthly_amount = serializers.SerializerMethodField()
     account = RecurringRuleNestedAccountSerializer(read_only=True)
     account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.none(), source="account", write_only=True
@@ -143,6 +144,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "payment_flexibility_days",
             "scheduled_change",
             "next_occurrence_date",
+            "estimated_monthly_amount",
             "change_effective_date",
             "cancel_scheduled_change",
             "created_at",
@@ -153,6 +155,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "paused_at",
             "scheduled_change",
             "next_occurrence_date",
+            "estimated_monthly_amount",
             "created_at",
             "updated_at",
         ]
@@ -186,6 +189,12 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         due = get_next_rule_run_date(obj, timezone.localdate())
         return due.isoformat() if due else None
 
+    def get_estimated_monthly_amount(self, obj: RecurringRule) -> str:
+        """Overwritten in to_representation with schedule-resolved params."""
+        from timeline.services.rule_amounts import rule_estimated_monthly_amount
+
+        return str(rule_estimated_monthly_amount(obj))
+
     def to_representation(self, instance: RecurringRule) -> dict:
         data = super().to_representation(instance)
         today = timezone.localdate()
@@ -200,6 +209,16 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         data["nth_week"] = params.nth_week
         data["start_date"] = params.start_date.isoformat()
         data["end_date"] = params.end_date.isoformat() if params.end_date else None
+        from timeline.services.rule_amounts import rule_estimated_monthly_amount_from_fields
+
+        data["estimated_monthly_amount"] = str(
+            rule_estimated_monthly_amount_from_fields(
+                amount=params.amount,
+                frequency=params.frequency,
+                interval=params.interval,
+                direction=params.direction,
+            )
+        )
         segment = self._effective_segment(instance, today)
         if segment is not None:
             if params.account_id != instance.account_id and getattr(segment, "account", None):

@@ -14,7 +14,7 @@ from accounts.relationship_models import AccountRelationship
 from accounts.services.relationships import active_relationships_for_accounts, deactivate_relationship
 from core.models import UserProfile
 from timeline.models import RecurringRule, ScenarioRuleOverride
-from timeline.services.ledger import build_timeline, generate_rule_occurrences
+from timeline.services.ledger import generate_rule_occurrences
 from transactions.models import TransferGroup
 
 
@@ -106,31 +106,13 @@ def lifecycle_preflight(account: Account, user, *, action: str) -> dict[str, Any
             "Deleting permanently removes this account, its transactions, recurring rules, and statement lines."
         )
 
-    future_payments = 0
-    try:
-        rows = build_timeline(
-            user,
-            start_date=today,
-            end_date=today.replace(year=today.year + 1),
-            account_id=account.pk,
-            projection_only=True,
-            caller="account_lifecycle",
-        )
-        future_payments = sum(
-            1
-            for r in rows
-            if r.get("account_id") == account.pk
-            and r.get("date")
-            and r["date"] > today
-            and r.get("amount")
-            and Decimal(str(r["amount"])) < 0
-        )
-    except Exception:
-        pass
+    future_payments = recurring + transfers
     if future_payments:
         warnings.append(
             f"Forecast shows {future_payments} upcoming outflow"
-            f"{'' if future_payments == 1 else 's'} on this account."
+            f"{'' if future_payments == 1 else 's'} related to this account "
+            f"({recurring} recurring, {transfers} planned transfer"
+            f"{'' if transfers == 1 else 's'})."
         )
 
     return {

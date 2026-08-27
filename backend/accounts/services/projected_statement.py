@@ -7,7 +7,8 @@ from typing import Any, Optional
 
 from accounts.models import Account
 from accounts.services.credit_card import calculate_next_statement_date
-from timeline.services.ledger import _credit_card_balance_through_date, build_timeline
+from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
+from timeline.services.ledger import _credit_card_balance_through_date
 
 
 def _signed_balance_at_cycle_end(
@@ -27,6 +28,25 @@ def _owed_from_signed(signed: Decimal) -> Decimal:
     if signed < 0:
         return abs(signed).quantize(Decimal("0.01"))
     return Decimal("0")
+
+
+def _canonical_rows_through(
+    user,
+    *,
+    today: date,
+    end_date: date,
+    household_id: int | None,
+    caller: str,
+) -> list[dict]:
+    forecast_days = max((end_date - today).days, 0)
+    rows, _ = get_or_build_canonical_forecast_timeline(
+        user,
+        today=today,
+        forecast_days=forecast_days,
+        household_id=household_id,
+        caller=caller,
+    )
+    return rows
 
 
 def calculate_projected_statement_for_account(
@@ -53,13 +73,11 @@ def calculate_projected_statement_for_account(
 
     cycle_end = calculate_next_statement_date(closing, today)
     if timeline_rows is None:
-        timeline_rows = build_timeline(
+        timeline_rows = _canonical_rows_through(
             user,
-            start_date=today,
+            today=today,
             end_date=cycle_end,
-            account_id=account.pk,
-            as_of_date=today,
-            projection_only=True,
+            household_id=account.household_id,
             caller="projected_statement",
         )
 
@@ -77,11 +95,12 @@ def calculate_projected_statements_for_accounts(
     as_of_date: Optional[date] = None,
     timeline_rows: Optional[list[dict]] = None,
 ) -> dict[int, dict[str, Any]]:
-    """Batch projected statement balances with one shared timeline build."""
+    """Batch projected statement balances with one shared canonical timeline."""
     today = as_of_date or date.today()
     credit_cards: list[Account] = []
     cycle_end_by_id: dict[int, date] = {}
     max_end = today
+    household_id: int | None = None
 
     for account in accounts:
         if not account.is_credit_card():
@@ -92,6 +111,8 @@ def calculate_projected_statements_for_accounts(
         cycle_end = calculate_next_statement_date(closing, today)
         credit_cards.append(account)
         cycle_end_by_id[account.id] = cycle_end
+        if household_id is None:
+            household_id = account.household_id
         if cycle_end > max_end:
             max_end = cycle_end
 
@@ -99,12 +120,11 @@ def calculate_projected_statements_for_accounts(
         return {}
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
+        timeline_rows = _canonical_rows_through(
             user,
-            start_date=today,
+            today=today,
             end_date=max_end,
-            as_of_date=today,
-            projection_only=True,
+            household_id=household_id,
             caller="projected_statement",
         )
 

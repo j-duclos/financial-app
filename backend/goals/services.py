@@ -89,22 +89,28 @@ def _actual_balance_at_end_of_date(account_id: int, as_of: date) -> Decimal:
 
 
 def _timeline_balance_at_end_of_date(user, account_id: int, as_of: date) -> Decimal | None:
-    """Forecast running balance on ``as_of`` from the account timeline."""
-    from timeline.services.ledger import build_timeline
+    """Forecast running balance on ``as_of`` from the canonical household timeline."""
+    from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
 
-    start = as_of - timedelta(days=120)
-    rows = build_timeline(
+    today = date.today()
+    if as_of < today:
+        return None
+    forecast_days = max((as_of - today).days, 0)
+    from accounts.models import Account
+
+    household_id = (
+        Account.objects.filter(pk=account_id).values_list("household_id", flat=True).first()
+    )
+    rows, _ = get_or_build_canonical_forecast_timeline(
         user,
-        start_date=start,
-        end_date=as_of,
-        account_id=account_id,
-        as_of_date=date.today(),
-        projection_only=True,
+        today=today,
+        forecast_days=forecast_days,
+        household_id=household_id,
         caller="goals_timeline",
     )
     last: Decimal | None = None
     for row in rows:
-        if row.get("account_id") != account_id:
+        if int(row.get("account_id") or 0) != int(account_id):
             continue
         row_date = row.get("date")
         if isinstance(row_date, str):

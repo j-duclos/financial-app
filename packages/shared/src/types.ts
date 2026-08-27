@@ -1343,6 +1343,8 @@ export interface RecurringRule {
   scheduled_change?: RecurringRuleScheduledChange | null;
   /** Canonical next occurrence (YYYY-MM-DD) from backend recurrence engine; null when none. */
   next_occurrence_date?: string | null;
+  /** Signed monthly equivalent from backend frequency normalization (Automation summaries). */
+  estimated_monthly_amount?: string | null;
   created_at: string;
   updated_at: string;
 }

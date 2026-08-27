@@ -1,7 +1,6 @@
 import type { Account, RecurringRule, Transaction } from "@budget-app/shared";
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
-import { getNextRuleRunDate } from "./ruleOccurrences";
 
 export const AUTOMATION_PAGE_INTRO =
   "Rules that automatically create or manage financial activity — income, bills, subscriptions, and transfers.";
@@ -18,16 +17,6 @@ export const RULE_SECTIONS = [
 export type RuleSectionKey = (typeof RULE_SECTIONS)[number]["key"];
 
 export type RuleLifecycleStatus = "running" | "paused" | "ended";
-
-const SUBSCRIPTION_CATEGORY_NAMES = new Set(["Streaming", "Software / Apps", "Memberships"]);
-
-const CARD_LOAN_PAYMENT_CATEGORY_NAMES = new Set([
-  "Credit Card Payment",
-  "Student Loan",
-  "Personal Loan",
-]);
-
-const TRANSFER_CATEGORY_NAMES = new Set(["Bank Transfer", "Transfer"]);
 
 const WEEKDAYS = [
   { value: 0, label: "Monday" },
@@ -55,47 +44,28 @@ export function isCreditCardExpenseRule(rule: RecurringRule): boolean {
   return rule.direction === "EXPENSE" && isCreditCardAccount(rule.account);
 }
 
+/**
+ * Presentation grouping from canonical rule fields only (direction, account type,
+ * transfer destination, is_bill) — never English category/name heuristics.
+ */
 export function getRuleSection(rule: RecurringRule): RuleSectionKey {
   if (rule.direction === "INCOME") return "income";
-  const catName = rule.category?.name ?? "";
   const hasTransferDest = !!(rule.transfer_to_account?.id ?? rule.transfer_to_account_id);
-  const nameLower = (rule.name ?? "").toLowerCase();
-  if (CARD_LOAN_PAYMENT_CATEGORY_NAMES.has(catName)) return "card_loan_payments";
-  if (
-    rule.direction === "TRANSFER" ||
-    hasTransferDest ||
-    TRANSFER_CATEGORY_NAMES.has(catName) ||
-    nameLower.includes("move to")
-  ) {
+  if (rule.direction === "TRANSFER" || hasTransferDest) {
+    if (isCreditCardAccount(rule.transfer_to_account)) return "card_loan_payments";
     return "transfers";
   }
   if (isCreditCardExpenseRule(rule)) return "credit_card_charges";
-  if (SUBSCRIPTION_CATEGORY_NAMES.has(catName)) return "subscriptions";
-  return "bills";
+  if (rule.is_bill) return "bills";
+  return "subscriptions";
 }
 
-export function ruleMonthlyAmount(rule: RecurringRule): number {
-  const amount = Math.abs(Number(rule.amount) || 0);
-  const interval = Math.max(1, Number(rule.interval) || 1);
-  let perMonth: number;
-  switch (rule.frequency) {
-    case "WEEKLY":
-      perMonth = (52 / 12 / interval) * amount;
-      break;
-    case "BIWEEKLY":
-      perMonth = (26 / 12 / interval) * amount;
-      break;
-    case "MONTHLY_DAY":
-    case "MONTHLY_NTH_WEEKDAY":
-      perMonth = amount / interval;
-      break;
-    case "YEARLY":
-      perMonth = amount / (12 * interval);
-      break;
-    default:
-      perMonth = amount / interval;
-  }
-  return rule.direction === "EXPENSE" ? -perMonth : perMonth;
+/** Backend-owned monthly amount; null when API omitted the field. */
+export function ruleEstimatedMonthlyAmount(rule: RecurringRule): number {
+  const raw = rule.estimated_monthly_amount;
+  if (raw == null || String(raw).trim() === "") return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export function ruleCountsTowardMonthlyCashFlow(rule: RecurringRule): boolean {
@@ -110,7 +80,7 @@ export function sectionMonthlySubtotal(
 ): number {
   return rules.reduce((sum, rule) => {
     if (!isRunning(rule)) return sum;
-    return sum + ruleMonthlyAmount(rule);
+    return sum + ruleEstimatedMonthlyAmount(rule);
   }, 0);
 }
 
@@ -121,8 +91,15 @@ export function estimatedMonthlyCashFlow(
   return rules.reduce((sum, rule) => {
     if (!isRunning(rule)) return sum;
     if (!ruleCountsTowardMonthlyCashFlow(rule)) return sum;
-    return sum + ruleMonthlyAmount(rule);
+    return sum + ruleEstimatedMonthlyAmount(rule);
   }, 0);
+}
+
+/** Canonical next occurrence from API — presentation only. */
+export function resolveAutomationNextRun(rule: RecurringRule, today: string): string | null {
+  if (getRuleLifecycleStatus(rule, today) !== "running") return null;
+  const fromApi = rule.next_occurrence_date?.slice(0, 10) ?? null;
+  return fromApi;
 }
 
 export function getRuleLifecycleStatus(rule: RecurringRule, today: string): RuleLifecycleStatus {
@@ -233,7 +210,7 @@ export function buildAutomationRows(rules: RecurringRule[], today: string): Auto
       triggerSummary: triggerSummary(rule),
       actionSummary: actionSummary(rule),
       cadenceSummary: cadenceSummary(rule),
-      nextRun: lifecycle === "running" ? getNextRuleRunDate(rule, today) : null,
+      nextRun: resolveAutomationNextRun(rule, today),
     };
   });
 }

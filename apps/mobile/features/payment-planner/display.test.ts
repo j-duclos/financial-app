@@ -8,7 +8,6 @@ import {
   formatDebtFreeMonth,
   formatMoneyOrDash,
   interestSavedLine,
-  paymentToReachUtilization,
   planIsRecalculating,
   priorityReasonLabel,
   targetUtilizationPercent,
@@ -140,10 +139,9 @@ describe("payment planner display", () => {
   it("uses user-configured utilization target, not hard-coded thresholds", () => {
     const acc = mockAccount({ target_utilization_percent: "10" });
     expect(targetUtilizationPercent(acc)).toBe(10);
-    expect(paymentToReachUtilization(acc)).toBe(880);
 
     const at30 = mockAccount({ target_utilization_percent: "30" });
-    expect(paymentToReachUtilization(at30)).toBe(680);
+    expect(targetUtilizationPercent(at30)).toBe(30);
   });
 
   it("detects pending recalculation while debouncing", () => {

@@ -239,24 +239,6 @@ export function targetUtilizationPercent(account: Account): number {
   return raw >= 0 ? raw : DEFAULT_TARGET_UTILIZATION_PERCENT;
 }
 
-/** Payment to bring utilization to target % (matches backend calculators). */
-export function paymentToReachUtilization(account: Account, targetPct?: number): number | null {
-  const limit = parseMoney(account.credit_limit);
-  const owed = parseMoney(account.balance_owed ?? account.current_balance ?? account.balance);
-  if (limit <= 0 || owed <= 0) return null;
-  const target = targetPct ?? targetUtilizationPercent(account);
-  const targetBalance = (target / 100) * limit;
-  const needed = owed - targetBalance;
-  return needed > 0 ? Math.round(needed * 100) / 100 : 0;
-}
-
-export function targetUtilizationPlanHint(account: Account): string | null {
-  const target = targetUtilizationPercent(account);
-  const pay = paymentToReachUtilization(account, target);
-  if (pay == null || pay <= 0) return null;
-  return `Pay ${formatCurrency(String(pay))} to reach ${target}% utilization target`;
-}
-
 export type DrawerForecastRow = {
   label: string;
   value: string;

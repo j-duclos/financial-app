@@ -33,9 +33,9 @@ import {
   getRuleLifecycleStatus,
   lifecycleStatusLabel,
   lifecycleStatusTone,
+  resolveAutomationNextRun,
   triggerSummary,
 } from "./automationDisplay";
-import { getNextRuleRunDate } from "./ruleOccurrences";
 import { ExecutionHistoryRowView } from "./components/ExecutionHistoryRow";
 import { RuleSummaryCard } from "./components/RuleSummaryCard";
 
@@ -102,7 +102,7 @@ export function AutomationDetailScreen() {
 
   const rule = ruleQuery.data;
   const lifecycle = rule ? getRuleLifecycleStatus(rule, today) : "paused";
-  const nextRun = rule && lifecycle === "running" ? getNextRuleRunDate(rule, today) : null;
+  const nextRun = rule ? resolveAutomationNextRun(rule, today) : null;
 
   const historyRows = useMemo(
     () => historyTransactions.map(buildExecutionHistoryRow),

@@ -131,16 +131,30 @@ def prepare_transfer_simulation_context(
         resolved_household = accounts[0].household_id
 
     if timeline_rows is None:
-        timeline_rows = build_timeline(
-            user,
-            start_date=today,
-            end_date=end_date,
-            scenario_id=scenario_id,
-            household_id=resolved_household,
-            as_of_date=today,
-            projection_only=True,
-            caller="transfer_simulation_base",
+        from timeline.services.canonical_timeline_cache import (
+            get_or_build_canonical_forecast_timeline,
         )
+
+        # Only reuse unmodified baseline when no scenario overlay is active.
+        if scenario_id is None:
+            timeline_rows, _ = get_or_build_canonical_forecast_timeline(
+                user,
+                today=today,
+                forecast_days=horizon_days,
+                household_id=resolved_household,
+                caller="transfer_simulation_base",
+            )
+        else:
+            timeline_rows = build_timeline(
+                user,
+                start_date=today,
+                end_date=end_date,
+                scenario_id=scenario_id,
+                household_id=resolved_household,
+                as_of_date=today,
+                projection_only=True,
+                caller="transfer_simulation_base",
+            )
 
     base_calendar = build_timeline_calendar(
         user,

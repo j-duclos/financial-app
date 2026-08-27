@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RecurringRule } from "@budget-app/shared";
 import {
@@ -8,9 +11,13 @@ import {
   getRuleLifecycleStatus,
   getRuleSection,
   groupAutomationRows,
+  resolveAutomationNextRun,
   triggerSummary,
 } from "@/features/automation/automationDisplay";
-import { getNextRuleRunDate } from "@/features/automation/ruleOccurrences";
+
+const dir = dirname(fileURLToPath(import.meta.url));
+const displaySource = readFileSync(join(dir, "automationDisplay.ts"), "utf8");
+const detailSource = readFileSync(join(dir, "AutomationDetailScreen.tsx"), "utf8");
 
 function mockRule(overrides: Partial<RecurringRule> = {}): RecurringRule {
   return {
@@ -36,7 +43,10 @@ function mockRule(overrides: Partial<RecurringRule> = {}): RecurringRule {
     active: true,
     paused_at: null,
     notes: null,
+    is_bill: false,
     category: { id: 2, name: "Streaming", household: 1 } as RecurringRule["category"],
+    next_occurrence_date: "2026-08-15",
+    estimated_monthly_amount: "-15.99",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -44,8 +54,12 @@ function mockRule(overrides: Partial<RecurringRule> = {}): RecurringRule {
 }
 
 describe("automationDisplay", () => {
-  it("classifies subscription rules", () => {
+  it("classifies non-bill expenses as subscriptions without category-name heuristics", () => {
     expect(getRuleSection(mockRule())).toBe("subscriptions");
+    expect(getRuleSection(mockRule({ is_bill: true }))).toBe("bills");
+    expect(displaySource).not.toMatch(/Streaming/);
+    expect(displaySource).not.toMatch(/Credit Card Payment/);
+    expect(displaySource).not.toMatch(/move to/);
   });
 
   it("builds human-readable trigger and summary", () => {
@@ -69,32 +83,35 @@ describe("automationDisplay", () => {
     expect(getRuleLifecycleStatus(mockRule({ active: false }), "2026-08-01")).toBe("paused");
   });
 
-  it("computes monthly cash flow excluding credit card charges", () => {
+  it("sums backend estimated_monthly_amount and excludes credit card charges", () => {
     const rules = [
-      mockRule({ amount: "100" }),
+      mockRule({ amount: "100", estimated_monthly_amount: "-100" }),
       mockRule({
         id: 3,
         name: "CC charge",
+        estimated_monthly_amount: "-50",
         account: { id: 9, name: "Visa", account_type: "CREDIT" } as RecurringRule["account"],
       }),
     ];
     const total = estimatedMonthlyCashFlow(rules, () => true);
-    expect(total).toBeLessThan(0);
-    expect(Math.abs(total)).toBeCloseTo(100, 0);
+    expect(total).toBe(-100);
+  });
+
+  it("uses backend next_occurrence_date for next run", () => {
+    expect(resolveAutomationNextRun(mockRule(), "2026-08-01")).toBe("2026-08-15");
+    expect(resolveAutomationNextRun(mockRule({ active: false }), "2026-08-01")).toBeNull();
+    expect(buildAutomationRows([mockRule()], "2026-08-01")[0].nextRun).toBe("2026-08-15");
+  });
+
+  it("does not generate recurrence schedules client-side", () => {
+    expect(displaySource).not.toMatch(/generateRuleOccurrences/);
+    expect(displaySource).not.toMatch(/getNextRuleRunDate/);
+    expect(displaySource).not.toMatch(/52\s*\/\s*12/);
+    expect(detailSource).not.toMatch(/ruleOccurrences/);
+    expect(detailSource).toMatch(/resolveAutomationNextRun/);
   });
 
   it("cadenceSummary formats monthly rules", () => {
     expect(cadenceSummary(mockRule())).toContain("Monthly");
-  });
-});
-
-describe("ruleOccurrences", () => {
-  it("returns next run for active monthly rule", () => {
-    const next = getNextRuleRunDate(mockRule(), "2026-08-01");
-    expect(next).toBe("2026-08-15");
-  });
-
-  it("returns null for paused rules", () => {
-    expect(getNextRuleRunDate(mockRule({ active: false }), "2026-08-01")).toBeNull();
   });
 });

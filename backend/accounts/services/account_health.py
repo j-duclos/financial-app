@@ -44,7 +44,7 @@ from accounts.services.balances import (
     credit_owed_from_signed_balance,
 )
 from accounts.services.credit_card import credit_payment_due_state, ledger_owed_balance
-from timeline.services.ledger import _balance_at_end_of_date, build_timeline
+from timeline.services.ledger import _balance_at_end_of_date
 from transactions.models import Transaction
 from transactions.services.matching import ledger_visible_transactions
 
@@ -821,14 +821,15 @@ def calculate_account_health(
 
     if forecast_summary is None and account_supports_available_to_spend(account):
         if timeline_rows is None:
-            window_end = today + timedelta(days=days)
-            timeline_rows = build_timeline(
+            from timeline.services.canonical_timeline_cache import (
+                get_or_build_canonical_forecast_timeline,
+            )
+
+            timeline_rows, _ = get_or_build_canonical_forecast_timeline(
                 user,
-                start_date=today,
-                end_date=window_end,
-                account_id=account.pk,
-                as_of_date=today,
-                projection_only=True,
+                today=today,
+                forecast_days=days,
+                household_id=account.household_id,
                 caller="account_health",
             )
         from accounts.services.available_to_spend import calculate_account_forecast_summary
