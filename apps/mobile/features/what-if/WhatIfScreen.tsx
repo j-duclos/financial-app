@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import type {
   Scenario,
@@ -27,6 +27,8 @@ import { ScenarioChangeRow } from "./components/ScenarioChangeRow";
 import { ScenarioContextBanner } from "./components/ScenarioContextBanner";
 import { WhatIfEmptyState } from "./components/WhatIfEmptyState";
 import { ChipRow } from "./components/ChipRow";
+import { PlanActionsSheet } from "./components/PlanActionsSheet";
+import { PlanPickerSheet } from "./components/PlanPickerSheet";
 import { AddChangeMenuSheet, ChangeKindSheet } from "./forms/ChangeKindSheet";
 import { CreateScenarioSheet } from "./forms/CreateScenarioSheet";
 import { DebtPaymentSheet } from "./forms/DebtPaymentSheet";
@@ -35,7 +37,7 @@ import { OneTimeEventSheet } from "./forms/OneTimeEventSheet";
 import { OverrideFormSheet } from "./forms/OverrideFormSheet";
 import { FORECAST_PERIOD_OPTIONS, horizonToMonths } from "./display";
 import { parsePositiveIntParam } from "./navigation";
-import { buildPlanIncludes } from "./scenarioPlainLanguage";
+import { buildPlanIncludes, type PlanIncludeItem } from "./scenarioPlainLanguage";
 import {
   isDebtPaymentOverride,
   isDebtRecurringPayment,
@@ -76,6 +78,8 @@ export function WhatIfScreen() {
   const [showDetails, setShowDetails] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createTemplate, setCreateTemplate] = useState<ScenarioTemplateKey>("blank");
+  const [planPickerOpen, setPlanPickerOpen] = useState(false);
+  const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [incomeKindOpen, setIncomeKindOpen] = useState(false);
   const [expenseKindOpen, setExpenseKindOpen] = useState(false);
@@ -89,6 +93,7 @@ export function WhatIfScreen() {
   const [debtSheetOpen, setDebtSheetOpen] = useState(false);
   const [recurringDebtOpen, setRecurringDebtOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [removeItem, setRemoveItem] = useState<PlanIncludeItem | null>(null);
   const [formsEnabled, setFormsEnabled] = useState(false);
 
   const profileQuery = useWhatIfProfile();
@@ -141,8 +146,7 @@ export function WhatIfScreen() {
   const formData = useWhatIfFormData(formsEnabled || addMenuOpen, defaultHousehold);
   const accounts = formData.accounts.data?.results ?? [];
   const rules = formData.rules.data?.results ?? [];
-  const categoriesRaw = formData.categories.data;
-  const categoriesList = Array.isArray(categoriesRaw) ? categoriesRaw : (categoriesRaw?.results ?? []);
+  const categoriesList = formData.categories.categories;
 
   const mutations = useScenarioMutations(selectedScenarioId);
 
@@ -160,8 +164,7 @@ export function WhatIfScreen() {
   const comparisonBusy =
     comparisonQuery.isLoading || comparisonQuery.isFetching || changesLoading;
   const horizonMonths = horizonToMonths(forecastPeriod);
-  const horizonLabel =
-    FORECAST_PERIOD_OPTIONS.find((o) => o.value === forecastPeriod)?.label ?? `${horizonMonths} months`;
+  const horizonLabel = `${horizonMonths}-month`;
 
   const invalidate = () => {
     if (selectedScenarioId != null) {
@@ -176,7 +179,7 @@ export function WhatIfScreen() {
     setForecastPeriod(horizonMonthsToParam(created.horizon_months ?? 12));
   };
 
-  const handleRemoveItem = async (item: ReturnType<typeof buildPlanIncludes>[number]) => {
+  const handleRemoveItem = async (item: PlanIncludeItem) => {
     if (item.kind === "override") await mutations.deleteScenarioOverride(item.sourceId);
     else if (item.kind === "event") await mutations.deleteScenarioOneTimeEvent(item.sourceId);
     else if (item.kind === "added_recurring") await mutations.deleteScenarioAddedRecurring(item.sourceId);
@@ -184,7 +187,7 @@ export function WhatIfScreen() {
     invalidate();
   };
 
-  const handleEditItem = (item: ReturnType<typeof buildPlanIncludes>[number]) => {
+  const handleEditItem = (item: PlanIncludeItem) => {
     setFormsEnabled(true);
     if (item.kind === "override") {
       const ov = (overrides ?? []).find((o) => o.id === item.sourceId);
@@ -293,14 +296,37 @@ export function WhatIfScreen() {
           />
         ) : (
           <>
-            <ChipRow
-              label="What-if plan"
-              options={scenarios.map((s: Scenario) => ({ value: String(s.id), label: s.name }))}
-              selected={String(selectedScenarioId ?? "")}
-              onSelect={(v) => setSelectedScenarioId(Number(v))}
-            />
+            {selectedScenario ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: theme.spacing.sm,
+                  gap: 4,
+                }}
+              >
+                <Pressable
+                  onPress={() => setPlanPickerOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Plan ${selectedScenario.name}`}
+                  style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6 }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Plan</Text>
+                    <Text style={{ color: theme.colors.text, ...theme.typography.headline }} numberOfLines={1}>
+                      {selectedScenario.name} ›
+                    </Text>
+                  </View>
+                </Pressable>
+                <IconButton
+                  name="ellipsis-v"
+                  accessibilityLabel="Plan options"
+                  onPress={() => setPlanActionsOpen(true)}
+                />
+              </View>
+            ) : null}
 
-            <View style={{ marginTop: theme.spacing.md }}>
+            <View style={{ marginBottom: theme.spacing.md }}>
               <ChipRow
                 label="Forecast period"
                 options={FORECAST_PERIOD_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
@@ -311,29 +337,6 @@ export function WhatIfScreen() {
 
             {selectedScenarioId && selectedScenario ? (
               <>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: theme.spacing.md, marginBottom: theme.spacing.sm }}>
-                  <Button
-                    label="Add change"
-                    variant="secondary"
-                    onPress={() => {
-                      setFormsEnabled(true);
-                      setAddMenuOpen(true);
-                    }}
-                  />
-                  {contextDebtId ? (
-                    <Button
-                      label="Model payoff"
-                      variant="secondary"
-                      onPress={() => {
-                        setFormsEnabled(true);
-                        setEditingEvent(null);
-                        setEditingOverride(null);
-                        setDebtSheetOpen(true);
-                      }}
-                    />
-                  ) : null}
-                </View>
-
                 <PlanSummaryCard
                   scenarioName={selectedScenario.name}
                   comparison={comparisonQuery.data}
@@ -344,16 +347,55 @@ export function WhatIfScreen() {
                   recalculating={comparisonQuery.isFetching && !!comparisonQuery.data}
                 />
 
-                <ComparisonSection comparison={comparisonQuery.data} horizonLabel={horizonLabel} />
+                <ComparisonSection
+                  comparison={comparisonQuery.data}
+                  horizonLabel={horizonLabel}
+                  loading={comparisonBusy}
+                  error={comparisonQuery.error}
+                  onRetry={() => void comparisonQuery.refetch()}
+                />
 
-                <View style={{ marginTop: theme.spacing.md, marginBottom: theme.spacing.sm }}>
-                  <Text style={{ color: theme.colors.text, ...theme.typography.headline }} accessibilityRole="header">
-                    Changes in this plan
-                  </Text>
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
-                    Hypothetical only — your real accounts and recurring rules are not modified.
-                  </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: theme.spacing.md,
+                    marginBottom: theme.spacing.sm,
+                    gap: 8,
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.text, ...theme.typography.headline }} accessibilityRole="header">
+                      Changes in this plan
+                    </Text>
+                    <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
+                      Hypothetical only — your real accounts and recurring rules are not modified.
+                    </Text>
+                  </View>
+                  <IconButton
+                    name="plus"
+                    accessibilityLabel="Add change"
+                    onPress={() => {
+                      setFormsEnabled(true);
+                      setAddMenuOpen(true);
+                    }}
+                  />
                 </View>
+
+                {contextDebtId ? (
+                  <View style={{ marginBottom: theme.spacing.sm }}>
+                    <Button
+                      label="Model payoff"
+                      variant="secondary"
+                      onPress={() => {
+                        setFormsEnabled(true);
+                        setEditingEvent(null);
+                        setEditingOverride(null);
+                        setDebtSheetOpen(true);
+                      }}
+                    />
+                  </View>
+                ) : null}
 
                 {planItems.length === 0 ? (
                   <EmptyState
@@ -366,7 +408,7 @@ export function WhatIfScreen() {
                       key={item.id}
                       item={item}
                       onEdit={() => handleEditItem(item)}
-                      onRemove={() => void handleRemoveItem(item)}
+                      onRemove={() => setRemoveItem(item)}
                     />
                   ))
                 )}
@@ -400,26 +442,6 @@ export function WhatIfScreen() {
                     ))}
                   </View>
                 ) : null}
-
-                <View style={{ flexDirection: "row", gap: 8, marginTop: theme.spacing.md }}>
-                  <View style={{ flex: 1 }}>
-                    <Button
-                      label="Duplicate plan"
-                      variant="secondary"
-                      onPress={() => {
-                        if (selectedScenarioId) {
-                          void mutations.duplicateScenarioMu.mutateAsync(selectedScenarioId).then((s) => {
-                            setSelectedScenarioId(s.id);
-                          });
-                        }
-                      }}
-                      loading={mutations.duplicateScenarioMu.isPending}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Button label="Delete plan" variant="danger" onPress={() => setDeleteConfirmOpen(true)} />
-                  </View>
-                </View>
               </>
             ) : null}
           </>
@@ -435,6 +457,38 @@ export function WhatIfScreen() {
         onClose={() => setCreateOpen(false)}
         onSubmit={(data) => void handleCreateScenario(data)}
       />
+
+      <PlanPickerSheet
+        visible={planPickerOpen}
+        scenarios={scenarios}
+        selectedId={selectedScenarioId}
+        onClose={() => setPlanPickerOpen(false)}
+        onSelect={setSelectedScenarioId}
+      />
+
+      {selectedScenario ? (
+        <PlanActionsSheet
+          visible={planActionsOpen}
+          planName={selectedScenario.name}
+          renaming={mutations.updateScenarioMu.isPending}
+          onClose={() => setPlanActionsOpen(false)}
+          onRename={(name) => {
+            void mutations.updateScenarioMu.mutateAsync({ id: selectedScenario.id, data: { name } }).then(() => {
+              setPlanActionsOpen(false);
+            });
+          }}
+          onAction={(action) => {
+            setPlanActionsOpen(false);
+            if (action === "duplicate" && selectedScenarioId) {
+              void mutations.duplicateScenarioMu.mutateAsync(selectedScenarioId).then((s) => {
+                setSelectedScenarioId(s.id);
+              });
+            } else if (action === "delete") {
+              setDeleteConfirmOpen(true);
+            }
+          }}
+        />
+      ) : null}
 
       <AddChangeMenuSheet
         visible={addMenuOpen}
@@ -554,6 +608,20 @@ export function WhatIfScreen() {
               setSelectedScenarioId(null);
               setDeleteConfirmOpen(false);
             });
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        visible={removeItem != null}
+        title="Remove change?"
+        message="This removes the hypothetical change from this plan only."
+        confirmLabel="Remove change"
+        destructive
+        onCancel={() => setRemoveItem(null)}
+        onConfirm={() => {
+          if (removeItem) {
+            void handleRemoveItem(removeItem).then(() => setRemoveItem(null));
           }
         }}
       />

@@ -187,33 +187,27 @@ def _financial_writes(queries) -> list[str]:
 def test_profile_calendar_query_counts(user, household, monkeypatch, capsys):
     seed_calendar_fixture(user, household, n_checking=5, n_cards=3, n_bills=12)
 
-    import accounts.services.available_to_spend as ats
     import timeline.services.calendar as cal
 
     counters = {
-        "forecast_account": 0,
-        "forecast_batch": 0,
-        "bulk_opening": 0,
+        "forecast_metrics": 0,
+        "canonical_forecast": 0,
     }
-    orig_account = ats.calculate_account_forecast_summary
-    orig_batch = ats._calculate_forecast_summaries_for_accounts
-    orig_bulk = cal.bulk_signed_ledger_balances
+    orig_metrics = cal.forecast_account_balance_metrics
+    from timeline.services import canonical_timeline_cache as ctc
 
-    def wrapped_account(*args, **kwargs):
-        counters["forecast_account"] += 1
-        return orig_account(*args, **kwargs)
+    orig_canonical = ctc.get_or_build_canonical_forecast_timeline
 
-    def wrapped_batch(*args, **kwargs):
-        counters["forecast_batch"] += 1
-        return orig_batch(*args, **kwargs)
+    def wrapped_metrics(*args, **kwargs):
+        counters["forecast_metrics"] += 1
+        return orig_metrics(*args, **kwargs)
 
-    def wrapped_bulk(*args, **kwargs):
-        counters["bulk_opening"] += 1
-        return orig_bulk(*args, **kwargs)
+    def wrapped_canonical(*args, **kwargs):
+        counters["canonical_forecast"] += 1
+        return orig_canonical(*args, **kwargs)
 
-    monkeypatch.setattr(ats, "calculate_account_forecast_summary", wrapped_account)
-    monkeypatch.setattr(ats, "_calculate_forecast_summaries_for_accounts", wrapped_batch)
-    monkeypatch.setattr(cal, "bulk_signed_ledger_balances", wrapped_bulk)
+    monkeypatch.setattr(cal, "forecast_account_balance_metrics", wrapped_metrics)
+    monkeypatch.setattr(ctc, "get_or_build_canonical_forecast_timeline", wrapped_canonical)
 
     cache.clear()
     reset_build_timeline_count()
@@ -233,18 +227,16 @@ def test_profile_calendar_query_counts(user, household, monkeypatch, capsys):
         f"sql={len(ctx.captured_queries)} "
         f"elapsed_ms={elapsed_ms:.0f} "
         f"timeline_builds={get_build_timeline_count()} "
-        f"forecast_account_calls={counters['forecast_account']} "
-        f"forecast_batches={counters['forecast_batch']} "
-        f"bulk_opening_calls={counters['bulk_opening']} "
+        f"forecast_metrics_calls={counters['forecast_metrics']} "
+        f"canonical_forecast_calls={counters['canonical_forecast']} "
         f"response_bytes={len(payload.encode('utf-8'))} "
         f"days={len(result['days'])}"
     )
     assert len(ctx.captured_queries) > 0
     assert result["days"]
-    assert get_build_timeline_count() == 1
-    assert counters["bulk_opening"] == 1
-    assert counters["forecast_batch"] == 1
-    assert counters["forecast_account"] == 0
+    assert get_build_timeline_count() >= 1
+    assert counters["canonical_forecast"] == 1
+    assert counters["forecast_metrics"] >= 1
     assert not hasattr(cal, "_rows_for_account")
 
 

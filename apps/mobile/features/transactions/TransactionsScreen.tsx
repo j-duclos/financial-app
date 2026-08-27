@@ -24,11 +24,9 @@ import {
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { FINANCIAL_LIST_PROPS } from "@/lib/flatListDefaults";
-import { resolveHouseholdId } from "@/lib/householdContext";
 import { describeApiError } from "@/services/api";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
-import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { useProfile } from "@/lib/profileQuery";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import {
@@ -49,6 +47,11 @@ import { AccountSelectorSheet } from "./AccountSelectorSheet";
 import { AccountLedgerHeader } from "./AccountLedgerHeader";
 import { resolveAccountCurrentBalance } from "./ledgerHeaderDisplay";
 import type { TransactionListRow } from "./buildTransactionList";
+import {
+  estimateLedgerOffset,
+  getLedgerItemLayout,
+  ledgerAnchorScrollIndex,
+} from "./ledgerScrollAnchor";
 import { markAttentionNavigation } from "@/features/dashboard/attentionNavigationTiming";
 import {
   parseRouteAccountId,
@@ -100,6 +103,7 @@ export function TransactionsScreen() {
   const [upcomingRangeOpen, setUpcomingRangeOpen] = useState(false);
   const [filterDraft, setFilterDraft] = useState(filters);
   const accountInitializedRef = useRef(false);
+  const listRef = useRef<FlatList<TransactionListRow>>(null);
 
   const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
@@ -164,9 +168,6 @@ export function TransactionsScreen() {
     rememberTransactionAccountSelection(accountId);
   }, []);
 
-  const householdId = resolveHouseholdId(defaultHouseholdId, filters.accountId, accounts);
-  const categoriesQuery = useCategoryOptions({ householdId });
-
   const {
     listRows,
     isError,
@@ -186,6 +187,39 @@ export function TransactionsScreen() {
     forecastReady,
     postedLedgerAnchor,
   });
+
+  const ledgerListKey = `${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`;
+  const ledgerDataReady =
+    !isRecentLoading &&
+    !isTimelineLoading &&
+    !listIsOnlyPlaceholders(listRows) &&
+    listHasActivityRows(listRows);
+  const ledgerAnchorIndex = useMemo(() => {
+    if (!ledgerDataReady) return null;
+    return ledgerAnchorScrollIndex(listRows);
+  }, [listRows, ledgerDataReady]);
+
+  /** Remount once data is ready so initialScrollIndex applies (scrollToIndex is unreliable without prior layout). */
+  const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}`;
+  const initialScrollIndex = useMemo(() => {
+    if (!ledgerDataReady || ledgerAnchorIndex == null) return 0;
+    return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
+  }, [ledgerDataReady, ledgerAnchorIndex, listRows.length]);
+
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<TransactionListRow> | null | undefined, index: number) =>
+      getLedgerItemLayout(listRows, index),
+    [listRows]
+  );
+
+  useEffect(() => {
+    if (!ledgerDataReady || initialScrollIndex <= 0) return;
+    const offset = estimateLedgerOffset(listRows, initialScrollIndex);
+    const timer = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 32);
+    return () => clearTimeout(timer);
+  }, [listMountKey, ledgerDataReady, initialScrollIndex, listRows]);
 
   const activeFilterCount = countActiveTransactionFilters(filters);
   const selectedAccountName =
@@ -370,13 +404,24 @@ export function TransactionsScreen() {
         />
       ) : (
         <FlatList
-          key={`${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`}
+          ref={listRef}
+          key={listMountKey}
           data={listRows}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
           {...FINANCIAL_LIST_PROPS}
+          initialNumToRender={Math.max(
+            FINANCIAL_LIST_PROPS.initialNumToRender,
+            initialScrollIndex + 8
+          )}
+          initialScrollIndex={initialScrollIndex > 0 ? initialScrollIndex : undefined}
+          getItemLayout={getItemLayout}
+          onScrollToIndexFailed={(info) => {
+            const offset = getLedgerItemLayout(listRows, info.index).offset;
+            listRef.current?.scrollToOffset({ offset, animated: false });
+          }}
           refreshControl={
             <RefreshControl
               refreshing={historyQuery.isFetching && !isRecentLoading}
@@ -470,9 +515,6 @@ export function TransactionsScreen() {
       <TransactionFiltersSheet
         visible={filtersOpen}
         draft={filterDraft}
-        categories={categoriesQuery.categories}
-        categoriesLoading={categoriesQuery.isLoading && categoriesQuery.categories.length === 0}
-        categoriesError={categoriesQuery.isError}
         onClose={() => setFiltersOpen(false)}
         onApply={(next) => {
           setFilters(next);

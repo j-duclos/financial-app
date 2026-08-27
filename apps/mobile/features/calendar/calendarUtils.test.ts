@@ -1,24 +1,35 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMonthGrid,
+  calendarGridWeekCount,
+  calendarGridWeekRow,
+  calendarRangeForSelection,
   dayHasActivity,
   daySeverity,
   isDateWithinForecast,
   monthBounds,
   parseCalendarAmount,
 } from "@/features/calendar/calendarUtils";
-import { horizonForForecastDays } from "@/features/calendar/types";
 import { calendarQueryKeys } from "@/features/calendar/queryKeys";
 
 describe("calendarUtils", () => {
-  it("buildMonthGrid pads to week boundaries", () => {
-    const grid = buildMonthGrid(2026, 7); // August 2026 starts on Saturday
-    expect(grid[0]).toBeNull();
+  it("buildMonthGrid pads leading and trailing week boundaries", () => {
+    const grid = buildMonthGrid(2026, 7); // August 2026
+    expect(grid.slice(0, 6).every((cell) => cell == null)).toBe(true);
     expect(grid.filter(Boolean).length).toBe(31);
+    expect(calendarGridWeekCount(grid)).toBe(6);
+    expect(calendarGridWeekRow(grid, 5)[0]).toBe("2026-08-30");
+    expect(calendarGridWeekRow(grid, 5)[1]).toBe("2026-08-31");
   });
 
   it("monthBounds returns full month range", () => {
     expect(monthBounds(2026, 1)).toEqual({ start: "2026-02-01", end: "2026-02-28" });
+  });
+
+  it("calendarRangeForSelection honors operational forecast days", () => {
+    const range = calendarRangeForSelection(30, 1, "2026-08-01");
+    expect(range.end).toBe("2026-08-31");
+    expect(range.start).toBe("2026-07-01");
   });
 
   it("dayHasActivity detects income or transactions", () => {
@@ -72,7 +83,7 @@ describe("calendarUtils", () => {
 describe("calendar query keys", () => {
   it("keys chunks by month range and filters", () => {
     const filters = {
-      horizon: "3m" as const,
+      forecastDays: 30 as const,
       lookbackMonths: 1 as const,
       accountId: 5 as const,
       scenarioId: "" as const,
@@ -80,7 +91,7 @@ describe("calendar query keys", () => {
     };
     expect(calendarQueryKeys.chunk(filters, "2026-08-01", "2026-08-31")).toEqual([
       "calendar-chunk",
-      "3m",
+      30,
       1,
       5,
       "",
@@ -88,12 +99,5 @@ describe("calendar query keys", () => {
       "2026-08-01",
       "2026-08-31",
     ]);
-  });
-});
-
-describe("horizonForForecastDays", () => {
-  it("maps operational forecast days to calendar horizons", () => {
-    expect(horizonForForecastDays(30)).toBe("3m");
-    expect(horizonForForecastDays(180)).toBe("6m");
   });
 });

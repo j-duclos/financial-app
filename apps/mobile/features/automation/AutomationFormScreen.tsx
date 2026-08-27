@@ -7,7 +7,6 @@ import {
   getProfile,
   getRule,
   listAccounts,
-  listCategories,
   listHouseholds,
   pauseRule,
   resumeRule,
@@ -21,6 +20,7 @@ import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
 import { todayStr } from "@/lib/dates";
 import { accountLifecycleStatus } from "@/lib/accountGroups";
+import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { automationQueryKeys } from "./queryKeys";
 import {
   buildRuleSummary,
@@ -203,10 +203,9 @@ export function AutomationFormScreen() {
     enabled: step === "conditions" || step === "review",
   });
 
-  const categoriesQuery = useQuery({
-    queryKey: ["categories", "automation-form", householdId],
-    queryFn: () => listCategories({ household: householdId, page_size: 500 }),
-    enabled: (step === "conditions" || step === "review") && householdId > 0,
+  const categoriesQuery = useCategoryOptions({
+    householdId: householdId > 0 ? householdId : null,
+    enabled: step === "conditions" || step === "review",
   });
 
   const accounts = useMemo(
@@ -217,7 +216,7 @@ export function AutomationFormScreen() {
     [accountsQuery.data?.results, householdId]
   );
 
-  const categories = categoriesQuery.data?.results ?? [];
+  const categories = categoriesQuery.categories;
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const catName = selectedCategory?.name ?? "";
   const transferAllowed = catName === "Credit Card Payment" || catName === "Bank Transfer";

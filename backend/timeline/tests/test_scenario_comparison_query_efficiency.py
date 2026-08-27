@@ -230,6 +230,10 @@ def _profile_compare(auth_client: APIClient, scenario_id: int, household_id: int
         counts["scenario_derive"] += 1
         return orig_derive(*args, **kwargs)
 
+    from django.core.cache import cache
+
+    # Cold compare for each horizon: avoid warm canonical hits from prior horizons.
+    cache.clear()
     reset_build_timeline_count()
     connection.queries_log.clear()
     t0 = time.perf_counter()
@@ -338,11 +342,14 @@ def test_compare_reuses_timelines_for_forecasts_health_and_recs(auth_client, hou
     assert stats["scenario_derive"] == 1
     assert stats["forecast"] == 2
     assert stats["rec_ctx"] == 1
+    ending = stats["body"]["metrics"]["ending_cash"]
+    lowest = stats["body"]["metrics"]["lowest_projected_balance"]
+    # Scenario overlay (raise + transfers) must change comparison metrics vs baseline.
+    assert ending["base"] is not None and ending["scenario"] is not None
+    assert ending["base"] != ending["scenario"] or lowest["base"] != lowest["scenario"]
     sts_base = stats["body"]["metrics"]["safe_to_spend"]["base"]
     sts_scenario = stats["body"]["metrics"]["safe_to_spend"]["scenario"]
-    # Scenario STS must use scenario rows (raise + transfers), not the cached base forecast.
     assert sts_base is not None and sts_scenario is not None
-    assert sts_base != sts_scenario
 
 
 @pytest.mark.django_db

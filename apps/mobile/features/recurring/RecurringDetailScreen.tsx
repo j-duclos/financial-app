@@ -9,12 +9,13 @@ import {
   pauseRule,
   resumeRule,
 } from "@budget-app/api-client";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import { getEffectiveDisplayName } from "@budget-app/shared";
 import {
   AppHeader,
   Button,
   Card,
   ConfirmDialog,
+  CurrencyDisplay,
   ErrorState,
   Screen,
   SectionHeader,
@@ -27,11 +28,14 @@ import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
 import { formatDateDisplay, todayStr } from "@/lib/dates";
 import { recurringQueryKeys } from "./queryKeys";
 import {
+  amountDisplayForRule,
   cadenceLabel,
   currentMonthKey,
   directionLabel,
   formatRecurringDate,
-  ruleIsActive,
+  lifecycleBadgeLabel,
+  resolveNextOccurrence,
+  ruleLifecycleStatus,
 } from "./recurringDisplay";
 
 export function RecurringDetailScreen() {
@@ -54,11 +58,6 @@ export function RecurringDetailScreen() {
     queryFn: () => getBillsOverview({ month, months_before: 0, months_after: 2 }),
     staleTime: 60_000,
   });
-
-  const occurrence = useMemo(() => {
-    const items = overviewQuery.data?.checklist.items ?? [];
-    return items.find((item) => item.rule_id === ruleId) ?? null;
-  }, [overviewQuery.data?.checklist.items, ruleId]);
 
   const pauseMutation = useMutation({
     mutationFn: () => pauseRule(ruleId),
@@ -86,7 +85,17 @@ export function RecurringDetailScreen() {
 
   const rule = ruleQuery.data;
   const today = todayStr();
-  const active = rule ? ruleIsActive(rule, today) : false;
+  const lifecycle = rule ? ruleLifecycleStatus(rule, today) : "inactive";
+  const statusBadge = lifecycleBadgeLabel(lifecycle);
+  const amountDisplay = rule ? amountDisplayForRule(rule) : null;
+  const nextOccurrence = rule
+    ? resolveNextOccurrence(
+        rule,
+        today,
+        overviewQuery.data?.checklist.items.find((i) => i.rule_id === ruleId)?.due_date ?? null
+      )
+    : null;
+
   const upcoming = useMemo(() => {
     const items = overviewQuery.data?.checklist.items ?? [];
     return items
@@ -103,7 +112,7 @@ export function RecurringDetailScreen() {
     );
   }
 
-  if (ruleQuery.isError || !rule) {
+  if (ruleQuery.isError || !rule || !amountDisplay) {
     return (
       <Screen scroll={false}>
         <ErrorState message={describeApiError(ruleQuery.error)} onRetry={() => ruleQuery.refetch()} />
@@ -129,20 +138,29 @@ export function RecurringDetailScreen() {
         <Card>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             <StatusChip label={directionLabel(rule.direction)} />
-            <StatusChip label={active ? "Active" : "Inactive"} tone={active ? "positive" : "warning"} />
+            {statusBadge ? <StatusChip label={statusBadge} tone="warning" /> : null}
           </View>
-          <DetailRow label="Amount" value={formatCurrency(rule.amount, rule.currency)} />
+          <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6 }}>
+            <Text style={{ color: theme.colors.textMuted, fontSize: 14 }}>Amount</Text>
+            <CurrencyDisplay
+              amount={amountDisplay.signed}
+              currency={rule.currency}
+              tone={amountDisplay.tone}
+              showSign={amountDisplay.showSign}
+              style={{ fontSize: 16 }}
+            />
+          </View>
           <DetailRow label="Account" value={getEffectiveDisplayName(rule.account)} />
           {rule.transfer_to_account ? (
             <DetailRow label="Transfer to" value={getEffectiveDisplayName(rule.transfer_to_account)} />
           ) : null}
-          {rule.category ? <DetailRow label="Category" value={rule.category.name} /> : null}
+          {rule.category && rule.direction !== "TRANSFER" ? (
+            <DetailRow label="Category" value={rule.category.name} />
+          ) : null}
           <DetailRow label="Frequency" value={cadenceLabel(rule)} />
           <DetailRow label="Start" value={formatDateDisplay(rule.start_date)} />
-          {rule.end_date ? <DetailRow label="End" value={formatDateDisplay(rule.end_date)} /> : null}
-          {occurrence ? (
-            <DetailRow label="Next occurrence" value={formatRecurringDate(occurrence.due_date)} />
-          ) : null}
+          <DetailRow label="Ends" value={rule.end_date ? formatDateDisplay(rule.end_date) : "Never"} />
+          <DetailRow label="Next occurrence" value={formatRecurringDate(nextOccurrence)} />
           {rule.notes ? <DetailRow label="Notes" value={rule.notes} /> : null}
           {rule.scheduled_change ? (
             <Text style={{ color: theme.colors.warning, marginTop: 8, fontSize: 13 }}>
@@ -154,7 +172,7 @@ export function RecurringDetailScreen() {
         {upcoming.length > 0 ? (
           <Card padded={false}>
             <View style={{ padding: theme.spacing.lg, paddingBottom: 0 }}>
-              <SectionHeader title="Upcoming (from forecast)" subtitle="Backend-generated preview" />
+              <SectionHeader title="Upcoming" subtitle="From bills forecast" />
             </View>
             {upcoming.map((p) => (
               <View
@@ -169,34 +187,34 @@ export function RecurringDetailScreen() {
                 }}
               >
                 <Text style={{ color: theme.colors.text }}>{formatRecurringDate(p.due_date)}</Text>
-                <Text style={{ color: theme.colors.text, fontWeight: "600" }}>
-                  {formatCurrency(p.amount ?? rule.amount, rule.currency)}
-                </Text>
+                <CurrencyDisplay
+                  amount={amountDisplay.signed}
+                  currency={rule.currency}
+                  tone={amountDisplay.tone}
+                  showSign={amountDisplay.showSign}
+                  style={{ fontSize: 14 }}
+                />
               </View>
             ))}
           </Card>
         ) : null}
 
         <View style={{ gap: 8 }}>
-          {active ? (
+          {lifecycle === "active" ? (
             <Button
               label="Pause recurrence"
               variant="secondary"
               loading={pauseMutation.isPending}
               onPress={() => pauseMutation.mutate()}
             />
-          ) : rule.active ? (
+          ) : rule.paused_at || lifecycle === "paused" || lifecycle === "inactive" ? (
             <Button
               label="Resume recurrence"
               loading={resumeMutation.isPending}
               onPress={() => resumeMutation.mutate()}
             />
           ) : null}
-          <Button
-            label="Delete rule"
-            variant="danger"
-            onPress={() => setConfirmDelete(true)}
-          />
+          <Button label="Delete rule" variant="danger" onPress={() => setConfirmDelete(true)} />
         </View>
       </ScrollView>
 

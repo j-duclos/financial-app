@@ -43,7 +43,7 @@ type Props = {
 
 /**
  * Scheduled/rule rows whose date has arrived but no actual bank/manual posting has confirmed them.
- * Resolved via Matches Imported, Skip, Edit, Move Date — not manual delete.
+ * Resolved via Matched Import, Skip, Edit, Move Date — not manual delete.
  */
 export default function PendingExpectedSection({
   pending,

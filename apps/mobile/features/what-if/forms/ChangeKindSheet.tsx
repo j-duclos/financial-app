@@ -98,7 +98,7 @@ export function AddChangeMenuSheet({
   ];
 
   return (
-    <BottomSheet visible={visible} title="Add to this plan" onClose={onClose}>
+    <BottomSheet visible={visible} title="What do you want to change?" onClose={onClose}>
       {actions.map((a) => (
         <Pressable
           key={a.label}

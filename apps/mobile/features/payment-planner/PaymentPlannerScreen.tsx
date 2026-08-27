@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshControl, Text, View } from "react-native";
+import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import type { DebtPayoffMode, DebtPayoffStrategy, PayoffStrategy } from "@budget-app/shared";
 import {
   AppHeader,
-  Button,
   EmptyState,
   ErrorState,
   Screen,
@@ -12,7 +11,6 @@ import {
   SkeletonBlock,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { describeApiError } from "@/services/api";
 import { DebtDetailSheet } from "./DebtDetailSheet";
 import { DebtPriorityRow } from "./DebtPriorityRow";
@@ -20,10 +18,9 @@ import { PlannerSummaryCard } from "./PlannerSummaryCard";
 import { StrategyModePanel } from "./StrategyModePanel";
 import { WhatIfPanel } from "./WhatIfPanel";
 import {
+  debtStrategyLabel,
   parseDebtModeParam,
-  planIsRecalculating,
   topRecommendation,
-  WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "./display";
 import { planDetailsPath } from "./navigation";
 import type { PlannerScenarioInputs } from "./queryKeys";
@@ -33,7 +30,6 @@ import {
   useDebtPayoffPlan,
   usePaymentPlannerAccounts,
 } from "./usePaymentPlannerData";
-import { targetUtilizationPercent } from "./display";
 
 export function PaymentPlannerScreen() {
   const theme = useTheme();
@@ -57,27 +53,21 @@ export function PaymentPlannerScreen() {
   );
   const [cardStrategy, setCardStrategy] = useState<PayoffStrategy>("minimum_payment");
   const [amountInput, setAmountInput] = useState(params.amount ?? "");
-
-  const debouncedExtraMonthly = useDebouncedValue(extraMonthly, WHAT_IF_NUMERIC_DEBOUNCE_MS);
-  const debouncedLumpSum = useDebouncedValue(lumpSum, WHAT_IF_NUMERIC_DEBOUNCE_MS);
+  const [appliedAmountInput, setAppliedAmountInput] = useState(params.amount ?? "");
 
   const scenarioInputs: PlannerScenarioInputs = useMemo(
     () => ({
       strategy,
       mode,
-      extraMonthly: debouncedExtraMonthly,
-      lumpSum: debouncedLumpSum,
+      extraMonthly,
+      lumpSum,
       lumpSumAccountId,
     }),
-    [strategy, mode, debouncedExtraMonthly, debouncedLumpSum, lumpSumAccountId]
+    [strategy, mode, extraMonthly, lumpSum, lumpSumAccountId]
   );
 
   const accountsQuery = usePaymentPlannerAccounts();
   const creditCards = useCreditCardsFromAccounts(accountsQuery.data?.results);
-  const creditCardsById = useMemo(
-    () => new Map(creditCards.map((account) => [account.id, account])),
-    [creditCards]
-  );
   const planQuery = useDebtPayoffPlan(scenarioInputs, creditCards.length > 0);
   const plan = planQuery.data;
 
@@ -102,6 +92,7 @@ export function PaymentPlannerScreen() {
     if (params.strategy === "custom_amount" && params.amount) {
       setCardStrategy("custom_amount");
       setAmountInput(params.amount);
+      setAppliedAmountInput(params.amount);
     } else if (params.strategy === "minimum_payment") {
       setCardStrategy("minimum_payment");
     }
@@ -111,20 +102,17 @@ export function PaymentPlannerScreen() {
     account: selectedAccount,
     planCard: selectedPlanCard,
     strategy: cardStrategy,
-    amountInput,
+    amountInput: cardStrategy === "custom_amount" ? appliedAmountInput : amountInput,
     enabled: !!selectedAccount && !!selectedPlanCard,
   });
-
-  const recalculating = planIsRecalculating(
-    { extraMonthly, lumpSum },
-    { extraMonthly: debouncedExtraMonthly, lumpSum: debouncedLumpSum },
-    planQuery.isFetching
-  );
 
   const refetchAll = () => {
     void accountsQuery.refetch();
     void planQuery.refetch();
   };
+
+  const recommended = plan ? topRecommendation(plan) : null;
+  const focusCard = plan?.cards.find((c) => c.payoff_order === 1);
 
   if (accountsQuery.isLoading) {
     return (
@@ -163,9 +151,6 @@ export function PaymentPlannerScreen() {
       }}
     >
       <AppHeader title="Payment Planner" onBack={() => router.back()} />
-      <Text style={{ color: theme.colors.textSecondary, marginBottom: 12, ...theme.typography.body }}>
-        See which debts to pay first and how extra payments change your projected payoff.
-      </Text>
 
       {planQuery.isError && !plan ? (
         <ErrorState message={describeApiError(planQuery.error)} onRetry={() => planQuery.refetch()} />
@@ -173,9 +158,11 @@ export function PaymentPlannerScreen() {
 
       {plan ? (
         <>
-          <PlannerSummaryCard plan={plan} recalculating={recalculating} />
-          {topRecommendation(plan) ? (
-            <View
+          <PlannerSummaryCard plan={plan} recalculating={planQuery.isFetching && !planQuery.isLoading} />
+          {recommended && focusCard ? (
+            <Pressable
+              onPress={() => setSelectedAccountId(focusCard.account_id)}
+              accessibilityRole="button"
               style={{
                 backgroundColor: theme.colors.tintMuted,
                 padding: theme.spacing.md,
@@ -183,13 +170,16 @@ export function PaymentPlannerScreen() {
                 marginBottom: theme.spacing.md,
               }}
             >
-              <Text style={{ color: theme.colors.text, fontWeight: "600", marginBottom: 4 }}>
-                Recommended next action
+              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+                Recommended next
               </Text>
-              <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body }}>
-                {topRecommendation(plan)}
+              <Text style={{ color: theme.colors.text, fontWeight: "700", marginTop: 2 }}>
+                {focusCard.name} · {focusCard.apr}% APR
               </Text>
-            </View>
+              <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}>
+                Pay this debt first under {debtStrategyLabel(strategy)}.
+              </Text>
+            </Pressable>
           ) : null}
         </>
       ) : planQuery.isLoading ? (
@@ -208,18 +198,23 @@ export function PaymentPlannerScreen() {
         lumpSum={lumpSum}
         lumpSumAccountId={lumpSumAccountId}
         creditCards={creditCards}
-        onExtraMonthlyChange={setExtraMonthly}
-        onLumpSumChange={setLumpSum}
-        onLumpSumAccountChange={setLumpSumAccountId}
+        appliedExtraMonthly={extraMonthly}
+        appliedLumpSum={lumpSum}
+        appliedLumpSumAccountId={lumpSumAccountId}
+        onApply={({ extraMonthly: nextExtra, lumpSum: nextLump, lumpSumAccountId: nextAccount }) => {
+          setExtraMonthly(nextExtra);
+          setLumpSum(nextLump);
+          setLumpSumAccountId(nextAccount);
+        }}
       />
 
       {plan && plan.recommendations.length > 0 ? (
         <View style={{ marginBottom: theme.spacing.md }}>
           <SectionHeader title="Recommendations" />
-          {plan.recommendations.map((rec) => (
+          {plan.recommendations.slice(0, 3).map((rec) => (
             <Text
               key={rec.id}
-              style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginBottom: 4 }}
+              style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginBottom: 6 }}
             >
               • {rec.message}
             </Text>
@@ -228,44 +223,54 @@ export function PaymentPlannerScreen() {
       ) : null}
 
       {plan && plan.timeline.length > 0 ? (
-        <Button
-          label="View month-by-month projection"
-          variant="secondary"
+        <Pressable
           onPress={() =>
             router.push({
               pathname: planDetailsPath(),
               params: {
                 strategy,
                 mode,
-                extraMonthly: debouncedExtraMonthly,
-                lumpSum: debouncedLumpSum,
+                extraMonthly,
+                lumpSum,
                 lumpSumAccountId: lumpSumAccountId ? String(lumpSumAccountId) : "",
               },
             })
           }
-          style={{ marginBottom: theme.spacing.md }}
-        />
+          accessibilityRole="button"
+          style={{
+            minHeight: theme.touchTarget,
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: theme.spacing.md,
+            borderTopWidth: 1,
+            borderBottomWidth: 1,
+            borderColor: theme.colors.border,
+            paddingVertical: 12,
+          }}
+        >
+          <Text style={{ flex: 1, color: theme.colors.text, fontWeight: "600" }}>
+            Month-by-month projection
+          </Text>
+          <Text style={{ color: theme.colors.textMuted }}>›</Text>
+        </Pressable>
       ) : null}
 
       {plan ? (
         <>
           <SectionHeader title="Payoff order" subtitle="Tap a debt for payment scenarios" />
-          {plan.cards.map((card) => {
-            const account = creditCardsById.get(card.account_id);
-            return (
-              <DebtPriorityRow
-                key={card.account_id}
-                card={card}
-                selected={selectedAccountId === card.account_id}
-                targetUtilization={account ? targetUtilizationPercent(account) : undefined}
-                onPress={() =>
-                  setSelectedAccountId((prev) =>
-                    prev === card.account_id ? null : card.account_id
-                  )
-                }
-              />
-            );
-          })}
+          {plan.cards.map((card) => (
+            <DebtPriorityRow
+              key={card.account_id}
+              card={card}
+              selected={selectedAccountId === card.account_id}
+              showUtilization={strategy === "utilization_target" || mode === "credit_score"}
+              onPress={() =>
+                setSelectedAccountId((prev) =>
+                  prev === card.account_id ? null : card.account_id
+                )
+              }
+            />
+          ))}
         </>
       ) : null}
 
@@ -279,6 +284,10 @@ export function PaymentPlannerScreen() {
           amountInput={amountInput}
           onStrategyChange={setCardStrategy}
           onAmountChange={setAmountInput}
+          onApplyCustomAmount={(amount) => {
+            setAmountInput(amount);
+            setAppliedAmountInput(amount);
+          }}
           projection={projectionQuery.data}
           projectionLoading={projectionQuery.isFetching}
           projectionError={

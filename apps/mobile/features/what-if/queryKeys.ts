@@ -25,7 +25,6 @@ export const whatIfQueryKeys = {
     ] as const,
   rules: ["what-if-rules"] as const,
   accounts: ["what-if-accounts"] as const,
-  categories: (householdId: number) => ["what-if-categories", householdId] as const,
   profile: ["what-if-profile"] as const,
   households: ["what-if-households"] as const,
 };

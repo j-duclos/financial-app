@@ -11,7 +11,13 @@ import {
 import { getEffectiveDisplayName } from "@budget-app/shared";
 import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { todayStr } from "@/lib/dates";
+import {
+  coerceToInputDate,
+  formatDateInput,
+  formatIsoDateForInput,
+  parseInputDateToIso,
+  todayInputDate,
+} from "@/lib/dates";
 import { resolveHouseholdId } from "@/lib/householdContext";
 import { isTransferCategoryName } from "@/lib/transactionsLedger";
 import { transactionEditLockMessage } from "@/lib/transactionStatus";
@@ -35,7 +41,7 @@ type FormState = {
 
 const emptyForm = (accountId?: number): FormState => ({
   account_id: accountId ?? "",
-  date: todayStr(),
+  date: todayInputDate(),
   payee: "",
   amount: "",
   direction: "OUTFLOW",
@@ -96,7 +102,7 @@ export function TransactionFormScreen() {
       account_id: fromId ?? prev.account_id,
       transfer_to_account_id: toId,
       amount: params.amount?.trim() || prev.amount,
-      date: params.date?.trim() || prev.date,
+      date: params.date?.trim() ? coerceToInputDate(params.date) : prev.date,
       payee: prev.payee || "Transfer",
     }));
   }, [isEdit, transferMode, presetFrom, presetTo, prefillAccount, params.amount, params.date]);
@@ -117,7 +123,7 @@ export function TransactionFormScreen() {
     const abs = Math.abs(parseFloat(txn.amount));
     setForm({
       account_id: txn.account?.id ?? txn.account_id ?? "",
-      date: txn.date,
+      date: formatIsoDateForInput(txn.date),
       payee: txn.payee,
       amount: Number.isFinite(abs) ? String(abs) : "",
       direction: txn.direction,
@@ -134,6 +140,8 @@ export function TransactionFormScreen() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (typeof form.account_id !== "number") throw new Error("Account is required");
+      const isoDate = parseInputDateToIso(form.date);
+      if (!isoDate) throw new Error("Enter a valid date (MM-DD-YYYY)");
       const signedAmount =
         form.direction === "OUTFLOW" ? `-${form.amount}` : form.amount;
 
@@ -145,7 +153,7 @@ export function TransactionFormScreen() {
           from_account: form.account_id,
           to_account: form.transfer_to_account_id,
           amount: form.amount,
-          date: form.date,
+          date: isoDate,
           payee: form.payee,
           memo: form.memo,
           from_category_id: typeof form.category_id === "number" ? form.category_id : null,
@@ -154,7 +162,7 @@ export function TransactionFormScreen() {
 
       const body = {
         account_id: form.account_id,
-        date: form.date,
+        date: isoDate,
         payee: form.payee,
         amount: signedAmount,
         category_id: typeof form.category_id === "number" ? form.category_id : null,
@@ -179,7 +187,12 @@ export function TransactionFormScreen() {
         setFieldErrors(fields);
         return;
       }
-      Alert.alert("Save failed", describeApiError(err));
+      const message = describeApiError(err);
+      if (message.toLowerCase().includes("valid date")) {
+        setFieldErrors((prev) => ({ ...prev, date: "Use MM-DD-YYYY" }));
+        return;
+      }
+      Alert.alert("Save failed", message);
     },
   });
 
@@ -238,7 +251,15 @@ export function TransactionFormScreen() {
           </View>
         </ScrollView>
 
-        <TextField label="Date (YYYY-MM-DD)" value={form.date} onChangeText={(v) => setField("date", v)} error={fieldErrors.date} />
+        <TextField
+          label="Date (MM-DD-YYYY)"
+          value={form.date}
+          onChangeText={(v) => setField("date", formatDateInput(v))}
+          keyboardType="number-pad"
+          maxLength={10}
+          placeholder="MM-DD-YYYY"
+          error={fieldErrors.date}
+        />
         <TextField label="Payee" value={form.payee} onChangeText={(v) => setField("payee", v)} error={fieldErrors.payee} />
         <TextField label="Amount" value={form.amount} onChangeText={(v) => setField("amount", v)} keyboardType="decimal-pad" error={fieldErrors.amount} />
 

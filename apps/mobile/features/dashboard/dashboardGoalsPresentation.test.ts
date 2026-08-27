@@ -105,9 +105,9 @@ describe("Dashboard goal card presentation", () => {
 });
 
 describe("Dashboard goal status (shared)", () => {
-  it("shared dashboardGoalStatusDisplay still exposes uppercase labels for other consumers", () => {
+  it("shared dashboardGoalStatusDisplay uses canonical sentence-case labels", () => {
     expect(
       dashboardGoalStatusDisplay({ pace_status: "behind", on_track_status: "behind" })?.label
-    ).toBe("BEHIND");
+    ).toBe("Behind");
   });
 });

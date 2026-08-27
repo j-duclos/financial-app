@@ -2,10 +2,10 @@ import React, { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { FinancialGoal } from "@budget-app/shared";
 import {
-  formatGoalProgressLine,
+  formatGoalProgressSummary,
   formatGoalTargetDate,
   goalListStatusDisplay,
-  goalSuggestionLine,
+  goalPrimaryRecommendation,
   parseProgressPercent,
 } from "@budget-app/shared";
 import { Card, IconButton, StatusChip } from "@/components/ui";
@@ -23,7 +23,7 @@ export const GoalCard = memo(function GoalCard({ goal, onPress, onActions }: Pro
   const pct = parseProgressPercent(goal.progress_percent);
   const status = goalListStatusDisplay(goal);
   const targetDate = formatGoalTargetDate(goal.target_date);
-  const suggestion = goalSuggestionLine(goal);
+  const recommendation = goalPrimaryRecommendation(goal);
 
   return (
     <Card onPress={onPress}>
@@ -42,26 +42,26 @@ export const GoalCard = memo(function GoalCard({ goal, onPress, onActions }: Pro
         </View>
       </View>
 
-      <View style={{ marginTop: 10 }}>
+      <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 8 }}>
+        {formatGoalProgressSummary(goal)}
+      </Text>
+
+      <View style={{ marginTop: 8 }}>
         <GoalProgressBar percent={pct} />
       </View>
 
-      <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 8 }}>
-        {formatGoalProgressLine(goal)}
-      </Text>
-      <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
-        {pct}% complete
-      </Text>
-
       {targetDate ? (
-        <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 4 }}>
-          Target: {targetDate}
+        <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 8 }}>
+          Target {targetDate}
         </Text>
       ) : null}
 
-      {suggestion ? (
-        <Text style={{ color: theme.colors.text, ...theme.typography.caption, marginTop: 6 }}>
-          {suggestion}
+      {recommendation ? (
+        <Text
+          style={{ color: theme.colors.text, ...theme.typography.caption, marginTop: 4 }}
+          numberOfLines={2}
+        >
+          {recommendation}
         </Text>
       ) : null}
     </Card>

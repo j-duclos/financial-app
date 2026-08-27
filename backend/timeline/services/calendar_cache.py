@@ -17,7 +17,7 @@ from common.services.profiler import perf_enabled, perf_print
 from timeline.services.calendar import build_timeline_calendar
 from timeline.services.calendar_chunks import SHORT_RANGE_DAYS, calendar_chunk_windows
 
-CALENDAR_CACHE_VERSION = "v2"
+CALENDAR_CACHE_VERSION = "v3"
 CALENDAR_CACHE_SECONDS = 300
 # Wait for an in-progress full-range build instead of starting a second one.
 _LOCK_TIMEOUT_SECONDS = 60
@@ -35,13 +35,15 @@ def calendar_canonical_cache_key(
     end_date: date,
     as_of_date: date,
     projection_only: bool,
+    forecast_days: int | None = None,
 ) -> str:
     rev = _household_revision_token([household_id] if household_id is not None else [])
+    fd = forecast_days if forecast_days is not None else 0
     return (
         f"timeline_calendar:{CALENDAR_CACHE_VERSION}:user:{user_id}"
         f":hh:{household_id or 0}:acct:{account_id or 0}:sc:{scenario_id or 0}"
         f":start:{start_date.isoformat()}:end:{end_date.isoformat()}"
-        f":asof:{as_of_date.isoformat()}:proj:{int(projection_only)}:frev:{rev}"
+        f":fd:{fd}:asof:{as_of_date.isoformat()}:proj:{int(projection_only)}:frev:{rev}"
     )
 
 
@@ -55,6 +57,7 @@ def get_or_build_canonical_calendar(
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
     projection_only: bool = True,
+    forecast_days: Optional[int] = None,
 ) -> dict[str, Any]:
     today = as_of_date or date.today()
     key = calendar_canonical_cache_key(
@@ -66,6 +69,7 @@ def get_or_build_canonical_calendar(
         end_date=end_date,
         as_of_date=today,
         projection_only=projection_only,
+        forecast_days=forecast_days,
     )
     cached = cache.get(key)
     if isinstance(cached, dict) and cached.get("days") is not None:
@@ -91,6 +95,7 @@ def get_or_build_canonical_calendar(
         cached = cache.get(key)
         if isinstance(cached, dict) and cached.get("days") is not None:
             return cached
+        build_start = time.perf_counter()
         result = build_timeline_calendar(
             user,
             start_date=start_date,
@@ -100,13 +105,16 @@ def get_or_build_canonical_calendar(
             household_id=household_id,
             as_of_date=today,
             projection_only=projection_only,
+            forecast_days=forecast_days,
         )
         cache.set(key, result, CALENDAR_CACHE_SECONDS)
         if perf_enabled():
+            elapsed_ms = (time.perf_counter() - build_start) * 1000
             perf_print(
                 f"[PERF] calendar_canonical cache=MISS "
                 f"start={start_date.isoformat()} end={end_date.isoformat()} "
-                f"days={len(result.get('days') or [])}"
+                f"forecast_days={forecast_days} days={len(result.get('days') or [])} "
+                f"calendar_grouping_elapsed_ms={elapsed_ms:.0f}"
             )
         return result
     finally:
@@ -123,6 +131,7 @@ def peek_canonical_calendar(
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
     projection_only: bool = True,
+    forecast_days: Optional[int] = None,
 ) -> dict[str, Any] | None:
     today = as_of_date or date.today()
     key = calendar_canonical_cache_key(
@@ -134,6 +143,7 @@ def peek_canonical_calendar(
         end_date=end_date,
         as_of_date=today,
         projection_only=projection_only,
+        forecast_days=forecast_days,
     )
     cached = cache.get(key)
     if isinstance(cached, dict) and cached.get("days") is not None:
@@ -153,6 +163,7 @@ def get_or_build_calendar_for_chunk(
     household_id: Optional[int] = None,
     as_of_date: Optional[date] = None,
     projection_only: bool = True,
+    forecast_days: Optional[int] = None,
 ) -> dict[str, Any]:
     """Prefer a cached full-range forecast; otherwise build only the near-term first chunk."""
     today = as_of_date or date.today()
@@ -165,6 +176,7 @@ def get_or_build_calendar_for_chunk(
         household_id=household_id,
         as_of_date=today,
         projection_only=projection_only,
+        forecast_days=forecast_days,
     )
     if full is not None:
         if perf_enabled():
@@ -192,6 +204,7 @@ def get_or_build_calendar_for_chunk(
             household_id=household_id,
             as_of_date=today,
             projection_only=projection_only,
+            forecast_days=forecast_days,
         )
     if perf_enabled():
         perf_print(
@@ -207,4 +220,5 @@ def get_or_build_calendar_for_chunk(
         household_id=household_id,
         as_of_date=today,
         projection_only=projection_only,
+        forecast_days=forecast_days,
     )

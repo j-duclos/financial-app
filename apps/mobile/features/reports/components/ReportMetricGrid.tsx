@@ -12,6 +12,8 @@ type Metric = {
   tone?: "positive" | "negative" | "neutral";
   comparison?: MonthComparisonMetric;
   previousMonth?: string;
+  /** How to color MoM deltas — expenses use neutral change styling. */
+  comparisonContext?: "income" | "expense" | "net" | "neutral";
 };
 
 type Props = {
@@ -36,6 +38,13 @@ export function ReportMetricGrid({ metrics }: Props) {
           const subtitle = m.comparison
             ? comparisonSubtitle(m.comparison.delta, m.comparison.percent_change, m.previousMonth)
             : undefined;
+          const comparisonContext =
+            m.comparisonContext ??
+            (m.label.toLowerCase().includes("expense")
+              ? "expense"
+              : m.label.toLowerCase().includes("income")
+                ? "income"
+                : "net");
           return (
             <View key={m.label} style={{ minWidth: "42%" }}>
               <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "600" }}>
@@ -51,6 +60,7 @@ export function ReportMetricGrid({ metrics }: Props) {
                 <PeriodComparisonBadge
                   text={subtitle}
                   delta={m.comparison?.delta}
+                  context={comparisonContext}
                   style={{ marginTop: 4 }}
                 />
               ) : null}

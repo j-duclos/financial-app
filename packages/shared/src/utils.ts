@@ -44,6 +44,9 @@ export function formatAccountOptionLabel(
  */
 export function formatCurrency(amount: string | number, currency = "USD"): string {
   const n = typeof amount === "string" ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) {
+    return "—";
+  }
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency,

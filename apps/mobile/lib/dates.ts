@@ -41,3 +41,53 @@ export function formatLongDate(iso: string | null | undefined): string | null {
   if (Number.isNaN(dt.getTime())) return null;
   return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
+
+/** Today's date as MM-DD-YYYY for mobile form inputs. */
+export function todayInputDate(): string {
+  return formatIsoDateForInput(todayStr());
+}
+
+/** ISO YYYY-MM-DD → MM-DD-YYYY for editable date fields. */
+export function formatIsoDateForInput(iso: string): string {
+  const datePart = iso.trim().slice(0, 10);
+  const match = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return iso;
+  return `${match[2]}-${match[3]}-${match[1]}`;
+}
+
+/** Normalize route/API values (ISO or MM-DD-YYYY) to MM-DD-YYYY for the form. */
+export function coerceToInputDate(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed.slice(0, 10))) {
+    return formatIsoDateForInput(trimmed);
+  }
+  if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return trimmed;
+  return trimmed;
+}
+
+/** Keep digits only and insert dashes: MM-DD-YYYY (max 10 chars). */
+export function formatDateInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`;
+}
+
+/** Parse MM-DD-YYYY to ISO YYYY-MM-DD for API payloads; null when incomplete/invalid. */
+export function parseInputDateToIso(input: string): string | null {
+  const trimmed = input.trim();
+  const match = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const dt = new Date(year, month - 1, day);
+  if (
+    dt.getFullYear() !== year ||
+    dt.getMonth() !== month - 1 ||
+    dt.getDate() !== day
+  ) {
+    return null;
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}

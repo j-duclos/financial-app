@@ -4,13 +4,22 @@ import type { FinancialGoal } from "@budget-app/shared";
 import { BottomSheet } from "@/components/ui";
 import { useTheme } from "@/theme";
 
-export type GoalActionId = "edit" | "duplicate" | "pause" | "complete" | "archive" | "delete";
+export type GoalActionId =
+  | "edit"
+  | "what-if"
+  | "duplicate"
+  | "pause"
+  | "complete"
+  | "archive"
+  | "delete";
 
 type Props = {
   visible: boolean;
   goal: FinancialGoal | null;
   onClose: () => void;
   onAction: (action: GoalActionId) => void;
+  /** When true, include What-If (detail overflow). */
+  includeWhatIf?: boolean;
 };
 
 function ActionRow({
@@ -48,7 +57,13 @@ function ActionRow({
   );
 }
 
-export function GoalActionsSheet({ visible, goal, onClose, onAction }: Props) {
+export function GoalActionsSheet({
+  visible,
+  goal,
+  onClose,
+  onAction,
+  includeWhatIf = false,
+}: Props) {
   if (!goal) return null;
   const isActive = goal.status === "active";
   const isPaused = goal.status === "paused";
@@ -57,6 +72,9 @@ export function GoalActionsSheet({ visible, goal, onClose, onAction }: Props) {
     <BottomSheet visible={visible} title={goal.name} onClose={onClose}>
       <View>
         <ActionRow label="Edit goal" onPress={() => onAction("edit")} />
+        {includeWhatIf ? (
+          <ActionRow label="Run What-If" onPress={() => onAction("what-if")} />
+        ) : null}
         <ActionRow label="Duplicate goal" onPress={() => onAction("duplicate")} />
         {isActive ? (
           <>

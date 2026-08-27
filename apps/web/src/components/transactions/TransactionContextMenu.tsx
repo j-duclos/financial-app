@@ -4,7 +4,7 @@ import { MoreHorizontal } from "lucide-react";
 
 export type PastActions = "edit" | "duplicate" | "delete";
 export type FutureActions = "edit" | "skip" | "delete";
-export type ExpectedActions = "matchesImported" | "skip" | "edit" | "moveDate" | "delete";
+export type ExpectedActions = "skip" | "edit" | "moveDate" | "delete";
 
 type Props = {
   variant: "past" | "future" | "expected";
@@ -12,7 +12,6 @@ type Props = {
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
-  onMatchesImported?: () => void;
   onMoveDate?: () => void;
   disabled?: boolean;
   readOnly?: boolean;
@@ -26,7 +25,6 @@ export default function TransactionContextMenu({
   onDuplicate,
   onDelete,
   onSkip,
-  onMatchesImported,
   onMoveDate,
   disabled,
   readOnly,
@@ -75,11 +73,6 @@ export default function TransactionContextMenu({
   const primaryItems: MenuItem[] =
     variant === "expected"
       ? ([
-          onMatchesImported && {
-            key: "matchesImported",
-            label: "Matches Imported",
-            action: onMatchesImported,
-          },
           onSkip && { key: "skip", label: "Skip", action: onSkip },
           onEdit && { key: "edit", label: "Edit", action: onEdit },
           onMoveDate && { key: "moveDate", label: "Move Date", action: onMoveDate },

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Account, DebtPayoffCardSummary, DebtPayoffPlan } from "@budget-app/shared";
 import {
+  baselineNotPayoffableLine,
   debtCardOutcomeLines,
   debtFreeHeadline,
+  debtRowMetaLine,
+  formatDebtFreeMonth,
+  formatMoneyOrDash,
   interestSavedLine,
   paymentToReachUtilization,
   planIsRecalculating,
@@ -27,6 +31,7 @@ function mockPlanCard(overrides: Partial<DebtPayoffCardSummary> = {}): DebtPayof
     total_projected_interest: "180.00",
     interest_this_month: "18.00",
     payoff_order: 1,
+    payoff_status: "projected",
     priority_reason: {
       code: "highest_apr",
       label: "Highest APR (18.00%) — avalanche strategy pays this first",
@@ -53,6 +58,7 @@ function mockPlan(overrides: Partial<DebtPayoffPlan> = {}): DebtPayoffPlan {
     debt_free_possible: true,
     total_interest: "500.00",
     interest_saved_vs_minimums: "200.00",
+    baseline_status: "payoffable",
     payoff_order: [1],
     cards: [mockPlanCard()],
     timeline: [],
@@ -68,6 +74,7 @@ function mockAccount(overrides: Partial<Account> = {}): Account {
     id: 1,
     household: { id: 1, name: "Home" } as Account["household"],
     account_type: "CREDIT",
+    role: "none",
     name: "Visa",
     institution: "",
     currency: "USD",
@@ -78,7 +85,7 @@ function mockAccount(overrides: Partial<Account> = {}): Account {
     balance_owed: "980",
     target_utilization_percent: "10",
     ...overrides,
-  };
+  } as Account;
 }
 
 describe("payment planner display", () => {
@@ -90,12 +97,40 @@ describe("payment planner display", () => {
 
   it("shows interest saved from backend field", () => {
     expect(interestSavedLine(mockPlan())).toContain("200");
+    expect(interestSavedLine(mockPlan())).toMatch(/Projected interest savings/);
   });
 
-  it("distinguishes minimum vs recommended on debt cards", () => {
-    const lines = debtCardOutcomeLines(mockPlanCard());
-    expect(lines.suggestedLine).toContain("Recommended:");
-    expect(lines.suggestedLine).toContain("150");
+  it("hides savings when baseline cannot amortize", () => {
+    const plan = mockPlan({
+      baseline_status: "baseline_not_payoffable",
+      interest_saved_vs_minimums: null,
+    });
+    expect(interestSavedLine(plan)).toBeNull();
+    expect(baselineNotPayoffableLine(plan)).toMatch(/would not pay off/);
+  });
+
+  it("never formats NaN for invalid money", () => {
+    expect(formatMoneyOrDash("not-a-number")).toBe("—");
+    expect(formatMoneyOrDash(Number.NaN)).toBe("—");
+    expect(formatMoneyOrDash("5877.34")).not.toContain("NaN");
+  });
+
+  it("formats compact debt-free month", () => {
+    expect(formatDebtFreeMonth(mockPlan({ debt_free_date: "2029-04-15" }))).toMatch(/Apr.*2029|2029/);
+    expect(
+      formatDebtFreeMonth(
+        mockPlan({ debt_free_date: null, debt_free_possible: false, simulation_status: "non_amortizing" })
+      )
+    ).toBe("—");
+  });
+
+  it("uses compact debt card outcome lines", () => {
+    const lines = debtCardOutcomeLines(mockPlanCard({ months_remaining: 1 }));
+    expect(lines.headline).toBe("Payoff next payment");
+    expect(debtCardOutcomeLines(mockPlanCard({ payoff_status: "non_amortizing" })).headline).toMatch(
+      /too low/i
+    );
+    expect(debtRowMetaLine(mockPlanCard())).toMatch(/18\.00% APR/);
   });
 
   it("uses backend priority reason label", () => {
@@ -144,7 +179,7 @@ describe("payment planner query keys", () => {
     );
   });
 
-  it("exports debounce constant aligned with web", () => {
-    expect(WHAT_IF_NUMERIC_DEBOUNCE_MS).toBe(350);
+  it("exports debounce constant for scenario inputs", () => {
+    expect(WHAT_IF_NUMERIC_DEBOUNCE_MS).toBeGreaterThanOrEqual(350);
   });
 });

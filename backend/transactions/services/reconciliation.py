@@ -884,6 +884,69 @@ def get_setup_data(
     }
 
 
+def preview_reconciliation(
+    *,
+    account: Account,
+    bank_current_balance: Decimal,
+    checked_transaction_ids: list[int],
+    period_start: date,
+    period_end: date,
+    as_of: Optional[date] = None,
+) -> dict[str, Any]:
+    """
+    Canonical live totals for an in-progress reconciliation (no writes).
+
+    Mobile must use this instead of summing checked rows locally. Matches the
+    opening / credit-normalization / difference rules used by ``complete_reconciliation``.
+    """
+    as_of = _as_of_date(as_of)
+    period_start, period_end = resolve_period_dates(
+        account, period_start, period_end, as_of, strict=True
+    )
+    bank_current_balance = Decimal(str(bank_current_balance))
+    bank_current_balance = _normalize_credit_balance(account, bank_current_balance)
+
+    prev = last_completed_reconciliation(account)
+    if prev is not None:
+        opening_bal = Decimal(str(prev.bank_current_balance))
+    else:
+        opening_bal = period_opening_balance(account, period_start)
+    opening_bal = Decimal(str(opening_bal)).quantize(Decimal("0.01"))
+    bank_current_balance = Decimal(str(bank_current_balance)).quantize(Decimal("0.01"))
+
+    allowed_ids = {
+        t.pk
+        for t in _load_reconcile_period_transactions(
+            account, as_of, period_start=period_start, period_end=period_end
+        )
+    }
+    checked_ids = list(dict.fromkeys(int(x) for x in checked_transaction_ids))
+    invalid = [pk for pk in checked_ids if pk not in allowed_ids]
+    if invalid:
+        raise ValueError(f"Invalid or already reconciled transaction ids: {invalid}")
+
+    checked_list = list(
+        Transaction.objects.filter(pk__in=checked_ids, account=account).order_by("date", "id")
+    )
+    cleared_balance = opening_bal + sum(
+        (Decimal(str(txn.amount)) for txn in checked_list), Decimal("0")
+    )
+    cleared_balance = cleared_balance.quantize(Decimal("0.01"))
+    diff = difference_remaining(bank_current_balance, cleared_balance)
+    return {
+        "account_id": account.pk,
+        "period_start_date": period_start,
+        "period_end_date": period_end,
+        "period_opening_balance": opening_bal,
+        "bank_current_balance": bank_current_balance,
+        "cleared_balance": cleared_balance,
+        "difference": diff,
+        "can_complete": balances_within_tolerance(diff),
+        "checked_count": len(checked_ids),
+        "tolerance": BALANCE_TOLERANCE,
+    }
+
+
 @db_transaction.atomic
 def complete_reconciliation(
     *,

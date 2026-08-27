@@ -72,9 +72,11 @@ export function formatDebtFreeMonths(plan: DebtPayoffPlan): string | null {
 }
 
 export function interestSavedLine(plan: DebtPayoffPlan): string | null {
+  if (plan.baseline_status === "baseline_not_payoffable") return null;
+  if (plan.interest_saved_vs_minimums == null) return null;
   const saved = Decimal(plan.interest_saved_vs_minimums);
   if (saved <= 0) return null;
-  return `Save ${formatCurrency(plan.interest_saved_vs_minimums)} interest vs minimums only`;
+  return `Projected interest savings: ${formatCurrency(plan.interest_saved_vs_minimums)}`;
 }
 
 export function cardPayoffTagline(

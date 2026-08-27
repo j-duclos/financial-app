@@ -24,6 +24,7 @@ from .views import (
 )
 from transactions.reconcile_views import (
     ReconcileSetupView,
+    ReconcilePreviewView,
     ReconcileCompleteView,
     ReconcileSessionListView,
     ReconcileSessionDetailView,
@@ -54,6 +55,7 @@ urlpatterns = [
     path("reconcile/match/", ReconcileMatchView.as_view(), name="reconcile-match"),
     path("reconcile/unmatched/", ReconcileUnmatchedView.as_view(), name="reconcile-unmatched"),
     path("reconcile/setup/", ReconcileSetupView.as_view(), name="reconcile-setup"),
+    path("reconcile/preview/", ReconcilePreviewView.as_view(), name="reconcile-preview"),
     path("reconcile/complete/", ReconcileCompleteView.as_view(), name="reconcile-complete"),
     path("reconcile/sessions/", ReconcileSessionListView.as_view(), name="reconcile-sessions"),
     path("reconcile/sessions/<int:session_id>/", ReconcileSessionDetailView.as_view(), name="reconcile-session-detail"),

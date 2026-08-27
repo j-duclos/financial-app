@@ -1,7 +1,6 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -15,6 +14,7 @@ from .services.reconciliation import (
     complete_reconciliation,
     get_setup_data,
     list_reconciliation_sessions,
+    preview_reconciliation,
     serialize_session_detail,
     serialize_session_summary,
     undo_reconciliation,
@@ -116,63 +116,114 @@ class ReconcileSetupView(APIView):
         )
 
 
+def _parse_complete_or_preview_body(request):
+    """Shared validation for preview/complete bodies.
+
+    Returns (account, bank, ids, start, end) or a Response on error.
+    """
+    account_id = request.data.get("account_id")
+    bank_raw = request.data.get("bank_current_balance")
+    checked_ids = request.data.get("checked_transaction_ids") or []
+    start_raw = request.data.get("period_start_date") or request.data.get("start_date")
+    end_raw = request.data.get("period_end_date") or request.data.get("end_date")
+
+    if account_id is None or bank_raw is None or bank_raw == "":
+        return Response(
+            {"detail": "account_id and bank_current_balance are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not start_raw or not end_raw:
+        return Response(
+            {"detail": "period_start_date and period_end_date are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not isinstance(checked_ids, list):
+        return Response(
+            {"detail": "checked_transaction_ids must be a list."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        bank_balance = Decimal(str(bank_raw))
+    except (InvalidOperation, TypeError):
+        return Response(
+            {"detail": "bank_current_balance must be a valid decimal."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        period_start = _parse_date_param(str(start_raw))
+        period_end = _parse_date_param(str(end_raw))
+    except ValueError:
+        return Response(
+            {"detail": "period_start_date and period_end_date must be YYYY-MM-DD."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    households = get_households_for_user(request.user)
+    account = Account.objects.filter(pk=account_id, household__in=households).first()
+    if not account:
+        return Response({"detail": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        checked_pks = [int(x) for x in checked_ids]
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "checked_transaction_ids must contain integers."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return account, bank_balance, checked_pks, period_start, period_end
+
+
+class ReconcilePreviewView(APIView):
+    """Canonical cleared balance / difference for an in-progress reconciliation (no writes)."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request):
+        parsed = _parse_complete_or_preview_body(request)
+        if isinstance(parsed, Response):
+            return parsed
+        account, bank_balance, checked_pks, period_start, period_end = parsed
+
+        try:
+            preview = preview_reconciliation(
+                account=account,
+                bank_current_balance=bank_balance,
+                checked_transaction_ids=checked_pks,
+                period_start=period_start,
+                period_end=period_end,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "account_id": preview["account_id"],
+                "period_start_date": preview["period_start_date"].isoformat(),
+                "period_end_date": preview["period_end_date"].isoformat(),
+                "period_opening_balance": str(preview["period_opening_balance"]),
+                "bank_current_balance": str(preview["bank_current_balance"]),
+                "cleared_balance": str(preview["cleared_balance"]),
+                "difference": str(preview["difference"]),
+                "can_complete": preview["can_complete"],
+                "checked_count": preview["checked_count"],
+                "tolerance": str(preview["tolerance"]),
+            }
+        )
+
+
 class ReconcileCompleteView(APIView):
     """Complete a reconciliation for a date range after checked transactions balance to bank."""
 
     permission_classes = [IsHouseholdMember]
 
     def post(self, request):
-        account_id = request.data.get("account_id")
-        bank_raw = request.data.get("bank_current_balance")
-        checked_ids = request.data.get("checked_transaction_ids") or []
-        start_raw = request.data.get("period_start_date") or request.data.get("start_date")
-        end_raw = request.data.get("period_end_date") or request.data.get("end_date")
-
-        if account_id is None or bank_raw is None or bank_raw == "":
-            return Response(
-                {"detail": "account_id and bank_current_balance are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not start_raw or not end_raw:
-            return Response(
-                {"detail": "period_start_date and period_end_date are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not isinstance(checked_ids, list):
-            return Response(
-                {"detail": "checked_transaction_ids must be a list."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            bank_balance = Decimal(str(bank_raw))
-        except (InvalidOperation, TypeError):
-            return Response(
-                {"detail": "bank_current_balance must be a valid decimal."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            period_start = _parse_date_param(str(start_raw))
-            period_end = _parse_date_param(str(end_raw))
-        except ValueError:
-            return Response(
-                {"detail": "period_start_date and period_end_date must be YYYY-MM-DD."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        households = get_households_for_user(request.user)
-        account = Account.objects.filter(pk=account_id, household__in=households).first()
-        if not account:
-            return Response({"detail": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            checked_pks = [int(x) for x in checked_ids]
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "checked_transaction_ids must contain integers."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        parsed = _parse_complete_or_preview_body(request)
+        if isinstance(parsed, Response):
+            return parsed
+        account, bank_balance, checked_pks, period_start, period_end = parsed
 
         try:
             rec = complete_reconciliation(

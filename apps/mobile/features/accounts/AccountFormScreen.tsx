@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@budget-app/api-client";
 import { type AccountType } from "@budget-app/shared";
 import { AppHeader, Button, Card, ConfirmDialog, ErrorState, Screen, TextField } from "@/components/ui";
+import { useTheme } from "@/theme";
 import { describeApiError, fieldErrorsFromApiError } from "@/services/apiErrors";
 import { invalidateFinancialQueries } from "@/lib/financialQueryRefresh";
 
@@ -37,7 +38,24 @@ const emptyForm = (): FormState => ({
   target_utilization_percent: "10",
 });
 
+function normalizeMoneyInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.-]/g, "");
+  const parts = cleaned.split(".");
+  if (parts.length <= 1) return cleaned;
+  return `${parts[0]}.${parts.slice(1).join("").slice(0, 2)}`;
+}
+
+function validateMoneyField(raw: string, label: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^-?\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return `${label} must be a valid amount (up to 2 decimal places).`;
+  }
+  return undefined;
+}
+
 export function AccountFormScreen() {
+  const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -135,6 +153,30 @@ export function AccountFormScreen() {
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const onSave = () => {
+    const nextErrors: Record<string, string> = {};
+    if (!form.name.trim()) nextErrors.name = "Name is required.";
+    const startingErr = validateMoneyField(form.starting_balance, "Starting balance");
+    if (startingErr) nextErrors.starting_balance = startingErr;
+    if (form.account_type === "CREDIT") {
+      const limitErr = validateMoneyField(form.credit_limit, "Credit limit");
+      if (limitErr) nextErrors.credit_limit = limitErr;
+      const utilErr = validateMoneyField(form.target_utilization_percent, "Utilization target");
+      if (utilErr) nextErrors.target_utilization_percent = utilErr;
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors(nextErrors);
+      return;
+    }
+    saveMutation.mutate();
   };
 
   if (isEdit && accountQuery.isLoading) {
@@ -172,11 +214,14 @@ export function AccountFormScreen() {
           error={fieldErrors.institution}
         />
 
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <Text style={{ color: theme.colors.textSecondary, ...theme.typography.label, marginBottom: 6 }}>
+          Account type
+        </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
           {ACCOUNT_TYPES.map((type) => (
             <Button
               key={type}
-              label={type}
+              label={type.charAt(0) + type.slice(1).toLowerCase()}
               variant={form.account_type === type ? "primary" : "secondary"}
               onPress={() => setField("account_type", type)}
             />
@@ -184,13 +229,26 @@ export function AccountFormScreen() {
         </View>
 
         {!isEdit ? (
-          <TextField
-            label="Starting balance"
-            value={form.starting_balance}
-            onChangeText={(v) => setField("starting_balance", v)}
-            keyboardType="decimal-pad"
-            error={fieldErrors.starting_balance}
-          />
+          <>
+            <TextField
+              label="Starting balance"
+              value={form.starting_balance}
+              onChangeText={(v) => setField("starting_balance", normalizeMoneyInput(v))}
+              keyboardType="decimal-pad"
+              error={fieldErrors.starting_balance}
+            />
+            <Text
+              style={{
+                color: theme.colors.textMuted,
+                ...theme.typography.caption,
+                marginTop: -8,
+                marginBottom: 12,
+              }}
+            >
+              Sets the ledger opening balance for this account. The server owns history and
+              running balances from this starting point — mobile does not recompute them.
+            </Text>
+          </>
         ) : null}
 
         {form.account_type === "CREDIT" ? (
@@ -198,14 +256,14 @@ export function AccountFormScreen() {
             <TextField
               label="Credit limit"
               value={form.credit_limit}
-              onChangeText={(v) => setField("credit_limit", v)}
+              onChangeText={(v) => setField("credit_limit", normalizeMoneyInput(v))}
               keyboardType="decimal-pad"
               error={fieldErrors.credit_limit}
             />
             <TextField
               label="Utilization target (%)"
               value={form.target_utilization_percent}
-              onChangeText={(v) => setField("target_utilization_percent", v)}
+              onChangeText={(v) => setField("target_utilization_percent", normalizeMoneyInput(v))}
               keyboardType="decimal-pad"
               error={fieldErrors.target_utilization_percent}
             />
@@ -214,7 +272,7 @@ export function AccountFormScreen() {
       </Card>
 
       <View style={{ marginTop: 16, gap: 8 }}>
-        <Button label={isEdit ? "Save changes" : "Create account"} onPress={() => saveMutation.mutate()} loading={saveMutation.isPending} />
+        <Button label={isEdit ? "Save changes" : "Create account"} onPress={onSave} loading={saveMutation.isPending} />
         {isEdit ? (
           <Button label="Archive account" variant="danger" onPress={() => setArchiveOpen(true)} />
         ) : null}

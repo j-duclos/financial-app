@@ -44,15 +44,37 @@ DEBT_STRATEGIES = frozenset({"avalanche", "snowball", "utilization_target", "cus
 PAYOFF_MODES = frozenset({"survival", "aggressive", "credit_score", "balanced"})
 # Industry scoring breakpoint (independent of the user's configured target).
 INDUSTRY_UTILIZATION_50_PCT = Decimal("50")
-MINIMUM_BASELINE_CACHE_VERSION = "v1"
+MINIMUM_BASELINE_CACHE_VERSION = "v2"
+
+# Simulation termination statuses (household + baseline).
+STATUS_DEBT_FREE = "debt_free"
+STATUS_NON_AMORTIZING = "non_amortizing"
+STATUS_UNRESOLVED = "unresolved"
+BASELINE_PAYOFFABLE = "payoffable"
+BASELINE_NOT_PAYOFFABLE = "baseline_not_payoffable"
 
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
 
 
+def _ensure_finite(value: Decimal) -> Decimal:
+    """Reject NaN/Infinity so API contracts never serialize non-finite numbers."""
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    if value.is_nan() or value.is_infinite():
+        raise ValueError("non-finite decimal in debt engine")
+    return value
+
+
 def _money(value: Decimal) -> str:
-    return str(_quantize(value))
+    return str(_quantize(_ensure_finite(value)))
+
+
+def _money_or_none(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return _money(value)
 
 
 def _add_month(d: date) -> date:
@@ -95,6 +117,15 @@ class _PayoffLoopResult:
     payoff_order: list[int]
     first_month_planned: dict[int, Decimal]
     monthly_budget: Decimal
+    status: str = STATUS_DEBT_FREE
+    non_amortizing_account_ids: list[int] | None = None
+
+
+@dataclass
+class _BaselineResult:
+    status: str
+    total_interest: Decimal | None
+    non_amortizing_account_ids: list[int]
 
 
 def _copy_card_states(states: list[CardState]) -> list[CardState]:
@@ -222,6 +253,11 @@ def _run_payoff_loop(
     Mutate ``states`` month-by-month. Callers must pass a copy of opening state.
 
     No SQL: APR, minimums, and balances are already on CardState / Account.
+
+    Termination:
+      - all balances <= 0 → debt_free
+      - no card receives payment above its accrued interest → non_amortizing
+      - max_months reached with balances remaining → unresolved
     """
     if lump_sum_by_account:
         for st in states:
@@ -240,6 +276,8 @@ def _run_payoff_loop(
             payoff_order=[],
             first_month_planned={},
             monthly_budget=Decimal("0"),
+            status=STATUS_DEBT_FREE,
+            non_amortizing_account_ids=[],
         )
 
     monthly_budget = _monthly_budget(states, mode, extra_monthly=extra_monthly)
@@ -252,16 +290,24 @@ def _run_payoff_loop(
     payoff_order: list[int] = []
     cards_paid_off: set[int] = set()
     first_month_planned: dict[int, Decimal] = {}
+    status = STATUS_UNRESOLVED
+    non_amortizing_ids: list[int] = []
 
     while any(s.balance > 0 for s in states) and months < max_months:
         months += 1
         month_interest = Decimal("0")
         month_paid = Decimal("0")
+        interests: dict[int, Decimal] = {}
 
         for st in states:
             if st.balance <= 0:
                 continue
-            interest = calculate_monthly_interest(st.account, st.balance) if st.apr > 0 else Decimal("0")
+            interest = (
+                calculate_monthly_interest(st.account, st.balance)
+                if st.apr > 0
+                else Decimal("0")
+            )
+            interests[st.account.pk] = interest
             st.balance = _quantize(st.balance + interest)
             month_interest += interest
 
@@ -283,9 +329,13 @@ def _run_payoff_loop(
             for st in active:
                 first_month_planned[st.account.pk] = payments[st.account.pk]
 
+        any_principal_reduction = False
         month_balances: dict[str, str] = {}
         for st in active:
             pay = min(payments.get(st.account.pk, Decimal("0")), st.balance)
+            interest = interests.get(st.account.pk, Decimal("0"))
+            if pay > interest:
+                any_principal_reduction = True
             st.balance = _quantize(st.balance - pay)
             month_paid += pay
             month_balances[str(st.account.pk)] = _money(st.balance)
@@ -308,17 +358,37 @@ def _run_payoff_loop(
         cursor = _add_month(cursor)
         if not any(s.balance > 0 for s in states):
             debt_free_date = cursor
+            status = STATUS_DEBT_FREE
             break
 
+        if not any_principal_reduction:
+            # Every remaining debt has payment <= accrued interest — will not shrink.
+            non_amortizing_ids = [
+                st.account.pk
+                for st in active
+                if payments.get(st.account.pk, Decimal("0"))
+                <= interests.get(st.account.pk, Decimal("0"))
+            ]
+            status = STATUS_NON_AMORTIZING
+            break
+    else:
+        if debt_free_date is None and status != STATUS_NON_AMORTIZING:
+            status = STATUS_UNRESOLVED
+            non_amortizing_ids = [
+                s.account.pk for s in states if s.balance > 0
+            ]
+
     return _PayoffLoopResult(
-        total_interest=total_interest,
-        total_paid=total_paid,
+        total_interest=_ensure_finite(total_interest),
+        total_paid=_ensure_finite(total_paid),
         timeline=timeline,
         months=months,
         debt_free_date=debt_free_date,
         payoff_order=payoff_order,
         first_month_planned=first_month_planned,
         monthly_budget=monthly_budget,
+        status=status,
+        non_amortizing_account_ids=non_amortizing_ids,
     )
 
 
@@ -339,19 +409,59 @@ def _minimum_baseline_cache_key(
     return f"debt_min_baseline:{MINIMUM_BASELINE_CACHE_VERSION}:{digest}"
 
 
+def _opening_non_amortizing_under_minimums(states: list[CardState]) -> list[int]:
+    """
+    Cards whose configured minimum does not cover current monthly interest.
+
+    Under a true minimums-only baseline these debts do not shrink on their own;
+    a finite interest-savings comparison against that baseline is not meaningful.
+    """
+    ids: list[int] = []
+    for s in states:
+        if s.balance <= 0 or s.apr <= 0:
+            continue
+        interest = calculate_monthly_interest(s.account, s.balance)
+        if interest > 0 and s.minimum <= interest:
+            ids.append(s.account.pk)
+    return ids
+
+
 def _simulate_minimums_only(
     opening_states: list[CardState],
     *,
     as_of: date,
     max_months: int,
-) -> Decimal:
-    """Minimum-payment baseline from opening state. No SQL. Cached by debt fingerprint."""
+) -> _BaselineResult:
+    """
+    Minimum-payment baseline from opening state. No SQL. Cached by debt fingerprint.
+
+    Only returns a finite interest total when the baseline actually reaches debt-free.
+    Non-amortizing or unresolved baselines never invent a huge interest figure.
+    """
     if not opening_states:
-        return Decimal("0")
+        return _BaselineResult(
+            status=BASELINE_PAYOFFABLE,
+            total_interest=Decimal("0"),
+            non_amortizing_account_ids=[],
+        )
+
+    opening_non_amort = _opening_non_amortizing_under_minimums(opening_states)
+    if opening_non_amort:
+        return _BaselineResult(
+            status=BASELINE_NOT_PAYOFFABLE,
+            total_interest=None,
+            non_amortizing_account_ids=opening_non_amort,
+        )
+
     key = _minimum_baseline_cache_key(opening_states, as_of, max_months)
     cached = cache.get(key)
-    if cached is not None:
-        return Decimal(str(cached))
+    if isinstance(cached, dict) and cached.get("status"):
+        interest_raw = cached.get("total_interest")
+        return _BaselineResult(
+            status=str(cached["status"]),
+            total_interest=Decimal(str(interest_raw)) if interest_raw is not None else None,
+            non_amortizing_account_ids=[int(x) for x in cached.get("non_amortizing_account_ids") or []],
+        )
     sim = _copy_card_states(opening_states)
     result = _run_payoff_loop(
         sim,
@@ -363,9 +473,28 @@ def _simulate_minimums_only(
         max_months=max_months,
         lump_sum_by_account=None,
     )
-    interest = _quantize(result.total_interest)
-    cache.set(key, str(interest), timeout=DEBT_PAYOFF_PROJECTION_CACHE_SECONDS)
-    return interest
+    if result.debt_free_date is not None and result.status == STATUS_DEBT_FREE:
+        baseline = _BaselineResult(
+            status=BASELINE_PAYOFFABLE,
+            total_interest=_quantize(result.total_interest),
+            non_amortizing_account_ids=[],
+        )
+    else:
+        baseline = _BaselineResult(
+            status=BASELINE_NOT_PAYOFFABLE,
+            total_interest=None,
+            non_amortizing_account_ids=list(result.non_amortizing_account_ids or []),
+        )
+    cache.set(
+        key,
+        {
+            "status": baseline.status,
+            "total_interest": str(baseline.total_interest) if baseline.total_interest is not None else None,
+            "non_amortizing_account_ids": baseline.non_amortizing_account_ids,
+        },
+        timeout=DEBT_PAYOFF_PROJECTION_CACHE_SECONDS,
+    )
+    return baseline
 
 
 def _simulate_interest_only(
@@ -380,7 +509,8 @@ def _simulate_interest_only(
 ) -> Decimal:
     """Backward-compatible wrapper; prefers opening states + baseline cache."""
     opening = _load_card_states(cards, as_of=as_of, balance_by_account=balance_by_account)
-    return _simulate_minimums_only(opening, as_of=as_of, max_months=max_months)
+    baseline = _simulate_minimums_only(opening, as_of=as_of, max_months=max_months)
+    return baseline.total_interest if baseline.total_interest is not None else Decimal("0")
 
 
 def simulate_household_debt(
@@ -430,14 +560,29 @@ def simulate_household_debt(
         lump_sum_by_account=lump_sum_by_account,
     )
 
-    baseline_interest = Decimal("0")
+    baseline_interest: Decimal | None = Decimal("0")
+    baseline_status = BASELINE_PAYOFFABLE
+    baseline_non_amortizing: list[int] = []
     if not _skip_baseline:
-        baseline_interest = _simulate_minimums_only(
+        baseline = _simulate_minimums_only(
             opening_states,
             as_of=today,
             max_months=max_months,
         )
-        interest_saved = max(Decimal("0"), _quantize(baseline_interest - loop.total_interest))
+        baseline_status = baseline.status
+        baseline_interest = baseline.total_interest
+        baseline_non_amortizing = baseline.non_amortizing_account_ids
+        if (
+            baseline_status == BASELINE_PAYOFFABLE
+            and baseline_interest is not None
+            and loop.status == STATUS_DEBT_FREE
+        ):
+            interest_saved: Decimal | None = max(
+                Decimal("0"),
+                _quantize(baseline_interest - loop.total_interest),
+            )
+        else:
+            interest_saved = None
     else:
         interest_saved = Decimal("0")
 
@@ -458,6 +603,7 @@ def simulate_household_debt(
         strategy=strategy,
         planned_monthly_payments=loop.first_month_planned,
         balance_by_account=balance_by_account,
+        non_amortizing_account_ids=set(loop.non_amortizing_account_ids or []),
     )
     milestones = _build_milestones(
         opening_states,
@@ -471,6 +617,9 @@ def simulate_household_debt(
         interest_saved,
         loop.monthly_budget,
         custom_order=custom_order,
+        baseline_status=baseline_status,
+        non_amortizing_account_ids=baseline_non_amortizing or (loop.non_amortizing_account_ids or []),
+        simulation_status=loop.status,
     )
     utilization_forecast = _utilization_forecast(opening_states, loop.timeline)
 
@@ -486,10 +635,17 @@ def simulate_household_debt(
         "debt_free_date": loop.debt_free_date.isoformat() if loop.debt_free_date else None,
         "months_to_debt_free": loop.months if loop.debt_free_date else None,
         "debt_free_possible": loop.debt_free_date is not None,
+        "simulation_status": loop.status,
         "total_interest": _money(loop.total_interest),
         "total_paid": _money(loop.total_paid),
-        "total_interest_minimums_only": _money(baseline_interest),
-        "interest_saved_vs_minimums": _money(interest_saved),
+        "baseline_status": baseline_status,
+        "total_interest_minimums_only": _money_or_none(baseline_interest),
+        "interest_saved_vs_minimums": _money_or_none(interest_saved),
+        "non_amortizing_account_ids": list(
+            dict.fromkeys(
+                (loop.non_amortizing_account_ids or []) + baseline_non_amortizing
+            )
+        ),
         "payoff_order": loop.payoff_order,
         "cards": card_summaries,
         "timeline": loop.timeline[:60],
@@ -609,9 +765,11 @@ def _build_card_summaries(
     strategy: str = "avalanche",
     planned_monthly_payments: dict[int, Decimal] | None = None,
     balance_by_account: dict | None = None,
+    non_amortizing_account_ids: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     opening_by_id = {s.account.pk: s for s in opening_states}
     order_rank = {aid: i + 1 for i, aid in enumerate(payoff_order)}
+    non_amortizing = non_amortizing_account_ids or set()
     summaries: list[dict[str, Any]] = []
 
     for card in all_cards:
@@ -638,7 +796,17 @@ def _build_card_summaries(
             start_date=today,
             starting_balance=owed,
         )
-        months_remaining = single.get("months_to_payoff") if single.get("payoff_possible") else None
+        payoff_possible = bool(single.get("payoff_possible"))
+        months_remaining = single.get("months_to_payoff") if payoff_possible else None
+        if card.pk in non_amortizing or (
+            not payoff_possible and single.get("estimated_monthly_interest")
+        ):
+            payoff_status = STATUS_NON_AMORTIZING
+            months_remaining = None
+        elif payoff_possible:
+            payoff_status = "projected"
+        else:
+            payoff_status = STATUS_UNRESOLVED
         rank = order_rank.get(card.pk)
         priority_reason = _card_priority_reason(strategy, rank, opening)
 
@@ -652,11 +820,14 @@ def _build_card_summaries(
                 "utilization_percent": _money(util) if util is not None else None,
                 "minimum_payment": _money(min_pay),
                 "suggested_payment": _money(suggested),
-                "payoff_date": single.get("payoff_date"),
+                "payoff_date": single.get("payoff_date") if payoff_possible else None,
                 "months_remaining": months_remaining,
-                "total_projected_interest": single.get("total_interest"),
+                "total_projected_interest": (
+                    single.get("total_interest") if payoff_possible else None
+                ),
                 "interest_this_month": _money(calculate_monthly_interest(card, owed)),
                 "payoff_order": rank,
+                "payoff_status": payoff_status,
                 "priority_reason": priority_reason,
                 "promotional_apr": (
                     str(card.promotional_apr) if card.promotional_apr is not None else None
@@ -759,10 +930,13 @@ def _build_milestones(
 def _build_recommendations(
     opening_states: list[CardState],
     strategy: str,
-    interest_saved: Decimal,
+    interest_saved: Decimal | None,
     monthly_budget: Decimal,
     *,
     custom_order: list[int] | None = None,
+    baseline_status: str = BASELINE_PAYOFFABLE,
+    non_amortizing_account_ids: list[int] | None = None,
+    simulation_status: str = STATUS_DEBT_FREE,
 ) -> list[dict[str, Any]]:
     recs: list[dict[str, Any]] = []
     active = [s for s in opening_states if s.balance > 0]
@@ -777,7 +951,7 @@ def _build_recommendations(
             f"{_money(focus.apr)}% APR debt.",
         }
     )
-    if interest_saved > 0:
+    if interest_saved is not None and interest_saved > 0:
         recs.append(
             {
                 "id": "interest_saved",
@@ -785,6 +959,35 @@ def _build_recommendations(
                 "message": f"This plan saves about ${_money(interest_saved)} vs minimum payments only.",
             }
         )
+    elif baseline_status == BASELINE_NOT_PAYOFFABLE:
+        recs.append(
+            {
+                "id": "baseline_not_payoffable",
+                "priority": "medium",
+                "message": "Minimum payments alone would not pay off all debts.",
+            }
+        )
+    non_amort_ids = set(non_amortizing_account_ids or [])
+    for st in active:
+        if st.account.pk not in non_amort_ids:
+            interest = calculate_monthly_interest(st.account, st.balance)
+            if st.minimum > 0 and interest > 0 and st.minimum <= interest:
+                non_amort_ids.add(st.account.pk)
+    for st in active:
+        if st.account.pk not in non_amort_ids:
+            continue
+        interest = calculate_monthly_interest(st.account, st.balance)
+        recs.append(
+            {
+                "id": f"non_amortizing_{st.account.pk}",
+                "priority": "high",
+                "message": (
+                    f"Minimum-only plan does not amortize {st.account.effective_display_name} "
+                    f"(~${_money(interest)}/mo interest)."
+                ),
+            }
+        )
+        break  # one concise row is enough for the list
     high_util = [
         s for s in opening_states if s.utilization > _target_utilization_percent(s.account)
     ]
@@ -928,10 +1131,13 @@ def _empty_plan(today: date, *, paid_off: bool = False) -> dict[str, Any]:
         "debt_free_date": today.isoformat() if paid_off else None,
         "months_to_debt_free": 0 if paid_off else None,
         "debt_free_possible": paid_off,
+        "simulation_status": STATUS_DEBT_FREE if paid_off else STATUS_UNRESOLVED,
         "total_interest": "0.00",
         "total_paid": "0.00",
+        "baseline_status": BASELINE_PAYOFFABLE,
         "total_interest_minimums_only": "0.00",
         "interest_saved_vs_minimums": "0.00",
+        "non_amortizing_account_ids": [],
         "payoff_order": [],
         "cards": [],
         "timeline": [],
@@ -1039,8 +1245,10 @@ def build_dashboard_debt_summary(
 
     saved = projection.get("interest_saved_vs_minimums")
     msg = None
-    if saved and Decimal(str(saved)) > 0:
+    if saved is not None and str(saved).strip() != "" and Decimal(str(saved)) > 0:
         msg = f"Your plan saves ${saved} interest vs minimums only"
+    elif plan.get("baseline_status") == "baseline_not_payoffable":
+        msg = "Minimum payments alone would not pay off all debts."
 
     return {
         "label": label,

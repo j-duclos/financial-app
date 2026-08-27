@@ -5,6 +5,9 @@ import { formatAccountOptionLabel, formatCurrency } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
+import { DatePickerField } from "@/features/recurring/DatePickerField";
+import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
+import { SelectRow } from "../components/SelectRow";
 import { ChipRow } from "../components/ChipRow";
 import {
   DEBT_OVERRIDE_NOTE,
@@ -32,6 +35,8 @@ type Props = {
   onClose: () => void;
   onSaved: () => void;
 };
+
+type PickerKind = "source" | "debt" | "rule" | null;
 
 export function DebtPaymentSheet({
   visible,
@@ -70,12 +75,36 @@ export function DebtPaymentSheet({
   const [ruleId, setRuleId] = useState(String(existingOverride?.rule?.id ?? ""));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picker, setPicker] = useState<PickerKind>(null);
 
   const debtAccount = debtAccounts.find((a) => a.id === Number(debtId));
+  const sourceAccount = assetAccounts.find((a) => a.id === Number(sourceId));
   const debtRules = useMemo(() => {
     if (!debtAccount) return [];
     return rules.filter((r) => r.active && rulePaysDebtAccount(r, debtAccount));
   }, [rules, debtAccount]);
+  const selectedRule = debtRules.find((r) => String(r.id) === ruleId) ?? debtRules[0];
+
+  const sourceOptions: PickerOption[] = useMemo(
+    () =>
+      assetAccounts.map((a) => ({
+        id: String(a.id),
+        title: formatAccountOptionLabel(a),
+        searchText: formatAccountOptionLabel(a),
+      })),
+    [assetAccounts]
+  );
+
+  const debtOptions: PickerOption[] = useMemo(
+    () =>
+      debtAccounts.map((a) => ({
+        id: String(a.id),
+        title: formatAccountOptionLabel(a),
+        subtitle: formatDebtBalance(a),
+        searchText: `${formatAccountOptionLabel(a)} ${formatDebtBalance(a)}`,
+      })),
+    [debtAccounts]
+  );
 
   const handleSubmit = async () => {
     if (!sourceId || !debtId || !amount.trim()) {
@@ -135,55 +164,99 @@ export function DebtPaymentSheet({
   };
 
   return (
-    <BottomSheet visible={visible} title={isEdit ? "Edit debt change" : "Pay down debt"} onClose={onClose}>
-      <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ gap: theme.spacing.md }}>
-        {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-          Hypothetical debt payment — does not move real money.
-        </Text>
-        {!isEdit ? (
-          <ChipRow
-            label="Change type"
-            options={[
-              { value: "one_time", label: "One-time payment" },
-              { value: "monthly_increase", label: "Increase monthly payment" },
-            ]}
-            selected={paymentType}
-            onSelect={(v) => setPaymentType(v as "one_time" | "monthly_increase")}
+    <>
+      <BottomSheet visible={visible} title={isEdit ? "Edit debt change" : "Pay down debt"} onClose={onClose}>
+        <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ gap: theme.spacing.md }}>
+          {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+            Hypothetical debt payment — does not move real money.
+          </Text>
+          {!isEdit ? (
+            <ChipRow
+              label="Change type"
+              options={[
+                { value: "one_time", label: "One-time payment" },
+                { value: "monthly_increase", label: "Increase monthly payment" },
+              ]}
+              selected={paymentType}
+              onSelect={(v) => setPaymentType(v as "one_time" | "monthly_increase")}
+            />
+          ) : null}
+          <SelectRow
+            label="Pay from"
+            value={sourceAccount ? formatAccountOptionLabel(sourceAccount) : null}
+            placeholder="Select account"
+            onPress={() => setPicker("source")}
           />
-        ) : null}
-        <ChipRow
-          label="Pay from"
-          options={assetAccounts.map((a) => ({ value: String(a.id), label: formatAccountOptionLabel(a) }))}
-          selected={sourceId}
-          onSelect={setSourceId}
-        />
-        <ChipRow
-          label="Debt account"
-          options={debtAccounts.map((a) => ({
-            value: String(a.id),
-            label: `${formatAccountOptionLabel(a)} · ${formatDebtBalance(a)}`,
-          }))}
-          selected={debtId}
-          onSelect={setDebtId}
-        />
-        {paymentType === "monthly_increase" && debtRules.length > 0 ? (
-          <ChipRow
-            label="Recurring payment rule"
-            options={debtRules.map((r) => ({
-              value: String(r.id),
-              label: `${r.name} (${formatCurrency(r.amount, r.currency)})`,
-            }))}
-            selected={ruleId || String(debtRules[0]?.id ?? "")}
-            onSelect={setRuleId}
+          <SelectRow
+            label="Debt account"
+            value={
+              debtAccount
+                ? `${formatAccountOptionLabel(debtAccount)} · ${formatDebtBalance(debtAccount)}`
+                : null
+            }
+            placeholder="Select debt"
+            onPress={() => setPicker("debt")}
           />
-        ) : null}
-        <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-        {paymentType === "one_time" ? (
-          <TextField label="Payment date" value={date} onChangeText={setDate} />
-        ) : null}
-        <Button label="Save change" onPress={handleSubmit} loading={saving} />
-      </ScrollView>
-    </BottomSheet>
+          {paymentType === "monthly_increase" && debtRules.length > 0 ? (
+            <SelectRow
+              label="Recurring payment"
+              value={
+                selectedRule
+                  ? `${selectedRule.name} (${formatCurrency(selectedRule.amount, selectedRule.currency)})`
+                  : null
+              }
+              onPress={() => setPicker("rule")}
+            />
+          ) : null}
+          <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+          {paymentType === "one_time" ? (
+            <DatePickerField label="Payment date" value={date} onChange={setDate} />
+          ) : null}
+          <Button label="Save change" onPress={handleSubmit} loading={saving} />
+        </ScrollView>
+      </BottomSheet>
+
+      <OptionsPickerSheet
+        visible={picker === "source"}
+        title="Pay from"
+        options={sourceOptions}
+        selectedId={sourceId || null}
+        searchPlaceholder="Search accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setSourceId(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "debt"}
+        title="Debt account"
+        options={debtOptions}
+        selectedId={debtId || null}
+        searchPlaceholder="Search debts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setDebtId(id);
+          setRuleId("");
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "rule"}
+        title="Recurring payment"
+        options={debtRules.map((r) => ({
+          id: String(r.id),
+          title: r.name,
+          subtitle: formatCurrency(r.amount, r.currency),
+        }))}
+        selectedId={ruleId || String(debtRules[0]?.id ?? "")}
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setRuleId(id);
+          setPicker(null);
+        }}
+      />
+    </>
   );
 }

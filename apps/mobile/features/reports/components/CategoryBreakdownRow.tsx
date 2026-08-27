@@ -52,6 +52,7 @@ export const CategoryBreakdownRow = React.memo(function CategoryBreakdownRow({
           <PeriodComparisonBadge
             text={formatDeltaVsPrevious(row.delta, previousMonth!)}
             delta={row.delta}
+            context={isExpense ? "expense" : "income"}
             style={{ marginTop: 2 }}
           />
         ) : null}
@@ -85,16 +86,24 @@ export const CategoryBreakdownRow = React.memo(function CategoryBreakdownRow({
   );
 });
 
-export function CategorySpendBarChart({ rows }: { rows: CategoryBreakdownItem[] }) {
+export function CategorySpendBarChart({
+  rows,
+  limit = 6,
+  onCategoryPress,
+}: {
+  rows: CategoryBreakdownItem[];
+  limit?: number;
+  onCategoryPress?: (categoryId: number, categoryName: string) => void;
+}) {
   const theme = useTheme();
   const ranked = React.useMemo(
     () =>
       [...rows]
         .filter((row) => parseAmount(row.total) < 0)
         .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
-        .slice(0, 6)
+        .slice(0, limit)
         .map((row) => ({ ...row, abs: Math.abs(parseAmount(row.total)) })),
-    [rows]
+    [rows, limit]
   );
 
   if (ranked.length === 0) return null;
@@ -103,11 +112,11 @@ export function CategorySpendBarChart({ rows }: { rows: CategoryBreakdownItem[] 
   const summary = ranked.map((r) => `${r.category_name} ${formatCurrency(r.abs)}`).join(", ");
 
   return (
-    <View accessible accessibilityLabel={`Top expense categories: ${summary}`}>
+    <View accessible={!onCategoryPress} accessibilityLabel={`Top expense categories: ${summary}`}>
       {ranked.map((row) => {
         const pct = Math.max(2, (row.abs / peak) * 100);
-        return (
-          <View key={row.category_id ?? row.category_name} style={{ marginBottom: 10 }}>
+        const content = (
+          <View style={{ marginBottom: 10 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
               <Text
                 style={{ color: theme.colors.text, fontSize: 13, flex: 1, marginRight: 8 }}
@@ -138,6 +147,22 @@ export function CategorySpendBarChart({ rows }: { rows: CategoryBreakdownItem[] 
             </View>
           </View>
         );
+
+        if (onCategoryPress && row.category_id != null) {
+          return (
+            <Pressable
+              key={row.category_id ?? row.category_name}
+              onPress={() => onCategoryPress(row.category_id!, row.category_name)}
+              accessibilityRole="button"
+              accessibilityLabel={`${row.category_name}, ${formatCurrency(row.abs)}`}
+              style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+            >
+              {content}
+            </Pressable>
+          );
+        }
+
+        return <View key={row.category_id ?? row.category_name}>{content}</View>;
       })}
     </View>
   );

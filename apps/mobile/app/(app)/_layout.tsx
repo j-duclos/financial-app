@@ -58,7 +58,10 @@ export default function AppLayout() {
       <Stack.Screen name="automation/new" />
       <Stack.Screen name="automation/edit/[id]" />
       <Stack.Screen name="categories" />
+      <Stack.Screen name="categories/new" />
+      <Stack.Screen name="categories/edit/[id]" />
       <Stack.Screen name="reconcile" />
+      <Stack.Screen name="reconcile/session/[id]" />
       <Stack.Screen name="profile" />
     </Stack>
   );

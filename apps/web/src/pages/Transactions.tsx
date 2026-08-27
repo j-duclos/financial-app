@@ -1649,13 +1649,7 @@ export default function Transactions() {
         setDeleteError("Could not load this scheduled transaction.");
         return;
       }
-      if (
-        window.confirm(
-          `"${row.description}" matches an imported transaction. Remove this scheduled item?`
-        )
-      ) {
-        skipOccurrenceMu.mutate(transactionId);
-      }
+      skipOccurrenceMu.mutate(transactionId);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not remove scheduled transaction");

@@ -74,11 +74,16 @@ export function refreshAfterTransactionEdit(
   }
 }
 
-/** Recurring-rule mutations affect forecasts; mark dependents stale (active screens refetch). */
+/** Recurring-rule mutations affect forecasts; mark dependents stale (active screens refetch).
+ * Backend post_save already bumps household financial_revision / forecast caches.
+ */
 export function invalidateRecurringRuleDependents(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["rules"] });
   void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
   void queryClient.invalidateQueries({ queryKey: ["bills-overview"] });
+  void queryClient.invalidateQueries({ queryKey: ["action-center"] });
+  void queryClient.invalidateQueries({ queryKey: ["scenarios"] });
+  void queryClient.invalidateQueries({ queryKey: ["what-if"] });
   invalidateFinancialQueries(queryClient);
 }
 

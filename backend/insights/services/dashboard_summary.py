@@ -1807,10 +1807,12 @@ def _compute_dashboard_core(
     else:
         _phase_timeline = phase_start(timer, "timeline_build")
         phases.append("timeline_build")
-        timeline_rows = _build_dashboard_timeline(
+        from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
+
+        timeline_rows, _ = get_or_build_canonical_forecast_timeline(
             user,
             today=today,
-            end_date=forecast_end,
+            forecast_days=days,
             caller="dashboard_summary",
         )
         phase_end(timer, _phase_timeline)

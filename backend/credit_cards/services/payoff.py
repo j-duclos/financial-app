@@ -193,6 +193,35 @@ def project_credit_card_payoff(
                 card, starting_balance, apr_val, monthly_rate, payment_amount,
             )
 
+    # Payment covers the full current balance → one payment cycle (not an off-by-one 2 months).
+    if payment_amount >= starting_balance:
+        interest = (
+            calculate_monthly_interest(card, starting_balance) if apr_val > 0 else Decimal("0")
+        )
+        payoff_balance = _quantize_money(starting_balance + interest)
+        payoff_date = _add_month(today)
+        return _build_success_result(
+            starting_balance=starting_balance,
+            apr_val=apr_val,
+            monthly_rate=monthly_rate,
+            payment_amount=payment_amount,
+            strategy=strategy,
+            payoff_date=payoff_date,
+            months=1,
+            total_interest=interest,
+            total_paid=payoff_balance,
+            schedule=[
+                {
+                    "month": 1,
+                    "starting_balance": _money_str(starting_balance),
+                    "interest_charged": _money_str(interest),
+                    "payment": _money_str(payoff_balance),
+                    "principal_paid": _money_str(starting_balance),
+                    "ending_balance": "0.00",
+                }
+            ],
+        )
+
     balance = starting_balance
     total_interest = Decimal("0")
     total_paid = Decimal("0")

@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import type { TimelineCalendarDay } from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/theme";
+import { calendarDayCellSizeStyle } from "./calendarLayout";
 import {
   dayAccessibilityLabel,
   dayHasActivity,
@@ -16,6 +17,7 @@ type Props = {
   dateIso: string;
   day?: TimelineCalendarDay;
   selected: boolean;
+  cellWidth: number;
   onPress: (dateIso: string) => void;
 };
 
@@ -39,6 +41,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
   dateIso,
   day,
   selected,
+  cellWidth,
   onPress,
 }: Props) {
   const theme = useTheme();
@@ -62,9 +65,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
       accessibilityHint={day?.is_negative ? "Projected negative balance" : undefined}
       accessibilityState={{ selected }}
       style={({ pressed }) => ({
-        flex: 1,
-        aspectRatio: 1,
-        minHeight: 44,
+        ...calendarDayCellSizeStyle(cellWidth),
         padding: 4,
         borderRadius: theme.radius.md,
         borderWidth: today ? 2 : 1,
@@ -72,7 +73,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
         backgroundColor: pressed ? theme.colors.surfaceMuted : colors.bg,
         alignItems: "center",
         justifyContent: "flex-start",
-        gap: 2,
+        overflow: "hidden",
       })}
     >
       <Text
@@ -85,7 +86,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
         {dayNum}
       </Text>
       {active ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 1 }}>
           {income > 0 ? (
             <FontAwesome name="arrow-down" size={8} color={theme.colors.moneyPositive} accessibilityLabel="Income" />
           ) : null}

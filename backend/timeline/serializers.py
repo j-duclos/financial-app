@@ -113,6 +113,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         help_text="Remove future-dated schedule segments without applying new values.",
     )
     scheduled_change = serializers.SerializerMethodField()
+    next_occurrence_date = serializers.SerializerMethodField()
     account = RecurringRuleNestedAccountSerializer(read_only=True)
     account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.none(), source="account", write_only=True
@@ -141,12 +142,20 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "is_bill",
             "payment_flexibility_days",
             "scheduled_change",
+            "next_occurrence_date",
             "change_effective_date",
             "cancel_scheduled_change",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "paused_at", "scheduled_change", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "paused_at",
+            "scheduled_change",
+            "next_occurrence_date",
+            "created_at",
+            "updated_at",
+        ]
 
     _SCHEDULE_ATTRS = (
         "account",
@@ -169,6 +178,13 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         if sched is None:
             return None
         return RecurringRuleScheduleSerializer(sched).data
+
+    def get_next_occurrence_date(self, obj: RecurringRule) -> str | None:
+        """Canonical next run from generate_rule_occurrence_dates — not a full forecast."""
+        from bills.recurring_payment_status import get_next_rule_run_date
+
+        due = get_next_rule_run_date(obj, timezone.localdate())
+        return due.isoformat() if due else None
 
     def to_representation(self, instance: RecurringRule) -> dict:
         data = super().to_representation(instance)

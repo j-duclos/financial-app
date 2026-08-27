@@ -133,7 +133,7 @@ function isSupersededPlannedTimelineRow(row: TimelineRow, timeline: TimelineRow[
 
 /**
  * Scheduled row has a matching bank/import row already on the ledger (Recent or timeline).
- * Used to offer "Matches Imported" — dismiss the planned duplicate via skip/remove.
+ * Used to offer "Matched Import" — dismiss the planned duplicate via skip/remove.
  */
 export function scheduledRowHasMatchingImport(row: TimelineRow, timeline: TimelineRow[]): boolean {
   if (!isPlannedScheduledTimelineRow(row)) return false;

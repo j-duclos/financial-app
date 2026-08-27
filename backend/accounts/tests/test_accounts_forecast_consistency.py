@@ -175,3 +175,38 @@ def test_enriched_accounts_builds_one_timeline_for_many_accounts(
     assert r.status_code == 200
     assert get_build_timeline_count() <= 1
     assert len(r.json()["results"]) >= 5
+
+
+@pytest.mark.django_db
+def test_accounts_enrichment_reuses_warm_canonical_timeline(
+    auth_client, user, household, main_checking
+):
+    """Home/Dashboard-warmed canonical cache must prevent a second timeline build."""
+    from timeline.services.canonical_timeline_cache import (
+        get_or_build_canonical_forecast_timeline,
+    )
+
+    today = date.today()
+    _planned(main_checking, today + timedelta(days=5), "Bill", Decimal("-50.00"))
+    cache.clear()
+    reset_build_timeline_count()
+
+    get_or_build_canonical_forecast_timeline(
+        user,
+        today=today,
+        forecast_days=30,
+        caller="dashboard_warmup",
+    )
+    builds_after_warmup = get_build_timeline_count()
+    assert builds_after_warmup == 1
+
+    r = auth_client.get(ENRICHED)
+    assert r.status_code == 200
+    assert get_build_timeline_count() == builds_after_warmup
+
+    detail = auth_client.get(
+        f"/api/accounts/{main_checking.id}/"
+        "?balance=true&forecast_summary=true&health=true&days=30"
+    )
+    assert detail.status_code == 200
+    assert get_build_timeline_count() == builds_after_warmup

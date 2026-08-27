@@ -18,9 +18,7 @@ from accounts.services.available_to_spend import (
     RISK_STATUS_RISK,
     _decimal,
     account_supports_available_to_spend,
-    calculate_forecast_summaries_for_accounts,
 )
-from accounts.services.balances import bulk_signed_ledger_balances
 from core.utils import get_households_for_user
 from insights.services.dashboard_summary import _classify_timeline_kind
 from insights.services.dashboard_upcoming import (
@@ -49,6 +47,7 @@ from insights.services.day_lowest_balance import (
 from insights.services.day_recovery import attach_recovery_to_days
 from timeline.services.ledger import (
     build_timeline,
+    forecast_account_balance_metrics,
     is_superseded_planned_row,
     timeline_row_process_order,
 )
@@ -147,12 +146,95 @@ def _cash_account_ids(accounts: list[Account]) -> list[int]:
     ]
 
 
-def _calendar_forecast_horizon_days(today: date, end_date: date) -> int:
-    """Clamp to the batch-forecast allow-list (same 7–90 window as before)."""
-    raw = min(max((end_date - today).days, 7), 90)
+def _historical_risk_reason_for_level(
+    level: str, balance: Decimal, buffer: Decimal, day: date
+) -> str | None:
+    if level == "none":
+        return None
+    ds = day.isoformat()
+    if level == "critical":
+        return f"Balance dropped below zero on {ds}."
+    if level == "watch":
+        return f"Balance fell below your {buffer} buffer on {ds}."
+    return None
+
+
+def _row_running_balance(row: dict) -> Decimal | None:
+    rb = row.get("running_balance")
+    if rb is None:
+        return None
+    return _decimal(rb)
+
+
+def _normalize_forecast_days(today: date, end_date: date, forecast_days: int | None) -> int:
+    if forecast_days is not None:
+        raw = forecast_days
+    else:
+        raw = max((end_date - today).days, 7)
     if raw in ALLOWED_FORECAST_DAYS:
         return raw
     return min(ALLOWED_FORECAST_DAYS, key=lambda d: (abs(d - raw), -d))
+
+
+def _load_calendar_timeline_rows(
+    user,
+    *,
+    start_date: date,
+    end_date: date,
+    forecast_days: int,
+    today: date,
+    scenario_id: Optional[int],
+    household_id: Optional[int],
+    as_of_date: Optional[date],
+    ephemeral_events: Optional[list],
+    projection_only: bool,
+    timeline_rows: Optional[list[dict]],
+) -> list[dict]:
+    """Historical display rows + canonical forecast rows (no duplicate forecast engine)."""
+    if timeline_rows is not None:
+        return timeline_rows
+
+    forecast_end = today + timedelta(days=forecast_days)
+    effective_end = min(end_date, forecast_end)
+    merged: list[dict] = []
+
+    if start_date < today:
+        hist_end = min(today - timedelta(days=1), end_date)
+        if start_date <= hist_end:
+            historical = build_timeline(
+                user,
+                start_date=start_date,
+                end_date=hist_end,
+                scenario_id=scenario_id,
+                account_id=None,
+                household_id=household_id,
+                as_of_date=as_of_date,
+                ephemeral_events=ephemeral_events,
+                projection_only=projection_only,
+                exclude_reconciled_past=False,
+                caller="timeline_calendar_history",
+            )
+            merged.extend(historical)
+
+    if today <= effective_end:
+        from timeline.services.canonical_timeline_cache import (
+            get_or_build_canonical_forecast_timeline,
+        )
+
+        forecast_rows, _ = get_or_build_canonical_forecast_timeline(
+            user,
+            today=today,
+            forecast_days=forecast_days,
+            household_id=household_id,
+            scenario_id=scenario_id,
+            caller="timeline_calendar",
+        )
+        for row in forecast_rows:
+            rd = _parse_date(row.get("date"))
+            if rd is not None and today <= rd <= effective_end:
+                merged.append(row)
+
+    return merged
 
 
 def build_timeline_calendar(
@@ -167,24 +249,23 @@ def build_timeline_calendar(
     ephemeral_events: Optional[list] = None,
     projection_only: bool = False,
     timeline_rows: Optional[list[dict]] = None,
+    forecast_days: Optional[int] = None,
 ) -> dict[str, Any]:
     today = as_of_date or date.today()
-    # Full household timeline so transfer legs materialize; scope per account below.
-    if timeline_rows is not None:
-        rows = timeline_rows
-    else:
-        rows = build_timeline(
-            user,
-            start_date=start_date,
-            end_date=end_date,
-            scenario_id=scenario_id,
-            account_id=None,
-            household_id=household_id,
-            as_of_date=as_of_date,
-            ephemeral_events=ephemeral_events,
-            projection_only=projection_only,
-            caller="timeline_calendar",
-        )
+    resolved_forecast_days = _normalize_forecast_days(today, end_date, forecast_days)
+    rows = _load_calendar_timeline_rows(
+        user,
+        start_date=start_date,
+        end_date=end_date,
+        forecast_days=resolved_forecast_days,
+        today=today,
+        scenario_id=scenario_id,
+        household_id=household_id,
+        as_of_date=as_of_date,
+        ephemeral_events=ephemeral_events,
+        projection_only=projection_only,
+        timeline_rows=timeline_rows,
+    )
     if account_id is not None:
         rows = [r for r in rows if r.get("account_id") == account_id]
 
@@ -229,10 +310,6 @@ def build_timeline_calendar(
         row["date"] = date_iso
         by_date_all[date_iso].append(row)
 
-    opening_as_of = start_date - timedelta(days=1)
-    scope_accounts = [accounts_by_id[aid] for aid in scope_ids if aid in accounts_by_id]
-    opening = bulk_signed_ledger_balances(scope_accounts, opening_as_of) if scope_accounts else {}
-
     buffer = _effective_buffer(account_id, accounts_by_id, cash_ids)
 
     days_out: list[dict[str, Any]] = []
@@ -244,11 +321,24 @@ def build_timeline_calendar(
     best_balance = None
     best_date = None
 
-    running: dict[int, Decimal] = dict(opening)
+    running: dict[int, Decimal] = {}
+    for row in rows:
+        rd = _parse_date(row.get("date"))
+        aid = row.get("account_id")
+        if rd is None or aid is None or int(aid) not in scope_ids or rd >= start_date:
+            continue
+        account_rows = rows_by_account_date.get((int(aid), rd), [])
+        if is_superseded_planned_row(row, account_rows):
+            continue
+        rb = _row_running_balance(row)
+        if rb is not None:
+            running[int(aid)] = rb
+
     d = start_date
     while d <= end_date:
         date_iso = d.isoformat()
         day_rows = by_date_all.get(date_iso, [])
+        is_forecast_day = d >= today
 
         income = Decimal("0")
         expense = Decimal("0")
@@ -256,6 +346,7 @@ def build_timeline_calendar(
         events: list[dict[str, Any]] = []
         marker_txns: list[dict[str, Any]] = []
         day_lowest = None
+        eod_by_account: dict[int, Decimal] = {}
 
         for row in sorted(day_rows, key=timeline_row_process_order):
             ev = _timeline_row_to_event(
@@ -272,12 +363,22 @@ def build_timeline_calendar(
             aid = row.get("account_id")
 
             if aid in scope_ids:
-                running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
-                acct_bal = running[aid]
-                if day_lowest is None or acct_bal < day_lowest:
-                    day_lowest = acct_bal
-                txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
-                marker_txns.append(txn)
+                rb = _row_running_balance(row)
+                if rb is not None:
+                    acct_bal = rb
+                    if day_lowest is None or acct_bal < day_lowest:
+                        day_lowest = acct_bal
+                    txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
+                    eod_by_account[int(aid)] = acct_bal
+                    marker_txns.append(txn)
+                else:
+                    prev = running.get(int(aid), Decimal("0"))
+                    acct_bal = prev + amt
+                    running[int(aid)] = acct_bal
+                    if day_lowest is None or acct_bal < day_lowest:
+                        day_lowest = acct_bal
+                    txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
+                    marker_txns.append(txn)
 
             events.append(
                 {
@@ -325,16 +426,20 @@ def build_timeline_calendar(
             ):
                 transfer += abs(amt)
 
+        for aid in scope_ids:
+            if aid in eod_by_account:
+                running[aid] = eod_by_account[aid]
+
         net = income - expense
 
         if account_id is not None:
-            ending = running.get(account_id, opening.get(account_id, Decimal("0")))
+            ending = running.get(account_id, Decimal("0"))
         else:
-            ending = sum(running.get(aid, opening.get(aid, Decimal("0"))) for aid in scope_ids)
+            ending = sum(running.get(aid, Decimal("0")) for aid in scope_ids)
 
         eod_worst: Decimal | None = None
         for aid in scope_ids:
-            bal = running.get(aid, opening.get(aid, Decimal("0")))
+            bal = running.get(aid, Decimal("0"))
             if eod_worst is None or bal < eod_worst:
                 eod_worst = bal
 
@@ -355,7 +460,7 @@ def build_timeline_calendar(
             acc = accounts_by_id.get(aid)
             if not acc:
                 continue
-            bal = running.get(aid, opening.get(aid, Decimal("0")))
+            bal = running.get(aid, Decimal("0"))
             account_snapshots.append(
                 AccountDayBalance(
                     account_name=acc.effective_display_name,
@@ -412,9 +517,12 @@ def build_timeline_calendar(
         risk_level = heat_to_risk_level(heat["heat_level"])
         risk_reason = heat.get("heat_reason")
         if not risk_reason and day_rows:
-            risk_reason = _risk_reason_for_level(
+            reason_fn = _risk_reason_for_level if is_forecast_day else _historical_risk_reason_for_level
+            risk_reason = reason_fn(
                 risk_level, ending, buffer, d
             ) or _day_risk_reason(date_iso, events, {}, accounts_by_id)
+            if not is_forecast_day and risk_reason and "projected" in risk_reason.lower():
+                risk_reason = risk_reason.replace(" projected", "").replace("Projected ", "")
 
         has_risk = heat["heat_level"] in ("tight", "dangerous")
 
@@ -431,15 +539,15 @@ def build_timeline_calendar(
             best_date = date_iso
 
         account_balance_map = {
-            str(aid): str(
-                running.get(aid, opening.get(aid, Decimal("0"))).quantize(Decimal("0.01"))
-            )
+            str(aid): str(running.get(aid, Decimal("0")).quantize(Decimal("0.01")))
             for aid in scope_ids
         }
 
         days_out.append(
             {
                 "date": date_iso,
+                "is_forecast": is_forecast_day,
+                "balance_scope": "account" if account_id is not None else "household_cash",
                 "income_total": str(income.quantize(Decimal("0.01"))),
                 "expense_total": str(expense.quantize(Decimal("0.01"))),
                 "transfer_total": str(transfer.quantize(Decimal("0.01"))),
@@ -496,28 +604,39 @@ def build_timeline_calendar(
 
     risky_accounts: list[dict[str, Any]] = []
     if account_id is None and cash_ids:
-        horizon_days = _calendar_forecast_horizon_days(today, end_date)
-        cash_accounts = [accounts_by_id[aid] for aid in cash_ids if aid in accounts_by_id]
-        forecasts = calculate_forecast_summaries_for_accounts(
-            user,
-            cash_accounts,
-            as_of_date=today,
-            days=horizon_days,
-            timeline_rows=rows,
-        )
+        from accounts.services.available_to_spend import _risk_status
+        from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+        forecast_end = today + timedelta(days=resolved_forecast_days)
         for aid in cash_ids:
             acc = accounts_by_id.get(aid)
-            summary = forecasts.get(aid)
-            if not acc or not summary:
+            if not acc:
                 continue
-            status = summary.get("risk_status")
+            metrics = forecast_account_balance_metrics(
+                rows,
+                account_id=aid,
+                today=today,
+                end_date=forecast_end,
+                minimum_buffer=_decimal(acc.minimum_buffer or 0),
+            )
+            lowest = metrics["lowest"]
+            lowest_date = metrics["lowest_date"]
+            minimum_buffer = _decimal(acc.minimum_buffer or 0)
+            current_balance = ledger_today_balance_before_pending(acc, today)
+            available = lowest - minimum_buffer
+            status = _risk_status(lowest, available, minimum_buffer, current_balance)
             if status in (RISK_STATUS_CRITICAL, RISK_STATUS_RISK):
+                risk_date = metrics["first_negative_date"] if status == RISK_STATUS_CRITICAL else (
+                    metrics["first_below_buffer_date"] or lowest_date
+                )
                 risky_accounts.append(
                     {
                         "account_id": aid,
                         "account_name": acc.effective_display_name,
-                        "lowest_projected_balance": summary.get("lowest_projected_balance"),
-                        "risk_date": summary.get("risk_date"),
+                        "lowest_projected_balance": str(
+                            _decimal(lowest).quantize(Decimal("0.01"))
+                        ),
+                        "risk_date": risk_date.isoformat() if risk_date is not None else None,
                         "risk_status": status,
                     }
                 )

@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import type { TimelineCalendarDay } from "@budget-app/shared";
 import { Card, CurrencyDisplay, SectionHeader } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { formatDateDisplay } from "@/lib/dates";
+import { formatDateDisplay, todayStr } from "@/lib/dates";
 import {
   dayHasActivity,
   daySeverity,
@@ -24,7 +24,6 @@ type Props = {
   forecastDays: number;
   eventFilter: CalendarEventFilter;
   onEventPress: (txn: TimelineCalendarTransaction) => void;
-  onViewAllTransactions: () => void;
 };
 
 export function CalendarDaySummary({
@@ -34,7 +33,6 @@ export function CalendarDaySummary({
   forecastDays,
   eventFilter,
   onEventPress,
-  onViewAllTransactions,
 }: Props) {
   const theme = useTheme();
   const resolved = day ?? emptyCalendarDay(dateIso);
@@ -42,6 +40,10 @@ export function CalendarDaySummary({
   const hasActivity = dayHasActivity(resolved);
   const filtered = filterCalendarTransactions(resolved.transactions, eventFilter);
   const openingBalance = parseCalendarAmount(resolved.ending_balance) - parseCalendarAmount(resolved.net_total);
+  const isForecastDay = resolved.is_forecast !== false && dateIso >= todayStr();
+  const isHouseholdCash = resolved.balance_scope === "household_cash";
+  const endingLabel = isHouseholdCash ? "Total cash ending" : "Ending";
+  const startingLabel = isHouseholdCash ? "Total cash starting" : "Starting";
 
   if (outsideForecast) {
     return (
@@ -60,28 +62,26 @@ export function CalendarDaySummary({
   return (
     <View style={{ gap: theme.spacing.md }}>
       <Card>
-        <SectionHeader
-          title={formatDateDisplay(dateIso)}
-          actionLabel={hasActivity ? "All transactions" : undefined}
-          onAction={hasActivity ? onViewAllTransactions : undefined}
-        />
+        <SectionHeader title={formatDateDisplay(dateIso)} />
         {(severity === "critical" || severity === "watch") && day ? (
           <ForecastWarningCard day={day} />
         ) : null}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.md, marginTop: 8 }}>
-          <Metric label="Starting" amount={String(openingBalance)} />
+          <Metric label={startingLabel} amount={String(openingBalance)} />
           <Metric label="Income" amount={resolved.income_total} tone="positive" />
           <Metric label="Expenses" amount={resolved.expense_total} tone="negative" />
           <Metric label="Net" amount={resolved.net_total} showSign />
           <Metric
-            label="Ending"
+            label={endingLabel}
             amount={resolved.ending_balance}
             tone={parseCalendarAmount(resolved.ending_balance) < 0 ? "negative" : "neutral"}
           />
         </View>
         {!hasActivity ? (
           <Text style={{ color: theme.colors.textSecondary, marginTop: 12, ...theme.typography.body }}>
-            No financial activity projected for this day.
+            {isForecastDay
+              ? "No financial activity projected for this day."
+              : "No financial activity recorded for this day."}
           </Text>
         ) : (
           <Text

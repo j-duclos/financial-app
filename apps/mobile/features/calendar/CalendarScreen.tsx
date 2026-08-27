@@ -32,7 +32,7 @@ import {
   isDateWithinForecast,
   shiftMonth,
 } from "./calendarUtils";
-import { DEFAULT_CALENDAR_EVENT_FILTER, horizonForForecastDays, type CalendarEventFilter } from "./types";
+import { DEFAULT_CALENDAR_EVENT_FILTER, type CalendarEventFilter } from "./types";
 
 export function CalendarScreen() {
   const theme = useTheme();
@@ -59,7 +59,7 @@ export function CalendarScreen() {
   const filters = useMemo(
     () =>
       buildCalendarFilters({
-        horizon: horizonForForecastDays(forecastDays),
+        forecastDays: forecastDays,
         lookbackMonths: 1,
         accountId,
         householdId: householdId ?? undefined,
@@ -142,17 +142,6 @@ export function CalendarScreen() {
     [router, selectedDate]
   );
 
-  const onViewAllTransactions = useCallback(() => {
-    if (!selectedDate) return;
-    router.push({
-      pathname: "/(app)/(tabs)/transactions",
-      params: {
-        date: selectedDate,
-        ...(accountId ? { account: String(accountId) } : {}),
-      },
-    });
-  }, [router, selectedDate, accountId]);
-
   const activeFilterCount =
     (accountId !== "" ? 1 : 0) +
     (eventFilter.flow !== "all" ? 1 : 0) +
@@ -187,7 +176,7 @@ export function CalendarScreen() {
           <RefreshControl refreshing={isFetching && !isLoading} onRefresh={() => refetchCalendar()} />
         }
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <Text style={{ color: theme.colors.text, ...theme.typography.title }} accessibilityRole="header">
             Calendar
           </Text>
@@ -208,8 +197,9 @@ export function CalendarScreen() {
               goToMonth(y, m - 1);
             }}
             style={{
-              padding: 12,
-              marginBottom: 12,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
+              marginBottom: 8,
               borderRadius: theme.radius.md,
               backgroundColor: theme.colors.warningBg,
               flexDirection: "row",
@@ -232,7 +222,7 @@ export function CalendarScreen() {
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: 8,
+            marginBottom: 4,
           }}
         >
           <IconButton name="chevron-left" accessibilityLabel="Previous month" onPress={goPrevMonth} />
@@ -256,7 +246,7 @@ export function CalendarScreen() {
           />
         )}
 
-        <View style={{ marginTop: 16 }}>
+        <View style={{ marginTop: theme.spacing.sm }}>
           {selectedDate ? (
             outsideLookback ? (
               <EmptyState
@@ -271,7 +261,6 @@ export function CalendarScreen() {
                 forecastDays={forecastDays}
                 eventFilter={eventFilter}
                 onEventPress={onEventPress}
-                onViewAllTransactions={onViewAllTransactions}
               />
             )
           ) : (

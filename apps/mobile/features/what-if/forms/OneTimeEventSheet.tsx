@@ -1,11 +1,13 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { ScrollView, Text } from "react-native";
 import type { Account, Category, ScenarioOneTimeEvent } from "@budget-app/shared";
 import { formatAccountOptionLabel } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
-import { ChipRow } from "../components/ChipRow";
+import { DatePickerField } from "@/features/recurring/DatePickerField";
+import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
+import { SelectRow } from "../components/SelectRow";
 import type { EventPreset } from "../types";
 import {
   createScenarioOneTimeEvent,
@@ -22,6 +24,8 @@ type Props = {
   onClose: () => void;
   onSaved: () => void;
 };
+
+type PickerKind = "account" | "to" | "category" | null;
 
 export function OneTimeEventSheet({
   visible,
@@ -48,6 +52,7 @@ export function OneTimeEventSheet({
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picker, setPicker] = useState<PickerKind>(null);
 
   const title =
     existing != null
@@ -57,6 +62,42 @@ export function OneTimeEventSheet({
         : preset === "expense"
           ? "Add one-time expense"
           : "Transfer money";
+
+  const accountOptions: PickerOption[] = useMemo(
+    () =>
+      accounts
+        .filter((a) => (isTransfer ? String(a.id) !== transferToId : true))
+        .map((a) => ({
+          id: String(a.id),
+          title: formatAccountOptionLabel(a),
+          searchText: formatAccountOptionLabel(a),
+        })),
+    [accounts, isTransfer, transferToId]
+  );
+
+  const toAccountOptions: PickerOption[] = useMemo(
+    () =>
+      accounts
+        .filter((a) => String(a.id) !== accountId)
+        .map((a) => ({
+          id: String(a.id),
+          title: formatAccountOptionLabel(a),
+          searchText: formatAccountOptionLabel(a),
+        })),
+    [accounts, accountId]
+  );
+
+  const categoryOptions: PickerOption[] = useMemo(
+    () => [
+      { id: "", title: "None" },
+      ...categories.map((c) => ({ id: String(c.id), title: c.name, searchText: c.name })),
+    ],
+    [categories]
+  );
+
+  const selectedAccount = accounts.find((a) => String(a.id) === accountId);
+  const selectedTo = accounts.find((a) => String(a.id) === transferToId);
+  const selectedCategory = categories.find((c) => String(c.id) === categoryId);
 
   const handleSubmit = async () => {
     if (!date || !amount) {
@@ -105,56 +146,88 @@ export function OneTimeEventSheet({
   };
 
   return (
-    <BottomSheet visible={visible} title={title} onClose={onClose}>
-      <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ gap: theme.spacing.md }}>
-        {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-          Scenario-only — does not create a real transaction.
-        </Text>
-        <TextField label="Date (YYYY-MM-DD)" value={date} onChangeText={setDate} />
-        {isTransfer ? (
-          <>
-            <ChipRow
-              label="From account"
-              options={accounts
-                .filter((a) => String(a.id) !== transferToId)
-                .map((a) => ({ value: String(a.id), label: formatAccountOptionLabel(a) }))}
-              selected={accountId}
-              onSelect={setAccountId}
+    <>
+      <BottomSheet visible={visible} title={title} onClose={onClose}>
+        <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ gap: theme.spacing.md }}>
+          {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+            Scenario-only — does not create a real transaction.
+          </Text>
+          <DatePickerField label="Date" value={date} onChange={setDate} />
+          {isTransfer ? (
+            <>
+              <SelectRow
+                label="From"
+                value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
+                placeholder="Select account"
+                onPress={() => setPicker("account")}
+              />
+              <SelectRow
+                label="To"
+                value={selectedTo ? formatAccountOptionLabel(selectedTo) : null}
+                placeholder="Select account"
+                onPress={() => setPicker("to")}
+              />
+            </>
+          ) : (
+            <SelectRow
+              label="Account"
+              value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
+              placeholder="Select account"
+              onPress={() => setPicker("account")}
             />
-            <ChipRow
-              label="To account"
-              options={accounts
-                .filter((a) => String(a.id) !== accountId)
-                .map((a) => ({ value: String(a.id), label: formatAccountOptionLabel(a) }))}
-              selected={transferToId}
-              onSelect={setTransferToId}
+          )}
+          <TextField label="Description" value={description} onChangeText={setDescription} />
+          <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+          {!isTransfer ? (
+            <SelectRow
+              label="Category"
+              value={selectedCategory?.name ?? null}
+              placeholder="Select category"
+              onPress={() => setPicker("category")}
             />
-          </>
-        ) : (
-          <ChipRow
-            label="Account"
-            options={accounts.map((a) => ({ value: String(a.id), label: formatAccountOptionLabel(a) }))}
-            selected={accountId}
-            onSelect={setAccountId}
-          />
-        )}
-        <TextField label="Description" value={description} onChangeText={setDescription} />
-        <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-        {!isTransfer ? (
-          <ChipRow
-            label="Category (optional)"
-            options={[
-              { value: "", label: "None" },
-              ...categories.map((c) => ({ value: String(c.id), label: c.name })),
-            ]}
-            selected={categoryId}
-            onSelect={setCategoryId}
-          />
-        ) : null}
-        <TextField label="Notes (optional)" value={notes} onChangeText={setNotes} />
-        <Button label="Save change" onPress={handleSubmit} loading={saving} />
-      </ScrollView>
-    </BottomSheet>
+          ) : null}
+          <TextField label="Notes (optional)" value={notes} onChangeText={setNotes} />
+          <Button label="Save change" onPress={handleSubmit} loading={saving} />
+        </ScrollView>
+      </BottomSheet>
+
+      <OptionsPickerSheet
+        visible={picker === "account"}
+        title={isTransfer ? "From account" : "Account"}
+        options={accountOptions}
+        selectedId={accountId || null}
+        searchPlaceholder="Search accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setAccountId(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "to"}
+        title="To account"
+        options={toAccountOptions}
+        selectedId={transferToId || null}
+        searchPlaceholder="Search accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setTransferToId(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "category"}
+        title="Category"
+        options={categoryOptions}
+        selectedId={categoryId}
+        searchPlaceholder="Search categories"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setCategoryId(id);
+          setPicker(null);
+        }}
+      />
+    </>
   );
 }

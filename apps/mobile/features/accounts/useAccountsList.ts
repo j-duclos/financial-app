@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { listAccounts } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
 import type { OperationalForecastDays } from "@budget-app/shared";
+import { accountQueryKeys } from "./queryKeys";
 
 function mergeEnrichedAccounts(base: Account[], enriched: Account[] | undefined): Account[] {
   if (!enriched?.length) return base;
@@ -24,14 +25,14 @@ export function useAccountsList(
   const lastNonEmpty = useRef<Account[]>([]);
 
   const mainQuery = useQuery({
-    queryKey: ["accounts", "main", "mobile"],
+    queryKey: accountQueryKeys.mainList(),
     queryFn: () => listAccounts({ balance: "true", page_size: 500, active_only: true }),
     placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
 
   const enrichQuery = useQuery({
-    queryKey: ["accounts", "enriched", { forecastDays, scope: "mobile" }],
+    queryKey: accountQueryKeys.enrichedList(forecastDays),
     queryFn: () =>
       listAccounts({
         balance: "true",

@@ -16,13 +16,18 @@ import {
 } from "./components/ReportSections";
 import { categoryDetailPath, parseReportRouteParams } from "./navigation";
 import { formatMonthLabel, parseReportTypeParam, reportTabLabel } from "./reportDisplay";
-import type { ReportFilters } from "./types";
+import type { ReportFilters, ReportHistoryMonths } from "./types";
 import { useReportsData } from "./useReportsData";
 
 export function ReportDetailScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ type: string; month?: string; months?: string }>();
+  const params = useLocalSearchParams<{
+    type: string;
+    month?: string;
+    months?: string;
+    section?: string;
+  }>();
   const reportType = parseReportTypeParam(params.type);
 
   const routeFilters = parseReportRouteParams(params);
@@ -33,6 +38,7 @@ export function ReportDetailScreen() {
     }),
     [routeFilters]
   );
+  const expandLimits = routeFilters?.section === "limits";
 
   const period = periodAnchorFromDate(`${filters.monthKey}-15`);
   const { data, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
@@ -49,6 +55,10 @@ export function ReportDetailScreen() {
 
   const onCategoryPress = (categoryId: number, categoryName: string) => {
     router.push(categoryDetailPath(categoryId, filters, categoryName));
+  };
+
+  const onHistoryMonthsChange = (months: ReportHistoryMonths) => {
+    router.setParams({ months: String(months) });
   };
 
   if (!householdReady) {
@@ -115,10 +125,26 @@ export function ReportDetailScreen() {
                 Showing cached data — refresh failed.
               </Text>
             ) : null}
+            {isFetching && data && !isLoading ? (
+              <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginBottom: 8 }}>
+                Updating…
+              </Text>
+            ) : null}
             {reportType === "overview" ? <OverviewSection data={data} filters={filters} /> : null}
-            {reportType === "cash-flow" ? <CashFlowSection data={data} /> : null}
+            {reportType === "cash-flow" ? (
+              <CashFlowSection
+                data={data}
+                historyMonths={filters.historyMonths}
+                onHistoryMonthsChange={onHistoryMonthsChange}
+              />
+            ) : null}
             {reportType === "spending" ? (
-              <SpendingSection data={data} filters={filters} onCategoryPress={onCategoryPress} />
+              <SpendingSection
+                data={data}
+                filters={filters}
+                onCategoryPress={onCategoryPress}
+                initiallyExpandLimits={expandLimits}
+              />
             ) : null}
             {reportType === "goals" ? <GoalsSection data={data} /> : null}
             {reportType === "debt" ? <DebtSection data={data} /> : null}

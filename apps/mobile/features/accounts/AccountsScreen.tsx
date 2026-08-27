@@ -1,13 +1,23 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { EmptyState, ErrorState, AppHeader, IconButton, Screen, SectionHeader, SkeletonBlock, StatusChip } from "@/components/ui";
+import {
+  EmptyState,
+  ErrorState,
+  AppHeader,
+  IconButton,
+  Screen,
+  SectionHeader,
+  SkeletonBlock,
+  StatusChip,
+} from "@/components/ui";
 import { useTheme } from "@/theme";
 import { groupAccountsByType } from "@/lib/accountGroups";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { describeApiError } from "@/services/api";
 import { useAccountsList } from "./useAccountsList";
 import { AccountRow } from "./AccountRow";
+import { markAccountsTiming } from "./accountsTiming";
 
 export function AccountsScreen() {
   const theme = useTheme();
@@ -19,6 +29,20 @@ export function AccountsScreen() {
     forecastDays,
     { forecastReady: ready }
   );
+
+  useEffect(() => {
+    markAccountsTiming("accounts-mounted", "list");
+  }, []);
+
+  useEffect(() => {
+    if (accounts.length > 0) markAccountsTiming("basic-account-data-visible", "list");
+  }, [accounts.length]);
+
+  useEffect(() => {
+    if (!isEnriching && accounts.some((a) => a.health_status != null || a.risk_status != null)) {
+      markAccountsTiming("enriched-statuses-visible", "list");
+    }
+  }, [isEnriching, accounts]);
 
   const visibleAccounts = useMemo(() => {
     if (!attentionFilterActive) return accounts;
@@ -41,7 +65,6 @@ export function AccountsScreen() {
     >
       <AppHeader
         title="Accounts"
-        showBack
         right={
           <IconButton
             name="plus"

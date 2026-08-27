@@ -4,7 +4,9 @@ import type { Account, Category, RecurringRule, ScenarioRuleOverride } from "@bu
 import { formatAccountOptionLabel, formatCurrency } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { ChipRow } from "../components/ChipRow";
+import { DatePickerField, EndsDateField } from "@/features/recurring/DatePickerField";
+import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
+import { SelectRow } from "../components/SelectRow";
 import type { OverrideContext } from "../types";
 import { createScenarioOverride, updateScenarioOverride } from "@budget-app/api-client";
 
@@ -20,6 +22,8 @@ type Props = {
   onClose: () => void;
   onSaved: () => void;
 };
+
+type PickerKind = "rule" | "status" | "account" | "category" | null;
 
 export function OverrideFormSheet({
   visible,
@@ -39,13 +43,14 @@ export function OverrideFormSheet({
   const [active, setActive] = useState(
     existing?.override_active === false ? "false" : existing?.override_active === true ? "true" : ""
   );
-  const [startDate, setStartDate] = useState(existing?.override_start_date ?? "");
-  const [endDate, setEndDate] = useState(existing?.override_end_date ?? "");
+  const [startDate, setStartDate] = useState<string | null>(existing?.override_start_date ?? null);
+  const [endDate, setEndDate] = useState<string | null>(existing?.override_end_date ?? null);
   const [accountId, setAccountId] = useState(String(existing?.override_account?.id ?? ""));
   const [categoryId, setCategoryId] = useState(String(existing?.override_category?.id ?? ""));
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picker, setPicker] = useState<PickerKind>(null);
 
   const ruleOptions = useMemo(() => {
     let filtered = rules;
@@ -63,6 +68,23 @@ export function OverrideFormSheet({
         ? "Edit paycheck change"
         : "Edit expense change";
 
+  const selectedRule = ruleOptions.find((r) => String(r.id) === ruleId) ?? existing?.rule;
+  const selectedAccount = accounts.find((a) => String(a.id) === accountId);
+  const selectedCategory = categories.find((c) => String(c.id) === categoryId);
+  const statusLabel =
+    active === "true" ? "Keep active" : active === "false" ? "Cancel / pause" : "No change";
+
+  const rulePickerOptions: PickerOption[] = useMemo(
+    () =>
+      ruleOptions.map((r) => ({
+        id: String(r.id),
+        title: r.name,
+        subtitle: formatCurrency(r.amount, r.currency),
+        searchText: `${r.name} ${r.amount}`,
+      })),
+    [ruleOptions]
+  );
+
   const handleSubmit = async () => {
     if (mode === "add" && !ruleId) {
       setError("Select a recurring item.");
@@ -75,8 +97,8 @@ export function OverrideFormSheet({
         rule_id: Number(ruleId || existing?.rule?.id),
         override_amount: amount === "" ? null : String(amount),
         override_active: active === "" ? null : active === "true",
-        override_start_date: context === "paycheck" && !startDate.trim() ? null : startDate.trim() || null,
-        override_end_date: endDate.trim() || null,
+        override_start_date: context === "paycheck" && !startDate ? null : startDate || null,
+        override_end_date: endDate || null,
         override_account_id: accountId ? Number(accountId) : null,
         override_category_id: categoryId ? Number(categoryId) : null,
         notes,
@@ -96,60 +118,121 @@ export function OverrideFormSheet({
   };
 
   return (
-    <BottomSheet visible={visible} title={title} onClose={onClose}>
-      <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ gap: theme.spacing.md }}>
-        {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-          Overrides the simulation only — your real recurring rule stays unchanged.
-        </Text>
-        {mode === "add" ? (
-          <ChipRow
-            label={context === "paycheck" ? "Paycheck or income" : "Bill or expense"}
-            options={[
-              { value: "", label: "Select…" },
-              ...ruleOptions.map((r) => ({
-                value: String(r.id),
-                label: `${r.name} (${formatCurrency(r.amount, r.currency)})`,
-              })),
-            ]}
-            selected={ruleId}
-            onSelect={setRuleId}
+    <>
+      <BottomSheet visible={visible} title={title} onClose={onClose}>
+        <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ gap: theme.spacing.md }}>
+          {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+            Overrides the simulation only — your real recurring rule stays unchanged.
+          </Text>
+          {mode === "add" ? (
+            <SelectRow
+              label={context === "paycheck" ? "Income source" : "Bill or expense"}
+              value={
+                selectedRule
+                  ? `${selectedRule.name} (${formatCurrency(selectedRule.amount, selectedRule.currency)})`
+                  : null
+              }
+              placeholder="Select…"
+              onPress={() => setPicker("rule")}
+            />
+          ) : selectedRule ? (
+            <Text style={{ color: theme.colors.textSecondary }}>
+              {selectedRule.name} · current {formatCurrency(selectedRule.amount, selectedRule.currency)}
+            </Text>
+          ) : null}
+          <TextField
+            label={context === "paycheck" ? "New amount" : "New amount"}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="decimal-pad"
           />
-        ) : null}
-        <TextField label="New amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-        <ChipRow
-          label="Status"
-          options={[
-            { value: "", label: "No change" },
-            { value: "true", label: "Keep active" },
-            { value: "false", label: "Cancel / pause" },
-          ]}
-          selected={active}
-          onSelect={setActive}
-        />
-        <TextField label="Start date (optional)" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" />
-        <TextField label="End date (optional)" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" />
-        <ChipRow
-          label="Account (optional)"
-          options={[
-            { value: "", label: "None" },
-            ...accounts.map((a) => ({ value: String(a.id), label: formatAccountOptionLabel(a) })),
-          ]}
-          selected={accountId}
-          onSelect={setAccountId}
-        />
-        <ChipRow
-          label="Category (optional)"
-          options={[
-            { value: "", label: "None" },
-            ...categories.map((c) => ({ value: String(c.id), label: c.name })),
-          ]}
-          selected={categoryId}
-          onSelect={setCategoryId}
-        />
-        <TextField label="Notes" value={notes} onChangeText={setNotes} />
-        <Button label="Save change" onPress={handleSubmit} loading={saving} />
-      </ScrollView>
-    </BottomSheet>
+          <SelectRow label="Status" value={statusLabel} onPress={() => setPicker("status")} />
+          <DatePickerField
+            label="Starts"
+            value={startDate}
+            placeholder="Optional"
+            onChange={setStartDate}
+          />
+          <EndsDateField value={endDate} onChange={setEndDate} />
+          <SelectRow
+            label="Account"
+            value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
+            placeholder="No change"
+            onPress={() => setPicker("account")}
+          />
+          <SelectRow
+            label="Category"
+            value={selectedCategory?.name ?? null}
+            placeholder="No change"
+            onPress={() => setPicker("category")}
+          />
+          <TextField label="Notes" value={notes} onChangeText={setNotes} />
+          <Button label="Save change" onPress={handleSubmit} loading={saving} />
+        </ScrollView>
+      </BottomSheet>
+
+      <OptionsPickerSheet
+        visible={picker === "rule"}
+        title={context === "paycheck" ? "Income source" : "Bill or expense"}
+        options={rulePickerOptions}
+        selectedId={ruleId || null}
+        searchPlaceholder="Search"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setRuleId(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "status"}
+        title="Status"
+        options={[
+          { id: "", title: "No change" },
+          { id: "true", title: "Keep active" },
+          { id: "false", title: "Cancel / pause" },
+        ]}
+        selectedId={active}
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setActive(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "account"}
+        title="Account"
+        options={[
+          { id: "", title: "No change" },
+          ...accounts.map((a) => ({
+            id: String(a.id),
+            title: formatAccountOptionLabel(a),
+            searchText: formatAccountOptionLabel(a),
+          })),
+        ]}
+        selectedId={accountId}
+        searchPlaceholder="Search accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setAccountId(id);
+          setPicker(null);
+        }}
+      />
+      <OptionsPickerSheet
+        visible={picker === "category"}
+        title="Category"
+        options={[
+          { id: "", title: "No change" },
+          ...categories.map((c) => ({ id: String(c.id), title: c.name, searchText: c.name })),
+        ]}
+        selectedId={categoryId}
+        searchPlaceholder="Search categories"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setCategoryId(id);
+          setPicker(null);
+        }}
+      />
+    </>
   );
 }

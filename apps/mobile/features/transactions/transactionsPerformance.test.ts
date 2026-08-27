@@ -18,13 +18,12 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/useDefaultHouseholdId/);
     expect(transactionsScreen).not.toMatch(/accounts\[0\]\?\.household/);
     expect(transactionsScreen).toMatch(/useAccountOptions/);
-    expect(transactionsScreen).toMatch(/useCategoryOptions/);
+    expect(transactionsScreen).not.toMatch(/useCategoryOptions/);
   });
 
   it("does not block account picker loading on transaction list fetch", () => {
     expect(transactionsScreen).not.toMatch(/accountsQuery\.isLoading/);
     expect(transactionsScreen).toMatch(/useAccountOptions/);
-    expect(transactionsScreen).toMatch(/categoriesLoading/);
   });
 
   it("loads recent history without waiting on timeline forecast readiness", () => {
@@ -41,5 +40,11 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/TransactionListItem/);
     expect(transactionsScreen).toMatch(/FINANCIAL_LIST_PROPS/);
     expect(transactionsData).toMatch(/filtersForList/);
+  });
+
+  it("anchors the ledger near Pending on open", () => {
+    expect(transactionsScreen).toMatch(/ledgerAnchorScrollIndex/);
+    expect(transactionsScreen).toMatch(/initialScrollIndex/);
+    expect(transactionsScreen).toMatch(/getItemLayout/);
   });
 });

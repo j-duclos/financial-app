@@ -1,21 +1,29 @@
 import React from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { useTheme } from "@/theme";
-import { comparisonTone } from "../reportDisplay";
+import {
+  comparisonTone,
+  comparisonToneForContext,
+  type ComparisonTone,
+} from "../reportDisplay";
 
 type Props = {
   text: string;
   delta?: string;
+  /** Prefer "expense" for spending category MoM so color is not misleading. */
+  context?: "income" | "expense" | "net" | "neutral";
+  tone?: ComparisonTone;
   style?: StyleProp<ViewStyle>;
 };
 
-export function PeriodComparisonBadge({ text, delta, style }: Props) {
+export function PeriodComparisonBadge({ text, delta, context, tone, style }: Props) {
   const theme = useTheme();
-  const tone = comparisonTone(delta);
+  const resolved =
+    tone ?? (context != null ? comparisonToneForContext(delta, context) : comparisonTone(delta));
   const color =
-    tone === "positive"
+    resolved === "positive"
       ? theme.colors.moneyPositive
-      : tone === "negative"
+      : resolved === "negative"
         ? theme.colors.moneyNegative
         : theme.colors.textMuted;
 

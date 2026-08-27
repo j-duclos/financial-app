@@ -40,6 +40,7 @@ export function Screen({
         <ScrollView
           contentContainerStyle={[{ paddingBottom: theme.spacing.xxl }, contentStyle]}
           keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
           {...scrollProps}
         >
           {children}

@@ -28,7 +28,8 @@ def card_a(household):
         name="High APR",
         credit_limit=Decimal("5000"),
         apr=Decimal("24"),
-        minimum_payment_amount=Decimal("40"),
+        # Min must exceed monthly interest at typical test balances (~$40 on $2k @ 24%).
+        minimum_payment_amount=Decimal("50"),
     )
 
 
@@ -323,8 +324,8 @@ def test_survival_mode_uses_minimums_only_budget(user, card_a, card_b):
     aggressive = simulate_household_debt(
         [card_a, card_b], strategy="avalanche", mode="aggressive", extra_monthly=Decimal("500")
     )
-    assert Decimal(survival["monthly_payment_budget"]) == Decimal("65.00")
-    assert Decimal(aggressive["monthly_payment_budget"]) == Decimal("565.00")
+    assert Decimal(survival["monthly_payment_budget"]) == Decimal("75.00")
+    assert Decimal(aggressive["monthly_payment_budget"]) == Decimal("575.00")
 
 
 @pytest.mark.django_db
@@ -337,7 +338,7 @@ def test_balanced_mode_uses_sixty_percent_of_extra(user, card_a, card_b):
         mode="balanced",
         extra_monthly=Decimal("100"),
     )
-    assert Decimal(plan["monthly_payment_budget"]) == Decimal("125.00")
+    assert Decimal(plan["monthly_payment_budget"]) == Decimal("135.00")
 
 
 @pytest.mark.django_db
@@ -404,8 +405,192 @@ def test_interest_saved_compares_same_opening_balances(user, card_a, card_b):
     baseline = Decimal(plan["total_interest_minimums_only"])
     selected = Decimal(plan["total_interest"])
     saved = Decimal(plan["interest_saved_vs_minimums"])
+    assert plan["baseline_status"] == "payoffable"
     assert baseline >= selected
     assert saved == (baseline - selected).quantize(Decimal("0.01"))
+
+
+@pytest.mark.django_db
+def test_non_amortizing_baseline_returns_null_savings_not_millions(user, household):
+    """Portfolio like Venture: min payment below monthly interest must not invent huge savings."""
+    lowes = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Lowe's",
+        credit_limit=Decimal("2000"),
+        apr=Decimal("31.99"),
+        minimum_payment_amount=Decimal("8.28"),
+    )
+    care = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        credit_limit=Decimal("3000"),
+        apr=Decimal("32.99"),
+        minimum_payment_amount=Decimal("63"),
+    )
+    savor = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        credit_limit=Decimal("3000"),
+        apr=Decimal("28.24"),
+        minimum_payment_amount=Decimal("25"),
+    )
+    venture = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Venture",
+        credit_limit=Decimal("3000"),
+        apr=Decimal("28.24"),
+        minimum_payment_amount=Decimal("26"),
+    )
+    _debt(lowes, user, Decimal("8.28"))
+    _debt(care, user, Decimal("1070.96"))
+    _debt(savor, user, Decimal("1920.92"))
+    _debt(venture, user, Decimal("2877.18"))
+    cache.clear()
+    plan = simulate_household_debt(
+        [lowes, care, savor, venture],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("150"),
+    )
+    total = Decimal(plan["total_debt"])
+    assert total == Decimal("5877.34")
+    expected_wapr = (
+        Decimal("8.28") * Decimal("31.99")
+        + Decimal("1070.96") * Decimal("32.99")
+        + Decimal("1920.92") * Decimal("28.24")
+        + Decimal("2877.18") * Decimal("28.24")
+    ) / total
+    assert Decimal(plan["weighted_apr"]) == expected_wapr.quantize(Decimal("0.01"))
+    burn = Decimal(plan["monthly_interest_burn"])
+    assert burn > 0
+    assert burn < total  # sanity: one month interest << principal
+    assert plan["baseline_status"] == "baseline_not_payoffable"
+    assert plan["interest_saved_vs_minimums"] is None
+    assert plan["total_interest_minimums_only"] is None
+    assert venture.id in plan["non_amortizing_account_ids"]
+    # Never invent multi-million "savings" on a ~$6k book.
+    assert "NaN" not in str(plan["total_debt"])
+    assert "Infinity" not in str(plan.values())
+    messages = [r["message"] for r in plan["recommendations"]]
+    assert any("would not pay off all debts" in m for m in messages)
+
+
+@pytest.mark.django_db
+def test_plan_numeric_fields_are_finite_or_null(user, card_a, card_b):
+    _debt(card_a, user, Decimal("1500"))
+    _debt(card_b, user, Decimal("400"))
+    plan = simulate_household_debt(
+        [card_a, card_b],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("100"),
+    )
+    money_fields = [
+        "total_debt",
+        "weighted_apr",
+        "monthly_interest_burn",
+        "monthly_payment_budget",
+        "extra_monthly",
+        "total_interest",
+        "total_paid",
+    ]
+    for field in money_fields:
+        val = Decimal(plan[field])
+        assert val.is_finite()
+    for field in ("interest_saved_vs_minimums", "total_interest_minimums_only"):
+        raw = plan[field]
+        if raw is not None:
+            assert Decimal(raw).is_finite()
+    for card in plan["cards"]:
+        for field in ("balance", "apr", "minimum_payment", "suggested_payment", "interest_this_month"):
+            assert Decimal(card[field]).is_finite()
+
+
+@pytest.mark.django_db
+def test_household_non_amortizing_exits_without_max_horizon(user, household):
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Stuck",
+        credit_limit=Decimal("5000"),
+        apr=Decimal("30"),
+        minimum_payment_amount=Decimal("20"),
+    )
+    _debt(card, user, Decimal("3000"))
+    plan = simulate_household_debt(
+        [card],
+        strategy="avalanche",
+        mode="survival",
+        extra_monthly=Decimal("0"),
+        max_months=360,
+    )
+    assert plan["debt_free_possible"] is False
+    assert plan["simulation_status"] == "non_amortizing"
+    assert plan["months_to_debt_free"] is None
+    assert plan["baseline_status"] == "baseline_not_payoffable"
+    assert plan["interest_saved_vs_minimums"] is None
+    # Early exit — must not burn hundreds of months of timeline.
+    assert len(plan["timeline"]) <= 2
+
+
+@pytest.mark.django_db
+def test_zero_balance_excluded_from_total_debt(user, card_a, card_b):
+    _debt(card_a, user, Decimal("1000"))
+    # card_b has no debt
+    plan = simulate_household_debt([card_a, card_b], extra_monthly=Decimal("100"))
+    assert Decimal(plan["total_debt"]) == Decimal("1000.00")
+    assert all(c["account_id"] != card_b.id for c in plan["cards"])
+
+
+@pytest.mark.django_db
+def test_missing_apr_does_not_produce_nan(user, household):
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="No APR",
+        credit_limit=Decimal("2000"),
+        apr=None,
+        minimum_payment_amount=Decimal("25"),
+    )
+    _debt(card, user, Decimal("500"))
+    plan = simulate_household_debt([card], extra_monthly=Decimal("50"))
+    assert Decimal(plan["weighted_apr"]) == Decimal("0.00")
+    assert Decimal(plan["monthly_interest_burn"]) == Decimal("0.00")
+    assert Decimal(plan["total_debt"]) == Decimal("500.00")
+
+
+@pytest.mark.django_db
+def test_tiny_balance_payoff_is_one_month_not_two(user, household):
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Lowe's",
+        credit_limit=Decimal("2000"),
+        apr=Decimal("31.99"),
+        minimum_payment_amount=Decimal("8.28"),
+    )
+    _debt(card, user, Decimal("8.28"))
+    plan = simulate_household_debt(
+        [card],
+        strategy="snowball",
+        mode="aggressive",
+        extra_monthly=Decimal("0"),
+    )
+    row = plan["cards"][0]
+    assert Decimal(row["balance"]) == Decimal("8.28")
+    assert row["months_remaining"] == 1
+    single = project_credit_card_payoff(
+        card,
+        "custom_amount",
+        custom_amount=Decimal("8.28"),
+        starting_balance=Decimal("8.28"),
+    )
+    assert single["payoff_possible"] is True
+    assert single["months_to_payoff"] == 1
 
 
 @pytest.mark.django_db

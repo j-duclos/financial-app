@@ -2,92 +2,95 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { ACCOUNT_DETAIL_PREVIEW_LIMIT, accountQueryKeys } from "./queryKeys";
+import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
 
-const accountsSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "AccountsScreen.tsx"),
-  "utf8"
-);
-const accountDetailSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "AccountDetailScreen.tsx"),
-  "utf8"
-);
-const appHeaderSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../components/ui/AppHeader.tsx"),
-  "utf8"
-);
-const stackNavSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../lib/navigateStackBack.ts"),
-  "utf8"
-);
-const dashboardNavSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../dashboard/navigation.ts"),
-  "utf8"
-);
-const tabsIndexSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../app/(app)/(tabs)/index.tsx"),
-  "utf8"
-);
+const dir = dirname(fileURLToPath(import.meta.url));
+const accountsSource = readFileSync(join(dir, "AccountsScreen.tsx"), "utf8");
+const accountDetailSource = readFileSync(join(dir, "AccountDetailScreen.tsx"), "utf8");
+const accountsList = readFileSync(join(dir, "useAccountsList.ts"), "utf8");
+const accountRow = readFileSync(join(dir, "AccountRow.tsx"), "utf8");
 
 describe("Accounts screen navigation", () => {
-  it("uses AppHeader with visible Back and preserved Add account action", () => {
+  it("does not show Back on Accounts root (bottom nav / More is the way out)", () => {
     expect(accountsSource).toMatch(/<AppHeader/);
-    expect(accountsSource).toMatch(/showBack/);
     expect(accountsSource).toMatch(/title="Accounts"/);
+    expect(accountsSource).not.toMatch(/showBack/);
     expect(accountsSource).toMatch(/accessibilityLabel="Add account"/);
-    expect(accountsSource).toMatch(/router\.push\("\/account\/new"\)/);
-    expect(accountsSource).not.toMatch(/typography\.title.*Accounts/);
   });
 
-  it("keeps attention filter controls separate from navigation", () => {
-    expect(accountsSource).toMatch(/Needs attention/);
-    expect(accountsSource).toMatch(/Clear filter/);
-    expect(accountsSource).toMatch(/router\.replace\("\/accounts"\)/);
-  });
-
-  it("routes to account detail without resetting the list screen", () => {
+  it("routes every account row tap to account detail (no separate View button)", () => {
     expect(accountsSource).toMatch(/router\.push\(`\/account\/\$\{account\.id\}`\)/);
+    expect(accountRow).not.toMatch(/label=["']View/);
+    expect(accountRow).toMatch(/onPress/);
   });
 });
 
-describe("Stack back helper", () => {
-  it("prefers router.back when history exists and falls back to More", () => {
-    expect(stackNavSource).toMatch(/navigation\.canGoBack\(\)/);
-    expect(stackNavSource).toMatch(/router\.back\(\)/);
-    expect(stackNavSource).toMatch(/SECONDARY_SCREEN_BACK_FALLBACK.*=.*"\/more"/);
-    expect(stackNavSource).toMatch(/router\.replace\(fallbackHref\)/);
+describe("Account detail → View ledger", () => {
+  it("opens Transactions with the selected account id and remembers selection", () => {
+    expect(accountDetailSource).toMatch(/transactionsForAccountPath/);
+    expect(accountDetailSource).toMatch(/rememberTransactionAccountSelection\(account\.id\)/);
+    expect(accountDetailSource).toMatch(/label="View ledger"/);
+    expect(accountDetailSource).not.toMatch(/View transactions/);
+
+    expect(transactionsForAccountPath(7, "360 Checking")).toEqual({
+      pathname: "/(app)/(tabs)/transactions",
+      params: { account: "7", accountName: "360 Checking" },
+    });
+    expect(transactionsForAccountPath(1, "Main")).toEqual({
+      pathname: "/(app)/(tabs)/transactions",
+      params: { account: "1", accountName: "Main" },
+    });
   });
 
-  it("does not hard-code Home as the fallback destination", () => {
-    expect(stackNavSource).not.toMatch(/replace\("\/\(app\)\/\(tabs\)"\)/);
-    expect(stackNavSource).not.toMatch(/replace\("\/"\)/);
-  });
-});
-
-describe("AppHeader back affordance", () => {
-  it("labels Back for accessibility and supports showBack", () => {
-    expect(appHeaderSource).toMatch(/accessibilityLabel="Back"/);
-    expect(appHeaderSource).toMatch(/showBack/);
-    expect(appHeaderSource).toMatch(/useStackBack/);
-    expect(appHeaderSource).toMatch(/< Back/);
-  });
-});
-
-describe("Dashboard attention filter navigation", () => {
-  it("pushes Accounts with attention param from Home", () => {
-    expect(dashboardNavSource).toMatch(/pathname: "\/accounts"/);
-    expect(dashboardNavSource).toMatch(/attention: "1"/);
-  });
-});
-
-describe("Tab root screens", () => {
-  it("does not add AppHeader back to Home tab root", () => {
-    expect(tabsIndexSource).not.toMatch(/AppHeader/);
-    expect(tabsIndexSource).not.toMatch(/showBack/);
-  });
-});
-
-describe("Account detail navigation", () => {
-  it("uses stack back from account detail", () => {
+  it("keeps stack Back on Account Detail", () => {
     expect(accountDetailSource).toMatch(/onBack=\{\(\) => router\.back\(\)\}/);
+  });
+});
+
+describe("Accounts request structure", () => {
+  it("uses shared list keys (not incompatible per-screen account keys for the same data)", () => {
+    expect(accountQueryKeys.mainList()).toEqual(["accounts", "main", "mobile"]);
+    expect(accountQueryKeys.enrichedList(30)).toEqual([
+      "accounts",
+      "enriched",
+      { forecastDays: 30, scope: "mobile" },
+    ]);
+    expect(accountsList).toMatch(/accountQueryKeys\.mainList/);
+    expect(accountsList).toMatch(/accountQueryKeys\.enrichedList/);
+    expect(accountDetailSource).toMatch(/accountQueryKeys\.enrichedList/);
+    expect(accountDetailSource).toMatch(/accountQueryKeys\.balanceDetail/);
+  });
+
+  it("does not issue per-account forecast endpoints from the list hook", () => {
+    expect(accountsList).toMatch(/listAccounts/);
+    expect(accountsList).not.toMatch(/getAccount\(/);
+    expect(accountsList).not.toMatch(/\/available-to-spend/);
+    expect(accountsList).not.toMatch(/\/health\//);
+  });
+
+  it("bounds Account Detail transaction previews", () => {
+    expect(ACCOUNT_DETAIL_PREVIEW_LIMIT).toBe(5);
+    expect(accountDetailSource).toMatch(/ACCOUNT_DETAIL_PREVIEW_LIMIT/);
+    expect(accountDetailSource).toMatch(/page_size: ACCOUNT_DETAIL_PREVIEW_LIMIT/);
+    expect(accountDetailSource).not.toMatch(/page_size: 8/);
+  });
+
+  it("seeds detail from list cache and does not wait on forecast for basic shell", () => {
+    expect(accountDetailSource).toMatch(/seedAccountFromListCache/);
+    expect(accountDetailSource).toMatch(/placeholderData: seeded/);
+    expect(accountDetailSource).toMatch(/getAccount\(accountId, true\)/);
+    expect(accountDetailSource).not.toMatch(/relationships:\s*true/);
+  });
+
+  it("reuses enriched list cache on detail and merges cold forecast into it", () => {
+    expect(accountDetailSource).toMatch(/accountQueryKeys\.enrichedList/);
+    expect(accountDetailSource).toMatch(/mergeAccountIntoEnrichedListCache/);
+    expect(accountDetailSource).toMatch(/enabled: false/);
+  });
+
+  it("does not show empty upcoming state while loading", () => {
+    expect(accountDetailSource).toMatch(/upcomingQuery\.isPending/);
+    expect(accountDetailSource).toMatch(/No upcoming transactions/);
   });
 });

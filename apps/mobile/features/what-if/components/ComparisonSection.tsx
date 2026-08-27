@@ -1,7 +1,7 @@
 import React from "react";
 import { Text, View } from "react-native";
 import type { ScenarioComparisonResponse } from "@budget-app/shared";
-import { Card } from "@/components/ui";
+import { Card, Button } from "@/components/ui";
 import { useTheme, type FinancialTone } from "@/theme";
 import {
   buildBeforeAfterRow,
@@ -13,6 +13,9 @@ import { BaselineScenarioMetric } from "./BaselineScenarioMetric";
 type Props = {
   comparison: ScenarioComparisonResponse | undefined;
   horizonLabel: string;
+  loading?: boolean;
+  error?: unknown;
+  onRetry?: () => void;
 };
 
 function deltaTone(raw: string | null | undefined): FinancialTone {
@@ -22,39 +25,51 @@ function deltaTone(raw: string | null | undefined): FinancialTone {
   return n > 0 ? "positive" : "critical";
 }
 
-export function ComparisonSection({ comparison, horizonLabel }: Props) {
+export function ComparisonSection({
+  comparison,
+  horizonLabel,
+  loading,
+  error,
+  onRetry,
+}: Props) {
   const theme = useTheme();
-  if (!comparison?.metrics) return null;
+
+  if (error && !comparison?.metrics) {
+    return (
+      <Card style={{ marginBottom: theme.spacing.md }}>
+        <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 8 }}>
+          Scenario impact
+        </Text>
+        <Text style={{ color: theme.colors.critical, marginBottom: 12 }}>
+          Could not calculate this scenario. Your changes are still saved.
+        </Text>
+        {onRetry ? <Button label="Retry" variant="secondary" onPress={onRetry} /> : null}
+      </Card>
+    );
+  }
+
+  if (!comparison?.metrics) {
+    if (loading) return null;
+    return null;
+  }
 
   const before = buildBeforeAfterRow(comparison, "base");
   const after = buildBeforeAfterRow(comparison, "scenario");
   const endingCash = comparison.metrics.ending_cash;
   const lowest = comparison.metrics.lowest_projected_balance;
+  const creditDebt = comparison.metrics.credit_debt_after_horizon;
+  const firstRisk = comparison.metrics.first_risk_date;
 
   return (
     <Card style={{ marginBottom: theme.spacing.md }}>
       <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 4 }}>
-        Baseline vs What-If
+        Scenario impact
       </Text>
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 12 }}>
-        Forecast window: {horizonLabel}. Values are projections, not current balances.
+        {horizonLabel} forecast — baseline vs this plan
       </Text>
 
       <View style={{ gap: 16 }}>
-        {lowest ? (
-          <BaselineScenarioMetric
-            label="Lowest projected balance"
-            baseline={before.lowestBalance}
-            scenario={after.lowestBalance}
-            delta={
-              lowest.delta
-                ? formatSignedDelta(lowest.delta)
-                : null
-            }
-            tone={deltaTone(lowest.delta)}
-          />
-        ) : null}
-
         {endingCash ? (
           <BaselineScenarioMetric
             label="Ending cash"
@@ -62,6 +77,16 @@ export function ComparisonSection({ comparison, horizonLabel }: Props) {
             scenario={formatComparisonValue("ending_cash", endingCash.scenario)}
             delta={endingCash.delta ? formatSignedDelta(endingCash.delta) : null}
             tone={deltaTone(endingCash.delta)}
+          />
+        ) : null}
+
+        {lowest ? (
+          <BaselineScenarioMetric
+            label="Lowest balance"
+            baseline={before.lowestBalance}
+            scenario={after.lowestBalance}
+            delta={lowest.delta ? formatSignedDelta(lowest.delta) : null}
+            tone={deltaTone(lowest.delta)}
           />
         ) : null}
 
@@ -76,6 +101,30 @@ export function ComparisonSection({ comparison, horizonLabel }: Props) {
                 : null
             }
             tone={deltaTone(comparison.metrics.risk_days?.delta)}
+          />
+        ) : null}
+
+        {firstRisk && (firstRisk.base || firstRisk.scenario) ? (
+          <BaselineScenarioMetric
+            label="First cash risk"
+            baseline={before.firstProblemDate}
+            scenario={after.firstProblemDate}
+            delta={null}
+            tone="neutral"
+          />
+        ) : null}
+
+        {creditDebt &&
+        (Math.abs(parseFloat(String(creditDebt.delta ?? "0"))) > 0.005 ||
+          Math.abs(parseFloat(String(creditDebt.base ?? "0"))) > 0.005) ? (
+          <BaselineScenarioMetric
+            label="Credit debt"
+            baseline={formatComparisonValue("credit_debt_after_horizon", creditDebt.base)}
+            scenario={formatComparisonValue("credit_debt_after_horizon", creditDebt.scenario)}
+            delta={creditDebt.delta ? formatSignedDelta(creditDebt.delta) : null}
+            tone={deltaTone(
+              creditDebt.delta != null ? String(-parseFloat(creditDebt.delta)) : null
+            )}
           />
         ) : null}
       </View>

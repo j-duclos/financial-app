@@ -255,7 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuth((prev) => ({
         ...prev,
         user: profileToUser(profile),
-        profile: prev.profile ?? profile,
+        profile,
       }));
       return profile;
     } catch (err) {

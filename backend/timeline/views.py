@@ -698,7 +698,7 @@ class TimelineView(APIView):
 
     def get(self, request):
         try:
-            start, end, as_of_date = _timeline_date_range(request)
+            start, end, as_of_date, _forecast_days = _timeline_date_range(request)
             today = timezone.localdate()
             if end > today:
                 forward_days = (end - today).days
@@ -829,9 +829,18 @@ def _timeline_date_range(request):
     end = request.query_params.get("end")
     as_of = request.query_params.get("as_of")
     horizon = request.query_params.get("horizon", "6m")
+    forecast_days_raw = request.query_params.get("forecast_days")
     today = timezone.localdate()
     as_of_date = dt.strptime(as_of, "%Y-%m-%d").date() if as_of else None
-    if not end:
+    forecast_days: int | None = None
+    if forecast_days_raw:
+        try:
+            forecast_days = max(1, int(forecast_days_raw))
+        except ValueError:
+            forecast_days = None
+    if forecast_days is not None:
+        end = today + timedelta(days=forecast_days)
+    elif not end:
         if horizon == "14d":
             end = today + timedelta(days=14)
         elif horizon == "3m":
@@ -857,7 +866,7 @@ def _timeline_date_range(request):
         start = _first_day_of_month(today, lookback_months)
     else:
         start = dt.strptime(start, "%Y-%m-%d").date() if isinstance(start, str) else start
-    return start, end, as_of_date
+    return start, end, as_of_date, forecast_days
 
 
 class TransferSimulationView(APIView):
@@ -949,7 +958,7 @@ class ResolveRiskView(APIView):
 
 
 def _calendar_filter_params(request):
-    start, end, as_of_date = _timeline_date_range(request)
+    start, end, as_of_date, forecast_days = _timeline_date_range(request)
     scenario_id = request.query_params.get("scenario_id")
     raw_account = request.query_params.get("account_id")
     household_id = request.query_params.get("household_id")
@@ -958,7 +967,7 @@ def _calendar_filter_params(request):
     if raw_account and str(raw_account).lower() not in ("all", ""):
         account_id = int(raw_account)
     household_id = int(household_id) if household_id else None
-    return start, end, as_of_date, scenario_id, account_id, household_id
+    return start, end, as_of_date, forecast_days, scenario_id, account_id, household_id
 
 
 def _calendar_no_store(payload):
@@ -975,8 +984,8 @@ class TimelineCalendarView(APIView):
             from timeline.services.calendar import public_calendar_payload
             from timeline.services.calendar_cache import get_or_build_canonical_calendar
 
-            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
-                request
+            start, end, as_of_date, forecast_days, scenario_id, account_id, household_id = (
+                _calendar_filter_params(request)
             )
             payload = get_or_build_canonical_calendar(
                 request.user,
@@ -987,6 +996,7 @@ class TimelineCalendarView(APIView):
                 household_id=household_id,
                 as_of_date=as_of_date,
                 projection_only=True,
+                forecast_days=forecast_days,
             )
             return _calendar_no_store(public_calendar_payload(payload))
         except Exception as e:
@@ -1004,8 +1014,8 @@ class TimelineCalendarSummaryView(APIView):
             from timeline.services.calendar import calendar_summary_payload
             from timeline.services.calendar_cache import get_or_build_canonical_calendar
 
-            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
-                request
+            start, end, as_of_date, forecast_days, scenario_id, account_id, household_id = (
+                _calendar_filter_params(request)
             )
             payload = get_or_build_canonical_calendar(
                 request.user,
@@ -1016,6 +1026,7 @@ class TimelineCalendarSummaryView(APIView):
                 household_id=household_id,
                 as_of_date=as_of_date,
                 projection_only=True,
+                forecast_days=forecast_days,
             )
             return _calendar_no_store(calendar_summary_payload(payload))
         except Exception as e:
@@ -1035,8 +1046,8 @@ class TimelineCalendarChunkView(APIView):
             from timeline.services.calendar import calendar_chunk_payload
             from timeline.services.calendar_cache import get_or_build_calendar_for_chunk
 
-            start, end, as_of_date, scenario_id, account_id, household_id = _calendar_filter_params(
-                request
+            start, end, as_of_date, forecast_days, scenario_id, account_id, household_id = (
+                _calendar_filter_params(request)
             )
             raw_chunk_start = request.query_params.get("chunk_start")
             raw_chunk_end = request.query_params.get("chunk_end")
@@ -1068,6 +1079,7 @@ class TimelineCalendarChunkView(APIView):
                 household_id=household_id,
                 as_of_date=as_of_date,
                 projection_only=True,
+                forecast_days=forecast_days,
             )
             return _calendar_no_store(calendar_chunk_payload(payload, chunk_start, chunk_end))
         except ValueError:

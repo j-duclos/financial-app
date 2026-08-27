@@ -7,15 +7,11 @@ import {
   parseAmountFilterInput,
   type TransactionFilters,
 } from "./types";
-import { TIME_FILTER_LABELS, RECENT_RANGE_OPTIONS, type TimeFilter } from "@/lib/transactionsLedger";
-import type { Category } from "@budget-app/shared";
+import { TIME_FILTER_LABELS, RECENT_RANGE_OPTIONS } from "@/lib/transactionsLedger";
 
 type Props = {
   visible: boolean;
   draft: TransactionFilters;
-  categories: Category[];
-  categoriesLoading?: boolean;
-  categoriesError?: boolean;
   onClose: () => void;
   onApply: (filters: TransactionFilters) => void;
 };
@@ -25,9 +21,6 @@ const TIME_FILTERS = RECENT_RANGE_OPTIONS;
 export function TransactionFiltersSheet({
   visible,
   draft: initialDraft,
-  categories,
-  categoriesLoading = false,
-  categoriesError = false,
   onClose,
   onApply,
 }: Props) {
@@ -52,8 +45,9 @@ export function TransactionFiltersSheet({
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
-  const chip = (label: string, active: boolean, onPress: () => void) => (
+  const chip = (key: string, label: string, active: boolean, onPress: () => void) => (
     <Pressable
+      key={key}
       onPress={onPress}
       style={{
         paddingHorizontal: 12,
@@ -87,29 +81,9 @@ export function TransactionFiltersSheet({
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {TIME_FILTERS.map((tf) =>
-                chip(TIME_FILTER_LABELS[tf], draft.timeFilter === tf, () => set("timeFilter", tf))
-              )}
-            </View>
-          </View>
-
-          <View>
-            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
-              Category
-            </Text>
-            {categoriesError ? (
-              <Text style={{ color: theme.colors.warning, fontSize: 12, marginBottom: 6 }}>
-                Could not load categories — other filters still work.
-              </Text>
-            ) : null}
-            {categoriesLoading ? (
-              <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 6 }}>
-                Loading categories…
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {chip("All categories", draft.categoryId == null, () => set("categoryId", null))}
-              {categories.slice(0, 20).map((c) =>
-                chip(c.name, draft.categoryId === c.id, () => set("categoryId", c.id))
+                chip(`time-${tf}`, TIME_FILTER_LABELS[tf], draft.timeFilter === tf, () =>
+                  set("timeFilter", tf)
+                )
               )}
             </View>
           </View>
@@ -119,10 +93,10 @@ export function TransactionFiltersSheet({
               Type
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {chip("All", draft.flow === "all", () => set("flow", "all"))}
-              {chip("Income", draft.flow === "income", () => set("flow", "income"))}
-              {chip("Expense", draft.flow === "expense", () => set("flow", "expense"))}
-              {chip("Transfer", draft.flow === "transfer", () => set("flow", "transfer"))}
+              {chip("flow-all", "All", draft.flow === "all", () => set("flow", "all"))}
+              {chip("flow-income", "Income", draft.flow === "income", () => set("flow", "income"))}
+              {chip("flow-expense", "Expense", draft.flow === "expense", () => set("flow", "expense"))}
+              {chip("flow-transfer", "Transfer", draft.flow === "transfer", () => set("flow", "transfer"))}
             </View>
           </View>
 
@@ -131,9 +105,13 @@ export function TransactionFiltersSheet({
               Posted / forecast
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {chip("All", draft.forecast === "all", () => set("forecast", "all"))}
-              {chip("Forecast", draft.forecast === "forecast", () => set("forecast", "forecast"))}
-              {chip("Posted", draft.forecast === "posted", () => set("forecast", "posted"))}
+              {chip("forecast-all", "All", draft.forecast === "all", () => set("forecast", "all"))}
+              {chip("forecast-forecast", "Forecast", draft.forecast === "forecast", () =>
+                set("forecast", "forecast")
+              )}
+              {chip("forecast-posted", "Posted", draft.forecast === "posted", () =>
+                set("forecast", "posted")
+              )}
             </View>
           </View>
 
@@ -142,9 +120,13 @@ export function TransactionFiltersSheet({
               Cleared
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {chip("All", draft.cleared === "all", () => set("cleared", "all"))}
-              {chip("Cleared", draft.cleared === "cleared", () => set("cleared", "cleared"))}
-              {chip("Pending", draft.cleared === "pending", () => set("cleared", "pending"))}
+              {chip("cleared-all", "All", draft.cleared === "all", () => set("cleared", "all"))}
+              {chip("cleared-cleared", "Cleared", draft.cleared === "cleared", () =>
+                set("cleared", "cleared")
+              )}
+              {chip("cleared-pending", "Pending", draft.cleared === "pending", () =>
+                set("cleared", "pending")
+              )}
             </View>
           </View>
 

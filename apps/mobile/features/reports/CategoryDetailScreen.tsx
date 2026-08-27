@@ -107,6 +107,7 @@ export function CategoryDetailScreen() {
                 <PeriodComparisonBadge
                   text={formatDeltaVsPrevious(row.delta, previousMonth)}
                   delta={row.delta}
+                  context={isExpense ? "expense" : "income"}
                   style={{ marginTop: 8 }}
                 />
               ) : null}

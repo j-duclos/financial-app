@@ -14,6 +14,10 @@ export function goalEditPath(id: number): `/goal/edit/${number}` {
   return `/goal/edit/${id}`;
 }
 
+export function goalContributionHistoryPath(id: number): `/goal/${number}/contributions` {
+  return `/goal/${id}/contributions`;
+}
+
 export function goalRelatedTransactionsPath(accountId: number): {
   pathname: "/(app)/(tabs)/transactions";
   params: { account: string };

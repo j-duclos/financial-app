@@ -296,7 +296,7 @@ def test_timeline_date_range_starts_at_current_month_by_default():
     class Req:
         query_params = {"horizon": "6m"}
 
-    start, end, _ = _timeline_date_range(Req())
+    start, end, _, _ = _timeline_date_range(Req())
     today = timezone.localdate()
     assert start == date(today.year, today.month, 1)
     assert end >= today
@@ -308,7 +308,7 @@ def test_timeline_date_range_lookback_months():
     class Req:
         query_params = {"horizon": "6m", "lookback_months": "2"}
 
-    start, _, _ = _timeline_date_range(Req())
+    start, _, _, _ = _timeline_date_range(Req())
     today = timezone.localdate()
     expected_month = today.month - 2
     expected_year = today.year

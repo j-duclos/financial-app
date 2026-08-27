@@ -1,13 +1,6 @@
+import type { OperationalForecastDays } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
 import { addDaysToIsoDate, todayStr } from "@/lib/dates";
-import type { CalendarHorizon } from "./types";
-
-const HORIZON_DAY_COUNTS: Record<CalendarHorizon, number> = {
-  "14d": 14,
-  "3m": 90,
-  "6m": 180,
-  "12m": 365,
-};
 
 export function parseCalendarAmount(val: string | null | undefined): number {
   if (val == null || val === "") return 0;
@@ -16,13 +9,13 @@ export function parseCalendarAmount(val: string | null | undefined): number {
 }
 
 export function calendarRangeForSelection(
-  horizon: CalendarHorizon,
+  forecastDays: OperationalForecastDays,
   lookbackMonths: number,
   todayIso: string = todayStr()
 ): { start: string; end: string } {
   const [y, m, d] = todayIso.split("-").map(Number);
   const today = new Date(y, m - 1, d);
-  const end = addDaysToIsoDate(todayIso, HORIZON_DAY_COUNTS[horizon]);
+  const end = addDaysToIsoDate(todayIso, forecastDays);
   const start = new Date(today.getFullYear(), today.getMonth() - lookbackMonths, 1);
   const sy = start.getFullYear();
   const sm = String(start.getMonth() + 1).padStart(2, "0");
@@ -50,7 +43,23 @@ export function buildMonthGrid(year: number, month: number): (string | null)[] {
     const day = String(d).padStart(2, "0");
     cells.push(`${year}-${m}-${day}`);
   }
+  while (cells.length % CALENDAR_WEEKDAY_COLUMNS !== 0) cells.push(null);
   return cells;
+}
+
+/** Fixed compact height for every calendar day cell (does not vary by week count). */
+export const CALENDAR_DAY_CELL_HEIGHT = 54;
+
+export const CALENDAR_WEEKDAY_COLUMNS = 7;
+
+export function calendarGridWeekCount(grid: (string | null)[]): number {
+  if (grid.length === 0 || grid.length % CALENDAR_WEEKDAY_COLUMNS !== 0) return 0;
+  return grid.length / CALENDAR_WEEKDAY_COLUMNS;
+}
+
+export function calendarGridWeekRow(grid: (string | null)[], rowIndex: number): (string | null)[] {
+  const start = rowIndex * CALENDAR_WEEKDAY_COLUMNS;
+  return grid.slice(start, start + CALENDAR_WEEKDAY_COLUMNS);
 }
 
 export function monthLabel(year: number, month: number): string {

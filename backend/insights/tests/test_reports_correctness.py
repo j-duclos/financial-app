@@ -141,3 +141,82 @@ def test_uncategorized_category_label(auth_client, household, user, account):
     assert res.status_code == 200
     names = {row["category_name"] for row in res.json()["breakdown"]}
     assert "Uncategorized" in names
+
+
+@pytest.mark.django_db
+def test_monthly_reports_exclude_credit_card_payment_transfers(auth_client, household, account):
+    """Paired CC payments must not double-count purchase + payment as two expenses."""
+    from accounts.models import Account
+    from categories.models import Category
+    from transactions.models import TransferGroup
+
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        role=Account.AccountRole.CREDIT_CARD,
+        name="Visa",
+        starting_balance=Decimal("0"),
+        currency="USD",
+        include_in_forecast=True,
+    )
+    groceries, _ = Category.objects.get_or_create(
+        household=household,
+        name="Groceries",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )
+    cc_pay, _ = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 98},
+    )
+    Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 8),
+        payee="Store",
+        amount=Decimal("-40.00"),
+        category=groceries,
+    )
+    tg = TransferGroup.objects.create(
+        household=household,
+        from_account=account,
+        to_account=card,
+        amount=Decimal("40.00"),
+        scheduled_date=date(2026, 8, 15),
+    )
+    Transaction.objects.create(
+        account=account,
+        date=date(2026, 8, 15),
+        payee="CC payment out",
+        amount=Decimal("-40.00"),
+        category=cc_pay,
+        transfer_group=tg,
+    )
+    Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 15),
+        payee="CC payment in",
+        amount=Decimal("40.00"),
+        category=cc_pay,
+        transfer_group=tg,
+    )
+    Transaction.objects.create(
+        account=account, date=date(2026, 8, 10), payee="Job", amount=Decimal("1000.00")
+    )
+
+    summary = auth_client.get("/api/insights/monthly-summary/?month=2026-08")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert Decimal(str(body["total_income"])) == Decimal("1000.00")
+    assert Decimal(str(body["total_expenses"])) == Decimal("-40.00")
+    assert Decimal(str(body["net"])) == Decimal("960.00")
+
+    unified = auth_client.get("/api/insights/reports/monthly/?month=2026-08&months=6")
+    assert unified.status_code == 200
+    overview = unified.json()["overview"]
+    assert Decimal(str(overview["total_income"])) == Decimal("1000.00")
+    assert Decimal(str(overview["total_expenses"])) == Decimal("-40.00")
+    names = {row["category_name"] for row in unified.json()["category_breakdown"]["breakdown"]}
+    assert "Groceries" in names
+    assert "Credit Card Payment" not in names

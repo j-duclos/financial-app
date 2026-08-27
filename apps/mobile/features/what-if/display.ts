@@ -197,10 +197,10 @@ export function buildPlanSummaryFooterLines(
 }
 
 export const FORECAST_PERIOD_OPTIONS: { value: "3m" | "6m" | "12m" | "24m"; label: string }[] = [
-  { value: "3m", label: "3 months" },
-  { value: "6m", label: "6 months" },
-  { value: "12m", label: "12 months" },
-  { value: "24m", label: "24 months" },
+  { value: "3m", label: "3 mo" },
+  { value: "6m", label: "6 mo" },
+  { value: "12m", label: "12 mo" },
+  { value: "24m", label: "24 mo" },
 ];
 
 export const EFFECT_KIND_LABELS: Record<string, string> = {

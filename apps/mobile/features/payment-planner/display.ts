@@ -11,7 +11,8 @@ import {
 } from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
 
-export const WHAT_IF_NUMERIC_DEBOUNCE_MS = 350;
+/** Prefer explicit Apply over per-keystroke refetch. Kept for scenario drawer debounce. */
+export const WHAT_IF_NUMERIC_DEBOUNCE_MS = 400;
 
 export const DEBT_STRATEGY_OPTIONS: Array<{
   id: DebtPayoffStrategy;
@@ -54,6 +55,29 @@ function parseMoney(raw: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Format API money for UI; never render NaN. */
+export function formatMoneyOrDash(raw: string | number | null | undefined): string {
+  if (raw == null || String(raw).trim() === "") return "—";
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw).replace(/[^\d.-]/g, ""));
+  if (!Number.isFinite(n)) return "—";
+  return formatCurrency(raw);
+}
+
+export function formatDebtFreeMonth(plan: DebtPayoffPlan): string {
+  if (parseMoney(plan.total_debt) <= 0) return "Paid off";
+  if (plan.debt_free_date) {
+    const d = new Date(`${plan.debt_free_date.slice(0, 10)}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+    }
+    return formatDateDisplay(plan.debt_free_date);
+  }
+  if (plan.simulation_status === "non_amortizing" || !plan.debt_free_possible) {
+    return "—";
+  }
+  return "—";
+}
+
 export function isCreditCardAccount(account: Account): boolean {
   return account.account_type === "CREDIT";
 }
@@ -92,9 +116,16 @@ export function debtFreeHeadline(plan: DebtPayoffPlan | null | undefined): strin
 }
 
 export function interestSavedLine(plan: DebtPayoffPlan): string | null {
+  if (plan.baseline_status === "baseline_not_payoffable") return null;
+  if (plan.interest_saved_vs_minimums == null) return null;
   const saved = parseMoney(plan.interest_saved_vs_minimums);
   if (saved <= 0) return null;
-  return `Save ${formatCurrency(plan.interest_saved_vs_minimums)} interest vs minimums only`;
+  return `Projected interest savings: ${formatMoneyOrDash(plan.interest_saved_vs_minimums)}`;
+}
+
+export function baselineNotPayoffableLine(plan: DebtPayoffPlan): string | null {
+  if (plan.baseline_status !== "baseline_not_payoffable") return null;
+  return "Minimum payments alone would not pay off all debts.";
 }
 
 export type DebtCardOutcomeLines = {
@@ -104,18 +135,30 @@ export type DebtCardOutcomeLines = {
 };
 
 export function debtCardOutcomeLines(card: DebtPayoffCardSummary): DebtCardOutcomeLines {
-  const suggested = formatCurrency(card.suggested_payment);
-  const suggestedLine = `Recommended: ${suggested}/mo`;
+  const suggestedLine = `Min ${formatMoneyOrDash(card.minimum_payment)}`;
+
+  if (card.payoff_status === "non_amortizing") {
+    return {
+      headline: "Payment too low for modeled payoff",
+      suggestedLine,
+      interestLine: null,
+    };
+  }
+
+  if (card.months_remaining === 1) {
+    return {
+      headline: "Payoff next payment",
+      suggestedLine,
+      interestLine: null,
+    };
+  }
 
   if (card.months_remaining != null && card.months_remaining > 0) {
     const months = card.months_remaining;
-    const monthLabel = `${months} month${months === 1 ? "" : "s"}`;
     return {
-      headline: `Projected payoff in ${monthLabel}`,
+      headline: `Projected ${months} month${months === 1 ? "" : "s"}`,
       suggestedLine,
-      interestLine: card.total_projected_interest
-        ? `${formatCurrency(card.total_projected_interest)} projected interest`
-        : null,
+      interestLine: null,
     };
   }
 
@@ -123,17 +166,22 @@ export function debtCardOutcomeLines(card: DebtPayoffCardSummary): DebtCardOutco
     return {
       headline: `Projected payoff by ${formatDateDisplay(card.payoff_date)}`,
       suggestedLine,
-      interestLine: card.total_projected_interest
-        ? `${formatCurrency(card.total_projected_interest)} projected interest`
-        : null,
+      interestLine: null,
     };
   }
 
   return {
-    headline: "Increase payment to model payoff",
+    headline: "Not enough data to project",
     suggestedLine,
     interestLine: null,
   };
+}
+
+/** Compact secondary line for payoff list rows. */
+export function debtRowMetaLine(card: DebtPayoffCardSummary): string {
+  const apr = parseMoney(card.apr);
+  const aprPart = Number.isFinite(apr) ? `${card.apr}% APR` : "APR —";
+  return `${aprPart} · Min ${formatMoneyOrDash(card.minimum_payment)}`;
 }
 
 export function priorityReasonLabel(card: DebtPayoffCardSummary): string | null {

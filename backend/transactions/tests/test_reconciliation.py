@@ -1431,3 +1431,154 @@ def test_session_history_stores_calculated_ending_balance(auth_client, account, 
     assert body["difference"] == "0.00"
     assert body["transactions"][0]["id"] == t1.pk
 
+
+
+class TestReconcilePreviewAndRunningBalanceRegression:
+    def test_preview_matches_complete_formula_without_writes(self, account, user, auth_client):
+        from transactions.services.reconciliation import preview_reconciliation
+
+        t1 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 8, 1),
+            payee="A",
+            amount=Decimal("-250.00"),
+        )
+        t2 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 8, 2),
+            payee="B",
+            amount=Decimal("-250.00"),
+        )
+        preview = preview_reconciliation(
+            account=account,
+            bank_current_balance=Decimal("500.00"),
+            checked_transaction_ids=[t1.pk, t2.pk],
+            period_start=date(2026, 8, 1),
+            period_end=date(2026, 8, 20),
+        )
+        assert preview["period_opening_balance"] == Decimal("1000.00")
+        assert preview["cleared_balance"] == Decimal("500.00")
+        assert preview["difference"] == Decimal("0.00")
+        assert preview["can_complete"] is True
+        assert Transaction.objects.filter(reconciled=True).count() == 0
+        assert Reconciliation.objects.count() == 0
+
+        r = auth_client.post(
+            "/api/reconcile/preview/",
+            {
+                "account_id": account.pk,
+                "bank_current_balance": "500.00",
+                "checked_transaction_ids": [t1.pk, t2.pk],
+                "period_start_date": "2026-08-01",
+                "period_end_date": "2026-08-20",
+            },
+            format="json",
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["cleared_balance"] == "500.00"
+        assert body["difference"] == "0.00"
+        assert body["can_complete"] is True
+
+    def test_preview_nonzero_difference_blocks_can_complete(self, account, user, auth_client):
+        t1 = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 8, 1),
+            payee="A",
+            amount=Decimal("-100.00"),
+        )
+        r = auth_client.post(
+            "/api/reconcile/preview/",
+            {
+                "account_id": account.pk,
+                "bank_current_balance": "500.00",
+                "checked_transaction_ids": [t1.pk],
+                "period_start_date": "2026-08-01",
+                "period_end_date": "2026-08-20",
+            },
+            format="json",
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["cleared_balance"] == "900.00"
+        assert body["difference"] == "-400.00"
+        assert body["can_complete"] is False
+
+    def test_finalize_does_not_overwrite_historical_running_balances(self, account, user):
+        """
+        Mandatory regression: statement ending balance is session metadata.
+
+        Distinct per-row running balances must remain distinct after finalize —
+        they must NOT all collapse to the statement ending balance.
+        """
+        # Opening 1250 → after A/B/C (-250 each): running 1000, 750, 500. Statement ending = 500.
+        account.starting_balance = Decimal("1250.00")
+        account.save(update_fields=["starting_balance"])
+
+        t_a = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 7, 1),
+            payee="Tx A",
+            amount=Decimal("-250.00"),
+        )
+        t_b = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 7, 2),
+            payee="Tx B",
+            amount=Decimal("-250.00"),
+        )
+        t_c = post_transaction(
+            user=user,
+            account_id=account.pk,
+            date=date(2026, 7, 3),
+            payee="Tx C",
+            amount=Decimal("-250.00"),
+        )
+
+        amounts_before = {
+            t_a.pk: Decimal(str(t_a.amount)),
+            t_b.pk: Decimal(str(t_b.amount)),
+            t_c.pk: Decimal(str(t_c.amount)),
+        }
+
+        from transactions.services.reconciliation import transaction_running_balances
+
+        setup = get_setup_data(account, start=date(2026, 7, 1), end=date(2026, 7, 31))
+        pre_running = transaction_running_balances(account, setup["unreconciled_transactions"])
+        assert pre_running[t_a.pk] == Decimal("1000.00")
+        assert pre_running[t_b.pk] == Decimal("750.00")
+        assert pre_running[t_c.pk] == Decimal("500.00")
+
+        statement_ending = Decimal("500.00")
+        rec = complete_reconciliation(
+            account=account,
+            user=user,
+            bank_current_balance=statement_ending,
+            checked_transaction_ids=[t_a.pk, t_b.pk, t_c.pk],
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+        )
+
+        assert rec.bank_current_balance == statement_ending
+        assert rec.final_reconciled_balance == statement_ending
+
+        entries = {
+            e.transaction_id: Decimal(str(e.reconciled_balance))
+            for e in ReconciliationEntry.objects.filter(session=rec)
+        }
+        assert entries[t_a.pk] == Decimal("1000.00")
+        assert entries[t_b.pk] == Decimal("750.00")
+        assert entries[t_c.pk] == Decimal("500.00")
+        # Critical: must NOT all become the statement ending balance.
+        assert len(set(entries.values())) == 3
+        assert not all(v == statement_ending for v in entries.values())
+
+        for txn in (t_a, t_b, t_c):
+            txn.refresh_from_db()
+            assert Decimal(str(txn.amount)) == amounts_before[txn.pk]
+            assert txn.reconciled is True

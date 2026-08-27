@@ -2504,6 +2504,7 @@ def build_forecast_projection_timeline(
     caller: str,
     scenario_id: Optional[int] = None,
     account_id: Optional[int] = None,
+    household_id: Optional[int] = None,
     start_date: Optional[date] = None,
     opening_balances: Optional[dict[int, Decimal]] = None,
 ) -> list[dict]:
@@ -2523,6 +2524,7 @@ def build_forecast_projection_timeline(
         as_of_date=today,
         scenario_id=scenario_id,
         account_id=account_id,
+        household_id=household_id,
         projection_only=True,
         exclude_reconciled_past=True,
         caller=caller,

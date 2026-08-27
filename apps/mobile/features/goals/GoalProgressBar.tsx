@@ -11,13 +11,15 @@ type Props = {
 export function GoalProgressBar({ percent, thin }: Props) {
   const theme = useTheme();
   const clamped = Math.min(100, Math.max(0, percent));
+  // Fabric requires accessibilityValue.now as an integer (long long).
+  const accessibilityNow = Math.round(clamped);
   return (
     <View
       accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: 100, now: clamped }}
+      accessibilityValue={{ min: 0, max: 100, now: accessibilityNow }}
       style={{
         height: thin ? 4 : 8,
-        borderRadius: theme.radius.full,
+        borderRadius: 999,
         backgroundColor: theme.colors.surfaceMuted,
         overflow: "hidden",
       }}
@@ -27,7 +29,7 @@ export function GoalProgressBar({ percent, thin }: Props) {
           width: `${clamped}%`,
           height: "100%",
           backgroundColor: theme.colors.tint,
-          borderRadius: theme.radius.full,
+          borderRadius: 999,
         }}
       />
     </View>

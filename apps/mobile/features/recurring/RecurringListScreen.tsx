@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
-import { getBillsOverview, listRules } from "@budget-app/api-client";
+import { listRules } from "@budget-app/api-client";
 import {
   AppHeader,
   EmptyState,
@@ -18,7 +18,6 @@ import { recurringQueryKeys } from "./queryKeys";
 import { RecurringRow } from "./RecurringRow";
 import {
   buildRecurringRows,
-  currentMonthKey,
   sortRecurringRows,
   type RecurringSortKey,
 } from "./recurringDisplay";
@@ -33,7 +32,6 @@ const SORT_OPTIONS: { key: RecurringSortKey; label: string }[] = [
 export function RecurringListScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const month = currentMonthKey();
   const [sortKey, setSortKey] = useState<RecurringSortKey>("next");
 
   const rulesQuery = useQuery({
@@ -42,30 +40,14 @@ export function RecurringListScreen() {
     staleTime: 60_000,
   });
 
-  const overviewQuery = useQuery({
-    queryKey: recurringQueryKeys.billsOverview(month),
-    queryFn: () => getBillsOverview({ month, months_before: 0, months_after: 1 }),
-    staleTime: 60_000,
-  });
-
   const rows = useMemo(() => {
-    const built = buildRecurringRows(
-      rulesQuery.data?.results ?? [],
-      overviewQuery.data?.checklist.items ?? [],
-      todayStr()
-    );
+    const built = buildRecurringRows(rulesQuery.data?.results ?? [], todayStr());
     return sortRecurringRows(built, sortKey);
-  }, [rulesQuery.data?.results, overviewQuery.data?.checklist.items, sortKey]);
+  }, [rulesQuery.data?.results, sortKey]);
 
-  const isLoading = rulesQuery.isLoading || overviewQuery.isLoading;
-  const isError = rulesQuery.isError || overviewQuery.isError;
-  const error = rulesQuery.error ?? overviewQuery.error;
-  const isFetching = rulesQuery.isFetching || overviewQuery.isFetching;
-
-  const refetch = () => {
-    void rulesQuery.refetch();
-    void overviewQuery.refetch();
-  };
+  const isLoading = rulesQuery.isLoading;
+  const isError = rulesQuery.isError;
+  const isFetching = rulesQuery.isFetching;
 
   return (
     <Screen scroll={false} contentStyle={{ paddingHorizontal: 0 }}>
@@ -81,34 +63,44 @@ export function RecurringListScreen() {
             />
           }
         />
-        <Text style={{ color: theme.colors.textSecondary, marginBottom: 12, ...theme.typography.body }}>
-          Manage repeating income, bills, and transfers that drive your forecast.
-        </Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-          {SORT_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.key}
-              onPress={() => setSortKey(opt.key)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: sortKey === opt.key }}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 999,
-                backgroundColor: sortKey === opt.key ? theme.colors.tintMuted : theme.colors.surfaceMuted,
-              }}
-            >
-              <Text
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: 6,
+            marginBottom: 8,
+            marginTop: -4,
+          }}
+        >
+          {SORT_OPTIONS.map((opt) => {
+            const selected = sortKey === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                onPress={() => setSortKey(opt.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
                 style={{
-                  color: sortKey === opt.key ? theme.colors.tint : theme.colors.text,
-                  fontWeight: "600",
-                  fontSize: 12,
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 999,
+                  backgroundColor: selected ? theme.colors.tintMuted : "transparent",
+                  borderWidth: 1,
+                  borderColor: selected ? theme.colors.tint : theme.colors.border,
                 }}
               >
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
+                <Text
+                  style={{
+                    color: selected ? theme.colors.tint : theme.colors.textSecondary,
+                    fontWeight: selected ? "700" : "500",
+                    fontSize: 12,
+                  }}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
@@ -118,7 +110,7 @@ export function RecurringListScreen() {
           <SkeletonBlock lines={3} />
         </View>
       ) : isError ? (
-        <ErrorState message={describeApiError(error)} onRetry={refetch} />
+        <ErrorState message={describeApiError(rulesQuery.error)} onRetry={() => rulesQuery.refetch()} />
       ) : rows.length === 0 ? (
         <EmptyState
           title="No recurring transactions"
@@ -134,7 +126,10 @@ export function RecurringListScreen() {
             <RecurringRow row={item} onPress={() => router.push(`/recurring/${item.rule.id}`)} />
           )}
           refreshControl={
-            <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
+            <RefreshControl
+              refreshing={isFetching && !isLoading}
+              onRefresh={() => void rulesQuery.refetch()}
+            />
           }
           contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
         />

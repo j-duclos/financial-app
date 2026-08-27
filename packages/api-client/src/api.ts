@@ -35,6 +35,7 @@ import type {
   StatementTransaction,
   ReconciliationMatch,
   ReconcileSetupResponse,
+  ReconcilePreviewResponse,
   ReconcileCompleteResponse,
   ReconciliationSessionListResponse,
   ReconciliationSessionDetail,
@@ -1270,10 +1271,11 @@ export async function getBucketForecast(bucketId: number): Promise<GoalForecastD
 
 export async function getBucketDetail(
   bucketId: number,
-  params?: { scenario?: number }
+  params?: { scenario?: number; history_limit?: number }
 ): Promise<GoalDetailResponse> {
   const q: Record<string, string> = {};
   if (params?.scenario != null) q.scenario = String(params.scenario);
+  if (params?.history_limit != null) q.history_limit = String(params.history_limit);
   return requestRequired(`/api/buckets/${bucketId}/detail/`, {
     params: Object.keys(q).length ? q : undefined,
   });
@@ -1288,6 +1290,7 @@ export async function getGoalsReport(params?: { months?: number; month?: string 
 
 export async function listGoalContributions(params?: {
   bucket?: number;
+  page?: number;
   page_size?: number;
 }): Promise<PaginatedResponse<{
   id: number;
@@ -1295,6 +1298,7 @@ export async function listGoalContributions(params?: {
   bucket_name: string;
   transaction: number;
   account: number;
+  account_name?: string | null;
   amount: string;
   date: string;
   source: string;
@@ -1303,6 +1307,7 @@ export async function listGoalContributions(params?: {
 }>> {
   const q: Record<string, string> = { page_size: String(params?.page_size ?? 100) };
   if (params?.bucket != null) q.bucket = String(params.bucket);
+  if (params?.page != null) q.page = String(params.page);
   return requestRequired("/api/goal-contributions/", { params: q });
 }
 
@@ -1783,6 +1788,7 @@ function calendarQueryParams(params: {
   end?: string;
   as_of?: string;
   horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+  forecast_days?: number;
   lookback_months?: number;
   scenario_id?: number | null;
   account_id?: number | null;
@@ -1795,6 +1801,7 @@ function calendarQueryParams(params: {
   if (params.end) q.end = params.end;
   if (params.as_of) q.as_of = params.as_of;
   if (params.horizon) q.horizon = params.horizon;
+  if (params.forecast_days != null) q.forecast_days = String(params.forecast_days);
   if (params.lookback_months != null) q.lookback_months = String(params.lookback_months);
   if (params.scenario_id != null) q.scenario_id = String(params.scenario_id);
   if (params.account_id != null) q.account_id = String(params.account_id);
@@ -1824,6 +1831,7 @@ export async function getTimelineCalendarSummary(
     end?: string;
     as_of?: string;
     horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+    forecast_days?: number;
     lookback_months?: number;
     scenario_id?: number | null;
     account_id?: number | null;
@@ -1843,6 +1851,7 @@ export async function getTimelineCalendarChunk(
     end?: string;
     as_of?: string;
     horizon?: "14d" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+    forecast_days?: number;
     lookback_months?: number;
     scenario_id?: number | null;
     account_id?: number | null;
@@ -1915,6 +1924,20 @@ export async function getReconcileSetup(
   if (params?.start) q.start = params.start;
   if (params?.end) q.end = params.end;
   return requestRequired("/api/reconcile/setup/", { params: q });
+}
+
+/** Canonical cleared balance / difference — does not write. Prefer over client-side summing. */
+export async function previewReconciliation(body: {
+  account_id: number;
+  bank_current_balance: string;
+  checked_transaction_ids: number[];
+  period_start_date: string;
+  period_end_date: string;
+}): Promise<ReconcilePreviewResponse> {
+  return requestRequired("/api/reconcile/preview/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function completeReconciliation(body: {

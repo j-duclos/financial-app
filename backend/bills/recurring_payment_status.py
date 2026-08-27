@@ -8,7 +8,6 @@ from datetime import date, timedelta
 from typing import Any, Iterable, Optional
 
 from timeline.models import RecurringRule
-from timeline.services.ledger import generate_rule_occurrences
 
 from .bill_insights import (
     DISPLAY_DUE_SOON,
@@ -66,10 +65,30 @@ def pick_checklist_occurrence_for_rule(
 
 
 def get_next_rule_run_date(rule: RecurringRule, today: date) -> date | None:
+    """Canonical next occurrence on/after today via schedule-aware recurrence expansion.
+
+    Returns None when the rule cannot produce future dates (inactive, paused with no
+    remaining window, ended, or no occurrence in the look-ahead window).
+    """
+    from timeline.services.rule_schedule import generate_rule_occurrence_dates
+
     end = today + timedelta(days=365 * 2)
-    for due in generate_rule_occurrences(rule, today, end):
+    for due in generate_rule_occurrence_dates(rule, today, end):
         if due >= today:
             return due
+    return None
+
+
+def next_occurrence_absence_reason(rule: RecurringRule, today: date) -> str | None:
+    """Explain why next_occurrence_date is null. None means a next date should exist."""
+    if not rule.active:
+        if rule.paused_at:
+            return "paused"
+        return "inactive"
+    if rule.end_date and rule.end_date < today:
+        return "ended"
+    if get_next_rule_run_date(rule, today) is None:
+        return "no_future_occurrence"
     return None
 
 

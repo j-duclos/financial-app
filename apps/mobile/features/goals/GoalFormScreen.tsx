@@ -35,6 +35,8 @@ import {
 import { useTheme } from "@/theme";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { describeApiError } from "@/services/api";
+import { DatePickerField } from "@/features/recurring/DatePickerField";
+import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
 import {
   buildBucketFundingPayload,
   buildGoalBucketPayload,
@@ -45,6 +47,12 @@ import { goalDetailPath, goalsListPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalsQueries } from "./queryKeys";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
+
+const PRIORITY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "High" },
+  { value: 3, label: "Normal" },
+  { value: 5, label: "Low" },
+];
 
 function creditBalanceOwed(account: Account): number | null {
   if (account.balance_owed != null && account.balance_owed !== "") {
@@ -72,71 +80,125 @@ function accountUsedByAnotherGoal(
   return null;
 }
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
-  const theme = useTheme();
-  return (
-    <View style={{ marginBottom: theme.spacing.lg }}>
-      <Text
-        style={{
-          color: theme.colors.textMuted,
-          ...theme.typography.label,
-          marginBottom: theme.spacing.sm,
-          textTransform: "uppercase",
-        }}
-      >
-        {title}
-      </Text>
-      <View style={{ gap: theme.spacing.sm }}>{children}</View>
-    </View>
-  );
-}
-
-function ChipSelect({
+function SelectRow({
   label,
-  options,
-  selected,
-  onSelect,
-  disabled,
+  value,
+  placeholder = "Select",
+  onPress,
+  error,
 }: {
   label: string;
-  options: { value: string; label: string; disabled?: boolean }[];
-  selected: string;
-  onSelect: (value: string) => void;
-  disabled?: boolean;
+  value: string | null;
+  placeholder?: string;
+  onPress: () => void;
+  error?: string;
 }) {
   const theme = useTheme();
   return (
     <View>
-      <Text style={{ color: theme.colors.text, ...theme.typography.caption, marginBottom: 6 }}>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
         {label}
       </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {options.map((opt) => {
-            const active = selected === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                disabled={disabled || opt.disabled}
-                onPress={() => onSelect(opt.value)}
-                style={{
-                  opacity: opt.disabled ? 0.4 : 1,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: theme.radius.full,
-                  borderWidth: 1,
-                  borderColor: active ? theme.colors.tint : theme.colors.border,
-                  backgroundColor: active ? theme.colors.tintMuted : theme.colors.surface,
-                }}
-              >
-                <Text style={{ color: active ? theme.colors.tint : theme.colors.text, fontSize: 13 }}>
-                  {opt.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </ScrollView>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}, ${value ?? placeholder}`}
+        style={{
+          minHeight: theme.touchTarget,
+          borderWidth: 1,
+          borderColor: error ? theme.colors.critical : theme.colors.border,
+          borderRadius: theme.radius.md,
+          paddingHorizontal: 12,
+          justifyContent: "center",
+          backgroundColor: theme.colors.surfaceMuted,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <Text
+          style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }}
+          numberOfLines={1}
+        >
+          {value ?? placeholder}
+        </Text>
+        <Text style={{ color: theme.colors.textMuted }}>›</Text>
+      </Pressable>
+      {error ? (
+        <Text style={{ color: theme.colors.critical, fontSize: 12, marginTop: 4 }}>{error}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function SwitchRow({
+  label,
+  help,
+  value,
+  onValueChange,
+}: {
+  label: string;
+  help?: string;
+  value: boolean;
+  onValueChange: (next: boolean) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text style={{ color: theme.colors.text, ...theme.typography.body }}>{label}</Text>
+        {help ? (
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 2 }}>
+            {help}
+          </Text>
+        ) : null}
+      </View>
+      <Switch value={value} onValueChange={onValueChange} />
+    </View>
+  );
+}
+
+function ChipRow({
+  label,
+  options,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string;
+  onSelect: (value: string) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
+        {label}
+      </Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {options.map((opt) => {
+          const active = selected === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              onPress={() => onSelect(opt.value)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: active ? theme.colors.tint : theme.colors.border,
+                backgroundColor: active ? theme.colors.tintMuted : theme.colors.surface,
+              }}
+            >
+              <Text style={{ color: active ? theme.colors.tint : theme.colors.text, fontSize: 13 }}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -153,6 +215,8 @@ export function GoalFormScreen() {
   const [form, setForm] = useState<GoalFormValues>(emptyGoalForm);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [picker, setPicker] = useState<"type" | "account" | "paycheck" | "priority" | null>(null);
 
   const overviewQuery = useQuery({
     queryKey: goalsQueryKeys.overview(householdId),
@@ -249,7 +313,10 @@ export function GoalFormScreen() {
         ? await updateBucket(editingId!, body)
         : await createBucket(body);
       if (!isDebtGoalType(values.goal_type)) {
-        await configureBucketFunding(saved.id, buildBucketFundingPayload(values.funding, values.monthly_contribution));
+        await configureBucketFunding(
+          saved.id,
+          buildBucketFundingPayload(values.funding, values.monthly_contribution)
+        );
       }
       return saved;
     },
@@ -261,6 +328,7 @@ export function GoalFormScreen() {
   });
 
   const onSubmit = () => {
+    if (saveMu.isPending) return;
     setSubmitError(null);
     const nextErrors = validateGoalForm(form);
     if (goalFormHasErrors(nextErrors)) {
@@ -270,6 +338,65 @@ export function GoalFormScreen() {
     setErrors({});
     saveMu.mutate({ ...form, auto_fund_enabled: form.funding.enabled });
   };
+
+  const goalTypeLabel =
+    GOAL_TYPE_OPTIONS.find((o) => o.value === form.goal_type)?.label ?? form.goal_type;
+
+  const linkedAccountLabel = useMemo(() => {
+    if (isDebt) {
+      if (!form.linked_credit_account) return null;
+      const account = debtAccounts.find((a) => a.id === form.linked_credit_account);
+      if (!account) return `Account #${form.linked_credit_account}`;
+      const owed = creditBalanceOwed(account);
+      return `${getEffectiveDisplayName(account)}${owed != null ? ` · ${formatCurrency(String(owed))}` : ""}`;
+    }
+    if (!form.linked_account) return null;
+    const account = savingsAccounts.find((a) => a.id === form.linked_account);
+    return account ? getEffectiveDisplayName(account) : `Account #${form.linked_account}`;
+  }, [isDebt, form.linked_credit_account, form.linked_account, debtAccounts, savingsAccounts]);
+
+  const paycheckLabel = useMemo(() => {
+    if (!form.funding.incomeRuleId) return null;
+    const rule = incomeRules.find((r) => r.id === form.funding.incomeRuleId);
+    return rule
+      ? `${rule.name} (${formatCurrency(String(rule.amount))})`
+      : `Rule #${form.funding.incomeRuleId}`;
+  }, [form.funding.incomeRuleId, incomeRules]);
+
+  const priorityLabel =
+    PRIORITY_OPTIONS.find((o) => o.value === form.priority)?.label ??
+    (form.priority <= 2 ? "High" : form.priority >= 4 ? "Low" : "Normal");
+
+  const accountOptions: PickerOption[] = useMemo(() => {
+    const list = isDebt ? debtAccounts : savingsAccounts;
+    return list
+      .filter((a) => accountUsedByAnotherGoal(a.id, existingGoals, editing?.id) == null)
+      .map((a) => {
+        const owed = isDebt ? creditBalanceOwed(a) : null;
+        return {
+          id: String(a.id),
+          title: getEffectiveDisplayName(a),
+          subtitle: owed != null ? formatCurrency(String(owed)) : undefined,
+          searchText: `${getEffectiveDisplayName(a)} ${a.account_type ?? ""}`,
+        };
+      });
+  }, [isDebt, debtAccounts, savingsAccounts, existingGoals, editing?.id]);
+
+  const typeOptions: PickerOption[] = GOAL_TYPE_OPTIONS.map((o) => ({
+    id: o.value,
+    title: o.label,
+  }));
+
+  const paycheckOptions: PickerOption[] = incomeRules.map((r) => ({
+    id: String(r.id),
+    title: r.name,
+    subtitle: formatCurrency(String(r.amount)),
+  }));
+
+  const priorityPickerOptions: PickerOption[] = PRIORITY_OPTIONS.map((o) => ({
+    id: String(o.value),
+    title: o.label,
+  }));
 
   if (!isReady || (isEdit && overviewQuery.isLoading && !editing)) {
     return (
@@ -294,20 +421,31 @@ export function GoalFormScreen() {
         onBack={() => (isEdit && editingId ? router.push(goalDetailPath(editingId)) : router.back())}
       />
       <ScrollView
-        contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
+        contentContainerStyle={{ paddingBottom: theme.spacing.xxl, gap: theme.spacing.md }}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
-        <FormSection title="Goal">
-          <TextField
-            label="Goal name"
-            value={form.name}
-            onChangeText={(name) => setForm((f) => ({ ...f, name }))}
-            error={errors.name}
-          />
-          <ChipSelect
+        <TextField
+          label="Goal name"
+          value={form.name}
+          onChangeText={(name) => setForm((f) => ({ ...f, name }))}
+          error={errors.name}
+        />
+
+        {isEdit ? (
+          <View>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
+              Goal type
+            </Text>
+            <Text style={{ color: theme.colors.text }}>{goalTypeLabel}</Text>
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
+              Goal type cannot be changed after creation.
+            </Text>
+          </View>
+        ) : GOAL_TYPE_OPTIONS.length <= 4 ? (
+          <ChipRow
             label="Goal type"
             selected={form.goal_type}
-            disabled={isEdit}
             onSelect={(goal_type) =>
               setForm((f) => ({
                 ...f,
@@ -318,229 +456,253 @@ export function GoalFormScreen() {
             }
             options={GOAL_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           />
-          {isEdit ? (
-            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-              Goal type cannot be changed after creation.
-            </Text>
-          ) : null}
+        ) : (
+          <SelectRow
+            label="Goal type"
+            value={goalTypeLabel}
+            onPress={() => setPicker("type")}
+          />
+        )}
+
+        <TextField
+          label={isDebt ? "Payoff target" : "Target amount"}
+          value={form.target_amount}
+          onChangeText={(target_amount) => setForm((f) => ({ ...f, target_amount }))}
+          keyboardType="decimal-pad"
+          error={errors.target_amount}
+        />
+
+        {isDebt ? (
           <TextField
-            label={isDebt ? "Payoff target" : "Target amount"}
-            value={form.target_amount}
-            onChangeText={(target_amount) => setForm((f) => ({ ...f, target_amount }))}
+            label="Starting debt amount"
+            value={form.starting_debt_amount}
+            onChangeText={(starting_debt_amount) => setForm((f) => ({ ...f, starting_debt_amount }))}
             keyboardType="decimal-pad"
-            error={errors.target_amount}
           />
-          {isDebt ? (
-            <TextField
-              label="Starting debt amount"
-              value={form.starting_debt_amount}
-              onChangeText={(starting_debt_amount) => setForm((f) => ({ ...f, starting_debt_amount }))}
-              keyboardType="decimal-pad"
-            />
-          ) : null}
-          <TextField
-            label="Target date (YYYY-MM-DD, optional)"
-            value={form.target_date}
-            onChangeText={(target_date) => setForm((f) => ({ ...f, target_date }))}
-            error={errors.target_date}
-            placeholder="2026-12-01"
-          />
-          <TextField
-            label="Description (optional)"
-            value={form.description}
-            onChangeText={(description) => setForm((f) => ({ ...f, description }))}
-          />
-        </FormSection>
+        ) : null}
 
-        <FormSection title="Funding">
-          {isDebt ? (
-            <ChipSelect
-              label="Linked credit/loan account"
-              selected={form.linked_credit_account ? String(form.linked_credit_account) : ""}
-              onSelect={(value) => {
-                const accountId = value ? Number(value) : "";
-                const account = debtAccounts.find((a) => a.id === accountId);
-                const owed = account ? creditBalanceOwed(account) : null;
-                const owedStr = owed != null ? owed.toFixed(2) : "";
-                setForm((f) => ({
-                  ...f,
-                  linked_credit_account: accountId,
-                  starting_debt_amount: owedStr || f.starting_debt_amount,
-                  target_amount:
-                    owedStr && (!f.target_amount.trim() || parseFloat(f.target_amount) === 0)
-                      ? owedStr
-                      : f.target_amount,
-                }));
-              }}
-              options={[
-                { value: "", label: "Select account" },
-                ...debtAccounts.map((a) => {
-                  const usedBy = accountUsedByAnotherGoal(a.id, existingGoals, editing?.id);
-                  const owed = creditBalanceOwed(a);
-                  return {
-                    value: String(a.id),
-                    label: `${getEffectiveDisplayName(a)}${owed != null ? ` · ${formatCurrency(String(owed))}` : ""}`,
-                    disabled: usedBy != null,
-                  };
-                }),
-              ]}
-            />
-          ) : (
-            <ChipSelect
-              label="Linked account"
-              selected={form.linked_account ? String(form.linked_account) : ""}
-              onSelect={(value) =>
-                setForm((f) => ({ ...f, linked_account: value ? Number(value) : "" }))
-              }
-              options={[
-                { value: "", label: "Select account" },
-                ...savingsAccounts.map((a) => ({
-                  value: String(a.id),
-                  label: getEffectiveDisplayName(a),
-                  disabled: accountUsedByAnotherGoal(a.id, existingGoals, editing?.id) != null,
-                })),
-              ]}
-            />
-          )}
-          {errors.linked_account ? (
-            <Text style={{ color: theme.colors.critical, fontSize: 12 }}>{errors.linked_account}</Text>
-          ) : null}
-          {errors.linked_credit_account ? (
-            <Text style={{ color: theme.colors.critical, fontSize: 12 }}>{errors.linked_credit_account}</Text>
-          ) : null}
+        <DatePickerField
+          label="Target date (optional)"
+          value={form.target_date || null}
+          placeholder="Select target date"
+          onChange={(target_date) => setForm((f) => ({ ...f, target_date }))}
+        />
+        {errors.target_date ? (
+          <Text style={{ color: theme.colors.critical, fontSize: 12 }}>{errors.target_date}</Text>
+        ) : null}
 
-          <TextField
-            label="Planned monthly contribution"
-            value={form.monthly_contribution}
-            onChangeText={(monthly_contribution) => setForm((f) => ({ ...f, monthly_contribution }))}
-            keyboardType="decimal-pad"
-            error={errors.monthly_contribution}
-          />
+        <SelectRow
+          label="Linked account"
+          value={linkedAccountLabel}
+          placeholder="Select account"
+          onPress={() => setPicker("account")}
+          error={errors.linked_account ?? errors.linked_credit_account}
+        />
 
-          {!isDebt ? (
-            <>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={{ color: theme.colors.text, ...theme.typography.body }}>Auto-transfer on payday</Text>
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                    Schedule transfers from paycheck rules
-                  </Text>
-                </View>
-                <Switch
+        <TextField
+          label="Planned monthly contribution"
+          value={form.monthly_contribution}
+          onChangeText={(monthly_contribution) => setForm((f) => ({ ...f, monthly_contribution }))}
+          keyboardType="decimal-pad"
+          error={errors.monthly_contribution}
+        />
+
+        <Pressable
+          onPress={() => setAdvancedOpen((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={advancedOpen ? "Hide advanced options" : "Advanced options"}
+          style={{ paddingVertical: 8 }}
+        >
+          <Text style={{ color: theme.colors.tint, fontWeight: "700" }}>
+            {advancedOpen ? "Hide advanced options" : "Advanced options ›"}
+          </Text>
+        </Pressable>
+
+        {advancedOpen ? (
+          <View style={{ gap: theme.spacing.md }}>
+            <SelectRow
+              label="Priority"
+              value={priorityLabel}
+              onPress={() => setPicker("priority")}
+            />
+
+            {!isDebt ? (
+              <>
+                <SwitchRow
+                  label="Auto-fund on payday"
+                  help="Move money from a paycheck rule into this goal"
                   value={form.funding.enabled}
                   onValueChange={(enabled) =>
                     setForm((f) => ({ ...f, funding: { ...f.funding, enabled } }))
                   }
                 />
-              </View>
-              {form.funding.enabled ? (
-                <>
-                  <ChipSelect
-                    label="Paycheck rule"
-                    selected={form.funding.incomeRuleId ? String(form.funding.incomeRuleId) : ""}
-                    onSelect={(value) =>
-                      setForm((f) => ({
-                        ...f,
-                        funding: { ...f.funding, incomeRuleId: value ? Number(value) : "" },
-                      }))
-                    }
-                    options={[
-                      { value: "", label: "Select paycheck" },
-                      ...incomeRules.map((r) => ({
-                        value: String(r.id),
-                        label: `${r.name} (${formatCurrency(String(r.amount))})`,
-                      })),
-                    ]}
-                  />
-                  <ChipSelect
-                    label="Amount mode"
-                    selected={form.funding.amountMode}
-                    onSelect={(amountMode) =>
-                      setForm((f) => ({
-                        ...f,
-                        funding: { ...f.funding, amountMode: amountMode as "fixed" | "percent" },
-                      }))
-                    }
-                    options={[
-                      { value: "fixed", label: "Fixed amount" },
-                      { value: "percent", label: "Percent of paycheck" },
-                    ]}
-                  />
-                  {form.funding.amountMode === "fixed" ? (
-                    <TextField
-                      label="Amount per paycheck"
-                      value={form.funding.fixedAmount}
-                      onChangeText={(fixedAmount) =>
-                        setForm((f) => ({ ...f, funding: { ...f.funding, fixedAmount } }))
-                      }
-                      keyboardType="decimal-pad"
+                {form.funding.enabled ? (
+                  <>
+                    <SelectRow
+                      label="Paycheck rule"
+                      value={paycheckLabel}
+                      placeholder="Select paycheck"
+                      onPress={() => setPicker("paycheck")}
                     />
-                  ) : (
-                    <TextField
-                      label="Percent of paycheck"
-                      value={form.funding.percent}
-                      onChangeText={(percent) =>
-                        setForm((f) => ({ ...f, funding: { ...f.funding, percent } }))
+                    <ChipRow
+                      label="Amount mode"
+                      selected={form.funding.amountMode}
+                      onSelect={(amountMode) =>
+                        setForm((f) => ({
+                          ...f,
+                          funding: { ...f.funding, amountMode: amountMode as "fixed" | "percent" },
+                        }))
                       }
-                      keyboardType="decimal-pad"
+                      options={[
+                        { value: "fixed", label: "Fixed amount" },
+                        { value: "percent", label: "Percent of paycheck" },
+                      ]}
                     />
-                  )}
-                </>
-              ) : null}
-              {errors.funding ? (
-                <Text style={{ color: theme.colors.critical, fontSize: 12 }}>{errors.funding}</Text>
-              ) : null}
-            </>
-          ) : null}
-        </FormSection>
+                    {form.funding.amountMode === "fixed" ? (
+                      <TextField
+                        label="Amount per paycheck"
+                        value={form.funding.fixedAmount}
+                        onChangeText={(fixedAmount) =>
+                          setForm((f) => ({ ...f, funding: { ...f.funding, fixedAmount } }))
+                        }
+                        keyboardType="decimal-pad"
+                      />
+                    ) : (
+                      <TextField
+                        label="Percent of paycheck"
+                        value={form.funding.percent}
+                        onChangeText={(percent) =>
+                          setForm((f) => ({ ...f, funding: { ...f.funding, percent } }))
+                        }
+                        keyboardType="decimal-pad"
+                      />
+                    )}
+                    {errors.funding ? (
+                      <Text style={{ color: theme.colors.critical, fontSize: 12 }}>
+                        {errors.funding}
+                      </Text>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
+            ) : null}
 
-        <FormSection title="Behavior">
-          <ChipSelect
-            label="Priority"
-            selected={String(form.priority)}
-            onSelect={(value) => setForm((f) => ({ ...f, priority: Number(value) }))}
-            options={[
-              { value: "1", label: "Highest" },
-              { value: "2", label: "High" },
-              { value: "3", label: "Medium" },
-              { value: "4", label: "Low" },
-              { value: "5", label: "Lowest" },
-            ]}
-          />
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ color: theme.colors.text, flex: 1 }}>Reduce safe-to-spend on linked account</Text>
-            <Switch
+            <SwitchRow
+              label="Reserve contributions from safe-to-spend"
+              help="Keep this goal's planned contributions out of money available to spend"
               value={form.include_in_safe_to_spend}
               onValueChange={(include_in_safe_to_spend) =>
                 setForm((f) => ({ ...f, include_in_safe_to_spend }))
               }
             />
-          </View>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ color: theme.colors.text, flex: 1 }}>Include in forecast</Text>
-            <Switch
+
+            <SwitchRow
+              label="Include in forecast"
+              help="Show this goal in cash-flow and balance projections"
               value={form.forecast_enabled}
               onValueChange={(forecast_enabled) => setForm((f) => ({ ...f, forecast_enabled }))}
             />
+
+            <TextField
+              label="Notes (optional)"
+              value={form.notes}
+              onChangeText={(notes) => setForm((f) => ({ ...f, notes }))}
+              multiline
+            />
           </View>
-          <TextField
-            label="Notes (optional)"
-            value={form.notes}
-            onChangeText={(notes) => setForm((f) => ({ ...f, notes }))}
-            multiline
-          />
-        </FormSection>
+        ) : null}
 
         {submitError ? (
-          <Text style={{ color: theme.colors.critical, marginBottom: theme.spacing.sm }}>{submitError}</Text>
+          <Text style={{ color: theme.colors.critical }}>{submitError}</Text>
         ) : null}
 
         <Button
           label={saveMu.isPending ? "Saving…" : isEdit ? "Save changes" : "Create goal"}
           loading={saveMu.isPending}
+          disabled={saveMu.isPending}
           onPress={onSubmit}
         />
       </ScrollView>
+
+      <OptionsPickerSheet
+        visible={picker === "type"}
+        title="Goal type"
+        options={typeOptions}
+        selectedId={form.goal_type}
+        onClose={() => setPicker(null)}
+        onSelect={(id) =>
+          setForm((f) => ({
+            ...f,
+            goal_type: id as GoalFormValues["goal_type"],
+            linked_account: "",
+            linked_credit_account: "",
+          }))
+        }
+      />
+
+      <OptionsPickerSheet
+        visible={picker === "account"}
+        title="Linked account"
+        options={accountOptions}
+        selectedId={
+          isDebt
+            ? form.linked_credit_account
+              ? String(form.linked_credit_account)
+              : null
+            : form.linked_account
+              ? String(form.linked_account)
+              : null
+        }
+        searchPlaceholder="Search accounts"
+        emptyMessage="No eligible accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          const accountId = Number(id);
+          if (isDebt) {
+            const account = debtAccounts.find((a) => a.id === accountId);
+            const owed = account ? creditBalanceOwed(account) : null;
+            const owedStr = owed != null ? owed.toFixed(2) : "";
+            setForm((f) => ({
+              ...f,
+              linked_credit_account: accountId,
+              starting_debt_amount: owedStr || f.starting_debt_amount,
+              target_amount:
+                owedStr && (!f.target_amount.trim() || parseFloat(f.target_amount) === 0)
+                  ? owedStr
+                  : f.target_amount,
+            }));
+            return;
+          }
+          setForm((f) => ({ ...f, linked_account: accountId }));
+        }}
+      />
+
+      <OptionsPickerSheet
+        visible={picker === "paycheck"}
+        title="Paycheck rule"
+        options={paycheckOptions}
+        selectedId={form.funding.incomeRuleId ? String(form.funding.incomeRuleId) : null}
+        searchPlaceholder="Search paycheck rules"
+        emptyMessage="No income rules found"
+        onClose={() => setPicker(null)}
+        onSelect={(id) =>
+          setForm((f) => ({
+            ...f,
+            funding: { ...f.funding, incomeRuleId: Number(id) },
+          }))
+        }
+      />
+
+      <OptionsPickerSheet
+        visible={picker === "priority"}
+        title="Priority"
+        options={priorityPickerOptions}
+        selectedId={String(
+          form.priority <= 2 ? 1 : form.priority >= 4 ? 5 : 3
+        )}
+        onClose={() => setPicker(null)}
+        onSelect={(id) => setForm((f) => ({ ...f, priority: Number(id) }))}
+      />
     </Screen>
   );
 }

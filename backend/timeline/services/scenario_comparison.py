@@ -30,6 +30,7 @@ from timeline.models import (
     ScenarioAddedRecurring,
 )
 from timeline.services.calendar import build_timeline_calendar
+from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
 from timeline.services.ledger import (
     build_timeline,
     dedupe_future_rule_occurrence_rows,
@@ -967,17 +968,18 @@ def build_scenario_comparison_context(
     rules_by_id = {r.id: r for r in household_rules}
     recurring_rules = [r for r in household_rules if r.active]
 
-    # projection_only: comparison GET must not materialize planned rows into Transactions.
-    base_rows = build_timeline(
+    # Reuse the canonical forecast pipeline (same builder + revision-keyed cache as
+    # Dashboard/Calendar). Scenario overlay applies on top — never a separate engine.
+    # projection_only + exclude_reconciled_past via build_forecast_projection_timeline.
+    base_rows, _ = get_or_build_canonical_forecast_timeline(
         user,
-        start_date=today,
-        end_date=end_date,
-        scenario_id=None,
+        today=today,
+        forecast_days=horizon_days,
         household_id=household_id or scenario.household_id,
-        as_of_date=today,
-        projection_only=True,
+        scenario_id=None,
         caller="scenario_comparison_base",
     )
+    base_rows = [r for r in base_rows if r.get("date") is None or r["date"] <= end_date]
     base_rows = dedupe_future_rule_occurrence_rows(base_rows, today)
 
     scenario_rows = build_scenario_timeline_from_base(

@@ -35,7 +35,7 @@ export const REPORT_TYPE_CARDS: ReportTypeCard[] = [
   {
     id: "spending",
     label: "Spending",
-    description: "Category breakdown and budget performance",
+    description: "Category breakdown and limit performance",
     icon: "pie-chart",
   },
   {

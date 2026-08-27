@@ -245,12 +245,17 @@ class AccountViewSet(ModelViewSet):
                     if cycle_end > window_end:
                         window_end = cycle_end
 
-            from timeline.services.ledger import build_forecast_projection_timeline
+            # Reuse the same canonical household timeline as Dashboard/Calendar.
+            # When credit cards extend past `days`, cache under the longer window.
+            from timeline.services.canonical_timeline_cache import (
+                get_or_build_canonical_forecast_timeline,
+            )
 
-            shared_timeline = build_forecast_projection_timeline(
+            effective_days = max(days, (window_end - today).days)
+            shared_timeline, _cache_hit = get_or_build_canonical_forecast_timeline(
                 self.request.user,
                 today=today,
-                end_date=window_end,
+                forecast_days=effective_days,
                 caller="accounts_list",
             )
             forecast_summaries = None

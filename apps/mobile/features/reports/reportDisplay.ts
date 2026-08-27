@@ -45,11 +45,24 @@ export function formatPercentChange(pct: string | null | undefined): string | nu
 
 export type ComparisonTone = "positive" | "negative" | "neutral";
 
+/** Raw signed-delta tone (income / net). Positive delta → green. */
 export function comparisonTone(delta: string | number | undefined): ComparisonTone {
   const n = parseAmount(delta);
   if (n > 0) return "positive";
   if (n < 0) return "negative";
   return "neutral";
+}
+
+/**
+ * Expense / category MoM deltas must not read as "green = good" from the signed
+ * ledger delta alone. Prefer neutral change styling; signed text carries meaning.
+ */
+export function comparisonToneForContext(
+  delta: string | number | undefined,
+  context: "income" | "expense" | "net" | "neutral" = "neutral"
+): ComparisonTone {
+  if (context === "expense" || context === "neutral") return "neutral";
+  return comparisonTone(delta);
 }
 
 export function comparisonSubtitle(

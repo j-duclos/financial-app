@@ -169,6 +169,15 @@ export interface Account {
   last_activity_date?: string | null;
   /** Compact payoff projection at minimum payment (when ?balance=true). */
   payoff_estimate?: PayoffEstimateSummary | null;
+  /**
+   * Nested forecast summary payload when ?forecast_summary=true.
+   * Includes canonical `current_balance` (before pending) used for Current vs After pending.
+   */
+  forecast_summary?: {
+    current_balance?: string | null;
+    available_to_spend?: string | null;
+    [key: string]: unknown;
+  } | null;
 }
 
 export interface PayoffEstimateSummary {
@@ -252,6 +261,8 @@ export interface DebtPayoffCardSummary {
   total_projected_interest: string | null;
   interest_this_month: string;
   payoff_order: number | null;
+  /** projected | non_amortizing | unresolved | paid_off */
+  payoff_status?: string | null;
   priority_reason?: DebtPayoffCardPriorityReason | null;
   promotional_apr: string | null;
   promotional_end_date: string | null;
@@ -283,10 +294,16 @@ export interface DebtPayoffPlan {
   debt_free_date: string | null;
   months_to_debt_free: number | null;
   debt_free_possible: boolean;
+  /** debt_free | non_amortizing | unresolved */
+  simulation_status?: string;
   total_interest: string;
   total_paid?: string;
-  total_interest_minimums_only?: string;
-  interest_saved_vs_minimums: string;
+  /** payoffable | baseline_not_payoffable */
+  baseline_status?: string;
+  total_interest_minimums_only?: string | null;
+  /** Null when minimum-only baseline never amortizes (no finite savings). */
+  interest_saved_vs_minimums: string | null;
+  non_amortizing_account_ids?: number[];
   payoff_order: number[];
   cards: DebtPayoffCardSummary[];
   timeline: Array<{
@@ -1324,6 +1341,8 @@ export interface RecurringRule {
   is_bill?: boolean;
   payment_flexibility_days?: number;
   scheduled_change?: RecurringRuleScheduledChange | null;
+  /** Canonical next occurrence (YYYY-MM-DD) from backend recurrence engine; null when none. */
+  next_occurrence_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1820,6 +1839,10 @@ export interface DayRecoveryInfo {
 
 export interface TimelineCalendarDay extends DayLowestBalanceMarker, DayRecoveryInfo {
   date: string;
+  /** True for today and future forecast days; false for historical lookback. */
+  is_forecast?: boolean;
+  /** household_cash when unfiltered; account when account filter is active. */
+  balance_scope?: "household_cash" | "account";
   income_total: string;
   expense_total: string;
   transfer_total: string;
@@ -1958,6 +1981,20 @@ export interface ReconcileSetupResponse {
   max_end_date: string;
   latest_session_id?: number | null;
   unreconciled_transactions: ReconcileTransactionRow[];
+}
+
+/** Canonical live totals from POST /api/reconcile/preview/ (no writes). */
+export interface ReconcilePreviewResponse {
+  account_id: number;
+  period_start_date: string;
+  period_end_date: string;
+  period_opening_balance: string;
+  bank_current_balance: string;
+  cleared_balance: string;
+  difference: string;
+  can_complete: boolean;
+  checked_count: number;
+  tolerance: string;
 }
 
 export interface ReconcileCompleteResponse {

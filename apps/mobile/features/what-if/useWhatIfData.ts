@@ -14,7 +14,6 @@ import {
   getProfile,
   getScenarioComparison,
   listAccounts,
-  listCategories,
   listHouseholds,
   listRules,
   listScenarioAddedRecurring,
@@ -28,6 +27,7 @@ import {
   updateScenarioOneTimeEvent,
   updateScenarioOverride,
 } from "@budget-app/api-client";
+import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import type { ForecastHorizon } from "./types";
 import { scenarioInputStamp, whatIfQueryKeys } from "./queryKeys";
 
@@ -140,11 +140,10 @@ export function useWhatIfFormData(enabled: boolean, householdId: number | undefi
     enabled,
     staleTime: 60_000,
   });
-  const categories = useQuery({
-    queryKey: whatIfQueryKeys.categories(householdId ?? 0),
-    queryFn: () => listCategories({ household: householdId! }),
+  /** Shared picker SoT — same cache as Transactions / Recurring / Spending Limits. */
+  const categories = useCategoryOptions({
+    householdId: householdId ?? null,
     enabled: enabled && householdId != null,
-    staleTime: 60_000,
   });
   return { accounts, rules, categories };
 }

@@ -3,22 +3,34 @@ import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { formatCurrency } from "@budget-app/shared";
 import type { MonthlyReports } from "@budget-app/shared";
-import { Card, SectionHeader } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { partitionCategoryBreakdown } from "../categoryBreakdownDisplay";
-import { reportDetailPath } from "../navigation";
+import { partitionCategoryBreakdown, topExpenseCategories } from "../categoryBreakdownDisplay";
+import {
+  reportAccountDetailPath,
+  reportDetailPath,
+  reportGoalDetailPath,
+} from "../navigation";
 import {
   formatMonthLabel,
   formatProjectedCompletion,
   formatSignedAmount,
   parseAmount,
 } from "../reportDisplay";
-import type { ReportFilters } from "../types";
+import type { ReportFilters, ReportHistoryMonths } from "../types";
 import { CategoryBreakdownRow, CategorySpendBarChart } from "./CategoryBreakdownRow";
-import { InterestTrendChart, IncomeExpenseTrendChart } from "./ReportCharts";
+import { CollapsibleReportSection } from "./CollapsibleReportSection";
+import {
+  CashFlowHistorySelector,
+  InterestTrendChart,
+  IncomeExpenseTrendChart,
+} from "./ReportCharts";
 import { ReportEmptyState } from "./ReportEmptyState";
 import { ReportMetricGrid } from "./ReportMetricGrid";
+import { ReportNavSection } from "./ReportNavSection";
 import { GoalProgressRow, SpendingLimitCard } from "./SpendingLimitCard";
+
+const TOP_CATEGORY_LIMIT = 6;
 
 type OverviewProps = {
   data: MonthlyReports;
@@ -33,6 +45,9 @@ export function OverviewSection({ data, filters }: OverviewProps) {
   const topCats = overview.top_expense_categories ?? [];
   const goals = overview.goals_snapshot;
   const debt = overview.debt_snapshot;
+  const totalDebtOwed = useMemo(() => {
+    return (data.debt.by_card ?? []).reduce((sum, row) => sum + parseAmount(row.balance_owed), 0);
+  }, [data.debt.by_card]);
 
   const metrics = useMemo(
     () => [
@@ -42,6 +57,7 @@ export function OverviewSection({ data, filters }: OverviewProps) {
         tone: "positive" as const,
         comparison: overview.comparison?.total_income,
         previousMonth,
+        comparisonContext: "income" as const,
       },
       {
         label: "Expenses",
@@ -49,6 +65,7 @@ export function OverviewSection({ data, filters }: OverviewProps) {
         tone: "negative" as const,
         comparison: overview.comparison?.total_expenses,
         previousMonth,
+        comparisonContext: "expense" as const,
       },
       {
         label: "Net",
@@ -56,34 +73,35 @@ export function OverviewSection({ data, filters }: OverviewProps) {
         tone: parseAmount(overview.net) >= 0 ? ("positive" as const) : ("negative" as const),
         comparison: overview.comparison?.net,
         previousMonth,
+        comparisonContext: "net" as const,
       },
     ],
     [overview, previousMonth]
   );
 
   return (
-    <View style={{ gap: theme.spacing.lg }}>
+    <View style={{ gap: theme.spacing.md }}>
       <ReportMetricGrid metrics={metrics} />
 
-      <Card>
-        <SectionHeader
-          title="Top spending"
-          actionLabel="View spending"
-          onAction={() => router.push(reportDetailPath("spending", filters))}
-        />
+      <ReportNavSection
+        title="Top spending"
+        footerLabel="See spending ›"
+        onPress={() => router.push(reportDetailPath("spending", filters))}
+        accessibilityHint="Opens the spending report"
+      >
         {topCats.length === 0 ? (
           <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>No expense categories this month.</Text>
         ) : (
           <CategorySpendBarChart rows={topCats} />
         )}
-      </Card>
+      </ReportNavSection>
 
-      <Card>
-        <SectionHeader
-          title="Goals"
-          actionLabel="View goals"
-          onAction={() => router.push(reportDetailPath("goals", filters))}
-        />
+      <ReportNavSection
+        title="Goals"
+        footerLabel="See goals ›"
+        onPress={() => router.push(reportDetailPath("goals", filters))}
+        accessibilityHint="Opens the goals report"
+      >
         <Text style={{ color: theme.colors.text, fontSize: 14 }}>
           {goals.total_saved ? formatCurrency(goals.total_saved) : "—"} saved of{" "}
           {goals.total_target ? formatCurrency(goals.total_target) : "—"}
@@ -92,16 +110,16 @@ export function OverviewSection({ data, filters }: OverviewProps) {
           {goals.goals_on_track ?? 0}/{goals.goals_active_count ?? 0} on track
           {goals.monthly_needed_total
             ? ` · ${formatCurrency(goals.monthly_needed_total)}/mo needed`
-            : " · No monthly target"}
+            : ""}
         </Text>
-      </Card>
+      </ReportNavSection>
 
-      <Card>
-        <SectionHeader
-          title="Debt"
-          actionLabel="View debt"
-          onAction={() => router.push(reportDetailPath("debt", filters))}
-        />
+      <ReportNavSection
+        title="Debt"
+        footerLabel="See debt ›"
+        onPress={() => router.push(reportDetailPath("debt", filters))}
+        accessibilityHint="Opens the debt report"
+      >
         <Text style={{ color: theme.colors.text, fontSize: 14 }}>
           Interest paid {debt.total_interest_paid ? formatCurrency(debt.total_interest_paid) : "—"}
         </Text>
@@ -109,36 +127,32 @@ export function OverviewSection({ data, filters }: OverviewProps) {
           {debt.highest_apr_card
             ? `Highest APR: ${debt.highest_apr_card.account_name} ${debt.highest_apr_card.apr}%`
             : "No credit cards"}
+          {totalDebtOwed > 0.005 ? ` · ${formatCurrency(totalDebtOwed)} owed` : ""}
         </Text>
-      </Card>
+      </ReportNavSection>
 
-      <Card>
-        <SectionHeader
-          title="Budget"
-          actionLabel="View budget"
-          onAction={() => router.push(reportDetailPath("spending", filters))}
-        />
+      <ReportNavSection
+        title="Spending limits"
+        footerLabel="See limit performance ›"
+        onPress={() => router.push(reportDetailPath("spending", filters, { section: "limits" }))}
+        accessibilityHint="Opens spending limit performance"
+      >
         <Text style={{ color: theme.colors.text, fontSize: 14 }}>
-          {data.spending_limits.above_target_count} above limit ·{" "}
+          {data.spending_limits.above_target_count} over limit ·{" "}
           {data.spending_limits.approaching_target_count} approaching
         </Text>
-        <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginTop: 4 }}>
-          Category budget {formatCurrency(data.spending_limits.total_monthly_targets)}
-        </Text>
-      </Card>
-
-      <Pressable
-        onPress={() => router.push(reportDetailPath("cash-flow", filters))}
-        accessibilityRole="button"
-        accessibilityLabel="View cash flow report"
-      >
-        <Text style={{ color: theme.colors.tint, fontWeight: "600", fontSize: 14 }}>View cash flow →</Text>
-      </Pressable>
+      </ReportNavSection>
     </View>
   );
 }
 
-export function CashFlowSection({ data }: { data: MonthlyReports }) {
+type CashFlowProps = {
+  data: MonthlyReports;
+  historyMonths: ReportHistoryMonths;
+  onHistoryMonthsChange: (months: ReportHistoryMonths) => void;
+};
+
+export function CashFlowSection({ data, historyMonths, onHistoryMonthsChange }: CashFlowProps) {
   const theme = useTheme();
   const overview = data.overview;
   const previousMonth = overview.previous_month;
@@ -151,6 +165,7 @@ export function CashFlowSection({ data }: { data: MonthlyReports }) {
         tone: "positive" as const,
         comparison: overview.comparison?.total_income,
         previousMonth,
+        comparisonContext: "income" as const,
       },
       {
         label: "Expenses",
@@ -158,6 +173,7 @@ export function CashFlowSection({ data }: { data: MonthlyReports }) {
         tone: "negative" as const,
         comparison: overview.comparison?.total_expenses,
         previousMonth,
+        comparisonContext: "expense" as const,
       },
       {
         label: "Net cash flow",
@@ -165,6 +181,7 @@ export function CashFlowSection({ data }: { data: MonthlyReports }) {
         tone: parseAmount(overview.net) >= 0 ? ("positive" as const) : ("negative" as const),
         comparison: overview.comparison?.net,
         previousMonth,
+        comparisonContext: "net" as const,
       },
     ],
     [overview, previousMonth]
@@ -174,11 +191,14 @@ export function CashFlowSection({ data }: { data: MonthlyReports }) {
     <View style={{ gap: theme.spacing.lg }}>
       <ReportMetricGrid metrics={metrics} />
       <Card>
-        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>Income vs expenses</Text>
-        <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 12 }}>
-          Historical monthly totals — transfers excluded (backend-calculated).
+        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 4 }}>
+          Income vs expenses
         </Text>
-        <IncomeExpenseTrendChart trend={overview.trend} />
+        <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 8 }}>
+          Monthly totals from backend aggregates — internal transfers excluded.
+        </Text>
+        <CashFlowHistorySelector value={historyMonths} onChange={onHistoryMonthsChange} />
+        <IncomeExpenseTrendChart trend={overview.trend} historyMonths={historyMonths} />
       </Card>
     </View>
   );
@@ -186,115 +206,140 @@ export function CashFlowSection({ data }: { data: MonthlyReports }) {
 
 export function SpendingSection({
   data,
-  filters,
   onCategoryPress,
+  initiallyExpandLimits = false,
 }: {
   data: MonthlyReports;
-  filters: ReportFilters;
+  filters?: ReportFilters;
   onCategoryPress: (categoryId: number, categoryName: string) => void;
+  initiallyExpandLimits?: boolean;
 }) {
   const theme = useTheme();
-  const router = useRouter();
-  const [showAll, setShowAll] = useState(false);
+  const [showAllCategories, setShowAllCategories] = useState(false);
   const previousMonth = data.overview.previous_month;
   const partitioned = useMemo(
     () => partitionCategoryBreakdown(data.category_breakdown.breakdown),
     [data.category_breakdown.breakdown]
   );
   const expenseAbs = Math.abs(partitioned.expenseSubtotal);
-  const visibleExpenses = showAll ? partitioned.expenses : partitioned.expenses.slice(0, 8);
-  const hiddenCount = partitioned.expenses.length - visibleExpenses.length;
+  const topCats = useMemo(
+    () => topExpenseCategories(data.category_breakdown.breakdown, TOP_CATEGORY_LIMIT),
+    [data.category_breakdown.breakdown]
+  );
+  const hiddenCategoryCount = Math.max(0, partitioned.expenses.length - TOP_CATEGORY_LIMIT);
+  const limitSummary = `${data.spending_limits.above_target_count} over · ${data.spending_limits.approaching_target_count} approaching`;
 
   return (
     <View style={{ gap: theme.spacing.lg }}>
       <Card>
-        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>Category breakdown</Text>
-        {partitioned.expenses.length === 0 && partitioned.income.length === 0 ? (
-          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>No categorized activity this month.</Text>
+        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
+          Category breakdown
+        </Text>
+        {partitioned.expenses.length === 0 ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
+            No expense categories this month.
+          </Text>
+        ) : showAllCategories ? (
+          <>
+            {partitioned.expenses.map((row) => (
+              <CategoryBreakdownRow
+                key={row.category_id ?? `all-${row.category_name}`}
+                row={row}
+                expenseSubtotal={expenseAbs}
+                previousMonth={previousMonth}
+                onPress={
+                  row.category_id != null
+                    ? () => onCategoryPress(row.category_id!, row.category_name)
+                    : undefined
+                }
+              />
+            ))}
+            {partitioned.expenses.length > TOP_CATEGORY_LIMIT ? (
+              <Pressable
+                onPress={() => setShowAllCategories(false)}
+                accessibilityRole="button"
+                style={{ marginTop: 8, minHeight: theme.touchTarget, justifyContent: "center" }}
+              >
+                <Text style={{ color: theme.colors.textMuted, fontSize: 13, fontWeight: "600" }}>
+                  Show top {TOP_CATEGORY_LIMIT} ›
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
         ) : (
           <>
-            <CategorySpendBarChart rows={data.category_breakdown.breakdown} />
-            <View style={{ marginTop: 16 }}>
-              <Text style={{ color: theme.colors.textSecondary, fontWeight: "700", fontSize: 13, marginBottom: 4 }}>
-                Income
-              </Text>
-              {partitioned.income.map((row) => (
-                <CategoryBreakdownRow
-                  key={row.category_id ?? "uncategorized-income"}
-                  row={row}
-                  expenseSubtotal={expenseAbs}
-                  previousMonth={previousMonth}
-                  showShare={false}
-                  onPress={
-                    row.category_id != null
-                      ? () => onCategoryPress(row.category_id!, row.category_name)
-                      : undefined
-                  }
-                />
-              ))}
-              <Text
-                style={{
-                  color: theme.colors.moneyPositive,
-                  fontWeight: "700",
-                  fontSize: 14,
-                  marginVertical: 8,
-                }}
+            <CategorySpendBarChart
+              rows={topCats}
+              limit={TOP_CATEGORY_LIMIT}
+              onCategoryPress={onCategoryPress}
+            />
+            {hiddenCategoryCount > 0 ? (
+              <Pressable
+                onPress={() => setShowAllCategories(true)}
+                accessibilityRole="button"
+                accessibilityLabel={`Show all ${partitioned.expenses.length} categories`}
+                style={{ marginTop: 8, minHeight: theme.touchTarget, justifyContent: "center" }}
               >
-                Income subtotal {formatSignedAmount(partitioned.incomeSubtotal)}
-              </Text>
-
-              <Text style={{ color: theme.colors.textSecondary, fontWeight: "700", fontSize: 13, marginBottom: 4 }}>
-                Expenses
-              </Text>
-              {visibleExpenses.map((row) => (
-                <CategoryBreakdownRow
-                  key={row.category_id ?? "uncategorized-expense"}
-                  row={row}
-                  expenseSubtotal={expenseAbs}
-                  previousMonth={previousMonth}
-                  onPress={
-                    row.category_id != null
-                      ? () => onCategoryPress(row.category_id!, row.category_name)
-                      : undefined
-                  }
-                />
-              ))}
-              {hiddenCount > 0 ? (
-                <Pressable onPress={() => setShowAll(true)} accessibilityRole="button">
-                  <Text style={{ color: theme.colors.tint, fontSize: 13, marginVertical: 8 }}>
-                    Show all {partitioned.expenses.length} expense categories
-                  </Text>
-                </Pressable>
-              ) : null}
-              {showAll && partitioned.expenses.length > 8 ? (
-                <Pressable onPress={() => setShowAll(false)} accessibilityRole="button">
-                  <Text style={{ color: theme.colors.tint, fontSize: 13, marginVertical: 8 }}>
-                    Show top categories only
-                  </Text>
-                </Pressable>
-              ) : null}
-              <Text
-                style={{
-                  color: theme.colors.moneyNegative,
-                  fontWeight: "700",
-                  fontSize: 14,
-                  marginVertical: 8,
-                }}
-              >
-                Expense subtotal {formatSignedAmount(partitioned.expenseSubtotal)}
-              </Text>
-              <Text style={{ color: theme.colors.text, fontWeight: "800", fontSize: 15 }}>
-                Net {formatSignedAmount(partitioned.net)}
-              </Text>
-            </View>
+                <Text style={{ color: theme.colors.textMuted, fontSize: 13, fontWeight: "600" }}>
+                  Show all {partitioned.expenses.length} categories ›
+                </Text>
+              </Pressable>
+            ) : null}
           </>
         )}
       </Card>
 
-      <Card>
-        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 12 }}>Budget performance</Text>
+      {partitioned.income.length > 0 ? (
+        <CollapsibleReportSection
+          title="Income"
+          subtitle={`${partitioned.income.length} categories · ${formatSignedAmount(partitioned.incomeSubtotal)}`}
+        >
+          {partitioned.income.map((row) => (
+            <CategoryBreakdownRow
+              key={row.category_id ?? "uncategorized-income"}
+              row={row}
+              expenseSubtotal={expenseAbs}
+              previousMonth={previousMonth}
+              showShare={false}
+              onPress={
+                row.category_id != null
+                  ? () => onCategoryPress(row.category_id!, row.category_name)
+                  : undefined
+              }
+            />
+          ))}
+        </CollapsibleReportSection>
+      ) : null}
+
+      <CollapsibleReportSection
+        title="Expenses"
+        subtitle={`${partitioned.expenses.length} categories · ${formatSignedAmount(partitioned.expenseSubtotal)}`}
+        initiallyExpanded={false}
+      >
+        {partitioned.expenses.map((row) => (
+          <CategoryBreakdownRow
+            key={row.category_id ?? "uncategorized-expense"}
+            row={row}
+            expenseSubtotal={expenseAbs}
+            previousMonth={previousMonth}
+            onPress={
+              row.category_id != null
+                ? () => onCategoryPress(row.category_id!, row.category_name)
+                : undefined
+            }
+          />
+        ))}
+      </CollapsibleReportSection>
+
+      <CollapsibleReportSection
+        title="Spending limit performance"
+        subtitle={data.spending_limits.targets.length === 0 ? "No limits this month" : limitSummary}
+        initiallyExpanded={initiallyExpandLimits}
+      >
         {data.spending_limits.targets.length === 0 ? (
-          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>No category budgets for this month.</Text>
+          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
+            No category spending limits for this month.
+          </Text>
         ) : (
           <View style={{ gap: 12 }}>
             {data.spending_limits.targets.map((target) => (
@@ -302,23 +347,18 @@ export function SpendingSection({
             ))}
           </View>
         )}
-        <Pressable
-          onPress={() => router.push("/(app)/(tabs)/budget")}
-          style={{ marginTop: 12 }}
-          accessibilityRole="button"
-        >
-          <Text style={{ color: theme.colors.tint, fontWeight: "600", fontSize: 14 }}>Open Budget →</Text>
-        </Pressable>
-      </Card>
+      </CollapsibleReportSection>
     </View>
   );
 }
 
 export function GoalsSection({ data }: { data: MonthlyReports }) {
   const theme = useTheme();
+  const router = useRouter();
   const report = data.goals;
   const summary = report.summary;
   const active = report.buckets.filter((b) => b.status === "active" || b.status === "paused");
+  const recentContributions = (report.contribution_history ?? []).slice(0, 5);
 
   return (
     <View style={{ gap: theme.spacing.lg }}>
@@ -335,60 +375,80 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
       />
 
       <Card>
-        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>Goal progress</Text>
+        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 4 }}>
+          Goal progress
+        </Text>
+        <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 8 }}>
+          {(summary.goals_on_track ?? 0)} of {(summary.goals_active_count ?? active.length)} on track
+        </Text>
         {active.length === 0 ? (
           <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>No active goals.</Text>
         ) : (
           active.map((goal) => (
-            <GoalProgressRow
+            <Pressable
               key={goal.id}
-              name={goal.name}
-              current={goal.current_amount}
-              target={goal.target_amount}
-              progressPercent={goal.progress_percent}
-              monthlyRequired={goal.monthly_required}
-              projectedCompletion={formatProjectedCompletion(goal.projected_completion_date)}
-            />
+              onPress={() => router.push(reportGoalDetailPath(goal.id))}
+              accessibilityRole="button"
+              accessibilityLabel={`${goal.name}, open goal detail`}
+              style={({ pressed }) => [{ opacity: pressed ? 0.75 : 1 }]}
+            >
+              <GoalProgressRow
+                name={goal.name}
+                current={goal.current_amount}
+                target={goal.target_amount}
+                progressPercent={goal.progress_percent}
+                monthlyRequired={goal.monthly_required}
+                projectedCompletion={formatProjectedCompletion(goal.projected_completion_date)}
+              />
+            </Pressable>
           ))
         )}
       </Card>
 
-      <Card>
-        <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>Actual funding</Text>
-        {(report.monthly_funding ?? []).length === 0 ? (
-          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
-            No actual contributions in this report window.
+      {recentContributions.length > 0 ? (
+        <Card>
+          <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
+            Recent contributions
           </Text>
-        ) : (
-          (report.monthly_funding ?? []).map((row) => (
+          {recentContributions.map((row) => (
             <View
-              key={`actual-${row.month}`}
+              key={row.id}
               style={{
                 flexDirection: "row",
                 justifyContent: "space-between",
                 paddingVertical: 8,
                 borderBottomWidth: 1,
                 borderBottomColor: theme.colors.border,
+                gap: 8,
               }}
             >
-              <Text style={{ color: theme.colors.text }}>{formatMonthLabel(row.month)}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.colors.text, fontSize: 14 }} numberOfLines={1}>
+                  {row.bucket_name ?? `Goal ${row.bucket_id}`}
+                </Text>
+                <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                  {row.date}
+                </Text>
+              </View>
               <Text style={{ color: theme.colors.textSecondary, fontWeight: "600" }}>
-                {formatSignedAmount(row.total)}
+                {formatSignedAmount(row.amount)}
               </Text>
             </View>
-          ))
-        )}
-        {(report.projected_monthly_funding ?? []).length > 0 ? (
-          <>
-            <Text style={{ color: theme.colors.textSecondary, fontWeight: "700", fontSize: 13, marginTop: 16 }}>
-              Projected funding
+          ))}
+        </Card>
+      ) : (
+        <Card>
+          <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
+            Actual funding
+          </Text>
+          {(report.monthly_funding ?? []).length === 0 ? (
+            <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
+              No actual contributions in this report window.
             </Text>
-            <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 8 }}>
-              Future contributions after {formatMonthLabel(data.month)} — not actual deposits.
-            </Text>
-            {(report.projected_monthly_funding ?? []).map((row) => (
+          ) : (
+            (report.monthly_funding ?? []).slice(-6).map((row) => (
               <View
-                key={`projected-${row.month}`}
+                key={`actual-${row.month}`}
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
@@ -398,20 +458,21 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
                 }}
               >
                 <Text style={{ color: theme.colors.text }}>{formatMonthLabel(row.month)}</Text>
-                <Text style={{ color: theme.colors.textMuted, fontWeight: "600" }}>
-                  {formatSignedAmount(row.total)} (projected)
+                <Text style={{ color: theme.colors.textSecondary, fontWeight: "600" }}>
+                  {formatSignedAmount(row.total)}
                 </Text>
               </View>
-            ))}
-          </>
-        ) : null}
-      </Card>
+            ))
+          )}
+        </Card>
+      )}
     </View>
   );
 }
 
 export function DebtSection({ data }: { data: MonthlyReports }) {
   const theme = useTheme();
+  const router = useRouter();
   const debt = data.debt;
 
   if (debt.by_card.length === 0 && parseAmount(debt.total_interest_paid) === 0) {
@@ -441,17 +502,27 @@ export function DebtSection({ data }: { data: MonthlyReports }) {
       />
 
       {debt.highest_apr_card ? (
-        <Card>
-          <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "600" }}>HIGHEST APR</Text>
-          <Text style={{ color: theme.colors.text, fontWeight: "600", marginTop: 4 }}>
-            {debt.highest_apr_card.account_name} · {debt.highest_apr_card.apr}%
-          </Text>
-        </Card>
+        <Pressable
+          onPress={() => router.push(reportAccountDetailPath(debt.highest_apr_card!.account_id))}
+          accessibilityRole="button"
+          accessibilityLabel={`${debt.highest_apr_card.account_name}, open account`}
+        >
+          <Card>
+            <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "600" }}>
+              HIGHEST APR
+            </Text>
+            <Text style={{ color: theme.colors.text, fontWeight: "600", marginTop: 4 }}>
+              {debt.highest_apr_card.account_name} · {debt.highest_apr_card.apr}%
+            </Text>
+          </Card>
+        </Pressable>
       ) : null}
 
       {debt.interest_trend && debt.interest_trend.length > 1 ? (
         <Card>
-          <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>Interest over time</Text>
+          <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
+            Interest over time
+          </Text>
           <InterestTrendChart trend={debt.interest_trend} />
         </Card>
       ) : null}
@@ -459,34 +530,49 @@ export function DebtSection({ data }: { data: MonthlyReports }) {
       <Card>
         <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>By card</Text>
         {debt.by_card.map((row) => (
-          <View
+          <Pressable
             key={row.account_id}
-            style={{
-              paddingVertical: 10,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.border,
-            }}
+            onPress={() => router.push(reportAccountDetailPath(row.account_id))}
+            accessibilityRole="button"
+            accessibilityLabel={`${row.account_name}, open account detail`}
+            style={({ pressed }) => [{ opacity: pressed ? 0.75 : 1 }]}
           >
-            <Text style={{ color: theme.colors.text, fontWeight: "600" }}>{row.account_name}</Text>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-              <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Paid</Text>
-              <Text style={{ color: theme.colors.moneyNegative, fontWeight: "600" }}>
-                {formatCurrency(row.interest_paid)}
-              </Text>
+            <View
+              style={{
+                paddingVertical: 10,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.border,
+              }}
+            >
+              <Text style={{ color: theme.colors.text, fontWeight: "600" }}>{row.account_name}</Text>
+              {row.balance_owed != null ? (
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+                  <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Balance</Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontWeight: "600" }}>
+                    {formatCurrency(row.balance_owed)}
+                  </Text>
+                </View>
+              ) : null}
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
+                <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Interest paid</Text>
+                <Text style={{ color: theme.colors.moneyNegative, fontWeight: "600" }}>
+                  {formatCurrency(row.interest_paid)}
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
+                <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Projected</Text>
+                <Text style={{ color: theme.colors.warning, fontWeight: "600" }}>
+                  {formatCurrency(row.projected_interest_remaining)}
+                </Text>
+              </View>
+              {row.apr ? (
+                <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginTop: 4 }}>
+                  APR {row.apr}%
+                  {row.utilization_percent ? ` · Utilization ${row.utilization_percent}%` : ""}
+                </Text>
+              ) : null}
             </View>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
-              <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>Projected</Text>
-              <Text style={{ color: theme.colors.warning, fontWeight: "600" }}>
-                {formatCurrency(row.projected_interest_remaining)}
-              </Text>
-            </View>
-            {row.apr ? (
-              <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginTop: 4 }}>
-                APR {row.apr}%
-                {row.utilization_percent ? ` · Utilization ${row.utilization_percent}%` : ""}
-              </Text>
-            ) : null}
-          </View>
+          </Pressable>
         ))}
       </Card>
     </View>

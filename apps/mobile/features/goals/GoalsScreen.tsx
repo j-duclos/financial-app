@@ -13,11 +13,11 @@ import {
 } from "@budget-app/api-client";
 import {
   AppHeader,
-  Button,
   Card,
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  IconButton,
   Screen,
   SkeletonBlock,
 } from "@/components/ui";
@@ -26,9 +26,21 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { describeApiError } from "@/services/api";
 import { GoalCard, GoalSectionHeader } from "./GoalCard";
 import { GoalActionsSheet, type GoalActionId } from "./GoalActionsSheet";
-import { goalCreatePath, goalDetailPath, goalEditPath } from "./navigation";
+import { goalCreatePath, goalDetailPath, goalEditPath, goalWhatIfPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalsQueries } from "./queryKeys";
 import type { FinancialGoal } from "@budget-app/shared";
+
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  return (
+    <View style={{ width: "47%" }}>
+      <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>{label}</Text>
+      <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong, marginTop: 2 }}>
+        {value}
+      </Text>
+    </View>
+  );
+}
 
 export function GoalsScreen() {
   const theme = useTheme();
@@ -89,6 +101,9 @@ export function GoalsScreen() {
       case "edit":
         router.push(goalEditPath(goal.id));
         break;
+      case "what-if":
+        router.push(goalWhatIfPath(goal.id));
+        break;
       case "duplicate":
         duplicateMu.mutate(goal.id);
         break;
@@ -137,7 +152,17 @@ export function GoalsScreen() {
         ),
       }}
     >
-      <AppHeader title="Goals" subtitle="What am I trying to accomplish?" showBack />
+      <AppHeader
+        title="Goals"
+        showBack
+        right={
+          <IconButton
+            name="plus"
+            accessibilityLabel="Create goal"
+            onPress={() => router.push(goalCreatePath())}
+          />
+        }
+      />
 
       {isLoading ? (
         <SkeletonBlock lines={8} />
@@ -146,49 +171,25 @@ export function GoalsScreen() {
       ) : (
         <>
           {summary && active.length > 0 ? (
-            <Card style={{ marginBottom: theme.spacing.md }}>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
-                <View style={{ minWidth: "45%" }}>
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                    Total saved
-                  </Text>
-                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                    {formatCurrency(summary.total_saved)}
-                  </Text>
-                </View>
-                <View style={{ minWidth: "45%" }}>
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                    Total target
-                  </Text>
-                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                    {formatCurrency(summary.total_target)}
-                  </Text>
-                </View>
-                <View style={{ minWidth: "45%" }}>
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                    On track
-                  </Text>
-                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                    {summary.goals_on_track}/{summary.goals_active_count}
-                  </Text>
-                </View>
-                {summary.monthly_needed_total && parseFloat(summary.monthly_needed_total) > 0 ? (
-                  <View style={{ minWidth: "45%" }}>
-                    <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                      Monthly needed
-                    </Text>
-                    <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                      {formatCurrency(summary.monthly_needed_total)}/mo
-                    </Text>
-                  </View>
-                ) : null}
+            <Card style={{ marginBottom: theme.spacing.md, paddingVertical: theme.spacing.sm }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", rowGap: 10, columnGap: 8 }}>
+                <SummaryStat label="Total saved" value={formatCurrency(summary.total_saved)} />
+                <SummaryStat label="Total target" value={formatCurrency(summary.total_target)} />
+                <SummaryStat
+                  label="On track"
+                  value={`${summary.goals_on_track}/${summary.goals_active_count}`}
+                />
+                <SummaryStat
+                  label="Monthly needed"
+                  value={
+                    summary.monthly_needed_total && parseFloat(summary.monthly_needed_total) > 0
+                      ? `${formatCurrency(summary.monthly_needed_total)}/mo`
+                      : "—"
+                  }
+                />
               </View>
             </Card>
           ) : null}
-
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: theme.spacing.sm }}>
-            <Button label="Create goal" onPress={() => router.push(goalCreatePath())} />
-          </View>
 
           {goals.length === 0 ? (
             <EmptyState

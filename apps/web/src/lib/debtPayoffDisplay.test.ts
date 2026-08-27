@@ -74,6 +74,17 @@ describe("interestSavedLine", () => {
   it("returns null when no savings", () => {
     expect(interestSavedLine(basePlan({ interest_saved_vs_minimums: "0.00" }))).toBeNull();
   });
+
+  it("returns null when baseline is not payoffable", () => {
+    expect(
+      interestSavedLine(
+        basePlan({
+          baseline_status: "baseline_not_payoffable",
+          interest_saved_vs_minimums: null,
+        })
+      )
+    ).toBeNull();
+  });
 });
 
 describe("strategy and mode descriptions", () => {

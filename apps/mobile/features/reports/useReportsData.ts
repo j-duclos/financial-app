@@ -5,6 +5,12 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { reportsQueryKeys } from "./queryKeys";
 import type { ReportFilters } from "./types";
 
+/**
+ * Shared monthly reports query for landing + every report detail route.
+ * One backend payload (`GET /api/insights/reports/monthly/`) — no client-side
+ * transaction summation. Month + historyMonths are part of the query key so
+ * Aug ↔ Jul navigation reuses cached periods via keepPreviousData.
+ */
 export function useReportsData(filters: ReportFilters) {
   const monthKey = filters.monthKey || currentMonthStr();
   const { householdId, isReady: householdReady } = useDefaultHouseholdId();

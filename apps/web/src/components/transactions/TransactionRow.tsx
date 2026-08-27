@@ -246,14 +246,23 @@ export default function TransactionRow({
       <span className={`text-right font-medium tabular-nums text-xs ${creditClass}`}>
         {row.balance == null ? "—" : fmtBal(row.balance)}
       </span>
-      <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        {variant === "expected" && onMatchesImported ? (
+          <button
+            type="button"
+            onClick={() => onMatchesImported()}
+            disabled={actionsDisabled}
+            className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50 whitespace-nowrap"
+          >
+            Matched Import
+          </button>
+        ) : null}
         <TransactionContextMenu
           variant={variant}
           onEdit={onEdit}
           onDuplicate={variant === "past" ? onDuplicate : undefined}
           onDelete={onDelete}
           onSkip={variant === "future" || variant === "expected" ? onSkip : undefined}
-          onMatchesImported={variant === "expected" ? onMatchesImported : undefined}
           onMoveDate={variant === "expected" ? onMoveDate : undefined}
           disabled={actionsDisabled}
           readOnly={row.readOnly}

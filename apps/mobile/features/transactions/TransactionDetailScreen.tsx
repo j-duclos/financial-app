@@ -25,7 +25,7 @@ import {
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { formatDateDisplay, todayStr } from "@/lib/dates";
-import { ledgerProjectionRange } from "@/lib/transactionsLedger";
+import { matchingImportTimelineRange } from "@/lib/transactionsLedger";
 import { resolveHouseholdId } from "@/lib/householdContext";
 import {
   canChangeTransactionCategory,
@@ -117,21 +117,21 @@ export function TransactionDetailScreen() {
   const canEdit = txn && !txn.reconciled && !lockMessage?.includes("Imported");
   const canChangeCategory = txn ? canChangeTransactionCategory(txn) : false;
 
-  const projectionRange = useMemo(
-    () => ledgerProjectionRange(MATCHING_IMPORT_FORECAST_DAYS),
+  const matchingTimelineRange = useMemo(
+    () => matchingImportTimelineRange(MATCHING_IMPORT_FORECAST_DAYS),
     []
   );
 
   const timelineQuery = useQuery({
     queryKey: transactionQueryKeys.timeline({
-      start: projectionRange.start,
-      end: projectionRange.end,
+      start: matchingTimelineRange.start,
+      end: matchingTimelineRange.end,
       account_id: txn?.account?.id ?? txn?.account_id,
     }),
     queryFn: () =>
       getTimeline({
-        start: projectionRange.start,
-        end: projectionRange.end,
+        start: matchingTimelineRange.start,
+        end: matchingTimelineRange.end,
         as_of: todayStr(),
         account_id: txn?.account?.id ?? txn?.account_id ?? undefined,
       }),
@@ -261,7 +261,7 @@ export function TransactionDetailScreen() {
         ) : null}
         {isPlanned && hasMatchingImport ? (
           <Button
-            label="Matches Imported"
+            label="Matched Import"
             onPress={() => skipMutation.mutate()}
             loading={skipMutation.isPending}
           />

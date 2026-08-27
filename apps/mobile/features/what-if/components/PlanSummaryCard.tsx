@@ -73,7 +73,7 @@ export function PlanSummaryCard({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 }}>
         <StatusChip label={summary.resultLabel} tone={resultTone(summary.result)} />
         {recalculating ? (
-          <Text style={{ color: colors.fg, fontSize: 12, opacity: 0.8 }}>Recalculating…</Text>
+          <Text style={{ color: colors.fg, fontSize: 12, opacity: 0.8 }}>Updating scenario…</Text>
         ) : null}
       </View>
       <Text style={{ color: colors.fg, ...theme.typography.headline, marginTop: 8 }} accessibilityRole="header">

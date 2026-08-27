@@ -287,6 +287,7 @@ class BucketFundingConfigSerializer(serializers.Serializer):
 
 class GoalContributionSerializer(serializers.ModelSerializer):
     bucket_name = serializers.CharField(source="bucket.name", read_only=True)
+    account_name = serializers.SerializerMethodField()
 
     class Meta:
         model = GoalContribution
@@ -296,6 +297,7 @@ class GoalContributionSerializer(serializers.ModelSerializer):
             "bucket_name",
             "transaction",
             "account",
+            "account_name",
             "amount",
             "date",
             "source",
@@ -303,3 +305,9 @@ class GoalContributionSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+    def get_account_name(self, obj: GoalContribution) -> str | None:
+        account = getattr(obj, "account", None)
+        if account is None:
+            return None
+        return getattr(account, "effective_display_name", None) or getattr(account, "name", None)

@@ -63,7 +63,8 @@ describe("account-centric transactions screen", () => {
   });
 
   it("uses independent list cache keys per account", () => {
-    expect(transactionsScreen).toMatch(/key=\{`\$\{filters\.accountId/);
+    expect(transactionsScreen).toMatch(/listMountKey/);
+    expect(transactionsScreen).toMatch(/filters\.accountId/);
     expect(transactionsData).toMatch(/filters\.accountId != null/);
     expect(transactionsData).toMatch(/account: filters\.accountId/);
   });
@@ -112,8 +113,9 @@ describe("account-centric navigation entry points", () => {
     );
   });
 
-  it("passes account id from account details view transactions", () => {
-    expect(accountDetailSource).toMatch(/account: String\(account\.id\)/);
-    expect(accountDetailSource).toMatch(/accountName: getEffectiveDisplayName\(account\)/);
+  it("passes account id from account details view ledger", () => {
+    expect(accountDetailSource).toMatch(/transactionsForAccountPath/);
+    expect(accountDetailSource).toMatch(/rememberTransactionAccountSelection\(account\.id\)/);
+    expect(accountDetailSource).toMatch(/label="View ledger"/);
   });
 });

@@ -4,7 +4,7 @@ export const calendarQueryKeys = {
   summary: (filters: CalendarFilters) =>
     [
       "calendar-summary",
-      filters.horizon,
+      filters.forecastDays,
       filters.lookbackMonths,
       filters.accountId,
       filters.scenarioId,
@@ -13,7 +13,7 @@ export const calendarQueryKeys = {
   chunk: (filters: CalendarFilters, chunkStart: string, chunkEnd: string) =>
     [
       "calendar-chunk",
-      filters.horizon,
+      filters.forecastDays,
       filters.lookbackMonths,
       filters.accountId,
       filters.scenarioId,

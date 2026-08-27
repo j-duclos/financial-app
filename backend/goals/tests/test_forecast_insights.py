@@ -145,6 +145,32 @@ def test_goal_detail_endpoint(auth_client, bucket):
     assert len(data["contribution_history"]) <= 100
 
 
+def test_goal_detail_respects_history_limit(user, savings, bucket, auth_client):
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    for i in range(8):
+        txn = post_transaction(
+            user, savings.id, today - timedelta(days=i + 1), f"Save {i}", Decimal("10")
+        )
+        record_contribution(
+            bucket,
+            transaction=txn,
+            account_id=savings.id,
+            amount=Decimal("10"),
+            contrib_date=today - timedelta(days=i + 1),
+            source=GoalContribution.Source.MANUAL,
+        )
+
+    limited = auth_client.get(f"/api/buckets/{bucket.id}/detail/?history_limit=5")
+    assert limited.status_code == 200
+    assert len(limited.json()["contribution_history"]) == 5
+
+    full = auth_client.get(f"/api/buckets/{bucket.id}/detail/")
+    assert full.status_code == 200
+    assert len(full.json()["contribution_history"]) == 8
+
+
 def test_contribution_history_omits_future_planned_rows(user, savings, bucket, auth_client):
     from django.utils import timezone
 

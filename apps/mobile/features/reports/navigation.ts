@@ -1,13 +1,18 @@
 import type { ReportTab } from "./reportDisplay";
-import type { ReportFilters } from "./types";
+import type { ReportFilters, ReportHistoryMonths } from "./types";
 
-export function reportDetailPath(type: ReportTab, filters: ReportFilters) {
+export function reportDetailPath(
+  type: ReportTab,
+  filters: ReportFilters,
+  options?: { section?: "limits" }
+) {
   return {
     pathname: "/reports/[type]" as const,
     params: {
       type,
       month: filters.monthKey,
       months: String(filters.historyMonths),
+      ...(options?.section ? { section: options.section } : {}),
     },
   };
 }
@@ -53,13 +58,24 @@ export function transactionsForReportPeriod(periodStart: string, periodEnd: stri
   };
 }
 
+export function reportGoalDetailPath(goalId: number): `/goal/${number}` {
+  return `/goal/${goalId}`;
+}
+
+export function reportAccountDetailPath(accountId: number): `/account/${number}` {
+  return `/account/${accountId}`;
+}
+
 export function parseReportRouteParams(params: {
   month?: string;
   months?: string;
-}): Pick<ReportFilters, "monthKey" | "historyMonths"> | null {
+  section?: string;
+}): (Pick<ReportFilters, "monthKey" | "historyMonths"> & { section?: "limits" }) | null {
   const monthKey = params.month;
   if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) return null;
   const months = Number(params.months);
-  const historyMonths = months === 6 || months === 12 || months === 24 ? months : 12;
-  return { monthKey, historyMonths };
+  const historyMonths: ReportHistoryMonths =
+    months === 6 || months === 12 || months === 24 ? months : 12;
+  const section = params.section === "limits" ? ("limits" as const) : undefined;
+  return { monthKey, historyMonths, section };
 }

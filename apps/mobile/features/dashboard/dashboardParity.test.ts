@@ -222,15 +222,15 @@ describe("Dashboard goal status", () => {
   it("shows explicit pace/on-track status labels", () => {
     expect(
       dashboardGoalStatusDisplay({ pace_status: "behind", on_track_status: "behind" })?.label
-    ).toBe("BEHIND");
+    ).toBe("Behind");
     expect(
       dashboardGoalStatusDisplay({ pace_status: "on_track", on_track_status: "on_track" })?.label
-    ).toBe("ON TRACK");
+    ).toBe("On track");
     expect(
       dashboardGoalStatusDisplay({ pace_status: "stalled", on_track_status: "behind" })?.label
-    ).toBe("STALLED");
+    ).toBe("Stalled");
     expect(
       dashboardGoalStatusDisplay({ pace_status: "completed", on_track_status: "ahead" })?.label
-    ).toBe("COMPLETED");
+    ).toBe("Complete");
   });
 });

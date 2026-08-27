@@ -127,4 +127,50 @@ describe("what-if screen isolation contract", () => {
     expect(source).toMatch(/invalidateScenarioQueries/);
     expect(source).toMatch(/Hypothetical only/);
   });
+
+  it("uses plan overflow and tap-to-edit changes without Edit/Remove link clutter", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const root = path.join(process.cwd(), "features/what-if");
+    const screen = fs.readFileSync(path.join(root, "WhatIfScreen.tsx"), "utf8");
+    const changeRow = fs.readFileSync(path.join(root, "components/ScenarioChangeRow.tsx"), "utf8");
+    const newRecurring = fs.readFileSync(path.join(root, "forms/NewRecurringSheet.tsx"), "utf8");
+    const oneTime = fs.readFileSync(path.join(root, "forms/OneTimeEventSheet.tsx"), "utf8");
+    const create = fs.readFileSync(path.join(root, "forms/CreateScenarioSheet.tsx"), "utf8");
+    const addMenu = fs.readFileSync(path.join(root, "forms/ChangeKindSheet.tsx"), "utf8");
+
+    expect(screen).toMatch(/PlanActionsSheet/);
+    expect(screen).toMatch(/PlanPickerSheet/);
+    expect(screen).not.toMatch(/Duplicate plan/);
+    expect(screen).not.toMatch(/label="Delete plan"/);
+    expect(changeRow).not.toMatch(/>Edit</);
+    expect(changeRow).not.toMatch(/>Remove</);
+    expect(changeRow).toMatch(/onPress=\{onEdit\}/);
+    expect(changeRow).toMatch(/ellipsis-v/);
+
+    expect(newRecurring).toMatch(/OptionsPickerSheet/);
+    expect(newRecurring).toMatch(/DatePickerField/);
+    expect(newRecurring).not.toMatch(/ChipRow/);
+    expect(oneTime).toMatch(/OptionsPickerSheet/);
+    expect(oneTime).not.toMatch(/ChipRow/);
+    expect(create).toMatch(/Template/);
+    expect(create).toMatch(/households\.length > 1/);
+    expect(create).toMatch(/OptionsPickerSheet/);
+    expect(addMenu).toMatch(/What do you want to change\?/);
+    expect(oneTime).toMatch(/Save change/);
+    expect(newRecurring).toMatch(/Save change/);
+
+    const summary = fs.readFileSync(path.join(root, "components/PlanSummaryCard.tsx"), "utf8");
+    expect(summary).toMatch(/Updating scenario/);
+  });
+
+  it("recalculates only after saved change via input stamp / compare query", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const data = fs.readFileSync(path.join(process.cwd(), "features/what-if/useWhatIfData.ts"), "utf8");
+    expect(data).toMatch(/keepPreviousData/);
+    expect(data).toMatch(/invalidateScenarioQueries/);
+    expect(data).not.toMatch(/invalidateFinancialQueries/);
+    expect(data).toMatch(/what-if-scenario-compare/);
+  });
 });

@@ -35,6 +35,8 @@ def override_changes_timing(ov: ScenarioRuleOverride) -> bool:
     if ov.override_category_id is not None and ov.override_category_id != rule.category_id:
         return True
     return False
+
+
 from timeline.services.ledger import (
     _append_scenario_projection_rows,
     _apply_scenario_category_shocks,
@@ -43,10 +45,10 @@ from timeline.services.ledger import (
     append_scenario_added_recurring_projections,
     apply_scenario_overrides,
     dedupe_future_rule_occurrence_rows,
-    generate_rule_occurrences,
     recompute_future_timeline_running_balances,
     signed_amount_for_rule,
 )
+from timeline.services.rule_schedule import generate_rule_occurrence_dates
 
 
 def _future_rule_row(row: dict, rule_id: int, today: date) -> bool:
@@ -80,10 +82,10 @@ def _ensure_projected_occurrences(
         return
     eff_start = eff.get("start_date") or rule.start_date
     eff_end = eff.get("end_date")
-    occ_dates = generate_rule_occurrences(
+    occ_dates = generate_rule_occurrence_dates(
         rule,
-        start_date=today,
-        end_date=end_date,
+        today,
+        end_date,
         effective_start=eff_start,
         effective_end=eff_end,
     )

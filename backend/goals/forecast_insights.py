@@ -700,6 +700,7 @@ def build_goal_detail(
     user,
     scenario_id: int | None = None,
     today: date | None = None,
+    history_limit: int = 100,
 ) -> dict[str, Any]:
     from goals.bucket_services import (
         bucket_to_api_dict,
@@ -765,10 +766,11 @@ def build_goal_detail(
                 "contribution_pace_monthly": _serialize_decimal(scenario_pace),
             }
 
+    limit = max(0, min(int(history_limit), 100))
     contributions = (
         GoalContribution.objects.filter(bucket=bucket, date__lte=today)
         .select_related("account", "transaction")
-        .order_by("-date", "-id")[:100]
+        .order_by("-date", "-id")[:limit]
     )
     history = [
         {

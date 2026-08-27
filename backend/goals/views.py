@@ -414,7 +414,20 @@ class GoalBucketViewSet(ModelViewSet):
         bucket = self.get_object()
         scenario_id = request.query_params.get("scenario")
         sid = int(scenario_id) if scenario_id and scenario_id.isdigit() else None
-        return Response(build_goal_detail(bucket, user=request.user, scenario_id=sid))
+        history_limit_raw = request.query_params.get("history_limit")
+        history_limit = (
+            int(history_limit_raw)
+            if history_limit_raw is not None and str(history_limit_raw).isdigit()
+            else 100
+        )
+        return Response(
+            build_goal_detail(
+                bucket,
+                user=request.user,
+                scenario_id=sid,
+                history_limit=history_limit,
+            )
+        )
 
     @action(detail=True, methods=["put", "patch"], url_path="funding")
     def configure_funding(self, request, pk=None):
@@ -457,9 +470,13 @@ class GoalContributionViewSet(ModelViewSet):
 
     def get_queryset(self):
         households = get_households_for_user(self.request.user)
-        return GoalContribution.objects.filter(bucket__household__in=households).select_related(
+        qs = GoalContribution.objects.filter(bucket__household__in=households).select_related(
             "bucket", "transaction", "account"
         )
+        bucket = self.request.query_params.get("bucket")
+        if bucket and str(bucket).isdigit():
+            qs = qs.filter(bucket_id=int(bucket))
+        return qs
 
     def create(self, request, *args, **kwargs):
         ser = AssignContributionSerializer(data=request.data)

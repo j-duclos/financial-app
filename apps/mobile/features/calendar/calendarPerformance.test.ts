@@ -30,7 +30,8 @@ describe("Calendar request orchestration", () => {
     expect(calendarData).not.toMatch(/visibleChunkQuery\.isSuccess/);
   });
 
-  it("prefetches adjacent months without waiting for visible chunk success", () => {
-    expect(calendarData).not.toMatch(/visibleChunkQuery\.isSuccess[\s\S]{0,120}prefetchMonth/);
+  it("does not prefetch adjacent months until canonical reuse is cheap", () => {
+    expect(calendarData).not.toMatch(/prefetchMonth/);
+    expect(calendarData).not.toMatch(/prefetchAdjacent/);
   });
 });

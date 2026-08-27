@@ -1,10 +1,9 @@
 import React from "react";
 import { Text, View } from "react-native";
-import { formatCurrency } from "@budget-app/shared";
 import type { DebtPayoffPlan } from "@budget-app/shared";
-import { Card, CurrencyDisplay } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { debtFreeHeadline, interestSavedLine } from "./display";
+import { formatMoneyOrDash, interestSavedLine, formatDebtFreeMonth } from "./display";
 import { formatDateDisplay } from "@/lib/dates";
 
 type Props = {
@@ -14,13 +13,13 @@ type Props = {
 
 export function PlannerSummaryCard({ plan, recalculating }: Props) {
   const theme = useTheme();
-  const headline = debtFreeHeadline(plan);
   const saved = interestSavedLine(plan);
+  const debtFree = formatDebtFreeMonth(plan);
 
   return (
     <Card style={{ marginBottom: theme.spacing.md }}>
       <Text
-        style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 4 }}
+        style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}
         accessibilityRole="header"
       >
         Plan summary
@@ -33,63 +32,61 @@ export function PlannerSummaryCard({ plan, recalculating }: Props) {
           Recalculating plan…
         </Text>
       ) : null}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-        <Metric label="Total debt" value={formatCurrency(plan.total_debt)} />
-        <Metric label="Weighted APR" value={`${plan.weighted_apr}%`} />
-        <Metric label="Interest / mo" value={formatCurrency(plan.monthly_interest_burn)} tone="critical" />
-        <Metric
-          label="Debt-free (est.)"
-          value={
-            plan.debt_free_date
-              ? formatDateDisplay(plan.debt_free_date)
-              : plan.debt_free_possible
-                ? "—"
-                : "Needs higher pay"
-          }
-        />
-      </View>
-      {headline ? (
-        <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 4 }}>
-          {headline}
+      <MetricRow label="Total debt" value={formatMoneyOrDash(plan.total_debt)} />
+      <MetricRow label="Weighted APR" value={formatAprOrDash(plan.weighted_apr)} />
+      <MetricRow label="Debt-free" value={debtFree} />
+      <MetricRow
+        label="Extra payment"
+        value={`${formatMoneyOrDash(plan.extra_monthly)}/mo`}
+      />
+      {saved ? (
+        <Text
+          style={{
+            color: theme.colors.moneyPositive,
+            ...theme.typography.caption,
+            marginTop: 10,
+          }}
+        >
+          {saved}
+        </Text>
+      ) : plan.baseline_status === "baseline_not_payoffable" ? (
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            ...theme.typography.caption,
+            marginTop: 10,
+          }}
+        >
+          Minimum payments alone would not pay off all debts.
         </Text>
       ) : null}
-      {saved ? (
-        <Text style={{ color: theme.colors.moneyPositive, ...theme.typography.caption }}>{saved}</Text>
-      ) : null}
-      <Text
-        style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}
-      >
-        Monthly budget: {formatCurrency(plan.monthly_payment_budget)} · Extra:{" "}
-        {formatCurrency(plan.extra_monthly)}
-      </Text>
-      <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
-        Projection as of {formatDateDisplay(plan.as_of)} — not a scheduled payment.
+      <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}>
+        As of {formatDateDisplay(plan.as_of)}
       </Text>
     </Card>
   );
 }
 
-function Metric({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "critical";
-}) {
+function formatAprOrDash(raw: string | null | undefined): string {
+  if (raw == null || String(raw).trim() === "") return "—";
+  const n = parseFloat(String(raw));
+  if (!Number.isFinite(n)) return "—";
+  return `${raw}%`;
+}
+
+function MetricRow({ label, value }: { label: string; value: string }) {
   const theme = useTheme();
   return (
-    <View style={{ minWidth: "45%", flexGrow: 1 }}>
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 6,
+      }}
+    >
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>{label}</Text>
-      <CurrencyDisplay
-        amount={value}
-        style={{
-          color: tone === "critical" ? theme.colors.critical : theme.colors.text,
-          fontWeight: "700",
-          fontSize: 16,
-        }}
-      />
+      <Text style={{ color: theme.colors.text, fontWeight: "700", fontSize: 15 }}>{value}</Text>
     </View>
   );
 }
