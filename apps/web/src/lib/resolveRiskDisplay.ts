@@ -3,13 +3,29 @@ import type {
   DashboardRecommendation,
   ResolveRiskAction,
   ResolveRiskPlan,
-  ResolveRiskSimulationPreview,
 } from "@budget-app/shared";
-import { formatCurrency } from "@budget-app/shared";
-import { simulationStatusClass, simulationStatusLabel } from "./transferSimulation";
+import {
+  formatResolveRiskLowest,
+  recommendationIsCreditPayment,
+  recommendationOpensTransfer,
+  recommendationShowsResolveRisk,
+  resolveRiskPlannerAccountId,
+  resolveRiskTransferPreset as buildResolveRiskTransferPreset,
+  simulationPreviewLines,
+  actionSeverityShows,
+} from "@budget-app/shared";
 import { normalizeSeverity, severityShowsAlert } from "./severity";
-import { recommendationOpensTransfer, snoozeRecommendation } from "./recommendationDisplay";
+import { snoozeRecommendation } from "./recommendationDisplay";
 import type { QuickTransactionPreset } from "../components/quickActions/QuickTransactionModal";
+
+export {
+  formatResolveRiskLowest,
+  recommendationIsCreditPayment,
+  recommendationOpensTransfer,
+  recommendationShowsResolveRisk,
+  simulationPreviewLines,
+  actionSeverityShows,
+};
 
 export function accountShowsResolveRisk(
   account: Pick<Account, "account_type" | "health_status" | "risk_status" | "lowest_projected_balance_30_days">
@@ -22,120 +38,36 @@ export function accountShowsResolveRisk(
   return false;
 }
 
-const CREDIT_RESOLVE_TYPES = new Set([
-  "reduce_utilization",
-  "pay_credit_card",
-  "debt_payoff",
-]);
-
-/** Utilization / card payoff — use Payment Planner, not the cash-flow resolve-risk drawer. */
-export function recommendationIsCreditPayment(rec: DashboardRecommendation): boolean {
-  const type = rec.type ?? "";
-  if (CREDIT_RESOLVE_TYPES.has(type)) return true;
-  if ((rec.id ?? "").startsWith("utilization-")) return true;
-  if (rec.impact_type === "credit_utilization") return true;
-  const primary = rec.primary_action_url ?? "";
-  const secondary = rec.secondary_action_url ?? "";
-  if (primary.includes("/credit-cards") || secondary.includes("/credit-cards")) return true;
-  const blob = `${rec.title} ${rec.why} ${rec.recommended_action ?? ""}`.toLowerCase();
-  if (blob.includes("utilization")) return true;
-  return false;
-}
-
-export function recommendationShowsResolveRisk(rec: DashboardRecommendation): boolean {
-  if (rec.account_id == null) return false;
-  if (recommendationIsCreditPayment(rec)) return false;
-  if (recommendationOpensTransfer(rec)) return false;
-  const sev = normalizeSeverity(rec.severity);
-  return sev === "critical" || sev === "at_risk";
-}
-
-export function formatResolveRiskLowest(balance: string | null | undefined): string {
-  if (balance == null) return "—";
-  return formatCurrency(balance);
-}
-
-export function simulationPreviewLines(
-  preview: ResolveRiskSimulationPreview | undefined
-): { lowestLine: string | null; improvementLine: string | null; statusLabel: string | null } {
-  if (
-    !preview?.simulated_lowest_projected_balance &&
-    !preview?.simulated_horizon_lowest_projected_balance &&
-    !preview?.base_lowest_projected_balance
-  ) {
-    return { lowestLine: null, improvementLine: null, statusLabel: null };
-  }
-  const sim =
-    preview.simulated_horizon_lowest_projected_balance ??
-    preview.simulated_lowest_projected_balance;
-  const simDate =
-    preview.simulated_horizon_lowest_date ?? preview.simulated_lowest_date ?? null;
-  const dateSuffix =
-    simDate != null && simDate.length >= 10
-      ? ` on ${new Date(`${simDate.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        })}`
-      : "";
-  const lowestLine = sim != null ? `Lowest projected becomes ${formatCurrency(sim)}${dateSuffix}` : null;
-  let improvementLine: string | null = null;
-  if (preview.improvement_amount) {
-    const imp = parseFloat(preview.improvement_amount);
-    if (Number.isFinite(imp) && imp > 0) {
-      improvementLine = `Improves balance by ${formatCurrency(preview.improvement_amount)}`;
-    }
-  }
-  const statusLabel = preview.result_status
-    ? simulationStatusLabel(
-        preview.result_status as "resolved" | "partial" | "failed"
-      )
-    : preview.risk_resolved
-      ? "Risk resolved"
-      : null;
-  return { lowestLine, improvementLine, statusLabel };
-}
-
 export function resolveRiskTransferPreset(
   action: ResolveRiskAction,
   accounts: Account[]
 ): QuickTransactionPreset | null {
-  if (action.kind !== "move_money" || !action.related_account_id || !action.account_id) {
-    return null;
-  }
-  const to = accounts.find((a) => a.id === action.account_id);
-  if (!to) return null;
-  const amount =
-    action.recommended_amount?.replace(/[^\d.]/g, "") ||
-    action.simulation?.improvement_amount?.replace(/[^\d.]/g, "");
-  const date =
-    action.simulation?.transfer_date ||
-    action.recommended_date ||
-    undefined;
+  const preset = buildResolveRiskTransferPreset(action, accounts);
+  if (!preset) return null;
   return {
-    accountId: action.account_id,
+    accountId: preset.accountId,
     mode: "transfer",
-    transferToAccountId: action.account_id,
-    transferFromAccountId: action.related_account_id,
-    defaultAmount: amount || undefined,
-    defaultDate: date,
+    transferToAccountId: preset.transferToAccountId,
+    transferFromAccountId: preset.transferFromAccountId,
+    defaultAmount: preset.defaultAmount,
+    defaultDate: preset.defaultDate,
   };
 }
 
 export function resolveRiskPlannerUrl(action: ResolveRiskAction): string | null {
-  if (action.kind === "reduce_utilization" || action.primary_action_url?.includes("credit-cards")) {
-    return action.account_id != null
-      ? `/credit-cards?account=${action.account_id}`
-      : "/credit-cards";
-  }
-  return null;
+  const accountId = resolveRiskPlannerAccountId(action);
+  if (accountId == null) return null;
+  return `/credit-cards?account=${accountId}`;
 }
 
 export function snoozeResolveRisk(plan: ResolveRiskPlan): void {
   if (plan.snooze_id) snoozeRecommendation(plan.snooze_id);
 }
 
-export function actionSeverityShows(action: ResolveRiskAction): boolean {
-  return severityShowsAlert(normalizeSeverity(action.severity));
+export { simulationStatusClass } from "./transferSimulation";
+
+export function recommendationShowsResolveRiskWeb(rec: DashboardRecommendation): boolean {
+  return recommendationShowsResolveRisk(rec);
 }
 
-export { simulationStatusClass };
+export { normalizeSeverity, severityShowsAlert };

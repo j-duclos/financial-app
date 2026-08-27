@@ -1,5 +1,6 @@
 import React from "react";
 import { EmptyState, Screen, AppHeader } from "@/components/ui";
+import { useStackBack } from "@/lib/stackNavigation";
 
 type Props = {
   title: string;
@@ -10,9 +11,10 @@ type Props = {
 
 /** Lightweight placeholder for features not yet migrated to mobile. */
 export function PlaceholderScreen({ title, message, showBack, onBack }: Props) {
+  const stackBack = useStackBack();
   return (
     <Screen>
-      <AppHeader title={title} onBack={showBack ? onBack : undefined} />
+      <AppHeader title={title} onBack={showBack ? (onBack ?? stackBack) : undefined} />
       <EmptyState
         title={`${title} coming soon`}
         message={

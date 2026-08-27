@@ -1,7 +1,5 @@
-import { PlaceholderScreen } from "@/components/PlaceholderScreen";
-import { useRouter } from "expo-router";
+import { ActionCenterScreen } from "@/features/action-center";
 
-export default function ActionCenterPlaceholder() {
-  const router = useRouter();
-  return <PlaceholderScreen title="Action Center" showBack onBack={() => router.back()} />;
+export default function ActionCenterRoute() {
+  return <ActionCenterScreen />;
 }

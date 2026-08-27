@@ -13,43 +13,68 @@ describe("getApiBaseUrl", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps explicit localhost URL in development", async () => {
+  async function loadEnv(mocks?: {
+    appEnv?: string;
+    apiUrl?: string;
+  }) {
+    vi.doMock("expo-constants", () => ({
+      default: {
+        expoConfig: {
+          extra: {
+            appEnv: mocks?.appEnv,
+            apiUrl: mocks?.apiUrl ?? "",
+          },
+        },
+      },
+    }));
+    return import("./env");
+  }
+
+  it("reads explicit localhost URL in development", async () => {
     process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
     process.env.EXPO_PUBLIC_APP_ENV = "development";
-    vi.doMock("expo-constants", () => ({
-      default: { expoConfig: { extra: { appEnv: "development" } } },
-    }));
-    vi.doMock("expo-device", () => ({ isDevice: true }));
-    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
     vi.stubGlobal("__DEV__", true);
 
-    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests, getApiTargetLabel } = await loadEnv({
+      appEnv: "development",
+    });
     resetApiBaseUrlCacheForTests();
     expect(getApiBaseUrl()).toBe("http://localhost:8000");
+    expect(getApiTargetLabel()).toBe("local");
   });
 
-  it("keeps explicit non-localhost URL", async () => {
+  it("keeps explicit Render URL and labels it render", async () => {
     process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com";
-    vi.doMock("expo-constants", () => ({ default: {} }));
-    vi.doMock("expo-device", () => ({ isDevice: true }));
-    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
-    vi.stubGlobal("__DEV__", false);
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
 
-    const { getApiBaseUrl } = await import("./env");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests, getApiTargetLabel } = await loadEnv();
+    resetApiBaseUrlCacheForTests();
     expect(getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
+    expect(getApiTargetLabel()).toBe("render");
+  });
+
+  it("throws when API URL is missing in development", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+      apiUrl: "",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(() => getApiBaseUrl()).toThrow(/EXPO_PUBLIC_API_URL is not configured/i);
   });
 
   it("throws when production env uses localhost", async () => {
     process.env.EXPO_PUBLIC_APP_ENV = "production";
     process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
-    vi.doMock("expo-constants", () => ({
-      default: { expoConfig: { extra: { appEnv: "production" } } },
-    }));
-    vi.doMock("expo-device", () => ({ isDevice: false }));
-    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
     vi.stubGlobal("__DEV__", false);
 
-    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "production",
+    });
     resetApiBaseUrlCacheForTests();
     expect(() => getApiBaseUrl()).toThrow(/local or private-network/i);
   });
@@ -57,14 +82,11 @@ describe("getApiBaseUrl", () => {
   it("throws when staging env uses plain HTTP", async () => {
     process.env.EXPO_PUBLIC_APP_ENV = "staging";
     process.env.EXPO_PUBLIC_API_URL = "http://api.example.com";
-    vi.doMock("expo-constants", () => ({
-      default: { expoConfig: { extra: { appEnv: "staging" } } },
-    }));
-    vi.doMock("expo-device", () => ({ isDevice: false }));
-    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
     vi.stubGlobal("__DEV__", false);
 
-    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "staging",
+    });
     resetApiBaseUrlCacheForTests();
     expect(() => getApiBaseUrl()).toThrow(/HTTPS/i);
   });
@@ -72,15 +94,53 @@ describe("getApiBaseUrl", () => {
   it("throws when production has no API URL configured", async () => {
     delete process.env.EXPO_PUBLIC_API_URL;
     process.env.EXPO_PUBLIC_APP_ENV = "production";
-    vi.doMock("expo-constants", () => ({
-      default: { expoConfig: { extra: { appEnv: "production", apiUrl: "" } } },
-    }));
-    vi.doMock("expo-device", () => ({ isDevice: false }));
-    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
     vi.stubGlobal("__DEV__", false);
 
-    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "production",
+      apiUrl: "",
+    });
     resetApiBaseUrlCacheForTests();
     expect(() => getApiBaseUrl()).toThrow(/not configured/i);
+  });
+
+  it("strips trailing slash", async () => {
+    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com/";
+    process.env.EXPO_PUBLIC_APP_ENV = "staging";
+    vi.stubGlobal("__DEV__", false);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "staging",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
+  });
+
+  it("does not rewrite localhost to LAN for physical devices", async () => {
+    process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("http://localhost:8000");
+  });
+});
+
+describe("wireApiClient uses centralized URL", () => {
+  it("services/api.ts configures shared client from getApiBaseUrl only", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../services/api.ts"),
+      "utf8"
+    );
+    expect(source).toMatch(/baseUrl:\s*getApiBaseUrl\(\)/);
+    expect(source).not.toMatch(/localhost:8000/);
+    expect(source).not.toMatch(/onrender\.com/);
+    expect(source).toMatch(/configurePerfLogging\(true,\s*getApiTargetLabel\(\)\)/);
   });
 });

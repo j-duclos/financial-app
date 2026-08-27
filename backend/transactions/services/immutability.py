@@ -89,6 +89,11 @@ def reject_if_reconciled(txn: Transaction, *, action: str = "changed") -> None:
         raise ValidationError(f"Reconciled transactions cannot be {action}.")
 
 
+def reject_if_bank_imported(txn: Transaction, *, action: str = "deleted") -> None:
+    if is_bank_imported(txn):
+        raise ValidationError(f"Imported bank transactions cannot be {action}.")
+
+
 def reject_if_reconciled_bulk(txns) -> None:
     for txn in txns:
         reject_if_reconciled(txn)
@@ -133,8 +138,7 @@ def validate_transaction_update(instance: Transaction, validated_data: dict) -> 
             raise ValidationError(
                 {
                     field: (
-                        "Reconciled transaction. Financial fields are locked. "
-                        "Undo the reconciliation first to change accounting history."
+                        "Reconciled transaction. Financial fields are locked."
                     )
                     for field in locked
                 }

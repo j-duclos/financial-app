@@ -1115,6 +1115,8 @@ export interface Transaction {
   plaid_transaction_id?: string | null;
   import_match_status?: string | null;
   is_bill?: boolean;
+  /** Canonical ledger balance after this row when requested via include_running_balance. */
+  running_balance?: string | null;
   created_at: string;
   updated_at: string;
 }

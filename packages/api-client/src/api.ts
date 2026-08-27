@@ -616,6 +616,10 @@ export async function listTransactions(params?: {
   search?: string;
   page?: number;
   page_size?: number;
+  /** DRF OrderingFilter, e.g. "date,id" for ascending ledger order. */
+  ordering?: string;
+  /** When true with account=, attach canonical running_balance per row. */
+  include_running_balance?: boolean;
 }): Promise<PaginatedResponse<Transaction>> {
   const q: Record<string, string> = {};
   if (params?.account != null) q.account = String(params.account);
@@ -630,6 +634,8 @@ export async function listTransactions(params?: {
   if (params?.search?.trim()) q.search = params.search.trim();
   if (params?.page != null) q.page = String(params.page);
   if (params?.page_size != null) q.page_size = String(params.page_size);
+  if (params?.ordering) q.ordering = params.ordering;
+  if (params?.include_running_balance) q.include_running_balance = "true";
   return requestRequired("/api/transactions/", { params: q });
 }
 

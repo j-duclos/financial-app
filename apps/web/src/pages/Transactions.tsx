@@ -12,10 +12,8 @@ import {
   updateTransaction,
   updateRule,
   deleteTransaction,
-  confirmTransaction,
   skipTransactionOccurrence,
   moveTransactionDate,
-  matchTransactionToImport,
   getAccount,
   getTimeline,
   getTransaction,
@@ -29,7 +27,6 @@ import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
 import PendingExpectedSection from "../components/transactions/PendingExpectedSection";
-import ExpectedMatchDialog from "../components/transactions/ExpectedMatchDialog";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
 import {
@@ -173,10 +170,6 @@ export default function Transactions() {
     () => new Set()
   );
   const [pendingSelectionKeys, setPendingSelectionKeys] = useState<Set<string>>(() => new Set());
-  const [matchDialog, setMatchDialog] = useState<{
-    transactionId: number;
-    label: string;
-  } | null>(null);
   const [editForm, setEditForm] = useState({
     date: todayStr(),
     payee: "",
@@ -1429,22 +1422,6 @@ export default function Transactions() {
     },
   });
 
-  const confirmMu = useMutation({
-    mutationFn: confirmTransaction,
-    onMutate: () => {
-      setAwaitingTimelineRecalc(true);
-    },
-    onSuccess: () => {
-      setDeleteError(null);
-      afterFinancialEdit({ refreshAccounts: true });
-    },
-    onError: (err: Error) => {
-      setAwaitingTimelineRecalc(false);
-      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
-      setDeleteError(msg || "Failed to confirm transaction");
-    },
-  });
-
   const moveDateMu = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) => moveTransactionDate(id, date),
     onMutate: () => {
@@ -1461,34 +1438,9 @@ export default function Transactions() {
     },
   });
 
-  const matchMu = useMutation({
-    mutationFn: ({
-      plannedId,
-      importedTransactionId,
-    }: {
-      plannedId: number;
-      importedTransactionId: number;
-    }) => matchTransactionToImport(plannedId, importedTransactionId),
-    onMutate: () => {
-      setAwaitingTimelineRecalc(true);
-    },
-    onSuccess: () => {
-      setDeleteError(null);
-      setMatchDialog(null);
-      afterFinancialEdit({ refreshAccounts: true });
-    },
-    onError: (err: Error) => {
-      setAwaitingTimelineRecalc(false);
-      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
-      setDeleteError(msg || "Failed to match transaction");
-    },
-  });
-
   const lifecyclePending =
     skipOccurrenceMu.isPending ||
-    confirmMu.isPending ||
     moveDateMu.isPending ||
-    matchMu.isPending ||
     deleteMu.isPending ||
     batchDeleteMu.isPending;
 
@@ -1499,9 +1451,7 @@ export default function Transactions() {
     deleteMu.isPending ||
     batchDeleteMu.isPending ||
     skipOccurrenceMu.isPending ||
-    confirmMu.isPending ||
-    moveDateMu.isPending ||
-    matchMu.isPending;
+    moveDateMu.isPending;
 
   useEffect(() => {
     if (
@@ -1644,6 +1594,13 @@ export default function Transactions() {
       setDeleteError("Reconciled transactions cannot be deleted.");
       return;
     }
+    if (isBankImportedTransaction({
+      plaid_transaction_id: row.plaid_transaction_id,
+      source: row.txn_source ?? row.source,
+    })) {
+      setDeleteError("Imported bank transactions cannot be deleted.");
+      return;
+    }
     setDeleteError(null);
     try {
       const transactionId =
@@ -1679,9 +1636,9 @@ export default function Transactions() {
     }
   }
 
-  async function confirmExpectedRow(row: TimelineRow) {
+  async function matchesImportedRow(row: TimelineRow) {
     if (row.reconciled) {
-      setDeleteError("Reconciled transactions cannot be confirmed.");
+      setDeleteError("Reconciled transactions cannot be removed.");
       return;
     }
     setDeleteError(null);
@@ -1689,19 +1646,19 @@ export default function Transactions() {
       const transactionId =
         row.transaction_id ?? (await ensureRowTransactionId(row));
       if (transactionId == null) {
-        setDeleteError("Could not load this expected transaction to confirm.");
+        setDeleteError("Could not load this scheduled transaction.");
         return;
       }
       if (
         window.confirm(
-          `Mark "${row.description}" as posted? It will move to Past as a confirmed transaction.`
+          `"${row.description}" matches an imported transaction. Remove this scheduled item?`
         )
       ) {
-        confirmMu.mutate(transactionId);
+        skipOccurrenceMu.mutate(transactionId);
       }
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
-      setDeleteError(msg || "Could not confirm transaction");
+      setDeleteError(msg || "Could not remove scheduled transaction");
     }
   }
 
@@ -1727,25 +1684,6 @@ export default function Transactions() {
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not move transaction date");
-    }
-  }
-
-  async function openMatchExpectedRow(row: TimelineRow) {
-    if (row.reconciled) return;
-    setDeleteError(null);
-    try {
-      const transactionId =
-        row.transaction_id ?? (await ensureRowTransactionId(row));
-      if (transactionId == null) {
-        setDeleteError(
-          "This scheduled item was already fulfilled by a nearby bank import (for example payroll posted one day early). Refresh the page — it should no longer appear in Pending."
-        );
-        return;
-      }
-      setMatchDialog({ transactionId, label: row.description });
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
-      setDeleteError(msg || "Could not open match dialog");
     }
   }
 
@@ -2313,8 +2251,7 @@ export default function Transactions() {
       )}
 
       {(selectedTransactionIds.size > 0 || pendingSelectionKeys.size > 0) &&
-        !editing &&
-        !matchDialog && (
+        !editing && (
         <div className="mb-3 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 shadow-sm">
           <span className="font-medium">
             {selectedTransactionIds.size > 0
@@ -2430,10 +2367,9 @@ export default function Transactions() {
               isCredit={isCredit}
               hiddenByPast={pastExpanded || forecastExpanded}
               onEditRow={openEditByLedgerRow}
-              onConfirmRow={confirmExpectedRow}
+              onMatchesImportedRow={matchesImportedRow}
               onSkipRow={confirmSkipRow}
               onMoveDateRow={moveDateExpectedRow}
-              onMatchRow={openMatchExpectedRow}
               onDeleteRow={confirmDeleteRow}
               actionsPending={forecastActionsLocked}
               selectedIds={selectedTransactionIds}
@@ -2839,21 +2775,6 @@ export default function Transactions() {
         </div>
       )}
 
-      {matchDialog && (
-        <ExpectedMatchDialog
-          transactionId={matchDialog.transactionId}
-          label={matchDialog.label}
-          currency={currency}
-          pending={matchMu.isPending}
-          onClose={() => setMatchDialog(null)}
-          onMatch={(importedTransactionId) =>
-            matchMu.mutate({
-              plannedId: matchDialog.transactionId,
-              importedTransactionId,
-            })
-          }
-        />
-      )}
 
     </div>
   );

@@ -1,20 +1,23 @@
 /**
- * Mobile API and environment configuration.
+ * Mobile API and environment configuration (single source of truth).
  *
- * Environments (EXPO_PUBLIC_APP_ENV):
- * - development — local Metro; HTTP allowed for localhost/LAN
- * - staging — internal beta builds; HTTPS required
+ * Canonical variable: EXPO_PUBLIC_API_URL
+ * App mode: EXPO_PUBLIC_APP_ENV = development | staging | production
+ *
+ * Switch Local ↔ Render by changing EXPO_PUBLIC_API_URL only (then reload Metro).
+ * Do not hard-code hosts in feature files — use getApiBaseUrl().
+ *
+ * Environments:
+ * - development — Metro; HTTP allowed for localhost / LAN / emulator hosts
+ * - staging — EAS preview / internal beta; HTTPS required; no localhost
  * - production — store builds; HTTPS required; no localhost
- *
- * Set EXPO_PUBLIC_API_URL in `.env` or EAS build profile env.
  */
 import Constants from "expo-constants";
-import * as Device from "expo-device";
-import { Platform } from "react-native";
 
 export type AppEnvironment = "development" | "staging" | "production";
 
-const DEFAULT_API_PORT = 8000;
+/** Coarse target for logs/UI: local Django vs Render (or other hosted) API. */
+export type ApiTargetLabel = "local" | "render" | "other";
 
 type ExpoExtra = {
   appEnv?: string;
@@ -35,6 +38,11 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/$/, "");
 }
 
+function parseUrl(url: string): URL {
+  const normalized = url.startsWith("http") ? url : `http://${url}`;
+  return new URL(normalized);
+}
+
 function isLocalhostHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -47,8 +55,7 @@ function isLocalhostHost(hostname: string): boolean {
 
 function isPrivateOrLocalUrl(url: string): boolean {
   try {
-    const normalized = url.startsWith("http") ? url : `http://${url}`;
-    const { hostname, protocol } = new URL(normalized);
+    const { hostname, protocol } = parseUrl(url);
     if (protocol !== "https:" && protocol !== "http:") return true;
     return isLocalhostHost(hostname);
   } catch {
@@ -58,49 +65,10 @@ function isPrivateOrLocalUrl(url: string): boolean {
 
 function isHttpsUrl(url: string): boolean {
   try {
-    return new URL(url.startsWith("http") ? url : `https://${url}`).protocol === "https:";
+    return parseUrl(url).protocol === "https:";
   } catch {
     return false;
   }
-}
-
-/** Host Metro/Expo uses to reach the dev machine (e.g. 192.168.1.52 from Expo Go QR). */
-function getExpoDevMachineHost(): string | null {
-  const raw =
-    (Constants.expoGoConfig as { debuggerHost?: string } | undefined)?.debuggerHost ??
-    Constants.expoConfig?.hostUri ??
-    null;
-  if (!raw) return null;
-  const host = raw.split(":")[0]?.trim();
-  if (!host || isLocalhostHost(host)) return null;
-  return host;
-}
-
-function defaultDevBaseUrl(): string {
-  if (Platform.OS === "android" && !Device.isDevice) {
-    return `http://10.0.2.2:${DEFAULT_API_PORT}`;
-  }
-  const lanHost = getExpoDevMachineHost();
-  if (lanHost) {
-    return `http://${lanHost}:${DEFAULT_API_PORT}`;
-  }
-  return `http://localhost:${DEFAULT_API_PORT}`;
-}
-
-function resolveConfiguredUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return defaultDevBaseUrl();
-
-  const base = stripTrailingSlash(trimmed);
-
-  if (__DEV__ && isPrivateOrLocalUrl(base) && Device.isDevice) {
-    const lanHost = getExpoDevMachineHost();
-    if (lanHost && isLocalhostHost(new URL(base.startsWith("http") ? base : `http://${base}`).hostname)) {
-      return `http://${lanHost}:${DEFAULT_API_PORT}`;
-    }
-  }
-
-  return base;
 }
 
 function assertProductionApiUrl(url: string, env: AppEnvironment): void {
@@ -108,38 +76,95 @@ function assertProductionApiUrl(url: string, env: AppEnvironment): void {
 
   if (isPrivateOrLocalUrl(url)) {
     throw new Error(
-      `${env} builds cannot use a local or private-network API URL (${url}). Set EXPO_PUBLIC_API_URL to your HTTPS API host.`
+      `${env} builds cannot use a local or private-network API URL (${url}). ` +
+        `Set EXPO_PUBLIC_API_URL to your HTTPS Render/API host.`
     );
   }
   if (!isHttpsUrl(url)) {
     throw new Error(
-      `${env} builds require HTTPS for EXPO_PUBLIC_API_URL. Plain HTTP is not permitted for authenticated financial APIs.`
+      `${env} builds require HTTPS for EXPO_PUBLIC_API_URL. ` +
+        `Plain HTTP is not permitted for authenticated financial APIs.`
     );
   }
 }
 
 let cachedApiBaseUrl: string | null = null;
 
+/**
+ * Resolve the single mobile API origin (canonical API_BASE_URL).
+ * Requires EXPO_PUBLIC_API_URL (or app.config extra.apiUrl) in every environment —
+ * no silent localhost fallback and no device-based auto-selection.
+ */
 export function getApiBaseUrl(): string {
   if (cachedApiBaseUrl) return cachedApiBaseUrl;
 
   const env = getAppEnvironment();
   const fromEnv = (process.env.EXPO_PUBLIC_API_URL || extra().apiUrl || "").trim();
 
-  let resolved: string;
-  if (fromEnv) {
-    resolved = resolveConfiguredUrl(fromEnv);
-  } else if (env === "development" || __DEV__) {
-    resolved = defaultDevBaseUrl();
-  } else {
+  if (!fromEnv) {
     throw new Error(
-      "EXPO_PUBLIC_API_URL is not configured. Set it to your production API origin (HTTPS, no trailing slash)."
+      "EXPO_PUBLIC_API_URL is not configured. " +
+        "Copy apps/mobile/.env.local.example or .env.render.example to .env, " +
+        "set the API origin (no trailing slash), and restart Expo."
+    );
+  }
+
+  const resolved = stripTrailingSlash(fromEnv);
+  try {
+    parseUrl(resolved);
+  } catch {
+    throw new Error(
+      `EXPO_PUBLIC_API_URL is not a valid URL: ${fromEnv}. ` +
+        `Example: http://192.168.1.10:8000 or https://financial-app-1-tu0l.onrender.com`
     );
   }
 
   assertProductionApiUrl(resolved, env);
   cachedApiBaseUrl = resolved;
   return resolved;
+}
+
+/** Hostname only — never log credentials or query strings. */
+export function getApiHostname(): string {
+  try {
+    return parseUrl(getApiBaseUrl()).hostname;
+  } catch {
+    return "unknown";
+  }
+}
+
+export function getApiTargetLabel(): ApiTargetLabel {
+  const host = getApiHostname().toLowerCase();
+  if (isLocalhostHost(host)) return "local";
+  if (host.endsWith(".onrender.com") || host.includes("onrender.com")) return "render";
+  return "other";
+}
+
+/** Human label for Profile / debug UI (dev only). */
+export function getApiTargetDisplayLabel(): string {
+  const label = getApiTargetLabel();
+  if (label === "local") return "Local";
+  if (label === "render") return "Render";
+  return "Other";
+}
+
+/**
+ * Development-only startup line, e.g. `[MOBILE ENV] API: local (192.168.1.10)`.
+ * No-op outside __DEV__. Never prints tokens or full URLs with credentials.
+ */
+export function logMobileApiEnvironment(): void {
+  if (!__DEV__) return;
+  try {
+    const label = getApiTargetLabel();
+    const host = getApiHostname();
+    // eslint-disable-next-line no-console
+    console.log(`[MOBILE ENV] API: ${label} (${host})`);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[MOBILE ENV] API configuration error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 /** Reset cached URL (tests only). */
@@ -151,7 +176,11 @@ export function resetApiBaseUrlCacheForTests(): void {
 export function getApiConnectivityHint(): string {
   const url = getApiBaseUrl();
   if (!__DEV__) return url;
-  return `${url}\nEnv: ${getAppEnvironment()}\nStart API: cd backend && python manage.py runserver 0.0.0.0:8000`;
+  return (
+    `${url}\n` +
+    `Env: ${getAppEnvironment()} · Target: ${getApiTargetDisplayLabel()}\n` +
+    `Local API: cd backend && ALLOWED_HOSTS='*' python3 manage.py runserver 0.0.0.0:8000`
+  );
 }
 
 export const API_REQUEST_TIMEOUT_MS = 90_000;

@@ -3,13 +3,19 @@ export function accountDetailPath(accountId: number): `/account/${number}` {
   return `/account/${accountId}`;
 }
 
-export function transactionsForAccountPath(accountId: number): {
+export function transactionsForAccountPath(
+  accountId: number,
+  accountName?: string
+): {
   pathname: "/(app)/(tabs)/transactions";
-  params: { account: string };
+  params: { account: string; accountName?: string };
 } {
   return {
     pathname: "/(app)/(tabs)/transactions",
-    params: { account: String(accountId) },
+    params: {
+      account: String(accountId),
+      ...(accountName ? { accountName } : {}),
+    },
   };
 }
 

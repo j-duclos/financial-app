@@ -13,6 +13,7 @@ import {
 } from "./ledgerTableLayout";
 import { creditBalanceColorClass, canEditLedgerTimelineRow, shouldHighlightUnmatchedScheduledRow, type LedgerRow } from "./transactionsLedgerUtils";
 import { unmatchedScheduleRowClasses, UNMATCHED_SCHEDULE_ROW_TITLE } from "./forecastRowSeverity";
+import { isBankImportedTransaction } from "./transactionStatusUtils";
 import type { TimelineRow } from "@budget-app/shared";
 import { sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 export const PAST_SCROLL_MIN_ROWS = COLLAPSED_LEDGER_ROWS;
@@ -229,7 +230,7 @@ export default function PastSection({
                       onEdit={row.txn.reconciled ? undefined : () => onEditTransaction(row.txn)}
                       onDuplicate={row.txn.reconciled ? undefined : () => onDuplicate(row.txn)}
                       onDelete={
-                        row.txn.reconciled
+                        row.txn.reconciled || isBankImportedTransaction(row.txn)
                           ? undefined
                           : () => onDelete(row.txn.id, row.txn.payee)
                       }

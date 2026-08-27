@@ -3,20 +3,16 @@ import { Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
-  DEFAULT_TRANSACTION_FILTERS,
+  clearTransactionFiltersPreservingAccount,
   parseAmountFilterInput,
   type TransactionFilters,
 } from "./types";
-import { TIME_FILTER_LABELS, type TimeFilter } from "@/lib/transactionsLedger";
-import type { Account, Category } from "@budget-app/shared";
-import { getEffectiveDisplayName } from "@budget-app/shared";
+import { TIME_FILTER_LABELS, RECENT_RANGE_OPTIONS, type TimeFilter } from "@/lib/transactionsLedger";
+import type { Category } from "@budget-app/shared";
 
 type Props = {
   visible: boolean;
   draft: TransactionFilters;
-  accounts: Account[];
-  accountsLoading?: boolean;
-  accountsError?: boolean;
   categories: Category[];
   categoriesLoading?: boolean;
   categoriesError?: boolean;
@@ -24,14 +20,11 @@ type Props = {
   onApply: (filters: TransactionFilters) => void;
 };
 
-const TIME_FILTERS = Object.keys(TIME_FILTER_LABELS) as TimeFilter[];
+const TIME_FILTERS = RECENT_RANGE_OPTIONS;
 
 export function TransactionFiltersSheet({
   visible,
   draft: initialDraft,
-  accounts,
-  accountsLoading = false,
-  accountsError = false,
   categories,
   categoriesLoading = false,
   categoriesError = false,
@@ -81,27 +74,12 @@ export function TransactionFiltersSheet({
     <BottomSheet visible={visible} title="Filters" onClose={onClose}>
       <ScrollView style={{ maxHeight: 480 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: theme.spacing.lg }}>
-          <View>
-            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
-              Account
-            </Text>
-            {accountsError ? (
-              <Text style={{ color: theme.colors.warning, fontSize: 12, marginBottom: 6 }}>
-                Could not load accounts — other filters still work.
-              </Text>
-            ) : null}
-            {accountsLoading ? (
-              <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 6 }}>
-                Loading accounts…
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {chip("All accounts", draft.accountId == null, () => set("accountId", null))}
-              {accounts.map((a) =>
-                chip(getEffectiveDisplayName(a), draft.accountId === a.id, () => set("accountId", a.id))
-              )}
-            </View>
-          </View>
+          <TextField
+            label="Search"
+            value={draft.search}
+            onChangeText={(text) => set("search", text)}
+            placeholder="Payee or memo"
+          />
 
           <View>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
@@ -150,6 +128,17 @@ export function TransactionFiltersSheet({
 
           <View>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
+              Posted / forecast
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {chip("All", draft.forecast === "all", () => set("forecast", "all"))}
+              {chip("Forecast", draft.forecast === "forecast", () => set("forecast", "forecast"))}
+              {chip("Posted", draft.forecast === "posted", () => set("forecast", "posted"))}
+            </View>
+          </View>
+
+          <View>
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
               Cleared
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -181,7 +170,7 @@ export function TransactionFiltersSheet({
             label="Clear"
             variant="secondary"
             onPress={() => {
-              setDraft(DEFAULT_TRANSACTION_FILTERS);
+              setDraft(clearTransactionFiltersPreservingAccount(initialDraft.accountId));
               setAmountMinInput("");
               setAmountMaxInput("");
             }}
@@ -193,6 +182,7 @@ export function TransactionFiltersSheet({
             onPress={() =>
               onApply({
                 ...draft,
+                accountId: initialDraft.accountId,
                 amountMin: parseAmountFilterInput(amountMinInput),
                 amountMax: parseAmountFilterInput(amountMaxInput),
               })

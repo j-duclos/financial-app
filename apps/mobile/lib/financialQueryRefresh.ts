@@ -23,6 +23,9 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["spending-targets"],
   ["spending-targets-summary"],
   ["spending-target"],
+  ["buckets"],
+  ["bucket-detail"],
+  ["goals-report"],
   ["monthly-reports"],
 ] as const;
 

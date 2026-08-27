@@ -1,8 +1,9 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { resolveRuleOccurrence } from "@budget-app/api-client";
+import { calendarMonthFromIsoDate, parseIsoDateParam } from "@budget-app/shared";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
 import {
   EmptyState,
@@ -36,12 +37,15 @@ import { DEFAULT_CALENDAR_EVENT_FILTER, horizonForForecastDays, type CalendarEve
 export function CalendarScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ date?: string }>();
+  const deepLinkDate = useMemo(() => parseIsoDateParam(params.date), [params.date]);
   const { forecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
   const today = todayStr();
   const [visibleYear, setVisibleYear] = useState(() => new Date().getFullYear());
   const [visibleMonth, setVisibleMonth] = useState(() => new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(today);
+  const [deepLinkApplied, setDeepLinkApplied] = useState(false);
   const [accountId, setAccountId] = useState<number | "">("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [eventFilter, setEventFilter] = useState<CalendarEventFilter>(DEFAULT_CALENDAR_EVENT_FILTER);
@@ -98,6 +102,15 @@ export function CalendarScreen() {
     goToMonth(now.getFullYear(), now.getMonth());
     setSelectedDate(todayStr());
   }, [goToMonth]);
+
+  useEffect(() => {
+    if (!deepLinkDate || deepLinkApplied) return;
+    const { year, month } = calendarMonthFromIsoDate(deepLinkDate);
+    setVisibleYear(year);
+    setVisibleMonth(month);
+    setSelectedDate(deepLinkDate);
+    setDeepLinkApplied(true);
+  }, [deepLinkDate, deepLinkApplied]);
 
   const onEventPress = useCallback(
     async (txn: TimelineCalendarTransaction) => {

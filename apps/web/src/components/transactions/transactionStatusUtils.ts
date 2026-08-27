@@ -80,7 +80,7 @@ export function transactionEditLockMessage(
   accountName?: string | null
 ): string | null {
   if (txn.reconciled) {
-    return "Reconciled transaction. Financial fields are locked. Undo the reconciliation to change accounting history.";
+    return "Reconciled transaction. Financial fields are locked.";
   }
   if (isBankImportedTransaction(txn)) {
     const from = accountName?.trim()

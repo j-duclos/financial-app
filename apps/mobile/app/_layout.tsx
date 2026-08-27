@@ -14,6 +14,7 @@ import { PrivacyOverlay } from "@/components/PrivacyOverlay";
 import { AuthProvider } from "@/features/auth";
 import { useAppLifecycleRefresh } from "@/hooks/useAppLifecycleRefresh";
 import { createAppQueryClient } from "@/lib/queryClient";
+import { logMobileApiEnvironment } from "@/constants/env";
 import { initMonitoring } from "@/lib/monitoring";
 import { ThemeProvider } from "@/theme";
 
@@ -40,6 +41,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     initMonitoring();
+    logMobileApiEnvironment();
   }, []);
 
   useEffect(() => {

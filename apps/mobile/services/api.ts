@@ -2,7 +2,7 @@ import {
   configureApiClient,
   configurePerfLogging,
 } from "@budget-app/api-client";
-import { getApiBaseUrl } from "@/constants/env";
+import { getApiBaseUrl, getApiTargetLabel } from "@/constants/env";
 import { saveAccessToken } from "@/services/secureTokenStorage";
 
 export { ApiError, describeApiError } from "./apiErrors";
@@ -18,6 +18,7 @@ let wired = false;
 
 /**
  * Configure the shared @budget-app/api-client once for the mobile runtime.
+ * All mobile features (auth, dashboard, accounts, …) share this single base URL.
  * Call again when token refs change (refs are closures over current auth state).
  */
 export function wireApiClient(refs: TokenRefs): void {
@@ -32,7 +33,7 @@ export function wireApiClient(refs: TokenRefs): void {
     onUnauthorized: refs.onUnauthorized,
   });
   if (!wired && __DEV__) {
-    configurePerfLogging(true);
+    configurePerfLogging(true, getApiTargetLabel());
     wired = true;
   }
 }

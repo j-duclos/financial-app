@@ -26,7 +26,7 @@ describe("groupAccountsByType", () => {
 });
 
 describe("transaction filters", () => {
-  it("counts active filters excluding search text", () => {
+  it("counts active filters excluding account selection and search text", () => {
     expect(countActiveTransactionFilters(DEFAULT_TRANSACTION_FILTERS)).toBe(0);
     expect(
       countActiveTransactionFilters({
@@ -34,6 +34,6 @@ describe("transaction filters", () => {
         accountId: 3,
         showReconciled: true,
       })
-    ).toBe(2);
+    ).toBe(1);
   });
 });

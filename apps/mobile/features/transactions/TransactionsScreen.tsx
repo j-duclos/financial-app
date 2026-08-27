@@ -1,21 +1,26 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   Text,
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { getEffectiveDisplayName } from "@budget-app/shared";
 import {
+  OPERATIONAL_FORECAST_DAY_OPTIONS,
+  type OperationalForecastDays,
+} from "@budget-app/shared";
+import {
+  BottomSheet,
   EmptyState,
   ErrorState,
   IconButton,
   Screen,
   SkeletonBlock,
-  TextField,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { FINANCIAL_LIST_PROPS } from "@/lib/flatListDefaults";
@@ -24,8 +29,15 @@ import { describeApiError } from "@/services/api";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
+import { useProfile } from "@/lib/profileQuery";
+import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
+import {
+  RECENT_RANGE_OPTIONS,
+  TIME_FILTER_LABELS,
+} from "@/lib/transactionsLedger";
 import {
   countActiveTransactionFilters,
+  clearTransactionFiltersPreservingAccount,
   DEFAULT_TRANSACTION_FILTERS,
   type TransactionFilters,
 } from "./types";
@@ -33,22 +45,79 @@ import { filtersFromSearchParams } from "./queryKeys";
 import { useTransactionsData } from "./useTransactionsData";
 import { TransactionListItem } from "./TransactionListItem";
 import { TransactionFiltersSheet } from "./TransactionFiltersSheet";
+import { AccountSelectorSheet } from "./AccountSelectorSheet";
+import { AccountLedgerHeader } from "./AccountLedgerHeader";
+import { resolveAccountCurrentBalance } from "./ledgerHeaderDisplay";
 import type { TransactionListRow } from "./buildTransactionList";
+import { markAttentionNavigation } from "@/features/dashboard/attentionNavigationTiming";
+import {
+  parseRouteAccountId,
+  rememberTransactionAccountSelection,
+  resolveInitialTransactionAccount,
+} from "./accountSelection";
+
+function listHasActivityRows(rows: TransactionListRow[]): boolean {
+  return rows.some(
+    (r) => r.kind === "history" || r.kind === "pending" || r.kind === "upcoming"
+  );
+}
+
+function listIsOnlyPlaceholders(rows: TransactionListRow[]): boolean {
+  return (
+    rows.length > 0 &&
+    rows.every((r) => r.kind === "section" || r.kind === "skeleton")
+  );
+}
 
 export function TransactionsScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ account?: string; category?: string; date?: string; dateFrom?: string; dateTo?: string }>();
+  const params = useLocalSearchParams<{
+    account?: string;
+    accountName?: string;
+    category?: string;
+    date?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }>();
+  const routeAccountId = parseRouteAccountId(params.account);
+  const routeFilters = filtersFromSearchParams({
+    account: params.account,
+    category: params.category,
+    date: params.date,
+    dateFrom: params.dateFrom,
+    dateTo: params.dateTo,
+  });
+
   const [filters, setFilters] = useState<TransactionFilters>(() => ({
     ...DEFAULT_TRANSACTION_FILTERS,
-    ...filtersFromSearchParams({
-      account: params.account,
-      category: params.category,
-      date: params.date,
-      dateFrom: params.dateFrom,
-      dateTo: params.dateTo,
-    }),
+    ...routeFilters,
+    accountId: routeAccountId,
   }));
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [accountSelectorOpen, setAccountSelectorOpen] = useState(false);
+  const [recentRangeOpen, setRecentRangeOpen] = useState(false);
+  const [upcomingRangeOpen, setUpcomingRangeOpen] = useState(false);
+  const [filterDraft, setFilterDraft] = useState(filters);
+  const accountInitializedRef = useRef(false);
+
+  const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
+  const { data: profile } = useProfile();
+  const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
+  const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
+  const accounts = accountOptionsQuery.accounts;
+
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.id === filters.accountId) ?? null,
+    [accounts, filters.accountId]
+  );
+
+  const postedLedgerAnchor = useMemo(() => {
+    const raw = resolveAccountCurrentBalance(selectedAccount);
+    if (raw == null) return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  }, [selectedAccount]);
 
   useEffect(() => {
     setFilters((prev) => ({
@@ -60,31 +129,46 @@ export function TransactionsScreen() {
         dateFrom: params.dateFrom,
         dateTo: params.dateTo,
       }),
+      ...(routeAccountId != null ? { accountId: routeAccountId } : {}),
     }));
-  }, [params.account, params.category, params.date, params.dateFrom, params.dateTo]);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filterDraft, setFilterDraft] = useState(filters);
-  const [searchInput, setSearchInput] = useState(filters.search);
+  }, [params.account, params.category, params.date, params.dateFrom, params.dateTo, routeAccountId]);
 
   useEffect(() => {
-    setSearchInput(filters.search);
-  }, [filters.search]);
+    if (routeAccountId != null) {
+      rememberTransactionAccountSelection(routeAccountId);
+      accountInitializedRef.current = true;
+      return;
+    }
+    if (accountInitializedRef.current || accounts.length === 0) return;
 
-  const onSearchChange = useCallback((text: string) => {
-    setSearchInput(text);
-    setFilters((prev) => (prev.search === text ? prev : { ...prev, search: text }));
+    const resolved = resolveInitialTransactionAccount({
+      routeAccountId: null,
+      defaultAccountId: profile?.default_account ?? null,
+      accounts,
+    });
+    if (resolved != null) {
+      setFilters((prev) => (prev.accountId === resolved ? prev : { ...prev, accountId: resolved }));
+      rememberTransactionAccountSelection(resolved);
+    }
+    accountInitializedRef.current = true;
+  }, [routeAccountId, accounts, profile?.default_account]);
+
+  useEffect(() => {
+    if (filters.accountId != null) {
+      rememberTransactionAccountSelection(filters.accountId);
+    }
+  }, [filters.accountId]);
+
+  const onSelectAccount = useCallback((accountId: number) => {
+    setFilters((prev) => ({ ...prev, accountId }));
+    rememberTransactionAccountSelection(accountId);
   }, []);
-
-  const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
-  const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
-  const accounts = accountOptionsQuery.accounts;
 
   const householdId = resolveHouseholdId(defaultHouseholdId, filters.accountId, accounts);
   const categoriesQuery = useCategoryOptions({ householdId });
 
   const {
     listRows,
-    isLoading,
     isError,
     error,
     isFetchingNextPage,
@@ -92,9 +176,24 @@ export function TransactionsScreen() {
     fetchNextPage,
     refetch,
     historyQuery,
-  } = useTransactionsData(filters);
+    timelineQuery,
+    headerForecastBalance,
+    headerCurrentFromLedger,
+    isRecentLoading,
+    isTimelineLoading,
+  } = useTransactionsData(filters, {
+    forecastDays,
+    forecastReady,
+    postedLedgerAnchor,
+  });
 
   const activeFilterCount = countActiveTransactionFilters(filters);
+  const selectedAccountName =
+    selectedAccount != null
+      ? getEffectiveDisplayName(selectedAccount)
+      : typeof params.accountName === "string" && params.accountName.trim()
+        ? params.accountName.trim()
+        : "Account";
 
   const onEndReached = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
@@ -109,14 +208,57 @@ export function TransactionsScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: TransactionListRow }) => (
-      <TransactionListItem item={item} onPressTransaction={onPressTransaction} />
+      <TransactionListItem
+        item={item}
+        onPressTransaction={onPressTransaction}
+        onPressRecentRange={() => setRecentRangeOpen(true)}
+        onPressUpcomingRange={() => setUpcomingRangeOpen(true)}
+      />
     ),
     [onPressTransaction]
   );
 
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
 
-  if (!householdReady) {
+  const hasAccountDeepLink = routeAccountId != null;
+  const waitingForAccount =
+    filters.accountId == null &&
+    (accountOptionsQuery.isLoading || (accounts.length === 0 && !accountOptionsQuery.isError));
+
+  const hasActivity = listHasActivityRows(listRows);
+  const placeholdersOnly = listIsOnlyPlaceholders(listRows);
+  const stillLoadingLedger =
+    isRecentLoading || isTimelineLoading || historyQuery.isPending || timelineQuery.isPending;
+  const showEmpty =
+    filters.accountId != null &&
+    !stillLoadingLedger &&
+    !hasActivity &&
+    !placeholdersOnly &&
+    !isError;
+
+  useEffect(() => {
+    markAttentionNavigation("transactions-mounted");
+  }, []);
+
+  useEffect(() => {
+    if (hasActivity) {
+      markAttentionNavigation("transactions-first-rows");
+    }
+  }, [hasActivity]);
+
+  useEffect(() => {
+    if (historyQuery.isFetched) {
+      markAttentionNavigation("transactions-first-network");
+    }
+  }, [historyQuery.isFetched]);
+
+  useEffect(() => {
+    if (timelineQuery.isFetched) {
+      markAttentionNavigation("transactions-timeline");
+    }
+  }, [timelineQuery.isFetched]);
+
+  if (!householdReady && !hasAccountDeepLink && accounts.length === 0) {
     return (
       <Screen edges={["top", "left", "right"]}>
         <View style={{ padding: theme.spacing.lg, gap: 8 }}>
@@ -127,13 +269,18 @@ export function TransactionsScreen() {
     );
   }
 
-  if (defaultHouseholdId == null && filters.accountId == null) {
+  if (accounts.length === 0 && !accountOptionsQuery.isLoading) {
     return (
       <Screen edges={["top", "left", "right"]}>
-        <EmptyState
-          title="Default household required"
-          message="Set a default household in Profile & Settings on web, or filter by account."
-        />
+        <View style={{ padding: theme.spacing.lg }}>
+          <Text style={{ color: theme.colors.text, ...theme.typography.title }}>Transactions</Text>
+          <EmptyState
+            title="No accounts yet"
+            message="Add an account to start tracking transactions."
+            actionLabel="Add account"
+            onAction={() => router.push("/account/new")}
+          />
+        </View>
       </Screen>
     );
   }
@@ -145,8 +292,20 @@ export function TransactionsScreen() {
           <Text style={{ color: theme.colors.text, ...theme.typography.title }}>Transactions</Text>
           <View style={{ flexDirection: "row", gap: 4 }}>
             <IconButton
+              name="search"
+              accessibilityLabel={
+                filters.search.trim() ? `Search active: ${filters.search}` : "Search"
+              }
+              onPress={() => {
+                setFilterDraft(filters);
+                setFiltersOpen(true);
+              }}
+            />
+            <IconButton
               name="filter"
-              accessibilityLabel={activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : "Filters"}
+              accessibilityLabel={
+                activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : "Filters"
+              }
               onPress={() => {
                 setFilterDraft(filters);
                 setFiltersOpen(true);
@@ -165,51 +324,53 @@ export function TransactionsScreen() {
             />
           </View>
         </View>
-        <TextField
-          label="Search"
-          value={searchInput}
-          onChangeText={onSearchChange}
-          placeholder="Payee or memo"
-          style={{ marginTop: theme.spacing.sm }}
-        />
+
         {filters.accountId != null ? (
-          <Pressable
-            onPress={() => setFilters((prev) => ({ ...prev, accountId: null }))}
-            style={{ marginTop: theme.spacing.sm, flexDirection: "row", alignItems: "center", gap: 6 }}
-          >
-            <FontAwesome name="times-circle" size={14} color={theme.colors.tint} />
-            <Text style={{ color: theme.colors.tint, ...theme.typography.caption }}>
-              Account filter active — tap to clear
-            </Text>
-          </Pressable>
+          <AccountLedgerHeader
+            accountId={filters.accountId}
+            fallbackAccount={selectedAccount}
+            forecastBalance={headerForecastBalance}
+            ledgerCurrentBalance={headerCurrentFromLedger}
+            forecastDays={forecastDays}
+            onPressAccount={() => setAccountSelectorOpen(true)}
+            accountNameFallback={selectedAccountName}
+          />
         ) : null}
       </View>
 
-      {isLoading ? (
+      {waitingForAccount ? (
         <View style={{ padding: theme.spacing.lg, gap: 8 }}>
           <SkeletonBlock lines={3} />
           <SkeletonBlock lines={3} />
-          <SkeletonBlock lines={3} />
         </View>
-      ) : isError ? (
-        <ErrorState message={describeApiError(error)} onRetry={() => void refetch()} />
-      ) : listRows.length === 0 ? (
+      ) : filters.accountId == null ? (
         <EmptyState
-          title="No transactions"
+          title="Select an account"
+          message="Choose an account to view its transaction ledger."
+          actionLabel="Choose account"
+          onAction={() => setAccountSelectorOpen(true)}
+        />
+      ) : isError && !hasActivity ? (
+        <ErrorState message={describeApiError(error)} onRetry={() => void refetch()} />
+      ) : showEmpty ? (
+        <EmptyState
+          title={`No transactions for ${selectedAccountName}`}
           message={
             activeFilterCount > 0 || filters.search.trim()
-              ? "No transactions match your filters. Try clearing filters or widening the date range."
-              : "Add a transaction or connect an account to see activity here."
+              ? `No ${selectedAccountName} transactions match these filters.`
+              : "Add a transaction to see activity in this account."
           }
-          actionLabel={activeFilterCount > 0 ? "Clear filters" : undefined}
+          actionLabel={activeFilterCount > 0 || filters.search.trim() ? "Clear filters" : undefined}
           onAction={
-            activeFilterCount > 0
-              ? () => setFilters(DEFAULT_TRANSACTION_FILTERS)
+            activeFilterCount > 0 || filters.search.trim()
+              ? () =>
+                  setFilters((prev) => clearTransactionFiltersPreservingAccount(prev.accountId))
               : undefined
           }
         />
       ) : (
         <FlatList
+          key={`${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`}
           data={listRows}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
@@ -218,7 +379,7 @@ export function TransactionsScreen() {
           {...FINANCIAL_LIST_PROPS}
           refreshControl={
             <RefreshControl
-              refreshing={historyQuery.isFetching && !isLoading}
+              refreshing={historyQuery.isFetching && !isRecentLoading}
               onRefresh={() => void refetch()}
               tintColor={theme.colors.tint}
             />
@@ -234,12 +395,81 @@ export function TransactionsScreen() {
         />
       )}
 
+      <AccountSelectorSheet
+        visible={accountSelectorOpen}
+        accounts={accounts}
+        selectedAccountId={filters.accountId}
+        onClose={() => setAccountSelectorOpen(false)}
+        onSelect={onSelectAccount}
+      />
+
+      <BottomSheet
+        visible={recentRangeOpen}
+        title="Recent history"
+        onClose={() => setRecentRangeOpen(false)}
+      >
+        <ScrollView>
+          {RECENT_RANGE_OPTIONS.map((opt) => (
+            <Pressable
+              key={opt}
+              onPress={() => {
+                setFilters((prev) => ({ ...prev, timeFilter: opt }));
+                setRecentRangeOpen(false);
+              }}
+              style={{
+                paddingVertical: 14,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.border,
+              }}
+            >
+              <Text
+                style={{
+                  color: filters.timeFilter === opt ? theme.colors.tint : theme.colors.text,
+                  ...theme.typography.bodyStrong,
+                }}
+              >
+                Last {TIME_FILTER_LABELS[opt]}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={upcomingRangeOpen}
+        title="Upcoming forecast"
+        onClose={() => setUpcomingRangeOpen(false)}
+      >
+        <ScrollView>
+          {OPERATIONAL_FORECAST_DAY_OPTIONS.map((days) => (
+            <Pressable
+              key={days}
+              onPress={() => {
+                setForecastDays(days as OperationalForecastDays);
+                setUpcomingRangeOpen(false);
+              }}
+              style={{
+                paddingVertical: 14,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.border,
+              }}
+            >
+              <Text
+                style={{
+                  color: forecastDays === days ? theme.colors.tint : theme.colors.text,
+                  ...theme.typography.bodyStrong,
+                }}
+              >
+                Next {days} days
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </BottomSheet>
+
       <TransactionFiltersSheet
         visible={filtersOpen}
         draft={filterDraft}
-        accounts={accounts}
-        accountsLoading={accountOptionsQuery.isLoading && accounts.length === 0}
-        accountsError={accountOptionsQuery.isError}
         categories={categoriesQuery.categories}
         categoriesLoading={categoriesQuery.isLoading && categoriesQuery.categories.length === 0}
         categoriesError={categoriesQuery.isError}

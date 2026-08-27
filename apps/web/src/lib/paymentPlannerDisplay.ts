@@ -1,8 +1,12 @@
 import { DEFAULT_TARGET_UTILIZATION_PERCENT, formatCurrency } from "@budget-app/shared";
 import type { Account, DebtPayoffCardSummary, PayoffProjection, PayoffStrategy } from "@budget-app/shared";
+import {
+  PAYMENT_PLANNER_LABEL as SHARED_PAYMENT_PLANNER_LABEL,
+  normalizePaymentActionLabel as sharedNormalizePaymentActionLabel,
+} from "@budget-app/shared/paymentPlannerDisplay";
 
 /** Primary CTA label for debt payment orchestration (replaces "Make Payment"). */
-export const PAYMENT_PLANNER_LABEL = "Payment Planner";
+export const PAYMENT_PLANNER_LABEL = SHARED_PAYMENT_PLANNER_LABEL;
 
 /** @deprecated Use PAYMENT_PLANNER_LABEL */
 export const OPEN_PAYOFF_PLANNER_LABEL = PAYMENT_PLANNER_LABEL;
@@ -25,13 +29,7 @@ export const PHASE1_PAYMENT_PLAN_OPTIONS: Array<{
 ];
 
 export function normalizePaymentActionLabel(label: string | null | undefined): string {
-  if (!label?.trim()) return PAYMENT_PLANNER_LABEL;
-  const trimmed = label.trim();
-  if (/^make\s*payment$/i.test(trimmed)) return PAYMENT_PLANNER_LABEL;
-  if (/^(open\s*)?payoff\s*planner$/i.test(trimmed)) return PAYMENT_PLANNER_LABEL;
-  if (/^pay\s*credit\s*card$/i.test(trimmed)) return PAYMENT_PLANNER_LABEL;
-  if (/^debt\s*payoff$/i.test(trimmed)) return PAYMENT_PLANNER_LABEL;
-  return label;
+  return sharedNormalizePaymentActionLabel(label);
 }
 
 function parseMoney(raw: string | null | undefined): number | null {

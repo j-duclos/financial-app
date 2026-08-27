@@ -40,8 +40,9 @@ Centralized in `constants/env.ts` and `app.config.ts` `extra`.
 ## 3. Production API URL
 
 - Staging/production builds **throw at startup** if URL is missing, non-HTTPS, or points to localhost/private network.
-- Development may use `http://localhost:8000`, LAN IP, or Android emulator `10.0.2.2`.
-- Document production URL in EAS environment: `EXPO_PUBLIC_API_URL=https://your-api-host` (no trailing slash).
+- Development **requires** an explicit `EXPO_PUBLIC_API_URL` (no silent localhost fallback). Copy `.env.local.example` or `.env.render.example`.
+- Document production URL in EAS / `.env.render.example`: `EXPO_PUBLIC_API_URL=https://financial-app-1-tu0l.onrender.com` (no trailing slash).
+- Switch Local ↔ Render via env only; see `apps/mobile/README.md`.
 
 ---
 

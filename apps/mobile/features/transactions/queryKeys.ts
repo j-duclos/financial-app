@@ -19,6 +19,8 @@ export function transactionListQueryParams(input: {
   showReconciled: boolean;
   historyStart: string;
   search: string;
+  ordering?: string;
+  includeRunningBalance?: boolean;
 }): Record<string, unknown> {
   return {
     account: input.accountId ?? undefined,
@@ -28,6 +30,8 @@ export function transactionListQueryParams(input: {
     showReconciled: input.showReconciled,
     include_reconciled_after: input.showReconciled ? input.historyStart : undefined,
     search: input.search.trim() || undefined,
+    ordering: input.ordering,
+    include_running_balance: input.includeRunningBalance ? true : undefined,
   };
 }
 

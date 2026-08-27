@@ -8,7 +8,7 @@ import {
   ConfirmDialog,
   Screen,
 } from "@/components/ui";
-import { getAppEnvironment } from "@/constants/env";
+import { getApiTargetDisplayLabel, getAppEnvironment } from "@/constants/env";
 import {
   getAppVersionLabel,
   getPrivacyPolicyUrl,
@@ -84,7 +84,7 @@ export default function ProfileScreen() {
         </Text>
         {__DEV__ ? (
           <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 6 }}>
-            Environment: {getAppEnvironment()}
+            Environment: {getAppEnvironment()} · API: {getApiTargetDisplayLabel()}
           </Text>
         ) : null}
         {supportEmail ? (

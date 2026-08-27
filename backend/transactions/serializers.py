@@ -27,6 +27,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     )
     rule_name = serializers.SerializerMethodField()
     linked_transaction_id = serializers.SerializerMethodField()
+    running_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
@@ -39,6 +40,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "interest_cycle_end_date", "plaid_transaction_id",
             "transfer_group_id", "posted_date", "planned_date", "imported_description",
             "normalized_payee", "import_match_status", "is_bill",
+            "running_balance",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -54,6 +56,12 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     def get_direction(self, obj):
         return "INFLOW" if obj.amount and obj.amount >= 0 else "OUTFLOW"
+
+    def get_running_balance(self, obj):
+        """Optional; populated by list(?include_running_balance=true) or context map."""
+        by_id = self.context.get("running_balances_by_id") or {}
+        val = by_id.get(obj.pk)
+        return str(val) if val is not None else None
 
     def _transfer_group_sibling(self, obj):
         group = getattr(obj, "transfer_group", None) if obj.transfer_group_id else None

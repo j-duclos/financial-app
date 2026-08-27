@@ -12,6 +12,7 @@ through the extended horizon (still exclude_reconciled_past — no reconciled hi
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -26,7 +27,10 @@ from accounts.services.lowest_projected_cash import (
     get_first_cash_shortfall_from_forecasts,
 )
 from common.services.cache import (
+    EXTENDED_CASH_RISK_BUILD_LOCK_SECONDS,
     EXTENDED_CASH_RISK_CACHE_SECONDS,
+    EXTENDED_CASH_RISK_SEED_POLL_SECONDS,
+    EXTENDED_CASH_RISK_SEED_WAIT_SECONDS,
     get_extended_cash_risk_cache_key,
     get_extended_cash_risk_seed_cache_key,
 )
@@ -463,6 +467,31 @@ def _fallback_full_scan(
     )
 
 
+def _wait_for_extended_cash_risk_seed(seed_key: str) -> dict[str, Any] | None:
+    """Briefly poll for a dashboard-seeded forecast continuation payload."""
+    deadline = time.monotonic() + EXTENDED_CASH_RISK_SEED_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        seed = cache.get(seed_key)
+        if isinstance(seed, dict):
+            if perf_enabled():
+                perf_print("[PERF] extended_cash_risk seed=HIT_AFTER_WAIT")
+            return seed
+        time.sleep(EXTENDED_CASH_RISK_SEED_POLL_SECONDS)
+    seed = cache.get(seed_key)
+    return seed if isinstance(seed, dict) else None
+
+
+def _wait_for_extended_cash_risk_result(result_key: str) -> dict[str, Any] | None:
+    deadline = time.monotonic() + EXTENDED_CASH_RISK_SEED_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        cached = cache.get(result_key)
+        if isinstance(cached, dict):
+            return cached
+        time.sleep(EXTENDED_CASH_RISK_SEED_POLL_SECONDS)
+    cached = cache.get(result_key)
+    return cached if isinstance(cached, dict) else None
+
+
 def get_extended_cash_risk(
     user,
     *,
@@ -487,56 +516,79 @@ def get_extended_cash_risk(
         as_of_date=today,
     )
     seed = cache.get(seed_key)
+    if not isinstance(seed, dict):
+        seed = _wait_for_extended_cash_risk_seed(seed_key)
     horizon_end = today + timedelta(days=EXTENDED_CASH_RISK_DAYS)
 
-    if isinstance(seed, dict) and seed.get("first_cash_shortfall"):
-        result = _result_from_shortfall(
-            today,
-            seed["first_cash_shortfall"],
-            accounts_by_id=accounts_by_id,
-        )
-        payload = result.to_api()
-        cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
-        return payload
+    lock_key = f"{result_key}:lock"
+    got_lock = cache.add(lock_key, "1", timeout=EXTENDED_CASH_RISK_BUILD_LOCK_SECONDS)
+    if not got_lock:
+        waited = _wait_for_extended_cash_risk_result(result_key)
+        if waited is not None:
+            log_perf("extended_cash_risk", cache="HIT_AFTER_WAIT", user=user.pk)
+            return waited
 
-    if isinstance(seed, dict) and seed.get("window_end") and seed.get("ending_balances"):
-        window_end = date.fromisoformat(str(seed["window_end"])[:10])
-        if window_end >= horizon_end:
-            payload = _empty_result(today).to_api()
+    try:
+        cached = cache.get(result_key)
+        if isinstance(cached, dict):
+            log_perf("extended_cash_risk", cache="HIT", user=user.pk)
+            return cached
+
+        if isinstance(seed, dict) and seed.get("first_cash_shortfall"):
+            if perf_enabled():
+                perf_print("[PERF] extended_cash_risk seed=HIT")
+            result = _result_from_shortfall(
+                today,
+                seed["first_cash_shortfall"],
+                accounts_by_id=accounts_by_id,
+            )
+            payload = result.to_api()
             cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
             return payload
-        openings = {
-            int(aid): _decimal(bal) for aid, bal in seed["ending_balances"].items()
-        }
-        if perf_enabled():
-            perf_print(
-                f"[PERF] extended_cash_risk continuation "
-                f"from={window_end.isoformat()} to={horizon_end.isoformat()}"
+
+        if isinstance(seed, dict) and seed.get("window_end") and seed.get("ending_balances"):
+            if perf_enabled():
+                perf_print("[PERF] extended_cash_risk seed=HIT")
+            window_end = date.fromisoformat(str(seed["window_end"])[:10])
+            if window_end >= horizon_end:
+                payload = _empty_result(today).to_api()
+                cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
+                return payload
+            openings = {
+                int(aid): _decimal(bal) for aid, bal in seed["ending_balances"].items()
+            }
+            if perf_enabled():
+                perf_print(
+                    f"[PERF] extended_cash_risk continuation "
+                    f"from={window_end.isoformat()} to={horizon_end.isoformat()}"
+                )
+            result = _continuation_scan(
+                user,
+                as_of=today,
+                window_end=window_end,
+                horizon_end=horizon_end,
+                openings=openings,
+                accounts=accounts,
+                accounts_by_id=accounts_by_id,
             )
-        result = _continuation_scan(
+            payload = result.to_api()
+            cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
+            log_perf("extended_cash_risk", cache="MISS_CONTINUATION", user=user.pk)
+            return payload
+
+        if perf_enabled():
+            perf_print("[PERF] extended_cash_risk seed=MISS fallback_full_scan")
+        result = _fallback_full_scan(
             user,
             as_of=today,
-            window_end=window_end,
             horizon_end=horizon_end,
-            openings=openings,
             accounts=accounts,
             accounts_by_id=accounts_by_id,
         )
         payload = result.to_api()
         cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
-        log_perf("extended_cash_risk", cache="MISS_CONTINUATION", user=user.pk)
+        log_perf("extended_cash_risk", cache="MISS_FALLBACK", user=user.pk)
         return payload
-
-    if perf_enabled():
-        perf_print("[PERF] extended_cash_risk fallback_full_scan")
-    result = _fallback_full_scan(
-        user,
-        as_of=today,
-        horizon_end=horizon_end,
-        accounts=accounts,
-        accounts_by_id=accounts_by_id,
-    )
-    payload = result.to_api()
-    cache.set(result_key, payload, timeout=EXTENDED_CASH_RISK_CACHE_SECONDS)
-    log_perf("extended_cash_risk", cache="MISS_FALLBACK", user=user.pk)
-    return payload
+    finally:
+        if got_lock:
+            cache.delete(lock_key)

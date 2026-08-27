@@ -21,18 +21,20 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/useCategoryOptions/);
   });
 
-  it("does not block transaction list on account or category picker loading", () => {
+  it("does not block account picker loading on transaction list fetch", () => {
     expect(transactionsScreen).not.toMatch(/accountsQuery\.isLoading/);
-    expect(transactionsScreen).toMatch(/accountsLoading/);
+    expect(transactionsScreen).toMatch(/useAccountOptions/);
     expect(transactionsScreen).toMatch(/categoriesLoading/);
   });
 
-  it("loads history and timeline concurrently when forecast is ready", () => {
+  it("loads recent history without waiting on timeline forecast readiness", () => {
     expect(transactionsData).toMatch(/useInfiniteQuery/);
     expect(transactionsData).toMatch(/getTimeline/);
-    expect(transactionsData).toMatch(/enabled: forecastReady && wantsTimeline/);
+    expect(transactionsData).toMatch(/enabled: forecastReady && wantsTimeline && filters\.accountId != null/);
     expect(transactionsData).toMatch(/needsTimelineProjection/);
-    expect(transactionsData).not.toMatch(/enabled:.*accounts/);
+    expect(transactionsData).toMatch(/enabled: filters\.accountId != null/);
+    expect(transactionsData).toMatch(/TRANSACTIONS_LEDGER_ORDERING/);
+    expect(transactionsData).toMatch(/include_running_balance/);
   });
 
   it("uses memoized list item and flat list tuning props", () => {

@@ -228,23 +228,40 @@ class PerfTimer:
 
 
 class QueryProfiler:
-    """Snapshot SQL query count and cumulative DB time within a scope."""
+    """Snapshot SQL query count and cumulative DB time within a scope.
+
+    Uses connection.execute_wrappers so counts work when DEBUG=False and
+    ENABLE_PERF_LOGS=True (required for Render profiling).
+    """
 
     def __init__(self) -> None:
         self.query_count = 0
         self.query_time_ms = 0.0
-        self._start_idx = 0
+        self._execute_wrapper = None
+
+    def _wrap_execute(self, execute, sql, params, many, context):
+        start = time.perf_counter()
+        try:
+            return execute(sql, params, many, context)
+        finally:
+            self.query_count += 1
+            self.query_time_ms += (time.perf_counter() - start) * 1000
 
     def start(self) -> None:
-        if perf_enabled():
-            self._start_idx = len(connection.queries)
+        if not perf_enabled():
+            return
+        self._execute_wrapper = self._wrap_execute
+        connection.execute_wrappers.append(self._execute_wrapper)
 
     def stop(self) -> None:
         if not perf_enabled():
             return
-        queries = connection.queries[self._start_idx :]
-        self.query_count = len(queries)
-        self.query_time_ms = sum(float(q.get("time", 0)) for q in queries) * 1000
+        if self._execute_wrapper is not None:
+            try:
+                connection.execute_wrappers.remove(self._execute_wrapper)
+            except ValueError:
+                pass
+            self._execute_wrapper = None
 
 
 def phase_start(timer: PerfTimer | None, name: str) -> PhaseToken:

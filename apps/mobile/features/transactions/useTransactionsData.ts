@@ -1,32 +1,44 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getReconcileSetup, getTimeline, listTransactions } from "@budget-app/api-client";
 import { useMemo } from "react";
+import type { OperationalForecastDays } from "@budget-app/shared";
 import {
   DEFAULT_TIME_FILTER,
-  ledgerPastTransactionStart,
   ledgerProjectionRange,
   pastTransactionsRange,
+  recentRangeLabel,
+  upcomingRangeLabel,
 } from "@/lib/transactionsLedger";
 import { todayStr } from "@/lib/dates";
-import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   buildTransactionListRows,
   indexTimelineBalances,
+  partitionTimelineForLedger,
 } from "./buildTransactionList";
 import { transactionListQueryParams, timelineQueryParams, transactionQueryKeys } from "./queryKeys";
 import { needsTimelineProjection } from "./timelineProjection";
-import type { TransactionFilters } from "./types";
+import {
+  TRANSACTIONS_LEDGER_ORDERING,
+  TRANSACTIONS_LEDGER_PAGE_SIZE,
+  type TransactionFilters,
+} from "./types";
 
-const PAGE_SIZE = 50;
+type Options = {
+  forecastDays: OperationalForecastDays;
+  forecastReady: boolean;
+  /** Account posted/available balance — anchors Pending/Upcoming when Recent has no Bal. */
+  postedLedgerAnchor?: number | null;
+};
 
-export function useTransactionsData(filters: TransactionFilters) {
-  const { forecastDays, ready: forecastReady } = usePageForecastWindow();
+export function useTransactionsData(filters: TransactionFilters, options: Options) {
+  const { forecastDays, forecastReady, postedLedgerAnchor = null } = options;
   const debouncedSearch = useDebouncedValue(filters.search, 350);
   const hideReconciledPast = !filters.showReconciled;
   const wantsTimeline = needsTimelineProjection(filters);
   const { start: historyStart, end: historyEnd } = pastTransactionsRange(filters.timeFilter);
   const projectionRange = ledgerProjectionRange(forecastDays);
+  const isSearchMode = debouncedSearch.trim().length > 0;
 
   const reconcileSetupQuery = useQuery({
     queryKey: transactionQueryKeys.reconcileSetup(filters.accountId ?? 0),
@@ -35,56 +47,61 @@ export function useTransactionsData(filters: TransactionFilters) {
     staleTime: 120_000,
   });
 
+  /**
+   * Recent "Last N days" must change the fetch window.
+   * Always use include_reconciled_after = historyStart (web History Range behavior)
+   * so expanding 14→90 loads older activity. Do NOT clamp to reconcile day-after —
+   * that made every range resolve to the same date_after and the picker did nothing.
+   */
   const dateAfter = useMemo(() => {
     if (filters.specificDate) return filters.specificDate;
     if (filters.dateFrom) return filters.dateFrom;
-    return ledgerPastTransactionStart(filters.timeFilter, hideReconciledPast, {
-      min_start_date: reconcileSetupQuery.data?.min_start_date,
-      last_reconcile_period_end: reconcileSetupQuery.data?.last_reconcile_period_end,
-    });
-  }, [
-    filters.specificDate,
-    filters.dateFrom,
-    filters.timeFilter,
-    hideReconciledPast,
-    reconcileSetupQuery.data?.min_start_date,
-    reconcileSetupQuery.data?.last_reconcile_period_end,
-  ]);
+    if (isSearchMode) return historyStart;
+    // Ledger mode: lower bound is the selected Recent range start (via include_reconciled_after).
+    // Omit date_after so reconciled-in-window rows are not excluded by a hard floor.
+    return undefined;
+  }, [filters.specificDate, filters.dateFrom, isSearchMode, historyStart]);
 
   const dateBefore = filters.specificDate ?? filters.dateTo ?? historyEnd;
 
   const listParams = transactionListQueryParams({
     accountId: filters.accountId,
     categoryId: filters.categoryId,
-    dateAfter,
+    dateAfter: dateAfter ?? historyStart,
     dateBefore,
-    showReconciled: filters.showReconciled,
+    showReconciled: true,
     historyStart,
     search: debouncedSearch,
+    ordering: isSearchMode ? "-date,-id" : TRANSACTIONS_LEDGER_ORDERING,
+    includeRunningBalance: !isSearchMode,
   });
 
+  const pageSize = TRANSACTIONS_LEDGER_PAGE_SIZE;
+
+  // Recent history — ascending ledger order with canonical running balances.
   const historyQuery = useInfiniteQuery({
-    queryKey: transactionQueryKeys.list({ ...listParams, pageSize: PAGE_SIZE }),
+    queryKey: transactionQueryKeys.list({ ...listParams, pageSize }),
     queryFn: ({ pageParam = 1 }) =>
       listTransactions({
         account: filters.accountId ?? undefined,
         category: filters.categoryId ?? undefined,
-        date_after: dateAfter,
+        ...(dateAfter ? { date_after: dateAfter } : {}),
         date_before: dateBefore,
         search: debouncedSearch.trim() || undefined,
         page: pageParam,
-        page_size: PAGE_SIZE,
-        ...(filters.showReconciled
-          ? {
-              show_reconciled: true,
-              include_reconciled_after: historyStart,
-            }
-          : { reconciled: false }),
+        page_size: pageSize,
+        ordering: isSearchMode ? "-date,-id" : TRANSACTIONS_LEDGER_ORDERING,
+        include_running_balance: !isSearchMode,
+        // Recent "Last N days" = History Range: include reconciled on/after historyStart.
+        // Do not client-strip reconciled afterward — that made the range a no-op after
+        // the last reconcile (everything older is reconciled and was discarded).
+        show_reconciled: true,
+        include_reconciled_after: historyStart,
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, _pages, lastPageParam) =>
       lastPage.next ? lastPageParam + 1 : undefined,
-    enabled: forecastReady,
+    enabled: filters.accountId != null,
     staleTime: 30_000,
   });
 
@@ -105,7 +122,7 @@ export function useTransactionsData(filters: TransactionFilters) {
         account_id: filters.accountId ?? undefined,
         exclude_reconciled_past: hideReconciledPast,
       }),
-    enabled: forecastReady && wantsTimeline,
+    enabled: forecastReady && wantsTimeline && filters.accountId != null,
     staleTime: 60_000,
   });
 
@@ -114,16 +131,16 @@ export function useTransactionsData(filters: TransactionFilters) {
     [historyQuery.data?.pages]
   );
 
+
   const balanceMap = useMemo(
     () => indexTimelineBalances(timelineQuery.data?.timeline),
     [timelineQuery.data?.timeline]
   );
 
-  const upcomingRows = useMemo(() => {
+  const { pending, upcoming } = useMemo(() => {
     const timeline = timelineQuery.data?.timeline ?? [];
-    const today = todayStr();
-    return timeline.filter((row) => row.date > today);
-  }, [timelineQuery.data?.timeline]);
+    return partitionTimelineForLedger(timeline, todayStr(), filters.accountId);
+  }, [timelineQuery.data?.timeline, filters.accountId]);
 
   const filtersForList = useMemo((): TransactionFilters => {
     return {
@@ -157,17 +174,59 @@ export function useTransactionsData(filters: TransactionFilters) {
     debouncedSearch,
   ]);
 
+  const timelineLoading = wantsTimeline && timelineQuery.isPending && !timelineQuery.data;
+  const recentLoading = historyQuery.isPending && historyTransactions.length === 0;
+
   const listRows = useMemo(
     () =>
       buildTransactionListRows({
-        upcoming: upcomingRows,
+        upcoming,
+        pending,
         history: historyTransactions,
         balanceMap,
         filters: filtersForList,
         today: todayStr(),
+        recentLoading,
+        timelineLoading,
+        isSearchMode,
+        recentRangeLabel: recentRangeLabel(filters.timeFilter),
+        upcomingRangeLabel: upcomingRangeLabel(forecastDays),
+        postedLedgerAnchor,
       }),
-    [upcomingRows, historyTransactions, balanceMap, filtersForList]
+    [
+      upcoming,
+      pending,
+      historyTransactions,
+      balanceMap,
+      filtersForList,
+      recentLoading,
+      timelineLoading,
+      isSearchMode,
+      filters.timeFilter,
+      forecastDays,
+      postedLedgerAnchor,
+    ]
   );
+
+  const headerCurrentFromLedger = useMemo(() => {
+    for (let i = listRows.length - 1; i >= 0; i--) {
+      const row = listRows[i];
+      if (row.kind === "pending" && row.runningBalance != null) return row.runningBalance;
+    }
+    for (let i = listRows.length - 1; i >= 0; i--) {
+      const row = listRows[i];
+      if (row.kind === "history" && row.runningBalance != null) return row.runningBalance;
+    }
+    return null;
+  }, [listRows]);
+
+  const headerForecastBalance = useMemo(() => {
+    for (let i = listRows.length - 1; i >= 0; i--) {
+      const row = listRows[i];
+      if (row.kind === "upcoming" && row.runningBalance != null) return row.runningBalance;
+    }
+    return null;
+  }, [listRows]);
 
   return {
     listRows,
@@ -177,7 +236,16 @@ export function useTransactionsData(filters: TransactionFilters) {
     forecastDays,
     forecastReady,
     defaultTimeFilter: DEFAULT_TIME_FILTER,
-    isLoading: historyQuery.isPending && listRows.length === 0,
+    headerForecastBalance,
+    headerCurrentFromLedger,
+    isSearchMode,
+    isLoading:
+      filters.accountId != null &&
+      recentLoading &&
+      !timelineLoading &&
+      listRows.length === 0,
+    isRecentLoading: recentLoading,
+    isTimelineLoading: timelineLoading,
     isError: historyQuery.isError,
     error: historyQuery.error,
     isFetchingNextPage: historyQuery.isFetchingNextPage,

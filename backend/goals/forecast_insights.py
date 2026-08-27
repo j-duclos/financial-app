@@ -416,15 +416,42 @@ def contribution_recommendation_text(
 ) -> str | None:
     monthly = suggestions.get("suggested_monthly")
     biweekly = suggestions.get("suggested_biweekly")
+
+    if pace_status == PACE_COMPLETED:
+        return "Goal completed"
+
+    if pace_status == PACE_AHEAD:
+        if forecast_gap and forecast_gap > 0:
+            return f"Add ${_quantize_money(forecast_gap)}/month to stay on pace"
+        return "On track for your target date"
+
+    if pace_status == PACE_ON_TRACK:
+        if monthly:
+            text = f"Continue ${monthly}/month to stay on pace"
+            if biweekly:
+                text = f"{text} · ${biweekly}/paycheck needed to reach target"
+            return text
+        return "On track for your target date"
+
+    if pace_status == PACE_BEHIND:
+        if monthly:
+            parts = [f"Need ${monthly}/month to reach your target date"]
+            if biweekly:
+                parts.append(f"${biweekly}/paycheck needed to reach target")
+            return " · ".join(parts)
+        if forecast_gap and forecast_gap > 0:
+            return f"Add ${_quantize_money(forecast_gap)}/month to get back on pace"
+        return "Current pace is too slow to reach your target date."
+
+    if pace_status == PACE_STALLED:
+        if monthly:
+            return f"Need ${monthly}/month to reach your target date"
+        return "No funding activity yet — set up contributions to stay on schedule."
+
     if forecast_gap and forecast_gap > 0:
-        return f"Add ${_quantize_money(forecast_gap)}/month to stay on pace"
-    if monthly and pace_status in (PACE_BEHIND, PACE_ON_TRACK, PACE_AHEAD):
-        parts = [f"Add ${monthly}/month to stay on pace"]
-        if biweekly:
-            parts.append(f"${biweekly}/paycheck needed to reach target")
-        return " · ".join(parts)
+        return f"Add ${_quantize_money(forecast_gap)}/month to get back on pace"
     if monthly:
-        return f"Add ${monthly}/month to stay on pace"
+        return f"Need ${monthly}/month to reach your target date"
     return None
 
 

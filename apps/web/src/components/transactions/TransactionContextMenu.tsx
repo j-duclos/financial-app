@@ -4,7 +4,7 @@ import { MoreHorizontal } from "lucide-react";
 
 export type PastActions = "edit" | "duplicate" | "delete";
 export type FutureActions = "edit" | "skip" | "delete";
-export type ExpectedActions = "confirm" | "skip" | "edit" | "moveDate" | "match" | "delete";
+export type ExpectedActions = "matchesImported" | "skip" | "edit" | "moveDate" | "delete";
 
 type Props = {
   variant: "past" | "future" | "expected";
@@ -12,11 +12,8 @@ type Props = {
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
-  onConfirm?: () => void;
+  onMatchesImported?: () => void;
   onMoveDate?: () => void;
-  onMatch?: () => void;
-  /** When false, Match is hidden (no import candidates). */
-  showMatch?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
 };
@@ -29,10 +26,8 @@ export default function TransactionContextMenu({
   onDuplicate,
   onDelete,
   onSkip,
-  onConfirm,
+  onMatchesImported,
   onMoveDate,
-  onMatch,
-  showMatch = true,
   disabled,
   readOnly,
 }: Props) {
@@ -80,11 +75,14 @@ export default function TransactionContextMenu({
   const primaryItems: MenuItem[] =
     variant === "expected"
       ? ([
-          onConfirm && { key: "confirm", label: "Confirm / Mark as Posted", action: onConfirm },
+          onMatchesImported && {
+            key: "matchesImported",
+            label: "Matches Imported",
+            action: onMatchesImported,
+          },
           onSkip && { key: "skip", label: "Skip", action: onSkip },
           onEdit && { key: "edit", label: "Edit", action: onEdit },
           onMoveDate && { key: "moveDate", label: "Move Date", action: onMoveDate },
-          showMatch && onMatch && { key: "match", label: "Match to Import", action: onMatch },
         ].filter(Boolean) as MenuItem[])
       : variant === "past"
         ? ([

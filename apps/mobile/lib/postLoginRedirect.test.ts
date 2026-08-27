@@ -9,6 +9,9 @@ describe("postLoginRedirect", () => {
   it("allows safe in-app paths", () => {
     expect(sanitizePostLoginRedirect("/transaction/42")).toBe("/transaction/42");
     expect(sanitizePostLoginRedirect("/(app)/(tabs)")).toBe("/(app)/(tabs)");
+    expect(sanitizePostLoginRedirect("/accounts")).toBe("/accounts");
+    expect(sanitizePostLoginRedirect("/goal/7")).toBe("/goal/7");
+    expect(sanitizePostLoginRedirect("/profile")).toBe("/profile");
   });
 
   it("rejects external and traversal paths", () => {

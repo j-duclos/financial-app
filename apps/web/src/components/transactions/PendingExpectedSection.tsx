@@ -28,10 +28,9 @@ type Props = {
   isCredit: boolean;
   hiddenByPast: boolean;
   onEditRow: (row: TimelineRow) => void;
-  onConfirmRow: (row: TimelineRow) => void;
+  onMatchesImportedRow: (row: TimelineRow) => void;
   onSkipRow: (row: TimelineRow) => void;
   onMoveDateRow: (row: TimelineRow) => void;
-  onMatchRow: (row: TimelineRow) => void;
   onDeleteRow: (row: TimelineRow) => void;
   actionsPending: boolean;
   selectedIds: Set<number>;
@@ -44,7 +43,7 @@ type Props = {
 
 /**
  * Scheduled/rule rows whose date has arrived but no actual bank/manual posting has confirmed them.
- * Resolved via Confirm, Skip, Edit, Move Date, or Match — not manual delete.
+ * Resolved via Matches Imported, Skip, Edit, Move Date — not manual delete.
  */
 export default function PendingExpectedSection({
   pending,
@@ -53,10 +52,9 @@ export default function PendingExpectedSection({
   isCredit,
   hiddenByPast,
   onEditRow,
-  onConfirmRow,
+  onMatchesImportedRow,
   onSkipRow,
   onMoveDateRow,
-  onMatchRow,
   onDeleteRow,
   actionsPending,
   selectedIds,
@@ -183,12 +181,12 @@ export default function PendingExpectedSection({
               scheduleHighlightTitle={
                 scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : "Expected transaction waiting for confirmation"
               }
-              onConfirm={editable ? () => onConfirmRow(row.row) : undefined}
+              onMatchesImported={
+                editable && scheduleHighlight ? () => onMatchesImportedRow(row.row) : undefined
+              }
               onEdit={editable ? () => onEditRow(row.row) : undefined}
               onSkip={editable ? () => onSkipRow(row.row) : undefined}
               onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
-              onMatch={editable ? () => onMatchRow(row.row) : undefined}
-              showMatch
               onDelete={editable ? () => onDeleteRow(row.row) : undefined}
               actionsDisabled={actionsPending}
               selected={isSelected}

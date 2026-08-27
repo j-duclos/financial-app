@@ -121,7 +121,7 @@ export function AutomationListScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg }}>
         <AppHeader
           title="Rules & Automation"
-          onBack={() => router.back()}
+          showBack
           right={
             <IconButton
               name="plus"

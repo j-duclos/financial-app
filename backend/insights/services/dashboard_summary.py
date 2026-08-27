@@ -74,6 +74,7 @@ from insights.services.dashboard_context import (
     load_dashboard_shared_context,
     store_dashboard_shared_context,
 )
+from insights.services.dashboard_shared_context_cache import resolve_dashboard_shared_context
 from insights.services.dashboard_upcoming import (
     CREDIT_CARD_PAYMENT_CATEGORY,
     UPCOMING_DAYS,
@@ -1735,6 +1736,7 @@ def _log_dashboard_build_perf(
     label: str,
     wall_start: float | None,
     query_profiler: QueryProfiler | None,
+    timer: PerfTimer | None = None,
     phases: list[str] | None = None,
 ) -> None:
     if not perf_enabled() or wall_start is None:
@@ -1753,7 +1755,14 @@ def _log_dashboard_build_perf(
     if bt_count > 1 and callers:
         perf_print(f"[PERF] {label} build_timeline_callers={','.join(callers)}")
     if query_profiler is not None:
-        perf_print(f"[PERF] query_count={query_profiler.query_count}")
+        perf_print(
+            f"[PERF] {label} sql query_count={query_profiler.query_count} "
+            f"query_time_ms={query_profiler.query_time_ms:.0f}"
+        )
+    if timer is not None and timer.phases:
+        perf_print(f"[PERF] {label}_phase_table total_ms={total_ms:.0f}")
+        for name, elapsed in sorted(timer.phases.items(), key=lambda item: -item[1]):
+            perf_print(f"[PERF] {label}_phase {name}={elapsed:.0f}ms")
 
 
 def _compute_dashboard_core(
@@ -1853,6 +1862,16 @@ def _compute_dashboard_core(
             accounts_by_id,
             forecasts,
         )
+        phase_end(timer, _phase_lpc)
+        if perf_enabled() and lpc_start is not None:
+            perf_print(
+                f"[PERF] lowest_projected_cash elapsed_ms="
+                f"{(time.perf_counter() - lpc_start) * 1000:.0f}"
+            )
+
+        _phase_attention = phase_start(timer, "attention")
+        phases.append("attention")
+        attention_start = time.perf_counter() if perf_enabled() else None
         attention_all = build_attention_items(
             health_by_id,
             accounts_by_id,
@@ -1861,11 +1880,12 @@ def _compute_dashboard_core(
             today=today,
             signed_balances=signed_balances,
         )
-        phase_end(timer, _phase_lpc)
-        if perf_enabled() and lpc_start is not None:
+        phase_end(timer, _phase_attention)
+        if perf_enabled() and attention_start is not None:
             perf_print(
-                f"[PERF] lowest_projected_cash elapsed_ms="
-                f"{(time.perf_counter() - lpc_start) * 1000:.0f}"
+                f"[PERF] attention elapsed_ms="
+                f"{(time.perf_counter() - attention_start) * 1000:.0f} "
+                f"items={len(attention_all)} accounts={len(accounts)}"
             )
 
     attention = attention_all[:ATTENTION_TOP_LIMIT]
@@ -1900,6 +1920,73 @@ def _compute_dashboard_core(
             "attention_all": attention_all,
         },
     }
+
+
+def _build_dashboard_shared_context_payload(
+    user,
+    *,
+    days: int,
+    today: date,
+    request_context: DashboardRequestContext,
+) -> dict[str, Any]:
+    """Build and seed extended-risk continuation data for dashboard shared context."""
+    core = _compute_dashboard_core(
+        user,
+        days=days,
+        today=today,
+        timer=PerfTimer() if perf_enabled() else None,
+        shared_context=None,
+        request_context=request_context,
+    )
+    remember_detailed_forecast_for_extended_risk(
+        user,
+        as_of_date=today,
+        household_ids=_household_ids_from_core(core),
+        accounts=core["accounts"],
+        forecasts=core["forecasts"],
+        timeline_rows=core["timeline_rows"],
+        window_days=days,
+        first_cash_shortfall=core.get("first_cash_shortfall"),
+    )
+    return core["shared_context"]
+
+
+def _resolve_dashboard_shared_context_for_request(
+    user,
+    *,
+    scope: dict[str, Any],
+    days: int,
+    today: date,
+    households,
+    household_ids: list[int],
+) -> tuple[dict[str, Any], bool, DashboardRequestContext]:
+    request_context = build_dashboard_request_context(
+        user,
+        today=today,
+        days=days,
+        households=households,
+        household_ids=household_ids,
+    )
+
+    def build() -> dict[str, Any]:
+        return _build_dashboard_shared_context_payload(
+            user,
+            days=days,
+            today=today,
+            request_context=request_context,
+        )
+
+    shared_context, reused = resolve_dashboard_shared_context(scope, build=build)
+    if shared_context is not None:
+        request_context = build_dashboard_request_context(
+            user,
+            today=today,
+            days=days,
+            households=households,
+            household_ids=household_ids,
+            include_health_support=False,
+        )
+    return shared_context, reused, request_context
 
 
 def _build_dashboard_summary(
@@ -1952,7 +2039,7 @@ def _build_dashboard_summary(
     attention_all = core["attention_all"]
     attention = core["attention"]
     forecast_risk = core["forecast_risk"]
-    if mode != "details":
+    if mode != "details" and shared_context is None:
         remember_detailed_forecast_for_extended_risk(
             user,
             as_of_date=today,
@@ -2040,6 +2127,7 @@ def _build_dashboard_summary(
             label="dashboard_summary_fast",
             wall_start=wall_start,
             query_profiler=query_profiler,
+            timer=timer,
             phases=phases,
         )
 
@@ -2081,6 +2169,7 @@ def _build_dashboard_summary(
             label="dashboard_summary_details",
             wall_start=wall_start,
             query_profiler=query_profiler,
+            timer=timer,
             phases=phases,
         )
 
@@ -2369,11 +2458,18 @@ def build_dashboard_summary_fast(
     as_of_date: date | None = None,
 ) -> dict[str, Any]:
     """Above-the-fold dashboard payload for fast first paint."""
+    timer = PerfTimer() if perf_enabled() else None
+    query_profiler = QueryProfiler() if perf_enabled() else None
+    wall_start = time.perf_counter() if perf_enabled() else None
+    if query_profiler is not None:
+        query_profiler.start()
+
     days = normalize_forecast_days(days)
     today = as_of_date or date.today()
     households = list(get_households_for_user(user))
     household_ids = [h.id for h in households]
 
+    _cache_phase = phase_start(timer, "cache_lookup")
     full_key = get_dashboard_summary_cache_key(
         user_id=user.pk,
         household_ids=household_ids,
@@ -2382,12 +2478,17 @@ def build_dashboard_summary_fast(
     )
     full_cached = cache.get(full_key)
     if full_cached is not None:
+        phase_end(timer, _cache_phase)
+        if query_profiler is not None:
+            query_profiler.stop()
         log_perf(
             "dashboard_summary_fast",
             cache="HIT_FULL",
             user=user.pk,
             days=days,
             households=len(household_ids),
+            timer=timer,
+            query_profiler=query_profiler,
         )
         return _extract_dashboard_fast(full_cached)
 
@@ -2399,42 +2500,84 @@ def build_dashboard_summary_fast(
     )
     cached = cache.get(cache_key)
     if cached is not None:
+        phase_end(timer, _cache_phase)
+        if query_profiler is not None:
+            query_profiler.stop()
         log_perf(
             "dashboard_summary_fast",
             cache="HIT",
             user=user.pk,
             days=days,
             households=len(household_ids),
+            timer=timer,
+            query_profiler=query_profiler,
         )
         return cached
+    phase_end(timer, _cache_phase)
 
-    wall_start = time.perf_counter()
+    miss_wall_start = time.perf_counter()
     _, scope = _dashboard_scope_cache_params(
         user, days=days, as_of_date=today, household_ids=household_ids
     )
-    request_context = build_dashboard_request_context(
+    _shared_phase = phase_start(timer, "shared_context_resolve")
+    shared_context, reused, request_context = _resolve_dashboard_shared_context_for_request(
         user,
-        today=today,
+        scope=scope,
         days=days,
+        today=today,
         households=households,
         household_ids=household_ids,
     )
+    phase_end(timer, _shared_phase)
+
+    cache_sql_count = 0
+    cache_sql_ms = 0.0
+    if query_profiler is not None:
+        cache_sql_count = query_profiler.query_count
+        cache_sql_ms = query_profiler.query_time_ms
+        query_profiler.stop()
+
+    if reused:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            log_perf(
+                "dashboard_summary_fast",
+                cache="HIT_AFTER_WAIT" if shared_context is not None else "HIT",
+                user=user.pk,
+                days=days,
+                households=len(household_ids),
+                shared_context="HIT",
+                timer=timer,
+                query_count=cache_sql_count,
+                query_time_ms=f"{cache_sql_ms:.0f}",
+            )
+            return cached
+
     result = _build_dashboard_summary(
         user,
         days=days,
         as_of_date=today,
         mode="fast",
-        cache_scope=scope,
+        cache_scope=None,
         request_context=request_context,
+        shared_context=shared_context,
     )
+    if perf_enabled() and timer is not None:
+        perf_print(
+            "[PERF] dashboard_summary_fast_request "
+            f"cache_lookup={timer.phases.get('cache_lookup', 0.0):.0f}ms "
+            f"shared_context_resolve={timer.phases.get('shared_context_resolve', 0.0):.0f}ms "
+            f"cache_sql_count={cache_sql_count}"
+        )
     log_perf(
         "dashboard_summary_fast",
         cache="MISS",
         user=user.pk,
         days=days,
         households=len(household_ids),
-        elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
+        elapsed_ms=f"{(time.perf_counter() - miss_wall_start) * 1000:.0f}",
         build_timeline_count=get_build_timeline_count(),
+        shared_context="HIT" if reused else "MISS",
     )
     cache.set(cache_key, result, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)
     return result
@@ -2490,14 +2633,13 @@ def build_dashboard_summary_details(
     _, scope = _dashboard_scope_cache_params(
         user, days=days, as_of_date=today, household_ids=household_ids
     )
-    shared_context = _load_dashboard_shared_context(scope)
-    request_context = build_dashboard_request_context(
+    shared_context, reused, request_context = _resolve_dashboard_shared_context_for_request(
         user,
-        today=today,
+        scope=scope,
         days=days,
+        today=today,
         households=households,
         household_ids=household_ids,
-        include_health_support=shared_context is None,
     )
     details_result = _build_dashboard_summary(
         user,
@@ -2515,7 +2657,7 @@ def build_dashboard_summary_details(
         households=len(household_ids),
         elapsed_ms=f"{(time.perf_counter() - wall_start) * 1000:.0f}",
         build_timeline_count=get_build_timeline_count(),
-        shared_context="HIT" if shared_context is not None else "MISS",
+        shared_context="HIT" if reused else "MISS",
     )
     details = _extract_dashboard_details(details_result)
     cache.set(cache_key, details, timeout=DASHBOARD_SUMMARY_CACHE_SECONDS)

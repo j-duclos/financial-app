@@ -16,7 +16,7 @@ const txn = (partial: Partial<Transaction> & Pick<Transaction, "id" | "payee" | 
   }) as Transaction;
 
 describe("buildTransactionListRows", () => {
-  it("places upcoming before history and hides reconciled running balances when sealed", () => {
+  it("places recent before upcoming and hides reconciled running balances when sealed", () => {
     const balanceMap = indexTimelineBalances([
       {
         date: "2026-06-01",
@@ -55,14 +55,15 @@ describe("buildTransactionListRows", () => {
           running_balance: "800.00",
         },
       ],
+      pending: [],
       history: [txn({ id: 10, payee: "Old", amount: "-10.00", date: "2026-06-01", reconciled: true })],
       balanceMap,
       filters: { ...DEFAULT_TRANSACTION_FILTERS, showReconciled: true },
       today: "2026-06-05",
     });
 
-    expect(rows[0]).toMatchObject({ kind: "section", title: "Upcoming" });
-    expect(rows.some((r) => r.kind === "history")).toBe(true);
+    expect(rows[0]).toMatchObject({ kind: "section", title: "Recent" });
+    expect(rows.some((r) => r.kind === "upcoming")).toBe(true);
     const historyRow = rows.find((r) => r.kind === "history");
     expect(historyRow && historyRow.kind === "history" ? historyRow.runningBalance : null).toBeNull();
   });

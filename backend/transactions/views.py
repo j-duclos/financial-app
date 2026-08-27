@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.request import Request
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
 
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
@@ -28,7 +29,7 @@ from .services import (
     post_transaction,
     skip_scheduled_transaction,
 )
-from .services.immutability import is_financial_update, reject_if_reconciled
+from .services.immutability import is_financial_update, reject_if_bank_imported, reject_if_reconciled
 from .services.matching import (
     explain_import_candidate_exclusions,
     find_candidate_matches,
@@ -332,10 +333,59 @@ class TransactionViewSet(ModelViewSet):
     serializer_class = TransactionSerializer
     permission_classes = [IsHouseholdMember]
     pagination_class = TransactionPagination
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["account", "category", "rule_id"]
     ordering_fields = ["date", "id", "amount"]
     ordering = ["-date", "-id"]
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        include = (request.query_params.get("include_running_balance") or "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        if not include:
+            return response
+        account_raw = request.query_params.get("account")
+        try:
+            account_id = int(account_raw) if account_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            account_id = None
+        if account_id is None:
+            return response
+
+        from datetime import date as date_cls
+
+        from accounts.models import Account
+
+        from .services.ledger_running_balances import running_balances_for_account_transactions
+
+        households = get_households_for_user(request.user)
+        account = Account.objects.filter(household__in=households, pk=account_id).first()
+        if account is None:
+            return response
+
+        results = response.data.get("results") if isinstance(response.data, dict) else None
+        if not isinstance(results, list) or not results:
+            return response
+
+        txn_ids = [row.get("id") for row in results if isinstance(row, dict) and row.get("id") is not None]
+        date_before = request.query_params.get("date_before")
+        as_of = date_cls.today()
+        if date_before:
+            try:
+                as_of = date_cls.fromisoformat(str(date_before))
+            except ValueError:
+                pass
+        balances = running_balances_for_account_transactions(account, txn_ids, as_of=as_of)
+        for row in results:
+            if not isinstance(row, dict):
+                continue
+            rid = row.get("id")
+            if rid in balances:
+                row["running_balance"] = balances[rid]
+        return response
 
     def get_queryset(self):
         from .services.matching import ledger_visible_transactions
@@ -800,6 +850,7 @@ class TransactionViewSet(ModelViewSet):
 
     def perform_destroy(self, instance: Transaction):
         reject_if_reconciled(instance, action="deleted")
+        reject_if_bank_imported(instance, action="deleted")
         today = timezone.localdate()
         if instance.source == Transaction.Source.INTEREST:
             from timeline.models import InterestCycleSkip

@@ -11,9 +11,11 @@ import { useTheme } from "@/theme";
 type Props = {
   value: OperationalForecastDays;
   onChange: (days: OperationalForecastDays) => void;
+  /** True while a new forecast window is loading but prior data may still be visible. */
+  updating?: boolean;
 };
 
-export function ForecastWindowSelect({ value, onChange }: Props) {
+export function ForecastWindowSelect({ value, onChange, updating }: Props) {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const label = useMemo(() => FORECAST_WINDOW_LABELS[value], [value]);
@@ -35,7 +37,10 @@ export function ForecastWindowSelect({ value, onChange }: Props) {
         }}
       >
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.label }}>Forecast</Text>
-        <Text style={{ color: theme.colors.text, fontWeight: "600" }}>{label}</Text>
+        <Text style={{ color: theme.colors.text, fontWeight: "600" }}>
+          {label}
+          {updating ? " · Updating…" : ""}
+        </Text>
       </Pressable>
 
       <BottomSheet visible={open} title="Forecast window" onClose={() => setOpen(false)}>

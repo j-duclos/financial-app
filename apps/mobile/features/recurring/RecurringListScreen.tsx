@@ -72,6 +72,7 @@ export function RecurringListScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg }}>
         <AppHeader
           title="Recurring"
+          showBack
           right={
             <IconButton
               name="plus"

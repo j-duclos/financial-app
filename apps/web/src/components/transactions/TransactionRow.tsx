@@ -37,6 +37,8 @@ export function projectionSelectionKey(row: TransactionRowData): string | null {
 /** Rows that can be batch-deleted: real txns, or scheduled rule rows that can be materialized. */
 export function canSelectTransactionForBatchDelete(row: TransactionRowData): boolean {
   if (row.reconciled || row.readOnly) return false;
+  if ((row.plaidTransactionId ?? "").trim()) return false;
+  if ((row.txnSource ?? "").toUpperCase() === "PLAID") return false;
   if (row.transactionId != null) return true;
   return row.source.rule_id != null && row.accountId != null;
 }
@@ -50,10 +52,8 @@ type Props = {
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
-  onConfirm?: () => void;
+  onMatchesImported?: () => void;
   onMoveDate?: () => void;
-  onMatch?: () => void;
-  showMatch?: boolean;
   actionsDisabled?: boolean;
   /** Multi-select for batch delete. */
   selected?: boolean;
@@ -136,10 +136,8 @@ export default function TransactionRow({
   onDuplicate,
   onDelete,
   onSkip,
-  onConfirm,
+  onMatchesImported,
   onMoveDate,
-  onMatch,
-  showMatch,
   actionsDisabled,
   selected = false,
   onSelectedChange,
@@ -255,10 +253,8 @@ export default function TransactionRow({
           onDuplicate={variant === "past" ? onDuplicate : undefined}
           onDelete={onDelete}
           onSkip={variant === "future" || variant === "expected" ? onSkip : undefined}
-          onConfirm={variant === "expected" ? onConfirm : undefined}
+          onMatchesImported={variant === "expected" ? onMatchesImported : undefined}
           onMoveDate={variant === "expected" ? onMoveDate : undefined}
-          onMatch={variant === "expected" ? onMatch : undefined}
-          showMatch={showMatch}
           disabled={actionsDisabled}
           readOnly={row.readOnly}
         />

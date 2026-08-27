@@ -216,11 +216,13 @@ Full env var checklist: `RENDER_DEPLOYMENT.md`.
 
 ```bash
 cd apps/mobile
-npm install
-npx expo start
+cp .env.local.example .env   # Local Django — or .env.render.example for Render
+npx expo start --clear
 ```
 
-- Set `EXPO_PUBLIC_API_URL=http://localhost:8000` (e.g. in `.env` or app config) so the device/emulator can reach the API.
+- **Local (fast):** `EXPO_PUBLIC_API_URL=http://localhost:8000` (simulator) or `http://<LAN-IP>:8000` (device). Run Django with `ALLOWED_HOSTS='*' python3 manage.py runserver 0.0.0.0:8000`.
+- **Render (realistic perf):** `EXPO_PUBLIC_API_URL=https://financial-app-1-tu0l.onrender.com` — mobile hits the hosted Django service (not the DB directly). Mutations are real production data.
+- Full details: `apps/mobile/README.md`.
 
 ## Other commands
 
@@ -673,3 +675,13 @@ Supporting code: `hooks/`, `lib/` (display helpers), `packages/api-client/` (typ
 
 
 
+
+
+
+Main   [Checking]                       [Critical]
+Projected negative: Aug 27                       >
+Add $1406.40 before Aug 27
+
+Care Credit  [Credit]                   [Critical]
+Utilization: 22%                                 >
+Pay $590.96 to reach your 10% target

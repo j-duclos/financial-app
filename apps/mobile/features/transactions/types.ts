@@ -22,10 +22,19 @@ export type TransactionFilters = {
   amountMax: number | null;
 };
 
+/** First-page size for mobile transaction list and Attention prefetch (same query key). */
+export const TRANSACTIONS_LIST_PAGE_SIZE = 15;
+
+/** Bounded Recent ledger page — large enough for a typical 14–90 day window in one request. */
+export const TRANSACTIONS_LEDGER_PAGE_SIZE = 500;
+
+/** Ascending ledger order matching backend running-balance walk (date, then id). */
+export const TRANSACTIONS_LEDGER_ORDERING = "date,id";
+
 export const DEFAULT_TRANSACTION_FILTERS: TransactionFilters = {
   accountId: null,
   categoryId: null,
-  timeFilter: "3m",
+  timeFilter: "14d",
   specificDate: null,
   dateFrom: null,
   dateTo: null,
@@ -38,13 +47,17 @@ export const DEFAULT_TRANSACTION_FILTERS: TransactionFilters = {
   amountMax: null,
 };
 
+/** Clear ledger filters but keep the selected account (account is navigation, not a filter). */
+export function clearTransactionFiltersPreservingAccount(accountId: number | null): TransactionFilters {
+  return { ...DEFAULT_TRANSACTION_FILTERS, accountId };
+}
+
 export function countActiveTransactionFilters(filters: TransactionFilters): number {
   let n = 0;
-  if (filters.accountId != null) n += 1;
   if (filters.categoryId != null) n += 1;
   if (filters.specificDate) n += 1;
   else if (filters.dateFrom || filters.dateTo) n += 1;
-  else if (filters.timeFilter !== "3m") n += 1;
+  else if (filters.timeFilter !== "14d") n += 1;
   if (filters.showReconciled) n += 1;
   if (filters.flow !== "all") n += 1;
   if (filters.cleared !== "all") n += 1;

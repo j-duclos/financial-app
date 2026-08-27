@@ -1,4 +1,5 @@
 import type { Transaction, TimelineRow } from "@budget-app/shared";
+import { scheduledRowHasMatchingImport } from "@budget-app/shared";
 export { formatDateDisplay, formatDateTimeDisplay } from "../../lib/dateDisplay";
 import { formatDateDisplay } from "../../lib/dateDisplay";
 import type { OperationalForecastDays } from "../../lib/forecastWindow";
@@ -469,26 +470,11 @@ export function isImportedTimelineRow(row: TimelineRow): boolean {
   return row.source === "actual" && row.transaction_id != null;
 }
 
-/**
- * Highlight scheduled rows when an unmatched bank import looks like the same charge
- * (amount + payee, within ±5 days — payroll often posts before the automation date).
- */
 export function shouldHighlightUnmatchedScheduledRow(
   row: TimelineRow,
   timeline: TimelineRow[]
 ): boolean {
-  if (!isPlannedScheduledTimelineRow(row)) return false;
-  if (isTransferLegImportConfirmed(row)) return false;
-  if (isShadowedByMatchedRuleSibling(row, timeline)) return false;
-  if (isSupersededPlannedTimelineRow(row, timeline)) return false;
-  const accountId = Number(row.account_id);
-  for (const other of timeline) {
-    if (Number(other.account_id) !== accountId) continue;
-    if (!isImportedTimelineRow(other)) continue;
-    if (daysBetweenIsoDates(other.date, row.date) > SCHEDULE_IMPORT_DATE_WINDOW_DAYS) continue;
-    if (plannedAndPostingLikelySame(row, other)) return true;
-  }
-  return false;
+  return scheduledRowHasMatchingImport(row, timeline);
 }
 
 /** Unmatched rule row superseded because a sibling occurrence already matched the bank import. */

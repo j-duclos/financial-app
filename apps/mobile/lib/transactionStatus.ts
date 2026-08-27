@@ -10,6 +10,25 @@ export function isBankImportedTransaction(txn: {
   return (txn.source ?? "").toUpperCase() === "PLAID";
 }
 
+/** Manual / scheduled rows may be deleted; bank imports and reconciled rows may not. */
+export function canDeleteTransaction(txn: {
+  reconciled?: boolean;
+  plaid_transaction_id?: string | null;
+  source?: string | null;
+}): boolean {
+  if (txn.reconciled) return false;
+  if (isBankImportedTransaction(txn)) return false;
+  return true;
+}
+
+/**
+ * Category is metadata — allowed on imports. Reconciled rows lock category
+ * (appears on reconciliation history).
+ */
+export function canChangeTransactionCategory(txn: { reconciled?: boolean }): boolean {
+  return !txn.reconciled;
+}
+
 export function isTransferTransaction(txn: Transaction): boolean {
   if (txn.transfer_to_account != null || txn.linked_transaction_id != null) return true;
   const cat = txn.category?.name ?? "";
@@ -25,7 +44,7 @@ export function transactionEditLockMessage(
   accountName?: string | null
 ): string | null {
   if (txn.reconciled) {
-    return "Reconciled transaction. Financial fields are locked. Undo the reconciliation to change accounting history.";
+    return "Reconciled transaction. Financial fields are locked.";
   }
   if (isBankImportedTransaction(txn)) {
     const from = accountName?.trim()

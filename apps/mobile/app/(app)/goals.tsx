@@ -1,7 +1,5 @@
-import { PlaceholderScreen } from "@/components/PlaceholderScreen";
-import { useRouter } from "expo-router";
+import { GoalsScreen } from "@/features/goals";
 
-export default function GoalsPlaceholder() {
-  const router = useRouter();
-  return <PlaceholderScreen title="Goals" showBack onBack={() => router.back()} />;
+export default function GoalsRoute() {
+  return <GoalsScreen />;
 }

@@ -170,7 +170,18 @@ export function AccountDetailScreen() {
 
       <View style={{ flexDirection: "row", gap: 8, marginTop: theme.spacing.lg }}>
         <View style={{ flex: 1 }}>
-          <Button label="View transactions" onPress={() => router.push({ pathname: "/(app)/(tabs)/transactions", params: { account: String(account.id) } })} />
+          <Button
+            label="View transactions"
+            onPress={() =>
+              router.push({
+                pathname: "/(app)/(tabs)/transactions",
+                params: {
+                  account: String(account.id),
+                  accountName: getEffectiveDisplayName(account),
+                },
+              })
+            }
+          />
         </View>
         <View style={{ flex: 1 }}>
           <Button label="Edit" variant="secondary" onPress={() => router.push(`/account/edit/${account.id}`)} />
@@ -182,7 +193,7 @@ export function AccountDetailScreen() {
         <EmptyState title="No upcoming transactions" message={`Nothing scheduled in the next ${forecastDays} days.`} />
       ) : (
         previewRows.upcoming.map((txn) => (
-          <TransactionRowCard key={txn.id} txn={txn} showAccount={false} />
+          <TransactionRowCard key={txn.id} txn={txn} />
         ))
       )}
 
@@ -191,7 +202,7 @@ export function AccountDetailScreen() {
         <EmptyState title="No recent activity" message="Recent unreconciled transactions will appear here." />
       ) : (
         previewRows.recent.map((txn) => (
-          <TransactionRowCard key={txn.id} txn={txn} showAccount={false} />
+          <TransactionRowCard key={txn.id} txn={txn} />
         ))
       )}
     </Screen>

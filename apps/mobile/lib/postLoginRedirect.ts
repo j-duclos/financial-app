@@ -5,6 +5,7 @@ const ALLOWED_PREFIXES = [
   "/(app)",
   "/transaction/",
   "/account/",
+  "/accounts",
   "/recurring/",
   "/automation/",
   "/budget/",
@@ -12,7 +13,12 @@ const ALLOWED_PREFIXES = [
   "/what-if",
   "/payment-planner",
   "/goals",
+  "/goal/",
   "/action-center",
+  "/spending-limits",
+  "/profile",
+  "/categories",
+  "/reconcile",
 ] as const;
 
 export function sanitizePostLoginRedirect(raw: string | undefined | null): string | null {

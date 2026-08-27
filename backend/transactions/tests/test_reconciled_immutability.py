@@ -79,3 +79,22 @@ def test_reconciled_transaction_cannot_be_deleted(api_client, user, account):
     resp = api_client.delete(f"/api/transactions/{txn.pk}/")
     assert resp.status_code == 400
     assert Transaction.objects.filter(pk=txn.pk).exists()
+
+
+@pytest.mark.django_db
+def test_imported_transaction_cannot_be_deleted(api_client, user, account):
+    txn = Transaction.objects.create(
+        account=account,
+        date=date(2026, 8, 18),
+        payee="Walmart",
+        amount=Decimal("-150.62"),
+        status=Transaction.Status.CLEARED,
+        cleared=True,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="txn_imported_1",
+    )
+    api_client.force_authenticate(user=user)
+    resp = api_client.delete(f"/api/transactions/{txn.pk}/")
+    assert resp.status_code == 400
+    assert "Imported" in str(resp.data)
+    assert Transaction.objects.filter(pk=txn.pk).exists()

@@ -48,10 +48,21 @@ export function TransactionFormScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const params = useLocalSearchParams<{ account?: string; id?: string }>();
+  const params = useLocalSearchParams<{
+    account?: string;
+    id?: string;
+    mode?: string;
+    from?: string;
+    to?: string;
+    amount?: string;
+    date?: string;
+  }>();
   const editId = params.id ? Number(params.id) : null;
   const isEdit = editId != null && editId > 0;
   const prefillAccount = Number(params.account);
+  const transferMode = params.mode === "transfer";
+  const presetFrom = Number(params.from);
+  const presetTo = Number(params.to);
 
   const [form, setForm] = useState<FormState>(() =>
     emptyForm(Number.isInteger(prefillAccount) && prefillAccount > 0 ? prefillAccount : undefined)
@@ -74,6 +85,31 @@ export function TransactionFormScreen() {
   const { categories } = useCategoryOptions({ householdId });
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const isTransfer = isTransferCategoryName(selectedCategory?.name);
+
+  useEffect(() => {
+    if (isEdit || !transferMode) return;
+    const fromId = Number.isInteger(presetFrom) && presetFrom > 0 ? presetFrom : null;
+    const toId = Number.isInteger(presetTo) && presetTo > 0 ? presetTo : prefillAccount;
+    if (!toId || !Number.isInteger(toId) || toId <= 0) return;
+    setForm((prev) => ({
+      ...prev,
+      account_id: fromId ?? prev.account_id,
+      transfer_to_account_id: toId,
+      amount: params.amount?.trim() || prev.amount,
+      date: params.date?.trim() || prev.date,
+      payee: prev.payee || "Transfer",
+    }));
+  }, [isEdit, transferMode, presetFrom, presetTo, prefillAccount, params.amount, params.date]);
+
+  useEffect(() => {
+    if (isEdit || !transferMode || categories.length === 0) return;
+    const bankTransfer = categories.find((c) => c.name === "Bank Transfer");
+    if (bankTransfer) {
+      setForm((prev) =>
+        prev.category_id === "" ? { ...prev, category_id: bankTransfer.id } : prev
+      );
+    }
+  }, [isEdit, transferMode, categories]);
 
   useEffect(() => {
     const txn = txnQuery.data;

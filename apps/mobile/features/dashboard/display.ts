@@ -6,7 +6,7 @@ import type {
   ExtendedCashRisk,
   ExtendedCashRiskResponse,
 } from "@budget-app/shared";
-import { formatCurrency } from "@budget-app/shared";
+import { formatCurrency, normalizeSeverity } from "@budget-app/shared";
 
 /** Format ISO date as "Jul 22" (matches web dateDisplay). */
 export function formatShortMonthDay(isoDate: string | null | undefined): string {
@@ -115,10 +115,11 @@ export function isDashboardOnboarding(
 export function attentionStatusTone(
   status: "healthy" | "watch" | "risk" | "critical"
 ): "positive" | "warning" | "critical" | "neutral" {
-  switch (status) {
+  switch (normalizeSeverity(status)) {
     case "critical":
-    case "risk":
       return "critical";
+    case "at_risk":
+      return "warning";
     case "watch":
       return "warning";
     case "healthy":
@@ -141,4 +142,15 @@ export function attentionStatusLabel(status: "healthy" | "watch" | "risk" | "cri
     default:
       return status;
   }
+}
+
+/** Dashboard attention card issue line — compact colon form from README mock. */
+export function attentionPrimaryIssueDisplay(reason: string | null | undefined): string | null {
+  const text = reason?.trim();
+  if (!text) return null;
+  const projected = text.match(/^Projected negative\s+(.+)$/i);
+  if (projected) return `Projected negative: ${projected[1]}`;
+  const utilization = text.match(/^Utilization is\s+(.+)$/i);
+  if (utilization) return `Utilization: ${utilization[1]}`;
+  return text;
 }

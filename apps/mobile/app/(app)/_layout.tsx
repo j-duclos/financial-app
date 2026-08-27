@@ -43,6 +43,9 @@ export default function AppLayout() {
       <Stack.Screen name="spending-limits/new" />
       <Stack.Screen name="spending-limits/edit/[id]" />
       <Stack.Screen name="goals" />
+      <Stack.Screen name="goal/[id]" />
+      <Stack.Screen name="goal/new" />
+      <Stack.Screen name="goal/edit/[id]" />
       <Stack.Screen name="action-center" />
       <Stack.Screen name="payment-planner" />
       <Stack.Screen name="payment-planner/plan-details" />

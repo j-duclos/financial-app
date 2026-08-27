@@ -14,7 +14,8 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging"
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_API_URL": "https://financial-app-1-tu0l.onrender.com"
       },
       "android": {
         "buildType": "apk"
@@ -23,7 +24,8 @@
     "production": {
       "distribution": "store",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "production"
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "https://financial-app-1-tu0l.onrender.com"
       },
       "autoIncrement": true
     }
