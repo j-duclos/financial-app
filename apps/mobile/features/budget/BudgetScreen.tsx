@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -9,6 +9,7 @@ import {
   SkeletonBlock,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
+import { FINANCIAL_LIST_PROPS } from "@/lib/flatListDefaults";
 import { describeApiError } from "@/services/api";
 import { BudgetSummaryCard } from "./BudgetSummaryCard";
 import { BudgetCategoryRow } from "./BudgetCategoryRow";
@@ -16,7 +17,7 @@ import { PeriodSelector } from "./PeriodSelector";
 import { currentPeriodAnchor, shiftPeriodAnchor } from "./periodUtils";
 import { sortBudgetRows } from "./spendingTargetDisplay";
 import { useBudgetData } from "./useBudgetData";
-import type { BudgetSortKey } from "./types";
+import type { BudgetCategoryRow as BudgetCategoryRowType, BudgetSortKey } from "./types";
 
 const SORT_OPTIONS: { key: BudgetSortKey; label: string }[] = [
   { key: "over", label: "Over first" },
@@ -31,9 +32,55 @@ export function BudgetScreen() {
   const [period, setPeriod] = useState(currentPeriodAnchor);
   const [sortKey, setSortKey] = useState<BudgetSortKey>("over");
 
-  const { summary, rows, isLoading, isError, error, isFetching, refetch } = useBudgetData(period);
+  const { summary, rows, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
+    useBudgetData(period);
 
   const sortedRows = useMemo(() => sortBudgetRows(rows, sortKey), [rows, sortKey]);
+
+  const onRowPress = useCallback(
+    (item: BudgetCategoryRowType) => {
+      router.push({
+        pathname: "/budget/[targetId]",
+        params: {
+          targetId: String(item.target.id),
+          anchor: period.anchor,
+        },
+      });
+    },
+    [router, period.anchor]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: BudgetCategoryRowType }) => (
+      <BudgetCategoryRow row={item} onPress={() => onRowPress(item)} />
+    ),
+    [onRowPress]
+  );
+
+  const keyExtractor = useCallback((item: BudgetCategoryRowType) => String(item.target.id), []);
+
+  if (!householdReady) {
+    return (
+      <Screen scroll={false}>
+        <View style={{ padding: theme.spacing.lg }}>
+          <SkeletonBlock lines={4} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (householdId == null) {
+    return (
+      <Screen scroll={false}>
+        <View style={{ padding: theme.spacing.lg }}>
+          <EmptyState
+            title="Default household required"
+            message="Set a default household in Profile & Settings on web to track your budget."
+          />
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen scroll={false} contentStyle={{ paddingHorizontal: 0 }}>
@@ -109,21 +156,9 @@ export function BudgetScreen() {
       ) : (
         <FlatList
           data={sortedRows}
-          keyExtractor={(item) => String(item.target.id)}
-          renderItem={({ item }) => (
-            <BudgetCategoryRow
-              row={item}
-              onPress={() =>
-                router.push({
-                  pathname: "/budget/[targetId]",
-                  params: {
-                    targetId: String(item.target.id),
-                    anchor: period.anchor,
-                  },
-                })
-              }
-            />
-          )}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          {...FINANCIAL_LIST_PROPS}
           refreshControl={
             <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
           }

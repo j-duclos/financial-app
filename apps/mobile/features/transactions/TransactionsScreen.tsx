@@ -8,29 +8,30 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { listAccounts, listCategories } from "@budget-app/api-client";
 import {
   EmptyState,
   ErrorState,
   IconButton,
   Screen,
-  SectionHeader,
   SkeletonBlock,
   TextField,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { accountLifecycleStatus } from "@/lib/accountGroups";
+import { FINANCIAL_LIST_PROPS } from "@/lib/flatListDefaults";
+import { resolveHouseholdId } from "@/lib/householdContext";
 import { describeApiError } from "@/services/api";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
+import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import {
   countActiveTransactionFilters,
   DEFAULT_TRANSACTION_FILTERS,
   type TransactionFilters,
 } from "./types";
-import { filtersFromSearchParams, transactionQueryKeys } from "./queryKeys";
+import { filtersFromSearchParams } from "./queryKeys";
 import { useTransactionsData } from "./useTransactionsData";
-import { TransactionRowCard } from "./TransactionRowCard";
+import { TransactionListItem } from "./TransactionListItem";
 import { TransactionFiltersSheet } from "./TransactionFiltersSheet";
 import type { TransactionListRow } from "./buildTransactionList";
 
@@ -63,28 +64,23 @@ export function TransactionsScreen() {
   }, [params.account, params.category, params.date, params.dateFrom, params.dateTo]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filterDraft, setFilterDraft] = useState(filters);
+  const [searchInput, setSearchInput] = useState(filters.search);
 
-  const accountsQuery = useQuery({
-    queryKey: transactionQueryKeys.accountsPicker,
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-    staleTime: 5 * 60_000,
-  });
+  useEffect(() => {
+    setSearchInput(filters.search);
+  }, [filters.search]);
 
-  const accounts = useMemo(
-    () => (accountsQuery.data?.results ?? []).filter((a) => accountLifecycleStatus(a) === "active"),
-    [accountsQuery.data?.results]
-  );
+  const onSearchChange = useCallback((text: string) => {
+    setSearchInput(text);
+    setFilters((prev) => (prev.search === text ? prev : { ...prev, search: text }));
+  }, []);
 
-  const householdId = filters.accountId
-    ? accounts.find((a) => a.id === filters.accountId)?.household?.id ?? null
-    : accounts[0]?.household?.id ?? null;
+  const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
+  const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
+  const accounts = accountOptionsQuery.accounts;
 
-  const categoriesQuery = useQuery({
-    queryKey: transactionQueryKeys.categories(householdId),
-    queryFn: () => listCategories({ household: householdId ?? undefined }),
-    enabled: householdId != null,
-    staleTime: 5 * 60_000,
-  });
+  const householdId = resolveHouseholdId(defaultHouseholdId, filters.accountId, accounts);
+  const categoriesQuery = useCategoryOptions({ householdId });
 
   const {
     listRows,
@@ -104,34 +100,43 @@ export function TransactionsScreen() {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const renderItem = useCallback(
-    ({ item }: { item: TransactionListRow }) => {
-      if (item.kind === "section") {
-        return <SectionHeader title={item.title} />;
-      }
-      if (item.kind === "upcoming") {
-        return (
-          <Pressable
-            onPress={() => {
-              if (item.row.transaction_id) {
-                router.push(`/transaction/${item.row.transaction_id}`);
-              }
-            }}
-          >
-            <TransactionRowCard timelineRow={item.row} runningBalance={item.runningBalance} />
-          </Pressable>
-        );
-      }
-      return (
-        <Pressable onPress={() => router.push(`/transaction/${item.txn.id}`)}>
-          <TransactionRowCard txn={item.txn} runningBalance={item.runningBalance} />
-        </Pressable>
-      );
+  const onPressTransaction = useCallback(
+    (id: number) => {
+      router.push(`/transaction/${id}`);
     },
     [router]
   );
 
+  const renderItem = useCallback(
+    ({ item }: { item: TransactionListRow }) => (
+      <TransactionListItem item={item} onPressTransaction={onPressTransaction} />
+    ),
+    [onPressTransaction]
+  );
+
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
+
+  if (!householdReady) {
+    return (
+      <Screen edges={["top", "left", "right"]}>
+        <View style={{ padding: theme.spacing.lg, gap: 8 }}>
+          <SkeletonBlock lines={3} />
+          <SkeletonBlock lines={3} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (defaultHouseholdId == null && filters.accountId == null) {
+    return (
+      <Screen edges={["top", "left", "right"]}>
+        <EmptyState
+          title="Default household required"
+          message="Set a default household in Profile & Settings on web, or filter by account."
+        />
+      </Screen>
+    );
+  }
 
   return (
     <Screen edges={["top", "left", "right"]} contentStyle={{ paddingHorizontal: 0 }}>
@@ -162,8 +167,8 @@ export function TransactionsScreen() {
         </View>
         <TextField
           label="Search"
-          value={filters.search}
-          onChangeText={(search) => setFilters((prev) => ({ ...prev, search }))}
+          value={searchInput}
+          onChangeText={onSearchChange}
           placeholder="Payee or memo"
           style={{ marginTop: theme.spacing.sm }}
         />
@@ -210,6 +215,7 @@ export function TransactionsScreen() {
           keyExtractor={keyExtractor}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
+          {...FINANCIAL_LIST_PROPS}
           refreshControl={
             <RefreshControl
               refreshing={historyQuery.isFetching && !isLoading}
@@ -232,7 +238,11 @@ export function TransactionsScreen() {
         visible={filtersOpen}
         draft={filterDraft}
         accounts={accounts}
-        categories={categoriesQuery.data?.results ?? []}
+        accountsLoading={accountOptionsQuery.isLoading && accounts.length === 0}
+        accountsError={accountOptionsQuery.isError}
+        categories={categoriesQuery.categories}
+        categoriesLoading={categoriesQuery.isLoading && categoriesQuery.categories.length === 0}
+        categoriesError={categoriesQuery.isError}
         onClose={() => setFiltersOpen(false)}
         onApply={(next) => {
           setFilters(next);

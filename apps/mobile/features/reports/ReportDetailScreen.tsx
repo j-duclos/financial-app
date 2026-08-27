@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { currentMonthStr } from "@budget-app/shared";
-import { AppHeader, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
+import { AppHeader, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
 import { PeriodSelector } from "@/features/budget/PeriodSelector";
 import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/features/budget/periodUtils";
 import { useTheme } from "@/theme";
@@ -35,7 +35,8 @@ export function ReportDetailScreen() {
   );
 
   const period = periodAnchorFromDate(`${filters.monthKey}-15`);
-  const { data, isLoading, isError, error, isFetching, refetch } = useReportsData(filters);
+  const { data, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
+    useReportsData(filters);
 
   if (!reportType) {
     return (
@@ -49,6 +50,29 @@ export function ReportDetailScreen() {
   const onCategoryPress = (categoryId: number, categoryName: string) => {
     router.push(categoryDetailPath(categoryId, filters, categoryName));
   };
+
+  if (!householdReady) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title={reportTabLabel(reportType)} onBack={() => router.back()} />
+        <View style={{ padding: 16 }}>
+          <SkeletonBlock lines={6} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (householdId == null) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title={reportTabLabel(reportType)} onBack={() => router.back()} />
+        <EmptyState
+          title="Default household required"
+          message="Set a default household in Profile & Settings on web to view reports."
+        />
+      </Screen>
+    );
+  }
 
   return (
     <Screen scroll={false}>

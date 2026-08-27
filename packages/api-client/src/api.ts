@@ -209,7 +209,6 @@ export async function listAccounts(params?: {
   if (params?.include_archived) q.include_archived = "true";
   if (params?.include_closed) q.include_closed = "true";
   if (params?.include_deleted) q.include_deleted = "true";
-  q._ = String(Date.now());
   const heavy = params?.forecast_summary === "true" || params?.health === "true";
   return requestRequired("/api/accounts/", {
     params: q,
@@ -263,7 +262,6 @@ export async function getAccount(
   if (options?.health) params.health = "true";
   if (options?.relationships) params.relationships = "true";
   if (options?.days != null) params.days = String(options.days);
-  if (Object.keys(params).length > 0) params._ = String(Date.now());
   const heavy = Boolean(options?.forecast_summary || options?.health);
   return requestRequired(`/api/accounts/${id}/`, {
     params: Object.keys(params).length > 0 ? params : undefined,
@@ -632,7 +630,6 @@ export async function listTransactions(params?: {
   if (params?.search?.trim()) q.search = params.search.trim();
   if (params?.page != null) q.page = String(params.page);
   if (params?.page_size != null) q.page_size = String(params.page_size);
-  q._ = String(Date.now());
   return requestRequired("/api/transactions/", { params: q });
 }
 
@@ -1701,7 +1698,6 @@ export async function getTimeline(params: {
   if (params.account_id != null) q.account_id = String(params.account_id);
   if (params.household_id != null) q.household_id = String(params.household_id);
   if (params.exclude_reconciled_past) q.exclude_reconciled_past = "true";
-  q._ = String(Date.now());
   return requestRequired("/api/timeline/", { params: q });
 }
 
@@ -1813,7 +1809,6 @@ export async function getTimelineCalendar(params: {
   household_id?: number | null;
 }): Promise<TimelineCalendarResponse> {
   const q = calendarQueryParams(params);
-  q._ = String(Date.now());
   return requestRequired("/api/timeline/calendar/", { params: q });
 }
 

@@ -14,7 +14,8 @@ export function AccountsScreen() {
   const router = useRouter();
   const { forecastDays, ready } = usePageForecastWindow();
   const { accounts, isLoading, isError, error, refetch, isEnriching } = useAccountsList(
-    ready ? forecastDays : 30
+    forecastDays,
+    { forecastReady: ready }
   );
 
   const groups = useMemo(() => groupAccountsByType(accounts), [accounts]);

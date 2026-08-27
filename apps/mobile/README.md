@@ -31,6 +31,28 @@ npx expo start
 
 Auth uses JWT (`/api/auth/token/`, refresh via `/api/auth/refresh/`). Tokens are stored in **Expo SecureStore** (not AsyncStorage).
 
+## Environments
+
+| `EXPO_PUBLIC_APP_ENV` | Use |
+|-----------------------|-----|
+| `development` | Local Metro + Django dev server |
+| `staging` | EAS `preview` internal beta builds |
+| `production` | Store builds |
+
+Copy `.env.example` to `.env` for local work. Staging/production builds require `EXPO_PUBLIC_API_URL` as HTTPS — see `constants/env.ts`.
+
+## EAS / internal beta
+
+See **`BETA_READINESS.md`** for the full production-readiness report.
+
+```bash
+npm install   # from monorepo root
+cd apps/mobile
+eas build --profile preview --platform android   # internal APK
+```
+
+Set EAS secrets: `EXPO_PUBLIC_API_URL`, optional legal/support URLs, optional `EXPO_PUBLIC_SENTRY_DSN`.
+
 ## Tests
 
 ```bash

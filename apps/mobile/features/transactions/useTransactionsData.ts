@@ -15,6 +15,7 @@ import {
   indexTimelineBalances,
 } from "./buildTransactionList";
 import { transactionListQueryParams, timelineQueryParams, transactionQueryKeys } from "./queryKeys";
+import { needsTimelineProjection } from "./timelineProjection";
 import type { TransactionFilters } from "./types";
 
 const PAGE_SIZE = 50;
@@ -23,6 +24,7 @@ export function useTransactionsData(filters: TransactionFilters) {
   const { forecastDays, ready: forecastReady } = usePageForecastWindow();
   const debouncedSearch = useDebouncedValue(filters.search, 350);
   const hideReconciledPast = !filters.showReconciled;
+  const wantsTimeline = needsTimelineProjection(filters);
   const { start: historyStart, end: historyEnd } = pastTransactionsRange(filters.timeFilter);
   const projectionRange = ledgerProjectionRange(forecastDays);
 
@@ -103,7 +105,7 @@ export function useTransactionsData(filters: TransactionFilters) {
         account_id: filters.accountId ?? undefined,
         exclude_reconciled_past: hideReconciledPast,
       }),
-    enabled: forecastReady,
+    enabled: forecastReady && wantsTimeline,
     staleTime: 60_000,
   });
 
@@ -123,16 +125,48 @@ export function useTransactionsData(filters: TransactionFilters) {
     return timeline.filter((row) => row.date > today);
   }, [timelineQuery.data?.timeline]);
 
+  const filtersForList = useMemo((): TransactionFilters => {
+    return {
+      accountId: filters.accountId,
+      categoryId: filters.categoryId,
+      timeFilter: filters.timeFilter,
+      specificDate: filters.specificDate,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      showReconciled: filters.showReconciled,
+      flow: filters.flow,
+      cleared: filters.cleared,
+      forecast: filters.forecast,
+      amountMin: filters.amountMin,
+      amountMax: filters.amountMax,
+      search: debouncedSearch,
+    };
+  }, [
+    filters.accountId,
+    filters.categoryId,
+    filters.timeFilter,
+    filters.specificDate,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.showReconciled,
+    filters.flow,
+    filters.cleared,
+    filters.forecast,
+    filters.amountMin,
+    filters.amountMax,
+    debouncedSearch,
+  ]);
+
   const listRows = useMemo(
     () =>
       buildTransactionListRows({
         upcoming: upcomingRows,
         history: historyTransactions,
         balanceMap,
-        filters: { ...filters, search: debouncedSearch },
+        filters: filtersForList,
         today: todayStr(),
       }),
-    [upcomingRows, historyTransactions, balanceMap, filters, debouncedSearch]
+    [upcomingRows, historyTransactions, balanceMap, filtersForList]
   );
 
   return {
@@ -150,7 +184,9 @@ export function useTransactionsData(filters: TransactionFilters) {
     hasNextPage: historyQuery.hasNextPage,
     fetchNextPage: historyQuery.fetchNextPage,
     refetch: async () => {
-      await Promise.all([historyQuery.refetch(), timelineQuery.refetch()]);
+      await historyQuery.refetch();
+      if (wantsTimeline) await timelineQuery.refetch();
     },
+    wantsTimeline,
   };
 }

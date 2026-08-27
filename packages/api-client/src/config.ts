@@ -4,9 +4,12 @@ let baseUrl = "";
 let getAccessToken: (() => string | null) | null = null;
 let getRefreshToken: (() => string | null) | null = null;
 let setAccessToken: ((access: string) => void) | null = null;
+let onUnauthorized: (() => void) | null = null;
 
 /** Single flight so concurrent 401s share one refresh instead of stampeding /auth/refresh/. */
 let refreshPromise: Promise<boolean> | null = null;
+/** Ensures concurrent 401 failures invoke the logout callback once. */
+let unauthorizedNotified = false;
 
 export function configureApiClient(options: {
   baseUrl: string;
@@ -15,11 +18,21 @@ export function configureApiClient(options: {
   getRefreshToken?: () => string | null;
   /** Persist new access token (e.g. localStorage + React state). */
   setAccessToken?: (access: string) => void;
+  /** Invoked once when a protected request cannot recover from 401. */
+  onUnauthorized?: () => void;
 }) {
   baseUrl = options.baseUrl.replace(/\/$/, "");
   getAccessToken = options.getAccessToken ?? null;
   getRefreshToken = options.getRefreshToken ?? null;
   setAccessToken = options.setAccessToken ?? null;
+  onUnauthorized = options.onUnauthorized ?? null;
+  unauthorizedNotified = false;
+}
+
+function notifyUnauthorized(): void {
+  if (unauthorizedNotified || !onUnauthorized) return;
+  unauthorizedNotified = true;
+  onUnauthorized();
 }
 
 export function getBaseUrl(): string {
@@ -134,14 +147,30 @@ async function requestInner<T>(
 
   if (perfOn) {
     const elapsedMs = Math.round(performance.now() - perfStarted);
-    perfLog(`[PERF] api END ${method} ${path} status=${res.status} elapsed_ms=${elapsedMs}`);
+    const bytesHeader = res.headers.get("content-length");
+    const cacheHint =
+      res.headers.get("X-Timeline-Cache") ??
+      res.headers.get("X-Dashboard-Cache") ??
+      res.headers.get("X-Cache");
+    const extra = [
+      bytesHeader ? `bytes=${bytesHeader}` : "",
+      cacheHint ? `cache=${cacheHint}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    perfLog(
+      `[PERF] api END ${method} ${path} status=${res.status} elapsed_ms=${elapsedMs}${extra ? ` ${extra}` : ""}`
+    );
   }
 
-  if (res.status === 401 && !didRefresh && !isPublicAuth && getRefreshToken && setAccessToken) {
-    const refreshed = await tryRefreshAccessToken();
-    if (refreshed) {
-      return requestInner<T>(path, options, true);
+  if (res.status === 401 && !isPublicAuth) {
+    if (!didRefresh && getRefreshToken && setAccessToken) {
+      const refreshed = await tryRefreshAccessToken();
+      if (refreshed) {
+        return requestInner<T>(path, options, true);
+      }
     }
+    notifyUnauthorized();
   }
 
   if (!res.ok) {

@@ -32,6 +32,19 @@ export function invalidateFinancialQueries(queryClient: QueryClient): void {
   }
 }
 
+/** Selective foreground refresh after long background — active screens only. */
+export function refetchFinancialDataOnForeground(queryClient: QueryClient): void {
+  const keys = [
+    ["dashboard-summary-fast"],
+    ["dashboard-summary-details"],
+    ["accounts"],
+    ["transactions"],
+  ] as const;
+  for (const queryKey of keys) {
+    void queryClient.refetchQueries({ queryKey: [...queryKey], type: "active" });
+  }
+}
+
 /** Immediate refresh after a transaction edit — authoritative timeline and account balances. */
 export function refreshAfterTransactionEdit(
   queryClient: QueryClient,

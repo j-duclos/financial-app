@@ -1,9 +1,8 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { listAccounts, resolveRuleOccurrence } from "@budget-app/api-client";
+import { resolveRuleOccurrence } from "@budget-app/api-client";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
 import {
   EmptyState,
@@ -13,10 +12,12 @@ import {
   SkeletonBlock,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { accountLifecycleStatus } from "@/lib/accountGroups";
 import { todayStr } from "@/lib/dates";
+import { resolveHouseholdId } from "@/lib/householdContext";
 import { describeApiError } from "@/services/api";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { CalendarMonthGrid } from "./CalendarMonthGrid";
 import { CalendarDaySummary } from "./CalendarDaySummary";
 import { CalendarFiltersSheet } from "./CalendarFiltersSheet";
@@ -36,6 +37,7 @@ export function CalendarScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { forecastDays, ready: forecastReady } = usePageForecastWindow();
+  const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
   const today = todayStr();
   const [visibleYear, setVisibleYear] = useState(() => new Date().getFullYear());
   const [visibleMonth, setVisibleMonth] = useState(() => new Date().getMonth());
@@ -45,20 +47,10 @@ export function CalendarScreen() {
   const [eventFilter, setEventFilter] = useState<CalendarEventFilter>(DEFAULT_CALENDAR_EVENT_FILTER);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
-  const accountsQuery = useQuery({
-    queryKey: ["accounts", "calendar-picker"],
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-    staleTime: 5 * 60_000,
-  });
+  const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
+  const accounts = accountOptionsQuery.accounts;
 
-  const accounts = useMemo(
-    () => (accountsQuery.data?.results ?? []).filter((a) => accountLifecycleStatus(a) === "active"),
-    [accountsQuery.data?.results]
-  );
-
-  const householdId = accountId
-    ? accounts.find((a) => a.id === accountId)?.household?.id
-    : accounts[0]?.household?.id;
+  const householdId = resolveHouseholdId(defaultHouseholdId, accountId || null, accounts);
 
   const filters = useMemo(
     () =>
@@ -66,7 +58,7 @@ export function CalendarScreen() {
         horizon: horizonForForecastDays(forecastDays),
         lookbackMonths: 1,
         accountId,
-        householdId,
+        householdId: householdId ?? undefined,
       }),
     [forecastDays, accountId, householdId]
   );
@@ -153,12 +145,23 @@ export function CalendarScreen() {
     (eventFilter.flow !== "all" ? 1 : 0) +
     (eventFilter.recurringOnly ? 1 : 0);
 
-  if (!forecastReady || (accountsQuery.isLoading && !accountsQuery.data)) {
+  if (!forecastReady || !householdReady) {
     return (
       <Screen scroll={false}>
         <SkeletonBlock lines={2} />
         <SkeletonBlock lines={8} />
         <SkeletonBlock lines={4} />
+      </Screen>
+    );
+  }
+
+  if (householdId == null) {
+    return (
+      <Screen scroll={false}>
+        <EmptyState
+          title="Default household required"
+          message="Set a default household in Profile & Settings on web to view your calendar."
+        />
       </Screen>
     );
   }
@@ -228,7 +231,7 @@ export function CalendarScreen() {
 
         {isError ? (
           <ErrorState message={describeApiError(error)} onRetry={() => refetchCalendar()} />
-        ) : isLoading ? (
+        ) : isLoading && days.length === 0 ? (
           <SkeletonBlock lines={10} />
         ) : (
           <CalendarMonthGrid
@@ -273,6 +276,8 @@ export function CalendarScreen() {
         visible={filtersOpen}
         onClose={() => setFiltersOpen(false)}
         accounts={accounts}
+        accountsLoading={accountOptionsQuery.isLoading && accounts.length === 0}
+        accountsError={accountOptionsQuery.isError}
         accountId={accountId}
         onAccountChange={setAccountId}
         eventFilter={eventFilter}

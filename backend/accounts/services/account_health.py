@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
-from django.db.models import Count
+from django.db.models import Count, Q, Sum
 
 from accounts.models import Account
 from accounts.relationship_models import AccountRelationship
@@ -146,21 +146,17 @@ def bulk_payments_since_statement(accounts: Iterable[Account]) -> dict[int, Deci
     ]
     if not cards:
         return {}
-    min_statement = min(acc.last_statement_date for acc in cards)
-    statement_by_id = {acc.pk: acc.last_statement_date for acc in cards}
-    qs = ledger_visible_transactions(
-        Transaction.objects.filter(
-            account_id__in=statement_by_id,
-            date__gt=min_statement,
-            amount__gt=0,
+    q_filter = Q()
+    for acc in cards:
+        q_filter |= Q(account_id=acc.pk, date__gt=acc.last_statement_date)
+    rows = (
+        ledger_visible_transactions(
+            Transaction.objects.filter(q_filter, amount__gt=0)
         )
+        .values("account_id")
+        .annotate(total=Sum("amount"))
     )
-    paid: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
-    for txn in qs:
-        cutoff = statement_by_id.get(txn.account_id)
-        if cutoff is not None and txn.date > cutoff:
-            paid[txn.account_id] += Decimal(str(txn.amount))
-    return dict(paid)
+    return {row["account_id"]: Decimal(str(row["total"] or 0)) for row in rows}
 
 
 def build_account_health_context(

@@ -5,12 +5,14 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "generate": "node scripts/generate.js"
+    "generate": "node scripts/generate.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@budget-app/shared": "file:../shared"
   },
   "devDependencies": {
-    "openapi-typescript-codegen": "^0.29.0"
+    "openapi-typescript-codegen": "^0.29.0",
+    "vitest": "^3.2.4"
   }
 }

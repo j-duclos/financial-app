@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import {
+  consumePendingPostLoginRedirect,
+  sanitizePostLoginRedirect,
+} from "@/lib/postLoginRedirect";
 import { Button, Screen, TextField } from "@/components/ui";
 import { useAuth } from "@/features/auth";
 import { describeApiError } from "@/services/api";
@@ -10,6 +14,7 @@ import { useTheme } from "@/theme";
 export default function LoginScreen() {
   const theme = useTheme();
   const { login } = useAuth();
+  const { redirect } = useLocalSearchParams<{ redirect?: string }>();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,7 +30,11 @@ export default function LoginScreen() {
     setSubmitting(true);
     try {
       await login(username, password);
-      router.replace("/(app)/(tabs)");
+      const destination =
+        sanitizePostLoginRedirect(typeof redirect === "string" ? redirect : undefined) ??
+        consumePendingPostLoginRedirect() ??
+        "/(app)/(tabs)";
+      router.replace(destination as never);
     } catch (e: unknown) {
       setError(describeApiError(e));
     } finally {

@@ -16,7 +16,7 @@ type Props = {
   onPress: () => void;
 };
 
-export function AccountRow({ account, onPress }: Props) {
+export const AccountRow = React.memo(function AccountRow({ account, onPress }: Props) {
   const theme = useTheme();
   const isCredit = account.account_type === "CREDIT";
   const targetUtil = parseFloat(
@@ -113,4 +113,4 @@ export function AccountRow({ account, onPress }: Props) {
       </View>
     </Pressable>
   );
-}
+});

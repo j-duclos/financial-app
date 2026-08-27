@@ -7,10 +7,12 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   login as apiLogin,
   register as apiRegister,
   getProfile,
+  perfLog,
   type UserProfile,
 } from "@budget-app/api-client";
 import { wireApiClient, describeApiError } from "@/services/api";
@@ -19,6 +21,8 @@ import {
   loadTokens,
   saveTokens,
 } from "@/services/secureTokenStorage";
+import { clearUserQueryCache } from "@/lib/clearUserQueryCache";
+import { PROFILE_QUERY_KEY, PROFILE_STALE_MS } from "@/lib/profileQueryKey";
 import { hasCompleteSession, resolveSessionRestore } from "./session";
 
 export type AuthUser = {
@@ -31,8 +35,9 @@ type AuthState = {
   access: string | null;
   refresh: string | null;
   user: AuthUser | null;
+  /** Convenience mirror of React Query `["profile"]` — may be null briefly after restore. */
   profile: UserProfile | null;
-  /** True while restoring tokens / validating session on launch. */
+  /** True while reading SecureStore and wiring the API client on launch. */
   initializing: boolean;
   isAuthenticated: boolean;
 };
@@ -55,7 +60,15 @@ function profileToUser(profile: UserProfile): AuthUser {
   };
 }
 
+function hydrateProfileCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  profile: UserProfile
+): void {
+  queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const [auth, setAuth] = useState<AuthState>({
     access: null,
     refresh: null,
@@ -67,8 +80,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const accessRef = useRef<string | null>(null);
   const refreshRef = useRef<string | null>(null);
+  const sessionEpochRef = useRef(0);
 
   const forceLogout = useCallback(async () => {
+    sessionEpochRef.current += 1;
+    clearUserQueryCache(queryClient);
     await clearTokens();
     accessRef.current = null;
     refreshRef.current = null;
@@ -80,40 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       initializing: false,
       isAuthenticated: false,
     });
-  }, []);
+  }, [queryClient]);
 
-  const applySession = useCallback(
-    async (access: string, refresh: string) => {
-      accessRef.current = access;
-      refreshRef.current = refresh;
-      await saveTokens(access, refresh);
-      wireApiClient({
-        getAccess: () => accessRef.current,
-        getRefresh: () => refreshRef.current,
-        onAccessUpdated: (next) => {
-          accessRef.current = next;
-          setAuth((prev) => ({ ...prev, access: next }));
-        },
-        onUnauthorized: () => {
-          void forceLogout();
-        },
-      });
-      const profile = await getProfile();
-      setAuth({
-        access,
-        refresh,
-        user: profileToUser(profile),
-        profile,
-        initializing: false,
-        isAuthenticated: true,
-      });
-      return profile;
-    },
-    [forceLogout]
-  );
-
-  // Keep api-client wired whenever token refs change.
-  useEffect(() => {
+  const syncApiClient = useCallback(() => {
     wireApiClient({
       getAccess: () => accessRef.current,
       getRefresh: () => refreshRef.current,
@@ -125,53 +110,104 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void forceLogout();
       },
     });
-  }, [forceLogout, auth.access, auth.refresh]);
+  }, [forceLogout]);
 
-  // Restore session on launch.
+  const fetchAndHydrateProfile = useCallback(
+    async (sessionEpoch: number): Promise<UserProfile | null> => {
+      const profileStart = __DEV__ ? performance.now() : 0;
+      try {
+        const profile = await queryClient.fetchQuery({
+          queryKey: PROFILE_QUERY_KEY,
+          queryFn: getProfile,
+          staleTime: PROFILE_STALE_MS,
+        });
+        if (sessionEpoch !== sessionEpochRef.current) return null;
+        hydrateProfileCache(queryClient, profile);
+        setAuth((prev) => ({
+          ...prev,
+          user: profileToUser(profile),
+          profile: prev.profile ?? profile,
+        }));
+        if (__DEV__) {
+          perfLog(
+            `[PERF] auth profile background fetch elapsed_ms=${Math.round(performance.now() - profileStart)}`
+          );
+        }
+        return profile;
+      } catch (err) {
+        if (sessionEpoch !== sessionEpochRef.current) return null;
+        if (__DEV__) {
+          console.warn("profile fetch failed", describeApiError(err));
+        }
+        return null;
+      }
+    },
+    [queryClient]
+  );
+
+  const applySession = useCallback(
+    async (access: string, refresh: string) => {
+      const sessionEpoch = ++sessionEpochRef.current;
+      clearUserQueryCache(queryClient);
+      accessRef.current = access;
+      refreshRef.current = refresh;
+      await saveTokens(access, refresh);
+      syncApiClient();
+      setAuth({
+        access,
+        refresh,
+        user: null,
+        profile: null,
+        initializing: false,
+        isAuthenticated: true,
+      });
+      return fetchAndHydrateProfile(sessionEpoch);
+    },
+    [fetchAndHydrateProfile, syncApiClient]
+  );
+
+  useEffect(() => {
+    syncApiClient();
+  }, [syncApiClient, auth.access, auth.refresh]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const restoreStart = __DEV__ ? performance.now() : 0;
       try {
         const { access, refresh } = await loadTokens();
+        if (__DEV__) {
+          perfLog(
+            `[PERF] auth SecureStore restore elapsed_ms=${Math.round(performance.now() - restoreStart)}`
+          );
+        }
         if (cancelled) return;
+
         const stored = { access, refresh };
-        if (!hasCompleteSession(stored)) {
+        const decision = resolveSessionRestore(stored);
+        if (decision.status !== "authenticated") {
           setAuth((prev) => ({ ...prev, initializing: false }));
           return;
         }
-        accessRef.current = access;
-        refreshRef.current = refresh;
-        wireApiClient({
-          getAccess: () => accessRef.current,
-          getRefresh: () => refreshRef.current,
-          onAccessUpdated: (next) => {
-            accessRef.current = next;
-            setAuth((prev) => ({ ...prev, access: next }));
-          },
-          onUnauthorized: () => {
-            void forceLogout();
-          },
+
+        const sessionEpoch = sessionEpochRef.current;
+        accessRef.current = decision.access;
+        refreshRef.current = decision.refresh;
+        syncApiClient();
+        setAuth({
+          access: decision.access,
+          refresh: decision.refresh,
+          user: null,
+          profile: null,
+          initializing: false,
+          isAuthenticated: true,
         });
-        try {
-          const profile = await getProfile();
-          if (cancelled) return;
-          const decision = resolveSessionRestore(stored, true);
-          if (decision.status !== "authenticated") {
-            await forceLogout();
-            return;
-          }
-          setAuth({
-            access,
-            refresh,
-            user: profileToUser(profile),
-            profile,
-            initializing: false,
-            isAuthenticated: true,
-          });
-        } catch {
-          if (cancelled) return;
-          await forceLogout();
+        if (__DEV__) {
+          perfLog(
+            `[PERF] auth shell ready elapsed_ms=${Math.round(performance.now() - restoreStart)}`
+          );
         }
+        void fetchAndHydrateProfile(sessionEpoch);
       } catch {
         if (!cancelled) {
           setAuth((prev) => ({ ...prev, initializing: false }));
@@ -181,45 +217,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [forceLogout]);
+  }, [fetchAndHydrateProfile, syncApiClient]);
 
   const login = useCallback(
     async (username: string, password: string) => {
-      // Ensure base URL is configured before the first auth call.
-      wireApiClient({
-        getAccess: () => accessRef.current,
-        getRefresh: () => refreshRef.current,
-        onAccessUpdated: (next) => {
-          accessRef.current = next;
-          setAuth((prev) => ({ ...prev, access: next }));
-        },
-        onUnauthorized: () => {
-          void forceLogout();
-        },
-      });
+      syncApiClient();
       const res = await apiLogin(username.trim(), password);
       await applySession(res.access, res.refresh);
     },
-    [applySession, forceLogout]
+    [applySession, syncApiClient]
   );
 
   const register = useCallback(
     async (username: string, password: string, email?: string) => {
-      wireApiClient({
-        getAccess: () => accessRef.current,
-        getRefresh: () => refreshRef.current,
-        onAccessUpdated: (next) => {
-          accessRef.current = next;
-          setAuth((prev) => ({ ...prev, access: next }));
-        },
-        onUnauthorized: () => {
-          void forceLogout();
-        },
-      });
+      syncApiClient();
       const res = await apiRegister({ username: username.trim(), password, email });
       await applySession(res.access, res.refresh);
     },
-    [applySession, forceLogout]
+    [applySession, syncApiClient]
   );
 
   const logout = useCallback(async () => {
@@ -228,19 +243,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (!accessRef.current) return null;
+    const sessionEpoch = sessionEpochRef.current;
     try {
-      const profile = await getProfile();
+      const profile = await queryClient.fetchQuery({
+        queryKey: PROFILE_QUERY_KEY,
+        queryFn: getProfile,
+        staleTime: 0,
+      });
+      if (sessionEpoch !== sessionEpochRef.current) return null;
+      hydrateProfileCache(queryClient, profile);
       setAuth((prev) => ({
         ...prev,
-        profile,
         user: profileToUser(profile),
+        profile: prev.profile ?? profile,
       }));
       return profile;
     } catch (err) {
       if (__DEV__) console.warn("refreshProfile failed", describeApiError(err));
       return null;
     }
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo(
     () => ({ auth, login, register, logout, refreshProfile }),

@@ -23,8 +23,8 @@ const PRIMARY_LINKS = [
 const SECONDARY_LINKS = [
   { title: "Reports", href: "/reports", subtitle: "Monthly insights" },
   { title: "Automation", href: "/automation", subtitle: "Rules & recurring automation" },
-  { title: "Categories", href: "/categories", subtitle: "Spending categories" },
-  { title: "Reconcile", href: "/reconcile", subtitle: "Statement reconciliation" },
+  { title: "Categories", href: "/categories", subtitle: "Web only for beta — selection on mobile" },
+  { title: "Reconcile", href: "/reconcile", subtitle: "Web only for beta" },
   { title: "Profile & Settings", href: "/profile", subtitle: "Account preferences" },
 ] as const;
 

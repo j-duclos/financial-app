@@ -102,7 +102,7 @@ export function useCalendarData({
         },
         { signal }
       ),
-    enabled: enabled && visibleChunkQuery.isSuccess,
+    enabled,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -126,13 +126,12 @@ export function useCalendarData({
   );
 
   useEffect(() => {
-    if (!prefetchAdjacent || !enabled || !visibleChunkQuery.isSuccess) return;
+    if (!prefetchAdjacent || !enabled) return;
     prefetchMonth(prevMonth.year, prevMonth.month);
     prefetchMonth(nextMonth.year, nextMonth.month);
   }, [
     prefetchAdjacent,
     enabled,
-    visibleChunkQuery.isSuccess,
     prefetchMonth,
     prevMonth.year,
     prevMonth.month,
@@ -176,8 +175,10 @@ export function useCalendarData({
     range,
     days,
     summary: summaryQuery.data?.summary,
-    isLoading: enabled && (visibleChunkQuery.isLoading || visibleChunkQuery.isPending),
-    isError: visibleChunkQuery.isError || summaryQuery.isError,
+    isLoading: enabled && days.length === 0 && (visibleChunkQuery.isLoading || visibleChunkQuery.isPending),
+    isSummaryLoading: enabled && summaryQuery.isLoading && !summaryQuery.data,
+    isError: visibleChunkQuery.isError,
+    summaryError: summaryQuery.isError,
     error: visibleChunkQuery.error ?? summaryQuery.error,
     isFetching: visibleChunkQuery.isFetching,
     refetchCalendar,

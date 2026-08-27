@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatCurrency } from "@budget-app/shared";
 import { getDashboardDetails, getDashboardSummaryFast } from "@budget-app/api-client";
 import {
   BalanceDisplay,
@@ -32,6 +31,7 @@ import {
   lowestProjectedCashSubtitle,
   topSummaryFromDashboard,
 } from "./display";
+import { DashboardGoalsSection, DashboardUpcomingSection } from "./DashboardDetailsSections";
 
 export function DashboardScreen() {
   const theme = useTheme();
@@ -52,20 +52,6 @@ export function DashboardScreen() {
     enabled: forecastReady,
   });
 
-  const { data: extendedCashRisk } = useExtendedCashRisk(forecastReady && !!summaryFast);
-  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
-
-  const [detailsEnabled, setDetailsEnabled] = useState(false);
-  useEffect(() => {
-    if (!summaryFast || fastError) {
-      setDetailsEnabled(false);
-      return;
-    }
-    setDetailsEnabled(false);
-    const timer = setTimeout(() => setDetailsEnabled(true), 350);
-    return () => clearTimeout(timer);
-  }, [summaryFast, fastError, forecastDays]);
-
   const {
     data: details,
     isLoading: detailsLoading,
@@ -75,8 +61,11 @@ export function DashboardScreen() {
   } = useQuery({
     queryKey: ["dashboard-summary-details", forecastDays],
     queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
-    enabled: detailsEnabled,
+    enabled: forecastReady,
   });
+
+  const { data: extendedCashRisk } = useExtendedCashRisk(forecastReady);
+  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   const top = useMemo(
     () => (summaryFast ? topSummaryFromDashboard({ ...summaryFast, snapshot: details?.snapshot }) : null),
@@ -93,7 +82,7 @@ export function DashboardScreen() {
   const onRefresh = async () => {
     await Promise.all([
       refetchFast(),
-      detailsEnabled ? refetchDetails() : Promise.resolve(),
+      refetchDetails(),
       queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] }),
     ]);
   };
@@ -273,106 +262,18 @@ export function DashboardScreen() {
         </>
       ) : null}
 
-      <SectionHeader
-        title={DASHBOARD_SECTION.upcoming}
-        actionLabel="Calendar"
-        onAction={() => router.push("/calendar")}
+      <DashboardUpcomingSection
+        loading={detailsLoading && !details}
+        error={detailsError}
+        errorMessage={describeApiError(detailsErr)}
+        onRetry={() => {
+          void refetchDetails();
+        }}
+        upcomingGroups={upcomingGroups}
+        firstCashShortfall={summaryFast?.first_cash_shortfall}
       />
-      {!detailsEnabled || (detailsLoading && !details) ? (
-        <Card>
-          <SkeletonBlock lines={4} />
-        </Card>
-      ) : detailsError ? (
-        <ErrorState
-          message={describeApiError(detailsErr)}
-          onRetry={() => {
-            void refetchDetails();
-          }}
-        />
-      ) : upcomingGroups.length === 0 ? (
-        <EmptyState title="No upcoming money movement in this window." />
-      ) : (
-        <View style={{ gap: theme.spacing.sm }}>
-          {summaryFast?.first_cash_shortfall?.date ? (
-            <Card style={{ backgroundColor: theme.colors.criticalBg }}>
-              <StatusChip label="First cash shortfall" tone="critical" />
-              <Text style={{ color: theme.colors.text, marginTop: 8, ...theme.typography.body }}>
-                {summaryFast.first_cash_shortfall.account_name} on{" "}
-                {summaryFast.first_cash_shortfall.date}
-              </Text>
-              {summaryFast.first_cash_shortfall.amount != null ? (
-                <CurrencyDisplay
-                  amount={summaryFast.first_cash_shortfall.amount}
-                  tone="negative"
-                  style={{ marginTop: 6 }}
-                />
-              ) : null}
-            </Card>
-          ) : null}
-          {upcomingGroups.map((group) => (
-            <Card key={group.date} onPress={() => router.push("/calendar")}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                  {group.label}
-                </Text>
-                <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                  {group.day_of_week}
-                </Text>
-              </View>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
-                <Text style={{ color: theme.colors.moneyPositive, ...theme.typography.caption }}>
-                  In {formatCurrency(group.income_total)}
-                </Text>
-                <Text style={{ color: theme.colors.moneyNegative, ...theme.typography.caption }}>
-                  Out {formatCurrency(group.expense_total)}
-                </Text>
-                <CurrencyDisplay amount={group.net_total} style={{ fontSize: 14 }} />
-              </View>
-              {group.has_risk ? (
-                <Text style={{ color: theme.colors.critical, ...theme.typography.caption, marginTop: 6 }}>
-                  {group.risk_reason || "Risk day"}
-                </Text>
-              ) : null}
-            </Card>
-          ))}
-        </View>
-      )}
 
-      <SectionHeader
-        title={DASHBOARD_SECTION.goals}
-        actionLabel="All goals"
-        onAction={() => router.push("/goals")}
-      />
-      {!detailsEnabled || (detailsLoading && !details) ? (
-        <Card>
-          <SkeletonBlock lines={3} />
-        </Card>
-      ) : goals.length === 0 ? (
-        <EmptyState
-          title="No goals yet"
-          message="Create a savings or debt goal to track progress here."
-          actionLabel="Goals"
-          onAction={() => router.push("/goals")}
-        />
-      ) : (
-        <View style={{ gap: theme.spacing.sm, marginBottom: theme.spacing.xl }}>
-          {goals.map((goal) => (
-            <Card key={goal.id} onPress={() => router.push("/goals")}>
-              <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>{goal.name}</Text>
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
-                {formatCurrency(goal.current_amount)} of {formatCurrency(goal.target_amount)} ·{" "}
-                {parseFloat(goal.progress_percent).toFixed(0)}%
-              </Text>
-              {goal.contribution_recommendation || goal.recommended_monthly_contribution ? (
-                <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 6 }}>
-                  {goal.contribution_recommendation ||
-                    `Suggested ${formatCurrency(goal.recommended_monthly_contribution!)}/mo`}
-                </Text>
-              ) : null}
-            </Card>
-          ))}
-        </View>
-      )}
+      <DashboardGoalsSection loading={detailsLoading && !details} goals={goals} />
     </Screen>
   );
 }

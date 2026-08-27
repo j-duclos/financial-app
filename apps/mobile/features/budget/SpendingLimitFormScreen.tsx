@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createSpendingTarget,
   deleteSpendingTarget,
-  listCategories,
   listSpendingTargets,
   suggestSpendingTargetType,
   updateSpendingTarget,
@@ -23,8 +22,9 @@ import {
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateSpendingTargetDependents } from "@/lib/financialQueryRefresh";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { budgetQueryKeys } from "./queryKeys";
-import { useBudgetHousehold } from "./useBudgetData";
 
 const PERIODS: { value: SpendingTargetPeriod; label: string }[] = [
   { value: "weekly", label: "Weekly" },
@@ -41,7 +41,7 @@ export function SpendingLimitFormScreen() {
   const editingId = params.id ? Number(params.id) : null;
   const isEdit = editingId != null && Number.isInteger(editingId) && editingId > 0;
 
-  const { householdId } = useBudgetHousehold();
+  const { householdId } = useDefaultHouseholdId();
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [targetAmount, setTargetAmount] = useState("");
   const [period, setPeriod] = useState<SpendingTargetPeriod>("monthly");
@@ -52,11 +52,9 @@ export function SpendingLimitFormScreen() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const categoriesQuery = useQuery({
-    queryKey: budgetQueryKeys.categories(householdId),
-    queryFn: () =>
-      listCategories({ page_size: 500, household: householdId!, type: "EXPENSE" }),
-    enabled: householdId != null,
+  const categoriesQuery = useCategoryOptions({
+    householdId,
+    type: "EXPENSE",
   });
 
   const editingQuery = useQuery({
@@ -93,7 +91,7 @@ export function SpendingLimitFormScreen() {
 
   const expenseCategories = useMemo(() => {
     const seen = new Set<string>();
-    return (categoriesQuery.data?.results ?? [])
+    return (categoriesQuery.categories ?? [])
       .filter((c) => c.category_type === "EXPENSE" && !c.is_archived)
       .filter((c) => {
         const key = c.name.trim().toLowerCase();
@@ -102,7 +100,7 @@ export function SpendingLimitFormScreen() {
         return true;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [categoriesQuery.data?.results]);
+  }, [categoriesQuery.categories]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {

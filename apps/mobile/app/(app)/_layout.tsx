@@ -1,11 +1,13 @@
-import { Redirect, Stack } from "expo-router";
+import { Redirect, Stack, usePathname } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 import { useAuth } from "@/features/auth";
+import { setPendingPostLoginRedirect } from "@/lib/postLoginRedirect";
 import { useTheme } from "@/theme";
 
 export default function AppLayout() {
   const { auth } = useAuth();
   const theme = useTheme();
+  const pathname = usePathname();
 
   if (auth.initializing) {
     return (
@@ -16,6 +18,9 @@ export default function AppLayout() {
   }
 
   if (!auth.isAuthenticated) {
+    if (pathname && pathname !== "/") {
+      setPendingPostLoginRedirect(pathname);
+    }
     return <Redirect href="/(auth)/login" />;
   }
 

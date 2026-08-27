@@ -15,7 +15,13 @@ type Props = {
   onSelectDate: (dateIso: string) => void;
 };
 
-export function CalendarMonthGrid({ year, month, days, selectedDate, onSelectDate }: Props) {
+export const CalendarMonthGrid = React.memo(function CalendarMonthGrid({
+  year,
+  month,
+  days,
+  selectedDate,
+  onSelectDate,
+}: Props) {
   const theme = useTheme();
   const grid = buildMonthGrid(year, month);
   const byDate = dayMap(days);
@@ -59,4 +65,4 @@ export function CalendarMonthGrid({ year, month, days, selectedDate, onSelectDat
       </View>
     </View>
   );
-}
+});

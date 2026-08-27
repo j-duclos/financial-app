@@ -6,6 +6,7 @@ import { currentMonthStr, formatCurrency } from "@budget-app/shared";
 import {
   AppHeader,
   Card,
+  EmptyState,
   ErrorState,
   IconButton,
   Screen,
@@ -46,12 +47,38 @@ export function ReportsScreen() {
     [filters, period]
   );
 
-  const { data, isLoading, isError, error, isFetching, refetch } = useReportsData(activeFilters);
+  const { data, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
+    useReportsData(activeFilters);
   const activeFilterCount = countActiveReportFilters(filters, DEFAULT_FILTERS);
 
   const onPeriodChange = (next: typeof period) => {
     setPeriod(next);
   };
+
+  if (!householdReady) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title="Reports" onBack={() => router.back()} />
+        <View style={{ padding: theme.spacing.lg }}>
+          <SkeletonBlock lines={5} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (householdId == null) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title="Reports" onBack={() => router.back()} />
+        <View style={{ padding: theme.spacing.lg }}>
+          <EmptyState
+            title="Default household required"
+            message="Set a default household in Profile & Settings on web to view reports."
+          />
+        </View>
+      </Screen>
+    );
+  }
 
   const previewNet = data?.overview.net;
 

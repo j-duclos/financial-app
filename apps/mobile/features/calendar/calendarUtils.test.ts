@@ -80,6 +80,7 @@ describe("calendar query keys", () => {
     };
     expect(calendarQueryKeys.chunk(filters, "2026-08-01", "2026-08-31")).toEqual([
       "calendar-chunk",
+      "3m",
       1,
       5,
       "",

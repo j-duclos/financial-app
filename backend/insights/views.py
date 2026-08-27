@@ -1,11 +1,12 @@
 from datetime import date
+from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from core.utils import get_households_for_user
 from accounts.models import Account
-from accounts.services.balances import signed_ledger_balance
+from accounts.services.balances import bulk_signed_ledger_balances
 from accounts.services.extended_cash_risk import get_extended_cash_risk
 from common.services.forecast_horizon import parse_forecast_days_param
 from .services.dashboard_summary import (
@@ -88,17 +89,21 @@ class AccountBalancesView(APIView):
     def get(self, request):
         households = get_households_for_user(request.user)
         today = date.today()
-        accounts = Account.objects.for_net_worth().filter(
-            household__in=households,
-            is_hidden=False,
+        accounts = list(
+            Account.objects.for_net_worth().filter(
+                household__in=households,
+                is_hidden=False,
+            )
         )
-        result = []
-        for acc in accounts:
-            result.append({
+        balances = bulk_signed_ledger_balances(accounts, today)
+        result = [
+            {
                 "account_id": acc.id,
                 "account_name": acc.effective_display_name,
-                "balance": signed_ledger_balance(acc, today),
-            })
+                "balance": balances.get(acc.id, Decimal("0")),
+            }
+            for acc in accounts
+        ]
         return Response({"balances": result})
 
 

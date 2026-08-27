@@ -22,7 +22,7 @@ type Props = {
   showShare?: boolean;
 };
 
-export function CategoryBreakdownRow({
+export const CategoryBreakdownRow = React.memo(function CategoryBreakdownRow({
   row,
   expenseSubtotal,
   previousMonth,
@@ -83,15 +83,19 @@ export function CategoryBreakdownRow({
       {content}
     </Pressable>
   );
-}
+});
 
 export function CategorySpendBarChart({ rows }: { rows: CategoryBreakdownItem[] }) {
   const theme = useTheme();
-  const ranked = [...rows]
-    .filter((row) => parseAmount(row.total) < 0)
-    .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
-    .slice(0, 6)
-    .map((row) => ({ ...row, abs: Math.abs(parseAmount(row.total)) }));
+  const ranked = React.useMemo(
+    () =>
+      [...rows]
+        .filter((row) => parseAmount(row.total) < 0)
+        .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
+        .slice(0, 6)
+        .map((row) => ({ ...row, abs: Math.abs(parseAmount(row.total)) })),
+    [rows]
+  );
 
   if (ranked.length === 0) return null;
 

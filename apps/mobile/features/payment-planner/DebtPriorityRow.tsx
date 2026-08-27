@@ -13,7 +13,12 @@ type Props = {
   onPress: () => void;
 };
 
-export function DebtPriorityRow({ card, selected, targetUtilization, onPress }: Props) {
+export const DebtPriorityRow = React.memo(function DebtPriorityRow({
+  card,
+  selected,
+  targetUtilization,
+  onPress,
+}: Props) {
   const theme = useTheme();
   const outcomes = debtCardOutcomeLines(card);
   const priority = priorityReasonLabel(card);
@@ -99,7 +104,7 @@ export function DebtPriorityRow({ card, selected, targetUtilization, onPress }: 
       </Card>
     </Pressable>
   );
-}
+});
 
 function Stat({ label, value }: { label: string; value: string }) {
   const theme = useTheme();

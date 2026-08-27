@@ -16,7 +16,11 @@ function mergeEnrichedAccounts(base: Account[], enriched: Account[] | undefined)
   return merged;
 }
 
-export function useAccountsList(forecastDays: OperationalForecastDays) {
+export function useAccountsList(
+  forecastDays: OperationalForecastDays,
+  options?: { forecastReady?: boolean }
+) {
+  const forecastReady = options?.forecastReady ?? true;
   const lastNonEmpty = useRef<Account[]>([]);
 
   const mainQuery = useQuery({
@@ -37,7 +41,7 @@ export function useAccountsList(forecastDays: OperationalForecastDays) {
         page_size: 500,
         active_only: true,
       }),
-    enabled: mainQuery.isSuccess,
+    enabled: forecastReady,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
@@ -58,7 +62,7 @@ export function useAccountsList(forecastDays: OperationalForecastDays) {
     error: mainQuery.error,
     refetch: () => {
       void mainQuery.refetch();
-      if (mainQuery.isSuccess) void enrichQuery.refetch();
+      if (forecastReady) void enrichQuery.refetch();
     },
   };
 }

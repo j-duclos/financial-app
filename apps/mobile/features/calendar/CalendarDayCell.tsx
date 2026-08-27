@@ -35,7 +35,12 @@ function severityColors(
   }
 }
 
-export function CalendarDayCell({ dateIso, day, selected, onPress }: Props) {
+export const CalendarDayCell = React.memo(function CalendarDayCell({
+  dateIso,
+  day,
+  selected,
+  onPress,
+}: Props) {
   const theme = useTheme();
   const today = todayStr() === dateIso;
   const dayNum = Number(dateIso.slice(8, 10));
@@ -108,4 +113,4 @@ export function CalendarDayCell({ dateIso, day, selected, onPress }: Props) {
       )}
     </Pressable>
   );
-}
+});

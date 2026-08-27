@@ -60,7 +60,12 @@ function StatusBadge({ icon }: { icon: TransactionStatusIcon }) {
   );
 }
 
-export function TransactionRowCard({ txn, timelineRow, runningBalance, showAccount = true }: Props) {
+export const TransactionRowCard = React.memo(function TransactionRowCard({
+  txn,
+  timelineRow,
+  runningBalance,
+  showAccount = true,
+}: Props) {
   const theme = useTheme();
   const payee = txn?.payee ?? timelineRow?.description ?? "—";
   const date = txn?.date ?? timelineRow?.date ?? "";
@@ -150,4 +155,4 @@ export function TransactionRowCard({ txn, timelineRow, runningBalance, showAccou
       </View>
     </View>
   );
-}
+});

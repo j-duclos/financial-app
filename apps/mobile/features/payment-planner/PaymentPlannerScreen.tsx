@@ -74,6 +74,10 @@ export function PaymentPlannerScreen() {
 
   const accountsQuery = usePaymentPlannerAccounts();
   const creditCards = useCreditCardsFromAccounts(accountsQuery.data?.results);
+  const creditCardsById = useMemo(
+    () => new Map(creditCards.map((account) => [account.id, account])),
+    [creditCards]
+  );
   const planQuery = useDebtPayoffPlan(scenarioInputs, creditCards.length > 0);
   const plan = planQuery.data;
 
@@ -247,7 +251,7 @@ export function PaymentPlannerScreen() {
         <>
           <SectionHeader title="Payoff order" subtitle="Tap a debt for payment scenarios" />
           {plan.cards.map((card) => {
-            const account = creditCards.find((a) => a.id === card.account_id);
+            const account = creditCardsById.get(card.account_id);
             return (
               <DebtPriorityRow
                 key={card.account_id}

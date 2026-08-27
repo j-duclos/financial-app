@@ -6,18 +6,20 @@ import {
   createTransaction,
   createTransfer,
   getTransaction,
-  listAccounts,
-  listCategories,
   updateTransaction,
 } from "@budget-app/api-client";
 import { getEffectiveDisplayName } from "@budget-app/shared";
 import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
+import { resolveHouseholdId } from "@/lib/householdContext";
 import { isTransferCategoryName } from "@/lib/transactionsLedger";
 import { transactionEditLockMessage } from "@/lib/transactionStatus";
 import { describeApiError, fieldErrorsFromApiError } from "@/services/apiErrors";
 import { refreshAfterTransactionEdit } from "@/lib/financialQueryRefresh";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
+import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { transactionQueryKeys } from "./queryKeys";
 
 type FormState = {
@@ -62,24 +64,14 @@ export function TransactionFormScreen() {
     enabled: isEdit,
   });
 
-  const accountsQuery = useQuery({
-    queryKey: transactionQueryKeys.accountsPicker,
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-  });
-
-  const accounts = accountsQuery.data?.results ?? [];
-  const householdId =
-    (typeof form.account_id === "number"
-      ? accounts.find((a) => a.id === form.account_id)?.household?.id
-      : accounts[0]?.household?.id) ?? null;
-
-  const categoriesQuery = useQuery({
-    queryKey: transactionQueryKeys.categories(householdId),
-    queryFn: () => listCategories({ household: householdId ?? undefined }),
-    enabled: householdId != null,
-  });
-
-  const categories = categoriesQuery.data?.results ?? [];
+  const { householdId: defaultHouseholdId } = useDefaultHouseholdId();
+  const { accounts } = useAccountOptions({ householdId: defaultHouseholdId });
+  const householdId = resolveHouseholdId(
+    defaultHouseholdId,
+    typeof form.account_id === "number" ? form.account_id : null,
+    accounts
+  );
+  const { categories } = useCategoryOptions({ householdId });
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const isTransfer = isTransferCategoryName(selectedCategory?.name);
 

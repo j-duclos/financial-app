@@ -7,6 +7,8 @@ export function describeApiError(err: unknown): string {
     if (err.status === 403) return "You do not have permission to do that.";
     if (err.status === 404) return "That resource was not found.";
     if (err.status === 422) return err.message || "Please check your input and try again.";
+    if (err.status === 429) return "Too many requests. Please wait a moment and try again.";
+    if (err.status === 504) return err.message || "The request timed out. Please try again.";
     if (err.status >= 500) return "The server had a problem. Please try again.";
     return err.message || `Request failed (${err.status})`;
   }

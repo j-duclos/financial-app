@@ -1,26 +1,16 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   getSpendingTargetsSummary,
-  listHouseholds,
   listSpendingTargets,
 } from "@budget-app/api-client";
 import type { SpendingTargetMetrics } from "@budget-app/shared";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { budgetQueryKeys } from "./queryKeys";
 import type { BudgetCategoryRow, BudgetPeriodAnchor } from "./types";
 
-export function useBudgetHousehold() {
-  const householdsQuery = useQuery({
-    queryKey: budgetQueryKeys.households,
-    queryFn: () => listHouseholds(),
-    staleTime: 5 * 60_000,
-  });
-  const householdId = householdsQuery.data?.[0]?.id ?? null;
-  return { householdsQuery, householdId };
-}
-
 export function useBudgetData(period: BudgetPeriodAnchor) {
-  const { householdId, householdsQuery } = useBudgetHousehold();
+  const { householdId, isReady: householdReady } = useDefaultHouseholdId();
 
   const summaryQuery = useQuery({
     queryKey: budgetQueryKeys.summary(householdId, period.monthKey, period.anchor),
@@ -31,6 +21,7 @@ export function useBudgetData(period: BudgetPeriodAnchor) {
       }),
     enabled: householdId != null,
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const targetsQuery = useQuery({
@@ -43,6 +34,7 @@ export function useBudgetData(period: BudgetPeriodAnchor) {
       }),
     enabled: householdId != null,
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const metricsById = useMemo(() => {
@@ -64,16 +56,19 @@ export function useBudgetData(period: BudgetPeriodAnchor) {
       .filter((row): row is BudgetCategoryRow => row != null);
   }, [targetsQuery.data?.results, metricsById]);
 
+  const primaryLoading =
+    householdId != null &&
+    rows.length === 0 &&
+    (summaryQuery.isPending || targetsQuery.isPending);
+
   return {
     householdId,
-    householdsQuery,
+    householdReady,
     summaryQuery,
     targetsQuery,
     summary: summaryQuery.data,
     rows,
-    isLoading:
-      householdsQuery.isLoading ||
-      (householdId != null && (summaryQuery.isLoading || targetsQuery.isLoading)),
+    isLoading: !householdReady || primaryLoading,
     isError: summaryQuery.isError || targetsQuery.isError,
     error: summaryQuery.error ?? targetsQuery.error,
     isFetching: summaryQuery.isFetching || targetsQuery.isFetching,

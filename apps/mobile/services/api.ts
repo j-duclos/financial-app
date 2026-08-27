@@ -29,6 +29,7 @@ export function wireApiClient(refs: TokenRefs): void {
       void saveAccessToken(access);
       refs.onAccessUpdated(access);
     },
+    onUnauthorized: refs.onUnauthorized,
   });
   if (!wired && __DEV__) {
     configurePerfLogging(true);

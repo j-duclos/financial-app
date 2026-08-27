@@ -26,7 +26,7 @@ import {
   spendingTargetPeriodLabel,
 } from "./spendingTargetDisplay";
 import { currentPeriodAnchor, formatPeriodRange } from "./periodUtils";
-import { useBudgetHousehold } from "./useBudgetData";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 
 export function BudgetCategoryDetailScreen() {
   const theme = useTheme();
@@ -34,7 +34,7 @@ export function BudgetCategoryDetailScreen() {
   const params = useLocalSearchParams<{ targetId: string; anchor?: string }>();
   const targetId = Number(params.targetId);
   const anchor = params.anchor ?? currentPeriodAnchor().anchor;
-  const { householdId } = useBudgetHousehold();
+  const { householdId } = useDefaultHouseholdId();
 
   const targetQuery = useQuery({
     queryKey: budgetQueryKeys.targetDetail(targetId, anchor),

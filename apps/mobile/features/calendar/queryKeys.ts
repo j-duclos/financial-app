@@ -13,6 +13,7 @@ export const calendarQueryKeys = {
   chunk: (filters: CalendarFilters, chunkStart: string, chunkEnd: string) =>
     [
       "calendar-chunk",
+      filters.horizon,
       filters.lookbackMonths,
       filters.accountId,
       filters.scenarioId,

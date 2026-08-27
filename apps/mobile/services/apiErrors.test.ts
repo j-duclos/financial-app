@@ -8,6 +8,8 @@ describe("describeApiError", () => {
     expect(describeApiError(new ApiError(404, "x"))).toMatch(/not found/i);
     expect(describeApiError(new ApiError(500, "x"))).toMatch(/server/i);
     expect(describeApiError(new ApiError(422, "Bad field"))).toBe("Bad field");
+    expect(describeApiError(new ApiError(429, "x"))).toMatch(/too many requests/i);
+    expect(describeApiError(new ApiError(504, "Gateway timeout"))).toMatch(/timeout/i);
   });
 
   it("surfaces network failures clearly", () => {

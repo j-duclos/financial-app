@@ -15,7 +15,11 @@ type Props = {
   visible: boolean;
   draft: TransactionFilters;
   accounts: Account[];
+  accountsLoading?: boolean;
+  accountsError?: boolean;
   categories: Category[];
+  categoriesLoading?: boolean;
+  categoriesError?: boolean;
   onClose: () => void;
   onApply: (filters: TransactionFilters) => void;
 };
@@ -26,7 +30,11 @@ export function TransactionFiltersSheet({
   visible,
   draft: initialDraft,
   accounts,
+  accountsLoading = false,
+  accountsError = false,
   categories,
+  categoriesLoading = false,
+  categoriesError = false,
   onClose,
   onApply,
 }: Props) {
@@ -77,6 +85,16 @@ export function TransactionFiltersSheet({
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
               Account
             </Text>
+            {accountsError ? (
+              <Text style={{ color: theme.colors.warning, fontSize: 12, marginBottom: 6 }}>
+                Could not load accounts — other filters still work.
+              </Text>
+            ) : null}
+            {accountsLoading ? (
+              <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 6 }}>
+                Loading accounts…
+              </Text>
+            ) : null}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {chip("All accounts", draft.accountId == null, () => set("accountId", null))}
               {accounts.map((a) =>
@@ -100,6 +118,16 @@ export function TransactionFiltersSheet({
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
               Category
             </Text>
+            {categoriesError ? (
+              <Text style={{ color: theme.colors.warning, fontSize: 12, marginBottom: 6 }}>
+                Could not load categories — other filters still work.
+              </Text>
+            ) : null}
+            {categoriesLoading ? (
+              <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginBottom: 6 }}>
+                Loading categories…
+              </Text>
+            ) : null}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {chip("All categories", draft.categoryId == null, () => set("categoryId", null))}
               {categories.slice(0, 20).map((c) =>

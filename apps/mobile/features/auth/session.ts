@@ -13,22 +13,16 @@ export function hasCompleteSession(tokens: StoredTokens): boolean {
 
 export type SessionRestoreResult =
   | { status: "unauthenticated" }
-  | { status: "authenticated"; access: string; refresh: string }
-  | { status: "expired" };
+  | { status: "authenticated"; access: string; refresh: string };
 
 /**
- * Decide how launch should treat stored tokens after a profile probe.
- * Profile success ⇒ authenticated; profile failure with tokens ⇒ expired/clear.
+ * Decide how launch should treat stored tokens after SecureStore read.
+ * Network profile validation happens in the background; invalid sessions are
+ * cleared via the API client's unauthorized callback when refresh fails.
  */
-export function resolveSessionRestore(
-  tokens: StoredTokens,
-  profileOk: boolean
-): SessionRestoreResult {
+export function resolveSessionRestore(tokens: StoredTokens): SessionRestoreResult {
   if (!hasCompleteSession(tokens)) {
     return { status: "unauthenticated" };
-  }
-  if (!profileOk) {
-    return { status: "expired" };
   }
   return {
     status: "authenticated",

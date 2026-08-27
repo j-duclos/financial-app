@@ -10,6 +10,8 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   accounts: Account[];
+  accountsLoading?: boolean;
+  accountsError?: boolean;
   accountId: number | "";
   onAccountChange: (id: number | "") => void;
   eventFilter: CalendarEventFilter;
@@ -51,6 +53,8 @@ export function CalendarFiltersSheet({
   visible,
   onClose,
   accounts,
+  accountsLoading = false,
+  accountsError = false,
   accountId,
   onAccountChange,
   eventFilter,
@@ -69,6 +73,16 @@ export function CalendarFiltersSheet({
       <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: theme.spacing.lg }}>
         <View>
           <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>Account</Text>
+          {accountsError ? (
+            <Text style={{ color: theme.colors.warning, fontSize: 13, marginBottom: 8 }}>
+              Could not load accounts — calendar data is still available.
+            </Text>
+          ) : null}
+          {accountsLoading ? (
+            <Text style={{ color: theme.colors.textMuted, fontSize: 13, marginBottom: 8 }}>
+              Loading accounts…
+            </Text>
+          ) : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             <Chip label="All accounts" selected={accountId === ""} onPress={() => onAccountChange("")} />
             {accounts.map((account) => (

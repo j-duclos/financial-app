@@ -13,20 +13,19 @@ describe("getApiBaseUrl", () => {
     vi.unstubAllGlobals();
   });
 
-  it("rewrites localhost to LAN host on physical devices in dev", async () => {
+  it("keeps explicit localhost URL in development", async () => {
     process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
     vi.doMock("expo-constants", () => ({
-      default: {
-        expoConfig: { hostUri: "192.168.1.52:8081" },
-        expoGoConfig: { debuggerHost: "192.168.1.52:8081" },
-      },
+      default: { expoConfig: { extra: { appEnv: "development" } } },
     }));
     vi.doMock("expo-device", () => ({ isDevice: true }));
     vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
     vi.stubGlobal("__DEV__", true);
 
-    const { getApiBaseUrl } = await import("./env");
-    expect(getApiBaseUrl()).toBe("http://192.168.1.52:8000");
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("http://localhost:8000");
   });
 
   it("keeps explicit non-localhost URL", async () => {
@@ -38,5 +37,50 @@ describe("getApiBaseUrl", () => {
 
     const { getApiBaseUrl } = await import("./env");
     expect(getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
+  });
+
+  it("throws when production env uses localhost", async () => {
+    process.env.EXPO_PUBLIC_APP_ENV = "production";
+    process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
+    vi.doMock("expo-constants", () => ({
+      default: { expoConfig: { extra: { appEnv: "production" } } },
+    }));
+    vi.doMock("expo-device", () => ({ isDevice: false }));
+    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
+    vi.stubGlobal("__DEV__", false);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    resetApiBaseUrlCacheForTests();
+    expect(() => getApiBaseUrl()).toThrow(/local or private-network/i);
+  });
+
+  it("throws when staging env uses plain HTTP", async () => {
+    process.env.EXPO_PUBLIC_APP_ENV = "staging";
+    process.env.EXPO_PUBLIC_API_URL = "http://api.example.com";
+    vi.doMock("expo-constants", () => ({
+      default: { expoConfig: { extra: { appEnv: "staging" } } },
+    }));
+    vi.doMock("expo-device", () => ({ isDevice: false }));
+    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
+    vi.stubGlobal("__DEV__", false);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    resetApiBaseUrlCacheForTests();
+    expect(() => getApiBaseUrl()).toThrow(/HTTPS/i);
+  });
+
+  it("throws when production has no API URL configured", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "production";
+    vi.doMock("expo-constants", () => ({
+      default: { expoConfig: { extra: { appEnv: "production", apiUrl: "" } } },
+    }));
+    vi.doMock("expo-device", () => ({ isDevice: false }));
+    vi.doMock("react-native", () => ({ Platform: { OS: "ios" } }));
+    vi.stubGlobal("__DEV__", false);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await import("./env");
+    resetApiBaseUrlCacheForTests();
+    expect(() => getApiBaseUrl()).toThrow(/not configured/i);
   });
 });

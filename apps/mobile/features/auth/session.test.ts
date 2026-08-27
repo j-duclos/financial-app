@@ -8,22 +8,21 @@ describe("auth session restore", () => {
   });
 
   it("marks missing tokens as unauthenticated", () => {
-    expect(resolveSessionRestore({ access: null, refresh: null }, false)).toEqual({
+    expect(resolveSessionRestore({ access: null, refresh: null })).toEqual({
       status: "unauthenticated",
     });
   });
 
-  it("marks failed profile probe as expired", () => {
-    expect(resolveSessionRestore({ access: "a", refresh: "r" }, false)).toEqual({
-      status: "expired",
-    });
-  });
-
-  it("authenticates when profile probe succeeds", () => {
-    expect(resolveSessionRestore({ access: "a", refresh: "r" }, true)).toEqual({
+  it("authenticates immediately when both tokens are present", () => {
+    expect(resolveSessionRestore({ access: "a", refresh: "r" })).toEqual({
       status: "authenticated",
       access: "a",
       refresh: "r",
     });
+  });
+
+  it("does not require a profile network probe before authenticated shell", () => {
+    const decision = resolveSessionRestore({ access: "a", refresh: "r" });
+    expect(decision.status).toBe("authenticated");
   });
 });

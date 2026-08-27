@@ -15,7 +15,7 @@ type Props = {
   onPress: () => void;
 };
 
-export function BudgetCategoryRow({ row, onPress }: Props) {
+export const BudgetCategoryRow = React.memo(function BudgetCategoryRow({ row, onPress }: Props) {
   const theme = useTheme();
   const { target, metrics } = row;
   const name = target.name || metrics.category_name;
@@ -72,4 +72,4 @@ export function BudgetCategoryRow({ row, onPress }: Props) {
       </Text>
     </Pressable>
   );
-}
+});
