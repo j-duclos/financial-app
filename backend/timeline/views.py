@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal
+import logging
 
 from django.db.models import Prefetch
 from django.utils import timezone
@@ -52,6 +53,8 @@ from core.timeline_cache import (
 )
 from .services.resolve_risk import build_resolve_risk_plan
 from .services.transfer_simulation import simulate_transfer_impact
+
+logger = logging.getLogger(__name__)
 from .services.rule_cleanup import (
     delete_future_materialized_transactions_for_rule,
     delete_materialized_transactions_for_rule_on_or_after,
@@ -859,14 +862,10 @@ class TimelineView(APIView):
                 )
 
             if rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id):
-                from timeline.services.ledger_section_balances import (
-                    assign_canonical_ledger_balance_after,
-                )
-
-                assign_canonical_ledger_balance_after(
-                    rows,
-                    today=as_of,
-                    account_ids={int(account_id)} if account_id is not None else None,
+                logger.error(
+                    "canonical timeline missing balance_after account_id=%s as_of=%s",
+                    account_id,
+                    as_of,
                 )
 
             # Serialize dates and decimals for JSON

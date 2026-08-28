@@ -503,6 +503,19 @@ function isShadowedByMatchedRuleSibling(
   return false;
 }
 
+/**
+ * Whether a timeline row participates in Transactions ledger display and Bal column.
+ * Prefer backend ``financially_active``; fall back to client filters for legacy payloads.
+ */
+export function isFinanciallyActiveTimelineRow(
+  row: TimelineRow,
+  timeline: TimelineRow[]
+): boolean {
+  if (row.financially_active === false) return false;
+  if (row.financially_active === true) return true;
+  return !isSupersededPlannedTimelineRow(row, timeline) && !isShadowedByMatchedRuleSibling(row, timeline);
+}
+
 /** Paired transfer leg — never hide from ledger when matching imports or debt skip logic. */
 function isPairedTransferTimelineRow(row: TimelineRow): boolean {
   return row.transfer_group_id != null;
@@ -759,9 +772,7 @@ export function buildLedgerRowsFromTimeline(
   pastOpeningOverride?: number | null,
   postReconcileAnchor?: number | null
 ): LedgerRow[] {
-  const visibleTimeline = timeline.filter(
-    (r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline)
-  );
+  const visibleTimeline = timeline.filter((r) => isFinanciallyActiveTimelineRow(r, timeline));
   const past = visibleTimeline
     .filter((r) => isPastTimelineRow(r, today))
     .sort(compareTimelineRows);
@@ -902,10 +913,8 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
       : running;
   rows.push({ type: "today_balance", balance: todayBalance });
 
-  const visibleTimeline = upcomingTimeline.filter(
-    (r) =>
-      !isSupersededPlannedTimelineRow(r, upcomingTimeline) &&
-      !isShadowedByMatchedRuleSibling(r, upcomingTimeline)
+  const visibleTimeline = upcomingTimeline.filter((r) =>
+    isFinanciallyActiveTimelineRow(r, upcomingTimeline)
   );
   const pending = visibleTimeline
     .filter((r) => isPendingExpectedTimelineRow(r, today))
@@ -1074,7 +1083,7 @@ export function accountTimelineRunningBalanceAsOfDate(
   const aid = Number(accountId);
   const rows = timeline
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
+    .filter((r) => isFinanciallyActiveTimelineRow(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) return null;
   const rb = parseFloat(rows[rows.length - 1].running_balance);
@@ -1134,7 +1143,7 @@ export function creditCardSignedBalanceAtDate(
       }
       return true;
     })
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
+    .filter((r) => isFinanciallyActiveTimelineRow(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) {
     return openingSignedBalance ?? null;
@@ -1180,7 +1189,7 @@ export function assetBalanceAsOfDateFromTimeline(
     .filter((r) => Number(r.account_id) === aid && r.date <= asOfDate)
     .filter((r) => !isProjectedInterestRow(r))
     .filter((r) => r.transaction_id == null || !excludeTransactionIds.has(r.transaction_id))
-    .filter((r) => !isSupersededPlannedTimelineRow(r, timeline) && !isShadowedByMatchedRuleSibling(r, timeline))
+    .filter((r) => isFinanciallyActiveTimelineRow(r, timeline))
     .sort(compareTimelineRows);
   if (rows.length === 0) return null;
 

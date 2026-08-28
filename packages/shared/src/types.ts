@@ -1789,6 +1789,8 @@ export interface TimelineRow {
    * clients display only — no local ledger arithmetic.
    */
   balance_after?: string | null;
+  /** Authoritative: False when superseded/shadowed — excluded from ledger walk and Bal column. */
+  financially_active?: boolean;
   /** Whether this transaction has been reconciled. */
   reconciled?: boolean;
   /** Running balance stored when this row was reconciled (signed; credit = negative debt). */

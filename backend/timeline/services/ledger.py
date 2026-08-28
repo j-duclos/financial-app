@@ -208,7 +208,7 @@ def recompute_timeline_running_balances(
         if aid is None or aid not in account_ids:
             continue
         acct_rows = rows_by_account.get(aid, [])
-        if is_superseded_planned_row(r, acct_rows):
+        if not row_participates_in_ledger_walk(r, acct_rows):
             r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
             continue
         amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
@@ -258,7 +258,7 @@ def recompute_future_timeline_running_balances(
         if aid is None or aid not in account_ids:
             continue
         acct_rows = rows_by_account.get(aid, [])
-        if is_superseded_planned_row(r, acct_rows):
+        if not row_participates_in_ledger_walk(r, acct_rows):
             r["running_balance"] = running.get(aid, opening.get(aid, Decimal("0")))
             continue
         amt = r["amount"] if isinstance(r["amount"], Decimal) else Decimal(str(r["amount"]))
@@ -1767,8 +1767,101 @@ def _planned_and_posting_likely_same(planned: dict, posting: dict) -> bool:
     return _descriptions_likely_same(desc_p, desc_o)
 
 
+def _is_paired_transfer_timeline_row(row: dict) -> bool:
+    return row.get("transfer_group_id") is not None
+
+
+def _timeline_amounts_match(a, b) -> bool:
+    try:
+        da = abs(Decimal(str(a)))
+        db = abs(Decimal(str(b)))
+        return abs(da - db) < Decimal("0.01")
+    except Exception:
+        return False
+
+
+def is_shadowed_by_matched_rule_sibling(row: dict, account_rows: list[dict]) -> bool:
+    """
+    Unmatched rule row superseded because a sibling occurrence already matched the bank import.
+
+    Matches web ``isShadowedByMatchedRuleSibling`` and ``shadowed_rule_occurrence_ids`` semantics.
+    """
+    if _is_paired_transfer_timeline_row(row):
+        return False
+    rule_id = row.get("rule_id")
+    if rule_id is None:
+        return False
+    account_id = row.get("account_id")
+    row_date = _timeline_row_date(row.get("date"))
+    if row_date is None or account_id is None:
+        return False
+    if (row.get("import_match_status") or "").lower() == "matched":
+        return False
+    try:
+        amt = Decimal(str(row.get("amount")))
+    except Exception:
+        return False
+    for other in account_rows:
+        if other is row:
+            continue
+        if other.get("account_id") != account_id or other.get("rule_id") != rule_id:
+            continue
+        if (other.get("import_match_status") or "").lower() != "matched":
+            continue
+        other_date = _timeline_row_date(other.get("date"))
+        if other_date is None:
+            continue
+        if abs((other_date - row_date).days) > SAME_ACCOUNT_DATE_WINDOW_DAYS:
+            continue
+        other_amt = other.get("amount")
+        if other_amt is not None and _timeline_amounts_match(amt, other_amt):
+            return True
+    covered = _matched_rule_occurrence_covers(
+        rule_id=int(rule_id),
+        account_id=int(account_id),
+        on_date=row_date,
+        amount=amt,
+    )
+    if covered is not None:
+        tid = row.get("transaction_id")
+        if tid is None or int(tid) != covered.pk:
+            return True
+    return False
+
+
+def is_financially_active_timeline_row(row: dict, account_rows: list[dict]) -> bool:
+    """Whether a row participates in balance math and Transactions ledger display."""
+    if is_superseded_planned_row(row, account_rows):
+        return False
+    if is_shadowed_by_matched_rule_sibling(row, account_rows):
+        return False
+    return True
+
+
+def row_participates_in_ledger_walk(row: dict, account_rows: list[dict]) -> bool:
+    """Use pre-annotated ``financially_active`` when present; else compute."""
+    if "financially_active" in row:
+        return bool(row["financially_active"])
+    return is_financially_active_timeline_row(row, account_rows)
+
+
+def annotate_financially_active_rows(rows: list[dict]) -> None:
+    """Mark each row with authoritative ``financially_active`` before the canonical balance walk."""
+    by_account: dict[int, list[dict]] = defaultdict(list)
+    for row in rows:
+        aid = row.get("account_id")
+        if aid is not None:
+            by_account[int(aid)].append(row)
+    for row in rows:
+        aid = row.get("account_id")
+        acct_rows = by_account.get(int(aid), []) if aid is not None else []
+        row["financially_active"] = is_financially_active_timeline_row(row, acct_rows)
+
+
 def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
     """Skip PLANNED rows when a matching CLEARED/RECONCILED posting exists same day (matches web ledger)."""
+    if _is_paired_transfer_timeline_row(row):
+        return False
     status = (row.get("status") or "").upper()
     if status != "PLANNED":
         return False
@@ -2469,6 +2562,7 @@ def build_forecast_projection_timeline(
     )
     from timeline.services.ledger_section_balances import assign_canonical_ledger_balance_after
 
+    annotate_financially_active_rows(rows)
     anchors = None
     if opening_balances is not None:
         anchors = {

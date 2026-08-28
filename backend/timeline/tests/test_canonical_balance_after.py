@@ -282,3 +282,203 @@ def test_canonical_cache_hit_shares_balance_after(user, main):
         sorted(cached_rows, key=lambda r: (str(r.get("date")), r.get("transaction_id") or 0)),
     ):
         assert a.get("balance_after") == b.get("balance_after")
+
+
+SHADOW_AMOUNT = Decimal("-503.43")
+POSTED_ANCHOR = Decimal("2360.64")
+GENS_RENT_AMOUNT = Decimal("1500.00")
+GENS_RENT_BAL = POSTED_ANCHOR + GENS_RENT_AMOUNT
+
+
+@pytest.mark.django_db
+def test_shadow_rule_row_excluded_from_canonical_walk(user, household):
+    """
+    Regression: shadow rule sibling must not affect canonical balance_after or Transactions visibility.
+
+    posted anchor = 2360.64, shadow = -503.43 (hidden), Gen's Rent = +1500 → 3860.64
+    """
+    from timeline.services.ledger import (
+        annotate_financially_active_rows,
+        is_shadowed_by_matched_rule_sibling,
+        row_participates_in_ledger_walk,
+    )
+
+    acct_id = 9001
+    rule_id = 42
+    shadow_day = date(2026, 8, 27)
+    matched_day = date(2026, 8, 30)
+    gens_day = date(2026, 8, 28)
+    as_of = gens_day
+
+    rows = [
+        {
+            "date": matched_day,
+            "description": "Shadowed bill",
+            "account_id": acct_id,
+            "amount": SHADOW_AMOUNT,
+            "type": "OUTFLOW",
+            "status": "PLANNED",
+            "source": "rule",
+            "rule_id": rule_id,
+            "transaction_id": 101,
+            "import_match_status": "matched",
+            "txn_source": "rule",
+        },
+        {
+            "date": shadow_day,
+            "description": "Shadowed bill",
+            "account_id": acct_id,
+            "amount": SHADOW_AMOUNT,
+            "type": "OUTFLOW",
+            "status": "PLANNED",
+            "source": "rule",
+            "rule_id": rule_id,
+            "transaction_id": 102,
+            "import_match_status": None,
+            "txn_source": "rule",
+        },
+        {
+            "date": gens_day,
+            "description": "Gen's Rent",
+            "account_id": acct_id,
+            "amount": GENS_RENT_AMOUNT,
+            "type": "INFLOW",
+            "status": "PLANNED",
+            "source": "one_time",
+            "rule_id": None,
+            "transaction_id": 103,
+            "txn_source": "one_time",
+        },
+    ]
+    annotate_financially_active_rows(rows)
+    shadow_row = rows[1]
+    assert shadow_row["financially_active"] is False
+    assert is_shadowed_by_matched_rule_sibling(shadow_row, rows)
+    assert not row_participates_in_ledger_walk(shadow_row, rows)
+
+    assign_canonical_ledger_balance_after(
+        rows,
+        today=as_of,
+        anchors={acct_id: POSTED_ANCHOR},
+        account_ids={acct_id},
+        force=True,
+    )
+    walk = transactions_ledger_walk_rows(rows, account_id=acct_id, today=as_of)
+    assert all(
+        not (
+            r.get("rule_id") == rule_id and str(r.get("date"))[:10] == shadow_day.isoformat()
+        )
+        for r in walk
+    )
+    gen_bal = _balance_by_description(rows, acct_id, "Gen's Rent")
+    assert gen_bal == GENS_RENT_BAL
+    assert gen_bal != POSTED_ANCHOR + SHADOW_AMOUNT + GENS_RENT_AMOUNT
+
+
+@pytest.mark.django_db
+def test_shadow_rule_materialized_occurrence_excluded_from_canonical_walk(user, household):
+    """Integration: DB shadow sibling + explicit rule row still yields Gen's Rent at anchor + 1500."""
+    from timeline.models import RecurringRule
+    from transactions.services import manual_match_transactions
+
+    acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.SPENDING,
+        name="Main Shadow DB",
+        starting_balance=POSTED_ANCHOR,
+        minimum_buffer=MINIMUM_BUFFER,
+        currency="USD",
+        include_in_forecast=True,
+    )
+    rule = RecurringRule.objects.create(
+        household=household,
+        account=acct,
+        name="Shadowed bill",
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=abs(SHADOW_AMOUNT),
+        frequency=RecurringRule.Frequency.WEEKLY,
+        start_date=date(2026, 8, 1),
+        active=True,
+    )
+    matched_day = date(2026, 8, 30)
+    shadow_day = date(2026, 8, 27)
+    gens_day = date(2026, 8, 28)
+    as_of = gens_day
+
+    early = Transaction.objects.create(
+        account=acct,
+        date=matched_day,
+        payee=rule.name,
+        amount=SHADOW_AMOUNT,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+        rule=rule,
+    )
+    imported = Transaction.objects.create(
+        account=acct,
+        date=matched_day,
+        payee="BANK SHADOW BILL",
+        amount=SHADOW_AMOUNT,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-shadow-503-db",
+        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+    )
+    manual_match_transactions(planned_id=early.pk, imported_id=imported.pk, user=user)
+    Transaction.objects.create(
+        account=acct,
+        date=shadow_day,
+        payee=rule.name,
+        amount=SHADOW_AMOUNT,
+        source=Transaction.Source.RULE,
+        status=Transaction.Status.PLANNED,
+        rule=rule,
+    )
+    _planned(acct, gens_day, "Gen's Rent", GENS_RENT_AMOUNT)
+
+    end = as_of + timedelta(days=FORECAST_DAYS)
+    rows = build_forecast_projection_timeline(
+        user,
+        today=as_of,
+        end_date=end,
+        caller="test_shadow_db",
+        account_id=acct.pk,
+    )
+    anchor = ledger_today_balance_before_pending(acct, as_of)
+    assert anchor == POSTED_ANCHOR
+    gen_bal = _balance_by_description(rows, acct.id, "Gen's Rent")
+    assert gen_bal == GENS_RENT_BAL
+
+
+@pytest.mark.django_db
+def test_financial_visibility_invariant(user, household):
+    """Every balance-walk row is financially active; inactive rows carry financially_active=False."""
+    from timeline.services.ledger import row_participates_in_ledger_walk
+
+    acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.SPENDING,
+        name="Invariant",
+        starting_balance=POSTED_ANCHOR,
+        currency="USD",
+        include_in_forecast=True,
+    )
+    _planned(acct, AUG_28, "Gen's Rent", GENS_RENT_AMOUNT)
+    end = AS_OF + timedelta(days=FORECAST_DAYS)
+    rows = build_forecast_projection_timeline(
+        user,
+        today=AS_OF,
+        end_date=end,
+        caller="test_invariant",
+        account_id=acct.pk,
+    )
+    walk = transactions_ledger_walk_rows(rows, account_id=acct.id, today=AS_OF)
+    acct_rows = [r for r in rows if r.get("account_id") == acct.id]
+    for row in walk:
+        assert row.get("financially_active") is not False
+        assert row_participates_in_ledger_walk(row, acct_rows)
+        assert row.get("balance_after") is not None
+    for row in acct_rows:
+        if row.get("financially_active") is False:
+            assert row.get("transaction_id") not in {r.get("transaction_id") for r in walk}

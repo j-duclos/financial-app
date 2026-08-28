@@ -6,6 +6,7 @@ transfers while transfers still appear in day detail lists.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -51,6 +52,8 @@ from timeline.services.ledger import (
     is_superseded_planned_row,
     timeline_row_process_order,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_date(val) -> date | None:
@@ -398,14 +401,13 @@ def build_timeline_calendar(
                     txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
                     eod_by_account[int(aid)] = acct_bal
                     marker_txns.append(txn)
-                elif row.get("balance_after") is None:
-                    prev = running.get(int(aid), Decimal("0"))
-                    acct_bal = prev + amt
-                    running[int(aid)] = acct_bal
-                    if day_lowest is None or acct_bal < day_lowest:
-                        day_lowest = acct_bal
-                    txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
-                    marker_txns.append(txn)
+                elif is_forecast_day and row.get("balance_after") is None:
+                    logger.error(
+                        "canonical calendar row missing balance_after account=%s date=%s desc=%r",
+                        aid,
+                        date_iso,
+                        row.get("description"),
+                    )
 
             events.append(
                 {

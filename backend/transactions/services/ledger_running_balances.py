@@ -67,7 +67,7 @@ def posted_ledger_running_after_walk(
         opening = cache.inception_opening_balance(account.pk) or Decimal("0")
         return opening.quantize(Decimal("0.01"))
 
-    from timeline.services.ledger import is_superseded_planned_row
+    from timeline.services.ledger import row_participates_in_ledger_walk
 
     cp = cache._checkpoint_by_account.get(account.pk)
     if cp is not None:
@@ -76,7 +76,7 @@ def posted_ledger_running_after_walk(
         running = cache.inception_opening_balance(account.pk) or Decimal("0")
 
     for row in rows:
-        if is_superseded_planned_row(row, rows):
+        if not row_participates_in_ledger_walk(row, rows):
             continue
         if _is_pending_expected_ledger_row(row, as_of):
             continue
@@ -112,7 +112,7 @@ def running_balances_for_account_transactions(
     if not rows:
         return {}
 
-    from timeline.services.ledger import is_superseded_planned_row
+    from timeline.services.ledger import row_participates_in_ledger_walk
 
     cp = cache._checkpoint_by_account.get(account.pk)
     if cp is not None:
@@ -125,7 +125,7 @@ def running_balances_for_account_transactions(
         rid = row.get("id")
         if rid is None:
             continue
-        if is_superseded_planned_row(row, rows):
+        if not row_participates_in_ledger_walk(row, rows):
             if rid in ids:
                 result[int(rid)] = str(running.quantize(Decimal("0.01")))
             continue

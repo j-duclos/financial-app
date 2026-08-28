@@ -210,21 +210,7 @@ def scan_first_negative_cash(
     if not eligible_ids or start_date > end_date:
         return _empty_result(as_of)
 
-    from timeline.services.ledger_section_balances import (
-        assign_canonical_ledger_balance_after,
-        rows_need_ledger_balance_after,
-        transactions_ledger_walk_rows,
-    )
-
-    if rows_need_ledger_balance_after(rows, today=start_date):
-        anchors = {aid: opening.get(aid, Decimal("0")) for aid in eligible_ids}
-        assign_canonical_ledger_balance_after(
-            rows,
-            today=start_date,
-            anchors=anchors,
-            account_ids=eligible_ids,
-            force=True,
-        )
+    from timeline.services.ledger_section_balances import transactions_ledger_walk_rows
 
     running = {aid: opening.get(aid, Decimal("0")) for aid in eligible_ids}
     already: list[ExtendedCashRiskAccount] = []

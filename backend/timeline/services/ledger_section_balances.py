@@ -15,9 +15,13 @@ which is a pure reducer over canonical ``balance_after`` values.
 """
 from __future__ import annotations
 
+import logging
+import os
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _row_date(row: dict[str, Any]) -> date:
@@ -111,9 +115,10 @@ def transactions_ledger_walk_rows(
     """
     Pending then Upcoming rows for one account — same sequence as Transactions Bal.
 
-    Skips superseded planned rows and optional ``end_date`` cutoff on upcoming.
+    Skips financially inactive rows (superseded planned, shadow rule siblings) and
+    optional ``end_date`` cutoff on upcoming.
     """
-    from timeline.services.ledger import is_superseded_planned_row
+    from timeline.services.ledger import row_participates_in_ledger_walk
 
     account_rows = [r for r in rows if int(r.get("account_id") or 0) == int(account_id)]
     pending = sorted(
@@ -126,7 +131,7 @@ def transactions_ledger_walk_rows(
     )
     walk: list[dict[str, Any]] = []
     for row in pending + upcoming:
-        if is_superseded_planned_row(row, account_rows):
+        if not row_participates_in_ledger_walk(row, account_rows):
             continue
         if end_date is not None and _row_date(row) > end_date:
             continue
@@ -155,6 +160,55 @@ def _resolve_ledger_anchors(
     return resolved
 
 
+def _debug_walk_account_id() -> int | None:
+    raw = os.environ.get("CANONICAL_LEDGER_WALK_DEBUG_ACCOUNT", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        from accounts.models import Account
+
+        acc = Account.objects.filter(name__iexact=raw).first()
+        return acc.id if acc is not None else None
+
+
+def _debug_log_canonical_walk(
+    *,
+    account_id: int,
+    anchor: Decimal,
+    walk: list[dict[str, Any]],
+    until_description: str | None,
+) -> None:
+    debug_aid = _debug_walk_account_id()
+    if debug_aid is None or int(debug_aid) != int(account_id):
+        return
+    from timeline.services.ledger import is_superseded_planned_row, is_shadowed_by_matched_rule_sibling
+
+    account_rows = walk  # walk is already filtered; log full pending/upcoming candidates separately
+    print(f"POSTED ANCHOR: {anchor}")
+    print("WALK ROWS:")
+    print(
+        "date\ttransaction_id\trule_id\tdescription\tstatus\tsource\ttxn_source\t"
+        "import_match_status\tplaid_transaction_id\tamount\tsigned\tsuperseded?\tshadowed?\t"
+        "financially_active\tbalance_after"
+    )
+    for row in walk:
+        desc = str(row.get("description") or "")
+        signed = signed_timeline_ledger_amount(row)
+        superseded = is_superseded_planned_row(row, account_rows)
+        shadowed = is_shadowed_by_matched_rule_sibling(row, account_rows)
+        print(
+            f"{row.get('date')}\t{row.get('transaction_id')}\t{row.get('rule_id')}\t{desc}\t"
+            f"{row.get('status')}\t{row.get('source')}\t{row.get('txn_source')}\t"
+            f"{row.get('import_match_status')}\t{row.get('plaid_transaction_id')}\t"
+            f"{row.get('amount')}\t{signed}\t{superseded}\t{shadowed}\t"
+            f"{row.get('financially_active')}\t{row.get('balance_after')}"
+        )
+        if until_description and until_description.lower() in desc.lower():
+            break
+
+
 def assign_canonical_ledger_balance_after(
     rows: list[dict[str, Any]],
     *,
@@ -167,7 +221,7 @@ def assign_canonical_ledger_balance_after(
     Canonical financial balance walk — assigns ``balance_after`` once per account.
 
     Walks Pending → Upcoming from ``posted_balance_before_pending`` (ledger anchor),
-    skipping superseded rows (same financially-active set as Transactions).
+    skipping financially inactive rows (superseded planned, shadow rule siblings).
     """
     if not rows:
         return rows
@@ -194,6 +248,12 @@ def assign_canonical_ledger_balance_after(
         for row in walk:
             running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
             row["balance_after"] = str(running)
+        _debug_log_canonical_walk(
+            account_id=aid,
+            anchor=anchor,
+            walk=walk,
+            until_description=os.environ.get("CANONICAL_LEDGER_WALK_UNTIL", "Gen's Rent"),
+        )
 
     return rows
 
@@ -348,12 +408,9 @@ def forecast_balance_metrics_from_transactions_ledger(
     ``balance_after`` from ``assign_canonical_ledger_balance_after``.
     """
     if rows_need_ledger_balance_after(rows, today=today, account_id=account_id):
-        assign_canonical_ledger_balance_after(
-            rows,
-            today=today,
-            anchors={account_id: ledger_anchor},
-            account_ids={account_id},
-            force=True,
+        raise ValueError(
+            f"canonical balance_after missing for account={account_id}; "
+            "forecast metrics must not reassign balances"
         )
 
     walk = transactions_ledger_walk_rows(
