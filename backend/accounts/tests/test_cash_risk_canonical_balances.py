@@ -117,7 +117,7 @@ def _aug_28_row_balances(rows, account_id):
         and str(r.get("date"))[:10] == AUG_28.isoformat()
     ]
     day_rows.sort(key=lambda r: (r.get("transaction_id") or -1, str(r.get("description") or "")))
-    return [Decimal(str(r["running_balance"])) for r in day_rows if r.get("running_balance") is not None]
+    return [Decimal(str(r["balance_after"])) for r in day_rows if r.get("balance_after") is not None]
 
 
 @pytest.mark.django_db

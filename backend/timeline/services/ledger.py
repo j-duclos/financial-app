@@ -412,9 +412,8 @@ def forecast_account_balance_metrics(
     """
     Ledger-aligned balance projection for one account (matches Transactions Bal).
 
-    Uses the Transactions ledger walk (Pending → Upcoming from posted anchor) — the
-    same sequence and math as ``annotate_transactions_ledger_balance_after`` /
-    ``balance_after``. Does not use chronological ``running_balance``.
+    Reduces over canonical ``balance_after`` on forecast rows — does not perform an
+    independent balance walk.
     """
     acc = Account.objects.filter(pk=account_id).first()
     if acc is not None:
@@ -2451,8 +2450,11 @@ def build_forecast_projection_timeline(
 
     Pass ``opening_balances`` with ``start_date`` after today to continue from a detailed
     forecast ending state without replaying days already projected.
+
+    Returned rows include authoritative ``balance_after`` from the single canonical
+    Pending → Upcoming ledger walk (see ``assign_canonical_ledger_balance_after``).
     """
-    return build_timeline(
+    rows = build_timeline(
         user,
         start_date=start_date or today,
         end_date=end_date,
@@ -2465,6 +2467,21 @@ def build_forecast_projection_timeline(
         caller=caller,
         opening_balances=opening_balances,
     )
+    from timeline.services.ledger_section_balances import assign_canonical_ledger_balance_after
+
+    anchors = None
+    if opening_balances is not None:
+        anchors = {
+            aid: (raw if isinstance(raw, Decimal) else Decimal(str(raw)))
+            for aid, raw in opening_balances.items()
+        }
+    assign_canonical_ledger_balance_after(
+        rows,
+        today=today,
+        anchors=anchors,
+        force=opening_balances is not None,
+    )
+    return rows
 
 
 def build_timeline(

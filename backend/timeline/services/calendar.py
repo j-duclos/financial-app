@@ -106,8 +106,8 @@ def _timeline_row_to_event(
         "transaction_id": row.get("transaction_id"),
         "status": row.get("status"),
         "source": row.get("source") or row.get("txn_source"),
-        "projected_balance": row.get("running_balance"),
-        "balance_after": row.get("running_balance"),
+        "projected_balance": row.get("balance_after") or row.get("running_balance"),
+        "balance_after": row.get("balance_after") or row.get("running_balance"),
         "is_risk": False,
         "transaction_type": row.get("transaction_type"),
         "transfer_group_id": row.get("transfer_group_id"),
@@ -159,11 +159,19 @@ def _historical_risk_reason_for_level(
     return None
 
 
-def _row_running_balance(row: dict) -> Decimal | None:
+def _row_canonical_balance(row: dict) -> Decimal | None:
+    """Authoritative ledger balance_after when present; else chronological running_balance."""
+    ba = row.get("balance_after")
+    if ba is not None:
+        return _decimal(ba)
     rb = row.get("running_balance")
     if rb is None:
         return None
     return _decimal(rb)
+
+
+def _row_running_balance(row: dict) -> Decimal | None:
+    return _row_canonical_balance(row)
 
 
 def _normalize_forecast_days(today: date, end_date: date, forecast_days: int | None) -> int:
@@ -334,6 +342,25 @@ def build_timeline_calendar(
         if rb is not None:
             running[int(aid)] = rb
 
+    if today >= start_date:
+        from timeline.services.ledger_section_balances import (
+            _after_pending_balance,
+            transactions_ledger_walk_rows,
+        )
+        from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+        for aid in scope_ids:
+            if aid in running:
+                continue
+            acc = accounts_by_id.get(aid)
+            if acc is None:
+                continue
+            anchor = ledger_today_balance_before_pending(acc, today)
+            walk = transactions_ledger_walk_rows(rows, account_id=aid, today=today)
+            running[aid] = _after_pending_balance(
+                walk, today=today, ledger_anchor=anchor
+            )
+
     d = start_date
     while d <= end_date:
         date_iso = d.isoformat()
@@ -363,7 +390,7 @@ def build_timeline_calendar(
             aid = row.get("account_id")
 
             if aid in scope_ids:
-                rb = _row_running_balance(row)
+                rb = _row_canonical_balance(row)
                 if rb is not None:
                     acct_bal = rb
                     if day_lowest is None or acct_bal < day_lowest:
@@ -371,7 +398,7 @@ def build_timeline_calendar(
                     txn["balance_after"] = str(acct_bal.quantize(Decimal("0.01")))
                     eod_by_account[int(aid)] = acct_bal
                     marker_txns.append(txn)
-                else:
+                elif row.get("balance_after") is None:
                     prev = running.get(int(aid), Decimal("0"))
                     acct_bal = prev + amt
                     running[int(aid)] = acct_bal

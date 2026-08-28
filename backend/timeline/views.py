@@ -44,7 +44,10 @@ from .services.scenario_comparison import (
 )
 from .services.ledger import build_timeline
 from .services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
-from .services.ledger_section_balances import annotate_transactions_ledger_balance_after
+from .services.ledger_section_balances import (
+    annotate_transactions_ledger_balance_after,
+    rows_need_ledger_balance_after,
+)
 from core.timeline_cache import (
     get_cached_timeline_response,
     set_cached_timeline_response,
@@ -858,12 +861,17 @@ class TimelineView(APIView):
                     caller="timeline_page",
                 )
 
-            annotate_transactions_ledger_balance_after(
-                rows,
-                account_id=account_id,
-                as_of=as_of,
-                posted_ending_balance=ledger_anchor,
+            needs_balance_after = (
+                ledger_anchor is not None
+                or rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id)
             )
+            if needs_balance_after:
+                annotate_transactions_ledger_balance_after(
+                    rows,
+                    account_id=account_id,
+                    as_of=as_of,
+                    posted_ending_balance=ledger_anchor,
+                )
 
             # Serialize dates and decimals for JSON
             for r in rows:

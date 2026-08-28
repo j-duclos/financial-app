@@ -85,12 +85,6 @@ def test_lowest_matches_balance_after_not_chronological_running_balance(
         caller="test_ledger_forecast",
         account_id=main_checking.pk,
     )
-    annotate_transactions_ledger_balance_after(
-        rows,
-        account_id=main_checking.pk,
-        as_of=today,
-        posted_ending_balance=anchor,
-    )
 
     hulu = next(r for r in rows if "Hulu" in (r.get("description") or ""))
     hulu_bal = Decimal(str(hulu["balance_after"]))
@@ -152,12 +146,6 @@ def test_overdue_pending_not_double_counted(user, main_checking):
         caller="test_overdue_pending",
         account_id=main_checking.pk,
     )
-    annotate_transactions_ledger_balance_after(
-        rows,
-        account_id=main_checking.pk,
-        as_of=today,
-        posted_ending_balance=anchor,
-    )
     future = next(r for r in rows if "Future bill" in (r.get("description") or ""))
     expected_low = Decimal(str(future["balance_after"]))
 
@@ -184,4 +172,4 @@ def test_overdue_pending_not_double_counted(user, main_checking):
 
     assert direct["lowest"] == expected_low
     assert metrics["lowest"] == direct["lowest"]
-    assert metrics["lowest"] == anchor - Decimal("200.00")
+    assert metrics["lowest"] == anchor - Decimal("500.00") - Decimal("200.00")

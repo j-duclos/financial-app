@@ -20,7 +20,7 @@ FORECAST_SUMMARY_CACHE_VERSION = "v1"
 # Short TTL: balances and rules change often; invalidation covers writes but TTL is a safety net.
 FORECAST_SUMMARY_CACHE_SECONDS = 300
 
-DASHBOARD_SUMMARY_CACHE_VERSION = "v1"
+DASHBOARD_SUMMARY_CACHE_VERSION = "v2"
 # Dashboard cache is shorter than forecast cache — widgets combine live balances, bills, and goals.
 DASHBOARD_SUMMARY_CACHE_SECONDS = 90
 

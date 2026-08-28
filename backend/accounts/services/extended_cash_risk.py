@@ -45,10 +45,8 @@ from timeline.services.ledger import (
     timeline_opening_balance_for_account,
 )
 from timeline.services.ledger_section_balances import (
-    signed_timeline_ledger_amount,
     transactions_ledger_walk_rows,
 )
-from transactions.services.reconciliation import ledger_today_balance_before_pending
 
 
 def _decimal(val) -> Decimal:
@@ -205,14 +203,28 @@ def scan_first_negative_cash(
     as_of: date,
 ) -> ExtendedCashRiskResult:
     """
-    Chronological first-negative walk across eligible cash accounts.
+    First-negative walk across eligible cash accounts using canonical ``balance_after``.
 
-    Stops after the first day any eligible account crosses below zero. Same-day
-    additional accounts are collected before returning. Does not keep walking
-    through the rest of the horizon.
+    Stops after the first day any eligible account crosses below zero.
     """
     if not eligible_ids or start_date > end_date:
         return _empty_result(as_of)
+
+    from timeline.services.ledger_section_balances import (
+        assign_canonical_ledger_balance_after,
+        rows_need_ledger_balance_after,
+        transactions_ledger_walk_rows,
+    )
+
+    if rows_need_ledger_balance_after(rows, today=start_date):
+        anchors = {aid: opening.get(aid, Decimal("0")) for aid in eligible_ids}
+        assign_canonical_ledger_balance_after(
+            rows,
+            today=start_date,
+            anchors=anchors,
+            account_ids=eligible_ids,
+            force=True,
+        )
 
     running = {aid: opening.get(aid, Decimal("0")) for aid in eligible_ids}
     already: list[ExtendedCashRiskAccount] = []
@@ -234,37 +246,32 @@ def scan_first_negative_cash(
 
     for aid in eligible_ids:
         account = accounts_by_id.get(aid)
-        if account is not None:
-            try:
-                anchor = ledger_today_balance_before_pending(account, start_date)
-            except Exception:
-                anchor = opening.get(aid, Decimal("0"))
-        else:
-            anchor = opening.get(aid, Decimal("0"))
         walk = transactions_ledger_walk_rows(
             rows, account_id=aid, today=start_date, end_date=end_date
         )
-        running = anchor
         for row in walk:
             rd = _timeline_row_date(row.get("date"))
-            if rd is None:
+            if rd is None or rd < start_date:
                 continue
-            running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
-            if running < Decimal("0"):
+            raw = row.get("balance_after")
+            if raw is None:
+                continue
+            running_bal = _decimal(raw).quantize(Decimal("0.01"))
+            if running_bal < Decimal("0"):
                 if best_date is None or rd < best_date:
                     best_date = rd
                     best_hits = {
                         aid: ExtendedCashRiskAccount(
                             account_id=aid,
                             account_name=account.effective_display_name if account else "",
-                            projected_balance=running,
+                            projected_balance=running_bal,
                         )
                     }
                 elif rd == best_date and aid not in best_hits:
                     best_hits[aid] = ExtendedCashRiskAccount(
                         account_id=aid,
                         account_name=account.effective_display_name if account else "",
-                        projected_balance=running,
+                        projected_balance=running_bal,
                     )
                 break
 

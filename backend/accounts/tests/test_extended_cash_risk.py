@@ -289,12 +289,20 @@ def test_scan_stops_on_first_negative_day():
             "account_id": 1,
             "amount": Decimal("-50"),
             "status": "PLANNED",
+            "source": "ONE_TIME",
+            "txn_source": "one_time",
+            "type": "OUTFLOW",
+            "balance_after": "-40.00",
         },
         {
             "date": later,
             "account_id": 1,
             "amount": Decimal("-9999"),
             "status": "PLANNED",
+            "source": "ONE_TIME",
+            "txn_source": "one_time",
+            "type": "OUTFLOW",
+            "balance_after": "-10039.00",
         },
     ]
     account = Account(id=1, name="Main")

@@ -4,12 +4,14 @@ The Transactions UI shows Recent (posted) then Pending then Upcoming. Pending
 rows can be dated *before* the last Recent row, so chronological timeline
 ``running_balance`` values are not the Bal column for those sections.
 
-Instead, Bal continues from the posted Recent ending balance through Pending
-then Upcoming in section order. That continuation is owned here — clients must
-render ``balance_after`` and must not recompute it.
+``assign_canonical_ledger_balance_after`` is the **only** place that performs
+the Pending → Upcoming balance walk and sets ``balance_after``. Every consumer
+(Transactions, Dashboard, Account Health, Calendar, Extended Cash Risk) reads
+those values or reduces over them — none may reconstruct balances with
+``running += amount``.
 
-Dashboard / Account Health forecast metrics must use this same walk — not
-chronological ``running_balance`` — so lowest balance matches Transactions Bal.
+Dashboard forecast metrics use ``forecast_balance_metrics_from_transactions_ledger``,
+which is a pure reducer over canonical ``balance_after`` values.
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ def _is_projected_interest(row: dict[str, Any]) -> bool:
 
 
 def _is_planned_scheduled(row: dict[str, Any]) -> bool:
+    """Match web/mobile isPlannedScheduledTimelineRow (+ ONE_TIME via txn_source)."""
     if _row_status(row) != "PLANNED":
         return False
     match_status = str(row.get("import_match_status") or "").lower()
@@ -41,17 +44,17 @@ def _is_planned_scheduled(row: dict[str, Any]) -> bool:
         return False
     if str(row.get("plaid_transaction_id") or "").strip():
         return False
-    source = str(row.get("source") or "").upper()
-    if source == "INTEREST":
+    source = str(row.get("source") or "").lower()
+    if source == "interest":
         return False
-    if source == "RULE":
+    if source == "rule":
         return True
-    txn_src = str(row.get("txn_source") or "").upper()
-    if txn_src == "RULE":
+    txn_src = str(row.get("txn_source") or "").lower()
+    if txn_src == "rule":
         return True
-    if row.get("rule_id") is not None:
+    if row.get("rule_id") is not None and source == "actual":
         return True
-    if source == "ONE_TIME":
+    if source == "one_time" or txn_src == "one_time":
         return True
     return False
 
@@ -91,6 +94,13 @@ def _decimal(val) -> Decimal:
     return Decimal(str(val))
 
 
+def _read_balance_after(row: dict[str, Any]) -> Decimal | None:
+    raw = row.get("balance_after")
+    if raw is None:
+        return None
+    return _decimal(raw).quantize(Decimal("0.01"))
+
+
 def transactions_ledger_walk_rows(
     rows: list[dict[str, Any]],
     *,
@@ -124,6 +134,90 @@ def transactions_ledger_walk_rows(
     return walk
 
 
+def _resolve_ledger_anchors(
+    account_ids: set[int],
+    today: date,
+    anchors: dict[int, Decimal] | None,
+) -> dict[int, Decimal]:
+    if anchors is not None:
+        return {
+            aid: _decimal(anchors.get(aid, Decimal("0"))).quantize(Decimal("0.01"))
+            for aid in account_ids
+        }
+    from accounts.models import Account
+    from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+    resolved: dict[int, Decimal] = {}
+    for acc in Account.objects.filter(pk__in=account_ids):
+        resolved[acc.id] = ledger_today_balance_before_pending(acc, today).quantize(
+            Decimal("0.01")
+        )
+    return resolved
+
+
+def assign_canonical_ledger_balance_after(
+    rows: list[dict[str, Any]],
+    *,
+    today: date,
+    anchors: dict[int, Decimal] | None = None,
+    account_ids: set[int] | None = None,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    Canonical financial balance walk — assigns ``balance_after`` once per account.
+
+    Walks Pending → Upcoming from ``posted_balance_before_pending`` (ledger anchor),
+    skipping superseded rows (same financially-active set as Transactions).
+    """
+    if not rows:
+        return rows
+
+    if account_ids is None:
+        account_ids = {
+            int(r["account_id"]) for r in rows if r.get("account_id") is not None
+        }
+    if not account_ids:
+        return rows
+
+    resolved_anchors = _resolve_ledger_anchors(account_ids, today, anchors)
+
+    for aid in sorted(account_ids):
+        anchor = resolved_anchors.get(aid)
+        if anchor is None:
+            continue
+        walk = transactions_ledger_walk_rows(
+            rows, account_id=aid, today=today, end_date=None
+        )
+        if not force and walk and all(r.get("balance_after") is not None for r in walk):
+            continue
+        running = anchor
+        for row in walk:
+            running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
+            row["balance_after"] = str(running)
+
+    return rows
+
+
+def rows_need_ledger_balance_after(
+    rows: list[dict[str, Any]],
+    *,
+    today: date,
+    account_id: int | None = None,
+) -> bool:
+    """True when any financially-active pending/upcoming row lacks ``balance_after``."""
+    if account_id is not None:
+        account_ids = {int(account_id)}
+    else:
+        account_ids = {
+            int(r["account_id"]) for r in rows if r.get("account_id") is not None
+        }
+    for aid in account_ids:
+        walk = transactions_ledger_walk_rows(rows, account_id=aid, today=today)
+        if any(r.get("balance_after") is None for r in walk):
+            return True
+    return False
+
+
 def annotate_transactions_ledger_balance_after(
     rows: list[dict[str, Any]],
     *,
@@ -132,42 +226,44 @@ def annotate_transactions_ledger_balance_after(
     posted_ending_balance: Decimal | None,
 ) -> list[dict[str, Any]]:
     """
-    Set ``balance_after`` on account-scoped rows for the Transactions ledger.
+    Ensure ``balance_after`` on ledger rows (delegates to canonical assign).
 
-    Walks Pending then Upcoming from ``posted_ending_balance``. When the anchor
-    is missing, falls back to each row's chronological ``running_balance``.
+    When ``posted_ending_balance`` is supplied, it overrides the anchor for
+    ``account_id``. Skips reassignment when canonical ``balance_after`` is
+    already present unless an explicit anchor is passed.
     """
     if not rows:
         return rows
 
-    scoped = [
-        r
-        for r in rows
-        if account_id is None or int(r.get("account_id") or 0) == int(account_id)
-    ]
-    pending = sorted(
-        (r for r in scoped if is_pending_expected_timeline_row(r, as_of)),
-        key=_sort_key,
-    )
-    upcoming = sorted(
-        (r for r in scoped if is_forecast_timeline_row(r, as_of)),
-        key=_sort_key,
-    )
-
-    for r in rows:
-        rb = r.get("running_balance")
-        if rb is not None and r.get("balance_after") is None:
-            r["balance_after"] = str(rb)
-
     if posted_ending_balance is None:
+        for r in rows:
+            rb = r.get("running_balance")
+            if rb is not None and r.get("balance_after") is None:
+                r["balance_after"] = str(rb)
         return rows
 
-    running = Decimal(str(posted_ending_balance)).quantize(Decimal("0.01"))
-    for r in pending + upcoming:
-        running = (running + signed_timeline_ledger_amount(r)).quantize(Decimal("0.01"))
-        r["balance_after"] = str(running)
+    account_ids = (
+        {int(account_id)} if account_id is not None else None
+    )
+    anchors = None
+    if account_id is not None:
+        anchors = {
+            int(account_id): _decimal(posted_ending_balance).quantize(Decimal("0.01"))
+        }
 
-    return rows
+    force = account_id is not None
+    if not force and not rows_need_ledger_balance_after(
+        rows, today=as_of, account_id=account_id
+    ):
+        return rows
+
+    return assign_canonical_ledger_balance_after(
+        rows,
+        today=as_of,
+        anchors=anchors,
+        account_ids=account_ids,
+        force=force,
+    )
 
 
 def _update_balance_metrics(
@@ -219,6 +315,23 @@ def _update_balance_metrics(
     )
 
 
+def _after_pending_balance(
+    walk: list[dict[str, Any]],
+    *,
+    today: date,
+    ledger_anchor: Decimal,
+) -> Decimal:
+    """Balance after the pending section (Current Balance when pending exists)."""
+    after_pending = ledger_anchor
+    for row in walk:
+        if _row_date(row) > today:
+            break
+        bal = _read_balance_after(row)
+        if bal is not None:
+            after_pending = bal
+    return after_pending
+
+
 def forecast_balance_metrics_from_transactions_ledger(
     rows: list[dict[str, Any]],
     *,
@@ -229,18 +342,28 @@ def forecast_balance_metrics_from_transactions_ledger(
     ledger_anchor: Decimal,
 ) -> dict[str, Any]:
     """
-    Forecast balance metrics using the Transactions ledger walk (Pending → Upcoming).
+    Forecast balance metrics — pure reducer over canonical ``balance_after``.
 
-    ``ledger_anchor`` is the posted Recent ending balance (``ledger_today_balance_before_pending``).
-    Each step uses ``signed_timeline_ledger_amount`` — the same math as ``balance_after``.
+    Does not perform ``running += amount``. Requires rows to carry authoritative
+    ``balance_after`` from ``assign_canonical_ledger_balance_after``.
     """
+    if rows_need_ledger_balance_after(rows, today=today, account_id=account_id):
+        assign_canonical_ledger_balance_after(
+            rows,
+            today=today,
+            anchors={account_id: ledger_anchor},
+            account_ids={account_id},
+            force=True,
+        )
+
     walk = transactions_ledger_walk_rows(
         rows, account_id=account_id, today=today, end_date=end_date
     )
 
-    running = _decimal(ledger_anchor).quantize(Decimal("0.01"))
+    opening = _decimal(ledger_anchor).quantize(Decimal("0.01"))
+    after_pending = _after_pending_balance(walk, today=today, ledger_anchor=opening)
 
-    lowest = running
+    lowest = opening
     lowest_date = today
     first_negative_date: date | None = None
     first_negative_balance: Decimal | None = None
@@ -248,21 +371,22 @@ def forecast_balance_metrics_from_transactions_ledger(
     first_below_buffer_balance: Decimal | None = None
     end_of_day: dict[date, Decimal] = {}
 
-    if running < Decimal("0"):
+    if opening < Decimal("0"):
         first_negative_date = today
-        first_negative_balance = running
-    if running < minimum_buffer:
+        first_negative_balance = opening
+    if opening < minimum_buffer:
         first_below_buffer_date = today
-        first_below_buffer_balance = running
+        first_below_buffer_balance = opening
 
     last_metric_date: date | None = None
-    balance_before_row = running
+    balance_before_row = after_pending
 
     for row in walk:
         rd = _row_date(row)
         if rd < today:
-            balance_before_row = running
-            running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
+            bal = _read_balance_after(row)
+            if bal is not None:
+                balance_before_row = bal
             continue
         if rd > end_date:
             break
@@ -318,9 +442,14 @@ def forecast_balance_metrics_from_transactions_ledger(
                 )
                 gap += timedelta(days=1)
 
-        running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
-        balance_before_row = running
-        end_of_day[rd] = running
+        bal = _read_balance_after(row)
+        if bal is None:
+            raise ValueError(
+                f"canonical balance_after missing for account={account_id} "
+                f"date={rd} description={row.get('description')!r}"
+            )
+        balance_before_row = bal
+        end_of_day[rd] = bal
         (
             lowest,
             lowest_date,
@@ -329,7 +458,7 @@ def forecast_balance_metrics_from_transactions_ledger(
             first_below_buffer_date,
             first_below_buffer_balance,
         ) = _update_balance_metrics(
-            running,
+            bal,
             rd,
             today=today,
             end_date=end_date,
@@ -370,7 +499,7 @@ def forecast_balance_metrics_from_transactions_ledger(
         d += timedelta(days=1)
 
     return {
-        "opening_balance": _decimal(ledger_anchor).quantize(Decimal("0.01")),
+        "opening_balance": opening,
         "lowest": lowest,
         "lowest_date": lowest_date,
         "ending": balance_before_row,
