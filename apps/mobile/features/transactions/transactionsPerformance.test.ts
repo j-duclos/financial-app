@@ -29,7 +29,8 @@ describe("Transactions request orchestration", () => {
   it("loads recent history without waiting on timeline forecast readiness", () => {
     expect(transactionsData).toMatch(/useInfiniteQuery/);
     expect(transactionsData).toMatch(/getTimeline/);
-    expect(transactionsData).toMatch(/enabled: forecastReady && wantsTimeline && filters\.accountId != null/);
+    expect(transactionsData).not.toMatch(/getReconcileSetup/);
+    expect(transactionsData).toMatch(/timelineEnabled/);
     expect(transactionsData).toMatch(/needsTimelineProjection/);
     expect(transactionsData).toMatch(/enabled: filters\.accountId != null/);
     expect(transactionsData).toMatch(/TRANSACTIONS_LEDGER_ORDERING/);

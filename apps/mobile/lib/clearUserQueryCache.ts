@@ -9,9 +9,6 @@ const USER_SPECIFIC_PREFIXES = [
   ["account-options"],
   ["category-options"],
   ["what-if-scenarios"],
-  ["what-if-profile"],
-  ["what-if-households"],
-  ["what-if-rules"],
   ["what-if-accounts"],
 ] as const;
 

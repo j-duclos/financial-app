@@ -28,6 +28,7 @@ import type {
   RecurringRule,
   Scenario,
   ScenarioRuleOverride,
+  ScenarioChangesResponse,
   TimelineResponse,
   TimelineCalendarResponse,
   TimelineCalendarSummaryResponse,
@@ -1492,6 +1493,10 @@ export async function deleteScenario(id: number): Promise<void> {
 
 export async function listScenarioOverrides(scenarioId: number): Promise<ScenarioRuleOverride[]> {
   return requestRequired(`/api/scenarios/${scenarioId}/overrides/`);
+}
+
+export async function getScenarioChanges(scenarioId: number): Promise<ScenarioChangesResponse> {
+  return requestRequired(`/api/scenarios/${scenarioId}/changes/`);
 }
 
 export async function createScenarioOverride(

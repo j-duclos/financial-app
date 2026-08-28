@@ -8,16 +8,20 @@ import {
   recommendationsEmptyMessage,
   recommendationsForActionCenter,
 } from "@budget-app/shared";
-import { getRecommendations, listAccounts } from "@budget-app/api-client";
+import { getRecommendations } from "@budget-app/api-client";
 import {
   AppHeader,
   EmptyState,
   ErrorState,
   Screen,
   SkeletonBlock,
+  Button,
+  Card,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { describeApiError } from "@/services/api";
 import { ForecastWindowSelect } from "@/features/dashboard/ForecastWindowSelect";
 import { RecommendationCard } from "./RecommendationCard";
@@ -38,6 +42,8 @@ export function ActionCenterScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
+  const { householdId } = useDefaultHouseholdId();
+  const { accounts } = useAccountOptions({ householdId });
   const [storageReady, setStorageReady] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [snoozed, setSnoozed] = useState<Set<string>>(new Set());
@@ -75,13 +81,6 @@ export function ActionCenterScreen() {
     enabled: forecastReady,
   });
 
-  const { data: accountsData } = useQuery({
-    queryKey: actionCenterQueryKeys.accounts(),
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
-    staleTime: 120_000,
-  });
-
-  const accounts = accountsData?.results ?? [];
   const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   const entries = useMemo(() => {

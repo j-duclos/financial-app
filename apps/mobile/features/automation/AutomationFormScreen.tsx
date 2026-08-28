@@ -4,10 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createRule,
-  getProfile,
   getRule,
-  listAccounts,
-  listHouseholds,
   pauseRule,
   resumeRule,
   updateRule,
@@ -19,8 +16,10 @@ import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
 import { todayStr } from "@/lib/dates";
-import { accountLifecycleStatus } from "@/lib/accountGroups";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
+import { useHouseholds } from "@/hooks/useHouseholds";
+import { useProfile } from "@/lib/profileQuery";
 import { automationQueryKeys } from "./queryKeys";
 import {
   buildRuleSummary,
@@ -186,8 +185,8 @@ export function AutomationFormScreen() {
   const [form, setForm] = useState<FormState>(() => defaultForm());
   const [error, setError] = useState<string | null>(null);
 
-  const profileQuery = useQuery({ queryKey: ["profile"], queryFn: () => getProfile() });
-  const householdsQuery = useQuery({ queryKey: ["households"], queryFn: () => listHouseholds() });
+  const profileQuery = useProfile();
+  const householdsQuery = useHouseholds();
   const ruleQuery = useQuery({
     queryKey: automationQueryKeys.detail(editingId ?? 0),
     queryFn: () => getRule(editingId!),
@@ -197,9 +196,8 @@ export function AutomationFormScreen() {
   const householdId =
     form.household || profileQuery.data?.default_household || householdsQuery.data?.[0]?.id || 0;
 
-  const accountsQuery = useQuery({
-    queryKey: ["accounts", "automation-form", householdId],
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
+  const { accounts } = useAccountOptions({
+    householdId: householdId > 0 ? householdId : null,
     enabled: step === "conditions" || step === "review",
   });
 
@@ -207,14 +205,6 @@ export function AutomationFormScreen() {
     householdId: householdId > 0 ? householdId : null,
     enabled: step === "conditions" || step === "review",
   });
-
-  const accounts = useMemo(
-    () =>
-      (accountsQuery.data?.results ?? []).filter(
-        (a) => accountLifecycleStatus(a) === "active" && a.household?.id === householdId
-      ),
-    [accountsQuery.data?.results, householdId]
-  );
 
   const categories = categoriesQuery.categories;
   const selectedCategory = categories.find((c) => c.id === form.category_id);

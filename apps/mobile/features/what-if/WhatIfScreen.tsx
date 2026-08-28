@@ -12,6 +12,7 @@ import type {
 import {
   AppHeader,
   Button,
+  Card,
   ConfirmDialog,
   EmptyState,
   ErrorState,
@@ -55,12 +56,12 @@ import type {
 import {
   invalidateScenarioQueries,
   scenarioInputStamp,
+  useHouseholds,
+  useProfile,
   useScenarioChanges,
   useScenarioComparison,
   useScenarioMutations,
   useWhatIfFormData,
-  useWhatIfHouseholds,
-  useWhatIfProfile,
   useWhatIfScenarios,
 } from "./useWhatIfData";
 import { useQueryClient } from "@tanstack/react-query";
@@ -96,8 +97,8 @@ export function WhatIfScreen() {
   const [removeItem, setRemoveItem] = useState<PlanIncludeItem | null>(null);
   const [formsEnabled, setFormsEnabled] = useState(false);
 
-  const profileQuery = useWhatIfProfile();
-  const householdsQuery = useWhatIfHouseholds();
+  const profileQuery = useProfile();
+  const householdsQuery = useHouseholds();
   const scenariosQuery = useWhatIfScenarios();
 
   const scenarios = scenariosQuery.data?.results ?? [];
@@ -124,6 +125,8 @@ export function WhatIfScreen() {
     addedRecurring,
     changesLoading,
     changesReady,
+    changesError,
+    refetchChanges,
   } = useScenarioChanges(selectedScenarioId);
 
   const inputStamp = scenarioInputStamp({
@@ -145,7 +148,7 @@ export function WhatIfScreen() {
 
   const formData = useWhatIfFormData(formsEnabled || addMenuOpen, defaultHousehold);
   const accounts = formData.accounts.data?.results ?? [];
-  const rules = formData.rules.data?.results ?? [];
+  const rules = formData.rules.rules;
   const categoriesList = formData.categories.categories;
 
   const mutations = useScenarioMutations(selectedScenarioId);
@@ -346,6 +349,19 @@ export function WhatIfScreen() {
                   horizonMonths={comparisonHorizonMonths(comparisonQuery.data, horizonMonths)}
                   recalculating={comparisonQuery.isFetching && !!comparisonQuery.data}
                 />
+
+                {changesError ? (
+                  <Card style={{ marginBottom: theme.spacing.md }}>
+                    <Text style={{ color: theme.colors.critical, marginBottom: theme.spacing.sm }}>
+                      Could not load scenario changes. Your plan is still saved — retry to compare impact.
+                    </Text>
+                    <Button
+                      label="Retry"
+                      variant="secondary"
+                      onPress={() => void refetchChanges()}
+                    />
+                  </Card>
+                ) : null}
 
                 <ComparisonSection
                   comparison={comparisonQuery.data}

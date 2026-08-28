@@ -6,7 +6,6 @@ export const transactionQueryKeys = {
   list: (params: Record<string, unknown>) => ["transactions", "list", params] as const,
   detail: (id: number) => ["transactions", "detail", id] as const,
   timeline: (params: Record<string, unknown>) => ["timeline", "ledger", params] as const,
-  reconcileSetup: (accountId: number) => ["reconcile-setup", accountId, "transactions-ledger"] as const,
   accountsPicker: ["account-options"] as const,
   categories: (householdId: number | null) => ["category-options", householdId] as const,
 };

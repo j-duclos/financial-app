@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { getReconcileSetup, getTimeline, listTransactions } from "@budget-app/api-client";
+import { getTimeline, listTransactions } from "@budget-app/api-client";
 import { useMemo } from "react";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import {
@@ -41,13 +41,6 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
   const { start: historyStart, end: historyEnd } = pastTransactionsRange(filters.timeFilter);
   const projectionRange = ledgerProjectionRange(forecastDays);
   const isSearchMode = debouncedSearch.trim().length > 0;
-
-  const reconcileSetupQuery = useQuery({
-    queryKey: transactionQueryKeys.reconcileSetup(filters.accountId ?? 0),
-    queryFn: () => getReconcileSetup(filters.accountId as number),
-    enabled: filters.accountId != null,
-    staleTime: 120_000,
-  });
 
   /**
    * Recent "Last N days" must change the fetch window.
@@ -257,7 +250,6 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     listRows,
     historyQuery,
     timelineQuery,
-    reconcileSetupQuery,
     forecastDays,
     forecastReady,
     defaultTimeFilter: DEFAULT_TIME_FILTER,

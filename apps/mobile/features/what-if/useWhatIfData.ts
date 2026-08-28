@@ -11,15 +11,9 @@ import {
   deleteScenarioOneTimeEvent,
   deleteScenarioOverride,
   duplicateScenario,
-  getProfile,
+  getScenarioChanges,
   getScenarioComparison,
   listAccounts,
-  listHouseholds,
-  listRules,
-  listScenarioAddedRecurring,
-  listScenarioCategoryShocks,
-  listScenarioOneTimeEvents,
-  listScenarioOverrides,
   listScenarios,
   updateScenario,
   updateScenarioAddedRecurring,
@@ -28,24 +22,11 @@ import {
   updateScenarioOverride,
 } from "@budget-app/api-client";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
+import { useHouseholds } from "@/hooks/useHouseholds";
+import { useProfile } from "@/lib/profileQuery";
+import { useRules } from "@/hooks/useRules";
 import type { ForecastHorizon } from "./types";
 import { scenarioInputStamp, whatIfQueryKeys } from "./queryKeys";
-
-export function useWhatIfProfile() {
-  return useQuery({
-    queryKey: whatIfQueryKeys.profile,
-    queryFn: getProfile,
-    staleTime: 60_000,
-  });
-}
-
-export function useWhatIfHouseholds() {
-  return useQuery({
-    queryKey: whatIfQueryKeys.households,
-    queryFn: listHouseholds,
-    staleTime: 60_000,
-  });
-}
 
 export function useWhatIfScenarios() {
   return useQuery({
@@ -56,42 +37,28 @@ export function useWhatIfScenarios() {
 }
 
 export function useScenarioChanges(scenarioId: number | null) {
-  const overrides = useQuery({
-    queryKey: whatIfQueryKeys.scenarioOverrides(scenarioId ?? 0),
-    queryFn: () => listScenarioOverrides(scenarioId!),
+  const changesQuery = useQuery({
+    queryKey: whatIfQueryKeys.scenarioChanges(scenarioId ?? 0),
+    queryFn: () => getScenarioChanges(scenarioId!),
     enabled: scenarioId != null,
-  });
-  const events = useQuery({
-    queryKey: whatIfQueryKeys.scenarioEvents(scenarioId ?? 0),
-    queryFn: () => listScenarioOneTimeEvents(scenarioId!),
-    enabled: scenarioId != null,
-  });
-  const shocks = useQuery({
-    queryKey: whatIfQueryKeys.scenarioShocks(scenarioId ?? 0),
-    queryFn: () => listScenarioCategoryShocks(scenarioId!),
-    enabled: scenarioId != null,
-  });
-  const addedRecurring = useQuery({
-    queryKey: whatIfQueryKeys.scenarioAddedRecurring(scenarioId ?? 0),
-    queryFn: () => listScenarioAddedRecurring(scenarioId!),
-    enabled: scenarioId != null,
+    staleTime: 30_000,
   });
 
-  const changesLoading =
-    scenarioId != null &&
-    (overrides.isLoading || events.isLoading || shocks.isLoading || addedRecurring.isLoading);
-
-  const changesReady =
-    scenarioId == null ||
-    (overrides.isSuccess && events.isSuccess && shocks.isSuccess && addedRecurring.isSuccess);
+  const overrides = changesQuery.data?.overrides;
+  const events = changesQuery.data?.one_time_events;
+  const shocks = changesQuery.data?.category_shocks;
+  const addedRecurring = changesQuery.data?.added_recurring;
 
   return {
-    overrides: overrides.data,
-    events: events.data,
-    shocks: shocks.data,
-    addedRecurring: addedRecurring.data,
-    changesLoading,
-    changesReady,
+    overrides,
+    events,
+    shocks,
+    addedRecurring,
+    changesQuery,
+    changesLoading: scenarioId != null && changesQuery.isLoading,
+    changesReady: scenarioId == null || changesQuery.isSuccess,
+    changesError: changesQuery.isError,
+    refetchChanges: changesQuery.refetch,
   };
 }
 
@@ -134,18 +101,14 @@ export function useWhatIfFormData(enabled: boolean, householdId: number | undefi
     enabled,
     staleTime: 60_000,
   });
-  const rules = useQuery({
-    queryKey: whatIfQueryKeys.rules,
-    queryFn: () => listRules(),
-    enabled,
-    staleTime: 60_000,
-  });
+  /** Shared rules list — same cache as Automation / Recurring. */
+  const rulesQuery = useRules({ enabled });
   /** Shared picker SoT — same cache as Transactions / Recurring / Spending Limits. */
   const categories = useCategoryOptions({
     householdId: householdId ?? null,
     enabled: enabled && householdId != null,
   });
-  return { accounts, rules, categories };
+  return { accounts, rules: rulesQuery, categories };
 }
 
 /** Invalidate only scenario-scoped queries — never real financial data. */
@@ -156,12 +119,7 @@ export function invalidateScenarioQueries(
   void queryClient.invalidateQueries({ queryKey: whatIfQueryKeys.scenarios });
   if (scenarioId != null) {
     void queryClient.invalidateQueries({
-      queryKey: whatIfQueryKeys.scenarioOverrides(scenarioId),
-    });
-    void queryClient.invalidateQueries({ queryKey: whatIfQueryKeys.scenarioEvents(scenarioId) });
-    void queryClient.invalidateQueries({ queryKey: whatIfQueryKeys.scenarioShocks(scenarioId) });
-    void queryClient.invalidateQueries({
-      queryKey: whatIfQueryKeys.scenarioAddedRecurring(scenarioId),
+      queryKey: whatIfQueryKeys.scenarioChanges(scenarioId),
     });
     void queryClient.invalidateQueries({ queryKey: ["what-if-scenario-compare", scenarioId] });
   }
@@ -214,4 +172,4 @@ export function useScenarioMutations(scenarioId: number | null) {
   };
 }
 
-export { scenarioInputStamp };
+export { useProfile, useHouseholds, scenarioInputStamp };

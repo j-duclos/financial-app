@@ -9,13 +9,14 @@ describe("what-if query isolation", () => {
   it("uses what-if prefix keys separate from real financial queries", () => {
     expect(whatIfQueryKeys.scenarios[0]).toBe("what-if-scenarios");
     expect(whatIfQueryKeys.compare(1, "12m", 2, 3, "stamp")[0]).toBe("what-if-scenario-compare");
+    expect(whatIfQueryKeys.scenarioChanges(5)[0]).toBe("what-if-scenario-changes");
 
     for (const prefix of FINANCIAL_QUERY_PREFIXES) {
       expect(prefix[0]).not.toMatch(/^what-if-/);
     }
 
     expect(whatIfQueryKeys.scenarios).not.toEqual(["dashboard-summary-fast"]);
-    expect(whatIfQueryKeys.scenarioOverrides(5)).not.toEqual(["rules"]);
+    expect(whatIfQueryKeys.scenarioChanges(5)).not.toEqual(["rules"]);
   });
 
   it("builds input stamp that changes when scenario changes update", () => {
@@ -172,5 +173,7 @@ describe("what-if screen isolation contract", () => {
     expect(data).toMatch(/invalidateScenarioQueries/);
     expect(data).not.toMatch(/invalidateFinancialQueries/);
     expect(data).toMatch(/what-if-scenario-compare/);
+    expect(data).toMatch(/getScenarioChanges/);
+    expect(data).toMatch(/scenarioChanges/);
   });
 });

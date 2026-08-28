@@ -3,11 +3,7 @@ import type { ForecastHorizon } from "./types";
 /** Scenario queries are isolated from real financial data (dashboard, timeline, etc.). */
 export const whatIfQueryKeys = {
   scenarios: ["what-if-scenarios"] as const,
-  scenarioOverrides: (scenarioId: number) => ["what-if-scenario-overrides", scenarioId] as const,
-  scenarioEvents: (scenarioId: number) => ["what-if-scenario-events", scenarioId] as const,
-  scenarioShocks: (scenarioId: number) => ["what-if-scenario-shocks", scenarioId] as const,
-  scenarioAddedRecurring: (scenarioId: number) =>
-    ["what-if-scenario-added-recurring", scenarioId] as const,
+  scenarioChanges: (scenarioId: number) => ["what-if-scenario-changes", scenarioId] as const,
   compare: (
     scenarioId: number,
     horizon: ForecastHorizon,
@@ -23,10 +19,8 @@ export const whatIfQueryKeys = {
       financialRevision,
       inputStamp,
     ] as const,
-  rules: ["what-if-rules"] as const,
+  /** What-If needs balances for debt/affordability forms — not the lightweight account-options list. */
   accounts: ["what-if-accounts"] as const,
-  profile: ["what-if-profile"] as const,
-  households: ["what-if-households"] as const,
 };
 
 export function scenarioInputStamp(parts: {

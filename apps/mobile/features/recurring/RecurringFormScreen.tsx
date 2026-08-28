@@ -4,9 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createRule,
-  getProfile,
   getRule,
-  listHouseholds,
   updateRule,
 } from "@budget-app/api-client";
 import type { RecurringRuleFrequency } from "@budget-app/shared";
@@ -22,6 +20,8 @@ import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
 import { todayStr } from "@/lib/dates";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
+import { useHouseholds } from "@/hooks/useHouseholds";
+import { useProfile } from "@/lib/profileQuery";
 import { recurringQueryKeys } from "./queryKeys";
 import { DatePickerField, EndsDateField } from "./DatePickerField";
 import { OptionsPickerSheet, type PickerOption } from "./OptionsPickerSheet";
@@ -249,8 +249,8 @@ export function RecurringFormScreen() {
   const [weekdayPickerOpen, setWeekdayPickerOpen] = useState(false);
   const [nthPickerOpen, setNthPickerOpen] = useState(false);
 
-  const profileQuery = useQuery({ queryKey: ["profile"], queryFn: () => getProfile() });
-  const householdsQuery = useQuery({ queryKey: ["households"], queryFn: () => listHouseholds() });
+  const profileQuery = useProfile();
+  const householdsQuery = useHouseholds();
   const ruleQuery = useQuery({
     queryKey: recurringQueryKeys.detail(editingId ?? 0),
     queryFn: () => getRule(editingId!),

@@ -1569,6 +1569,14 @@ export interface ScenarioCategoryShock {
   updated_at: string;
 }
 
+/** Aggregate read payload for `/api/scenarios/{id}/changes/`. */
+export interface ScenarioChangesResponse {
+  overrides: ScenarioRuleOverride[];
+  one_time_events: ScenarioOneTimeEvent[];
+  category_shocks: ScenarioCategoryShock[];
+  added_recurring: ScenarioAddedRecurring[];
+}
+
 export interface ScenarioComparisonMetric {
   base: string | number | null;
   scenario: string | number | null;

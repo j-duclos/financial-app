@@ -369,6 +369,30 @@ class ScenarioViewSet(ModelViewSet):
         serializer.save(scenario=scenario)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["get"], url_path="changes")
+    def changes(self, request, pk=None):
+        """Aggregate scenario edits for mobile read path (one request vs four)."""
+        scenario = self.get_object()
+        overrides_qs = ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
+            "rule", "rule__account", "rule__category", "override_account", "override_category"
+        )
+        events_qs = ScenarioOneTimeEvent.objects.filter(scenario=scenario).select_related(
+            "account", "transfer_to_account", "category"
+        )
+        shocks_qs = ScenarioCategoryShock.objects.filter(scenario=scenario).select_related("category")
+        added_qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
+            "account", "transfer_to_account", "category"
+        )
+        ctx = {"request": request}
+        return Response(
+            {
+                "overrides": ScenarioRuleOverrideSerializer(overrides_qs, many=True, context=ctx).data,
+                "one_time_events": ScenarioOneTimeEventSerializer(events_qs, many=True, context=ctx).data,
+                "category_shocks": ScenarioCategoryShockSerializer(shocks_qs, many=True, context=ctx).data,
+                "added_recurring": ScenarioAddedRecurringSerializer(added_qs, many=True, context=ctx).data,
+            }
+        )
+
     @action(detail=True, methods=["get"], url_path="compare")
     def compare(self, request, pk=None):
         scenario = self.get_object()

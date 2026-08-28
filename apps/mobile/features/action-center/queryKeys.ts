@@ -2,7 +2,6 @@ import type { QueryClient } from "@tanstack/react-query";
 
 export const actionCenterQueryKeys = {
   recommendations: (forecastDays: number) => ["recommendations", "action-center", forecastDays] as const,
-  accounts: () => ["accounts", "action-center"] as const,
   resolveRisk: (accountId: number, forecastDays: number) =>
     ["resolve-risk", accountId, forecastDays] as const,
 };
