@@ -350,26 +350,15 @@ def ledger_today_balance_before_pending(
     account: Account, as_of: Optional[date] = None
 ) -> Decimal:
     """
-    Balance after unreconciled cleared activity through ``as_of``, before pending planned rows.
+    Balance after posted ledger activity through ``as_of``, before pending planned rows.
 
-    Matches the Transactions ledger ``today_balance`` / Recent ending Bal — the anchor for
-    Pending → Upcoming ``balance_after``. Never includes pending planned rows that the
-    forecast walk will apply separately.
+    Same canonical walk as Recent ``running_balance`` ending — the anchor for Pending →
+    Upcoming ``balance_after``. Never includes pending planned rows applied separately
+    in the forecast walk.
     """
     from transactions.services.ledger_running_balances import posted_ledger_running_after_walk
 
-    as_of = _as_of_date(as_of)
-    if last_reconcile_period_end(account) is None:
-        return posted_ledger_running_after_walk(account, as_of=as_of)
-
-    balance = past_ledger_opening_balance(account, as_of)
-    txns = filter_superseded_planned_transactions(
-        list(unreconciled_transactions_qs(account, as_of))
-    )
-    for txn in txns:
-        if (txn.status or "").upper() in ("CLEARED", "RECONCILED"):
-            balance += txn.amount
-    return balance
+    return posted_ledger_running_after_walk(account, as_of=_as_of_date(as_of))
 
 
 def unreconciled_transactions_qs(

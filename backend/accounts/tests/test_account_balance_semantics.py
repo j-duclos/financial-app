@@ -195,3 +195,85 @@ def test_recent_running_balance_matches_posted_before_pending_anchor(checking):
     assert walk_anchor == anchor
     assert anchor == Decimal("1160.00")
     assert pending.amount == Decimal("-25.00")
+
+
+@pytest.mark.django_db
+def test_reconciled_account_forecast_anchor_matches_posted_walk(user, checking):
+    """
+    Regression: forecast anchor must use the same post-checkpoint ledger walk as Recent.
+
+    The removed reconcile branch only summed *unreconciled* rows after the checkpoint.
+    Reconciled ledger-visible rows dated after ``period_end`` are included in
+    ``posted_ledger_running_after_walk`` (via TimelineBalanceCache) but were skipped
+    by ``unreconciled_transactions_qs``, producing a wrong anchor (e.g. -57.77 vs 1784.18).
+    """
+    from datetime import date as date_cls
+
+    from timeline.services.ledger import build_forecast_projection_timeline
+    from transactions.services.ledger_running_balances import posted_ledger_running_after_walk
+
+    today = date_cls(2026, 8, 27)
+    period_end = date_cls(2026, 8, 10)
+    anchor = Decimal("1784.18")
+    first_amount = Decimal("1500.00")
+    first_balance_after = Decimal("3284.18")
+
+    rec = Reconciliation.objects.create(
+        user=user,
+        account=checking,
+        bank_current_balance=Decimal("300.00"),
+        app_current_balance=Decimal("300.00"),
+        last_reconciled_balance=Decimal("300.00"),
+        final_reconciled_balance=Decimal("300.00"),
+        difference=Decimal("0"),
+        period_start_date=date_cls(2026, 8, 1),
+        period_end_date=period_end,
+        status=Reconciliation.Status.COMPLETED,
+        is_active=True,
+        completed_at=timezone.now(),
+    )
+    # Reconciled post-checkpoint row: in canonical walk, excluded from old unreconciled branch.
+    Transaction.objects.create(
+        account=checking,
+        date=date_cls(2026, 8, 15),
+        payee="Paycheck sealed",
+        amount=Decimal("1484.18"),
+        status=Transaction.Status.RECONCILED,
+        reconciled=True,
+        reconciliation=rec,
+        cleared=True,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-sealed-pay",
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=date_cls(2026, 8, 28),
+        payee="Gen's Rent",
+        amount=first_amount,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    cache.clear()
+
+    walk_anchor = posted_ledger_running_after_walk(checking, as_of=today)
+    forecast_anchor = ledger_today_balance_before_pending(checking, today)
+    assert walk_anchor == anchor
+    assert forecast_anchor == anchor
+    assert forecast_anchor == walk_anchor
+
+    end = today + timedelta(days=30)
+    rows = build_forecast_projection_timeline(
+        user,
+        today=today,
+        end_date=end,
+        caller="test_reconciled_anchor",
+        account_id=checking.pk,
+    )
+    gen_rows = [
+        r
+        for r in rows
+        if r.get("account_id") == checking.pk and (r.get("description") or "") == "Gen's Rent"
+    ]
+    assert len(gen_rows) == 1
+    assert Decimal(str(gen_rows[0]["balance_after"])) == first_balance_after
+    assert first_balance_after == anchor + first_amount
