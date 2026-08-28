@@ -299,12 +299,12 @@ describe("no client-side ledger balance math", () => {
     expect(src).toMatch(/balance_after/);
   });
 
-  it("useTransactionsData passes ledger_anchor to getTimeline", () => {
+  it("useTransactionsData does not pass ledger_anchor to getTimeline", () => {
     const src = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "useTransactionsData.ts"),
       "utf8"
     );
-    expect(src).toMatch(/ledger_anchor/);
+    expect(src).not.toMatch(/ledger_anchor\s*:/);
     expect(src).toMatch(/getTimeline/);
   });
 });

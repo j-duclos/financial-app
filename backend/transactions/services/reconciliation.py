@@ -356,34 +356,11 @@ def ledger_today_balance_before_pending(
     Pending → Upcoming ``balance_after``. Never includes pending planned rows that the
     forecast walk will apply separately.
     """
+    from transactions.services.ledger_running_balances import posted_ledger_running_after_walk
+
     as_of = _as_of_date(as_of)
     if last_reconcile_period_end(account) is None:
-        from timeline.services.ledger import _signed_starting_balance, is_superseded_planned_row
-        from timeline.services.ledger_section_balances import is_pending_expected_timeline_row
-
-        opening, credit_opening_pre_negated = _signed_starting_balance(account)
-        txns = list(
-            ledger_visible_transactions(
-                Transaction.objects.filter(account=account, date__lte=as_of).order_by(
-                    "date", "id"
-                )
-            )
-        )
-        compare_rows = [_timeline_row_from_transaction(t) for t in txns]
-        total = opening
-        for txn, row in zip(txns, compare_rows):
-            if is_pending_expected_timeline_row(row, as_of):
-                continue
-            if is_superseded_planned_row(row, compare_rows):
-                continue
-            total += txn.amount
-        if (
-            account.account_type == Account.AccountType.CREDIT
-            and total > 0
-            and not credit_opening_pre_negated
-        ):
-            total = -total
-        return total
+        return posted_ledger_running_after_walk(account, as_of=as_of)
 
     balance = past_ledger_opening_balance(account, as_of)
     txns = filter_superseded_planned_transactions(

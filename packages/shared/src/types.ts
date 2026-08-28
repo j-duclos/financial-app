@@ -1785,8 +1785,8 @@ export interface TimelineRow {
   transaction_id: number | null;
   running_balance: string;
   /**
-   * Transactions-ledger Bal for Pending/Upcoming when `ledger_anchor` is supplied
-   * (continues from posted Recent ending). Otherwise mirrors running_balance.
+   * Canonical forecast balance after this row (Pending/Upcoming). Assigned server-side;
+   * clients display only — no local ledger arithmetic.
    */
   balance_after?: string | null;
   /** Whether this transaction has been reconciled. */

@@ -21,26 +21,69 @@ def _row_date(row: dict) -> date | None:
         return None
 
 
-def _is_pending_expected_ledger_row(row: dict, as_of: date) -> bool:
-    """
-    Pending Expected = due PLANNED rule/one-time rows not yet confirmed.
+def _normalize_cache_row_for_pending(row: dict) -> dict:
+    """Adapt TimelineBalanceCache rows to timeline pending semantics."""
+    src = row.get("source")
+    if hasattr(src, "value"):
+        src = src.value
+    src_l = str(src or "").lower()
+    return {
+        "date": row.get("date"),
+        "status": row.get("status"),
+        "source": src_l if src_l in ("rule", "one_time", "interest") else "actual",
+        "txn_source": src_l or None,
+        "rule_id": row.get("rule_id"),
+        "import_match_status": row.get("import_match_status"),
+        "plaid_transaction_id": row.get("plaid_transaction_id"),
+    }
 
-    These belong in the Pending section (web + mobile). They must NOT be folded into
-    Recent posted running balances — that produced impossible jumps like Recent Chewy
-    Bal $81.15 (which was actually the end-of-Pending balance after Venture -$100).
+
+def _is_pending_expected_ledger_row(row: dict, as_of: date) -> bool:
+    from timeline.services.ledger_section_balances import is_pending_expected_timeline_row
+
+    return is_pending_expected_timeline_row(_normalize_cache_row_for_pending(row), as_of)
+
+
+def posted_ledger_running_after_walk(
+    account: Account,
+    *,
+    as_of: date | None = None,
+) -> Decimal:
     """
-    status = (row.get("status") or "").upper()
-    if status != "PLANNED":
-        return False
-    row_date = _row_date(row)
-    if row_date is None or row_date > as_of:
-        return False
-    source = (row.get("source") or "").upper()
-    if source == "INTEREST":
-        return False
-    if source == "RULE" or row.get("rule_id") is not None:
-        return True
-    return source == "ONE_TIME"
+    Canonical posted-before-pending balance — same ending state as the last Recent row.
+
+    Matches ``ledger_today_balance_before_pending``; exposed for invariant tests.
+    """
+    as_of = as_of or date.today()
+    cache = TimelineBalanceCache()
+    cache.preload_accounts([account])
+    cache.preload_transactions([account.pk], as_of, min_as_of=as_of)
+
+    rows = list(cache._ledger_rows_by_account.get(account.pk, []))
+    if not rows:
+        cp = cache._checkpoint_by_account.get(account.pk)
+        if cp is not None:
+            return Decimal(str(cp[1])).quantize(Decimal("0.01"))
+        opening = cache.inception_opening_balance(account.pk) or Decimal("0")
+        return opening.quantize(Decimal("0.01"))
+
+    from timeline.services.ledger import is_superseded_planned_row
+
+    cp = cache._checkpoint_by_account.get(account.pk)
+    if cp is not None:
+        running = Decimal(str(cp[1]))
+    else:
+        running = cache.inception_opening_balance(account.pk) or Decimal("0")
+
+    for row in rows:
+        if is_superseded_planned_row(row, rows):
+            continue
+        if _is_pending_expected_ledger_row(row, as_of):
+            continue
+        if row.get("source") == "interest":
+            pass
+        running = running + Decimal(str(row["amount"]))
+    return running.quantize(Decimal("0.01"))
 
 
 def running_balances_for_account_transactions(
@@ -87,12 +130,10 @@ def running_balances_for_account_transactions(
                 result[int(rid)] = str(running.quantize(Decimal("0.01")))
             continue
         if _is_pending_expected_ledger_row(row, as_of):
-            # Do not apply — Pending section continues from posted ending separately.
             if rid in ids:
                 result[int(rid)] = str(running.quantize(Decimal("0.01")))
             continue
         if row.get("source") == "interest":
-            # Interest rows still affect balance when present in the ledger preload.
             pass
         running = running + Decimal(str(row["amount"]))
         if int(rid) in ids:

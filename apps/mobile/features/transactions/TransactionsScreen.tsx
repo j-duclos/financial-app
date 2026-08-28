@@ -45,7 +45,6 @@ import { TransactionListItem } from "./TransactionListItem";
 import { TransactionFiltersSheet } from "./TransactionFiltersSheet";
 import { AccountSelectorSheet } from "./AccountSelectorSheet";
 import { AccountLedgerHeader } from "./AccountLedgerHeader";
-import { resolveAccountCurrentBalance } from "./ledgerHeaderDisplay";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
   estimateLedgerOffset,
@@ -116,13 +115,6 @@ export function TransactionsScreen() {
     [accounts, filters.accountId]
   );
 
-  const postedLedgerAnchor = useMemo(() => {
-    const raw = resolveAccountCurrentBalance(selectedAccount);
-    if (raw == null) return null;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
-  }, [selectedAccount]);
-
   useEffect(() => {
     setFilters((prev) => ({
       ...prev,
@@ -185,7 +177,6 @@ export function TransactionsScreen() {
   } = useTransactionsData(filters, {
     forecastDays,
     forecastReady,
-    postedLedgerAnchor,
     householdId: defaultHouseholdId,
   });
 

@@ -44,10 +44,7 @@ from .services.scenario_comparison import (
 )
 from .services.ledger import build_timeline
 from .services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
-from .services.ledger_section_balances import (
-    annotate_transactions_ledger_balance_after,
-    rows_need_ledger_balance_after,
-)
+from .services.ledger_section_balances import rows_need_ledger_balance_after
 from core.timeline_cache import (
     get_cached_timeline_response,
     set_cached_timeline_response,
@@ -764,15 +761,16 @@ class TimelineView(APIView):
                 "yes",
             )
             ledger_anchor_raw = request.query_params.get("ledger_anchor")
-            ledger_anchor: Decimal | None = None
             if ledger_anchor_raw is not None and str(ledger_anchor_raw).strip() != "":
-                try:
-                    ledger_anchor = Decimal(str(ledger_anchor_raw))
-                except Exception:
-                    return Response(
-                        {"detail": "ledger_anchor must be a decimal."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                return Response(
+                    {
+                        "detail": (
+                            "ledger_anchor is not accepted — canonical balance_after "
+                            "is computed server-side."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             as_of = as_of_date or today
             cache_key = timeline_response_cache_key(
@@ -785,31 +783,30 @@ class TimelineView(APIView):
                 as_of_date=as_of_date,
                 exclude_reconciled_past=exclude_reconciled_past,
             )
-            # ledger_anchor changes balance_after — do not serve shared HTTP cache for it.
-            if ledger_anchor is None:
-                cached = get_cached_timeline_response(cache_key)
-                if cached is not None:
-                    if (
-                        exclude_reconciled_past
-                        and account_id is not None
-                        and "past_opening_balance" not in cached
-                    ):
-                        from accounts.models import Account
-                        from transactions.services.reconciliation import past_ledger_opening_balance
+            # ledger_anchor removed — canonical balance_after is server-owned.
+            cached = get_cached_timeline_response(cache_key)
+            if cached is not None:
+                if (
+                    exclude_reconciled_past
+                    and account_id is not None
+                    and "past_opening_balance" not in cached
+                ):
+                    from accounts.models import Account
+                    from transactions.services.reconciliation import past_ledger_opening_balance
 
-                        households = get_households_for_user(request.user)
-                        acc = Account.objects.filter(pk=account_id, household__in=households).first()
-                        if acc is not None:
-                            cached = dict(cached)
-                            cached["past_opening_balance"] = str(
-                                past_ledger_opening_balance(acc, as_of)
-                            )
-                    resp = Response(cached)
-                    resp["Cache-Control"] = "private, max-age=60"
-                    resp["X-Timeline-Cache"] = "hit"
-                    resp["X-Timeline-Skip-Logic"] = "1"
-                    resp["X-Canonical-Timeline"] = "http-cache"
-                    return resp
+                    households = get_households_for_user(request.user)
+                    acc = Account.objects.filter(pk=account_id, household__in=households).first()
+                    if acc is not None:
+                        cached = dict(cached)
+                        cached["past_opening_balance"] = str(
+                            past_ledger_opening_balance(acc, as_of)
+                        )
+                resp = Response(cached)
+                resp["Cache-Control"] = "private, max-age=60"
+                resp["X-Timeline-Cache"] = "hit"
+                resp["X-Timeline-Skip-Logic"] = "1"
+                resp["X-Canonical-Timeline"] = "http-cache"
+                return resp
 
             t0 = time.perf_counter()
             canonical_hit = False
@@ -861,16 +858,15 @@ class TimelineView(APIView):
                     caller="timeline_page",
                 )
 
-            needs_balance_after = (
-                ledger_anchor is not None
-                or rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id)
-            )
-            if needs_balance_after:
-                annotate_transactions_ledger_balance_after(
+            if rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id):
+                from timeline.services.ledger_section_balances import (
+                    assign_canonical_ledger_balance_after,
+                )
+
+                assign_canonical_ledger_balance_after(
                     rows,
-                    account_id=account_id,
-                    as_of=as_of,
-                    posted_ending_balance=ledger_anchor,
+                    today=as_of,
+                    account_ids={int(account_id)} if account_id is not None else None,
                 )
 
             # Serialize dates and decimals for JSON
@@ -913,17 +909,12 @@ class TimelineView(APIView):
                 perf_print(
                     f"[PERF] timeline_endpoint elapsed_ms={elapsed_ms:.0f} "
                     f"canonical={'HIT' if canonical_hit else ('MISS' if used_canonical else 'n/a')} "
-                    f"rows={len(rows)} account_id={account_id} "
-                    f"ledger_anchor={'1' if ledger_anchor is not None else '0'}"
+                    f"rows={len(rows)} account_id={account_id}"
                 )
 
             resp = Response(payload)
-            if ledger_anchor is None:
-                set_cached_timeline_response(cache_key, resp.data)
-                resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
-            else:
-                resp["Cache-Control"] = "no-store"
-            # This path only runs on HTTP-cache miss (or ledger_anchor requests that skip it).
+            set_cached_timeline_response(cache_key, resp.data)
+            resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
             resp["X-Timeline-Cache"] = "miss"
             if used_canonical:
                 resp["X-Canonical-Timeline"] = "hit" if canonical_hit else "miss"

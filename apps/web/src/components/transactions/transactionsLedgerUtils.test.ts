@@ -236,6 +236,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 9,
           transaction_id: 50,
           running_balance: "632.52",
+          balance_after: "889.99",
         } as TimelineRow,
       ],
       today,
@@ -247,7 +248,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const lastPast = sections.past[sections.past.length - 1];
     const firstFuture = sections.future[0];
     expect(lastPast?.balance).toBeCloseTo(1000, 2);
-    expect(firstFuture?.balance).toBeCloseTo(1000 - 110.01, 2);
+    expect(firstFuture?.balance).toBeCloseTo(889.99, 2);
   });
 
   it("does not duplicate due planned rows in past and pending", () => {
@@ -284,6 +285,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 34,
           transaction_id: 10,
           running_balance: "900",
+          balance_after: "915.54",
         } as TimelineRow,
       ],
       today,
@@ -299,7 +301,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     if (sections.pending[0].type === "transaction_from_timeline") {
       expect(sections.pending[0].row.description).toBe("Chewy");
     }
-    expect(sections.pending[0].balance).toBeCloseTo(995 - 79.46, 2);
+    expect(sections.pending[0].balance).toBeCloseTo(915.54, 2);
   });
 
   it("keeps overdue planned bills in Pending, not Recent", () => {
@@ -337,6 +339,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 8,
           transaction_id: 44,
           running_balance: "900",
+          balance_after: "911.00",
         } as TimelineRow,
         {
           date: addDaysToIsoDate(today, 10),
@@ -349,6 +352,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 9,
           transaction_id: null,
           running_balance: "0",
+          balance_after: "-289.00",
         } as TimelineRow,
       ],
       today,
@@ -366,8 +370,8 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     }
     expect(sections.future).toHaveLength(1);
     expect(sections.today?.balance).toBeCloseTo(996, 2);
-    expect(sections.pending[0].balance).toBeCloseTo(996 - 85, 2);
-    expect(sections.future[0].balance).toBeCloseTo(996 - 85 - 1200, 2);
+    expect(sections.pending[0].balance).toBeCloseTo(911, 2);
+    expect(sections.future[0].balance).toBeCloseTo(-289, 2);
   });
 
   it("posted transfer legs stay in Recent; projected transfer legs stay in Upcoming", () => {
@@ -397,6 +401,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 22,
           transaction_id: null,
           running_balance: "650",
+          balance_after: "650",
         } as TimelineRow,
       ],
       today,
@@ -440,6 +445,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           rule_id: 5,
           transaction_id: 2,
           running_balance: "142.18",
+          balance_after: "-142.18",
         } as TimelineRow,
       ],
       today,
@@ -725,7 +731,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.today?.balance).toBeCloseTo(-1721.96, 2);
   });
 
-  it("hide-reconciled walks sequentially from opening override, not absolute server balances", () => {
+  it("hide-reconciled uses API running_balance on past rows when present", () => {
     const rows = buildLedgerRowsFromTimeline(
       [
         {
@@ -761,8 +767,8 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const sections = splitLedgerSections(rows);
     expect(sections.start?.balance).toBeCloseTo(2234.85, 2);
     expect(sections.past[0].balance).toBeCloseTo(2205.84, 2);
-    expect(sections.past[1].balance).toBeCloseTo(2172, 1);
-    expect(sections.past[2].balance).toBeCloseTo(2154.09, 1);
+    expect(sections.past[1].balance).toBeCloseTo(2174.01, 2);
+    expect(sections.past[2].balance).toBeCloseTo(1327.31, 2);
   });
 });
 
@@ -834,7 +840,7 @@ describe("resolveLedgerOpening", () => {
     const rows = buildLedgerRowsFromTimeline(timeline, todayStr(), 1805.3, false);
     expect(rows.find((r) => r.type === "starting_balance")?.balance).toBe(1805.3);
     const pastTxn = rows.find((r) => r.type === "transaction_from_timeline");
-    expect(pastTxn?.balance).toBeCloseTo(1805.3 - 125.53, 2);
+    expect(pastTxn?.balance).toBeCloseTo(6890.39, 2);
   });
 });
 
@@ -913,6 +919,7 @@ describe("currentBalanceFromLedgerSections", () => {
         rule_id: 10,
         transaction_id: 2,
         running_balance: "428.26",
+        balance_after: "428.26",
       },
       {
         date: today,
@@ -925,6 +932,7 @@ describe("currentBalanceFromLedgerSections", () => {
         rule_id: 11,
         transaction_id: 3,
         running_balance: "112.26",
+        balance_after: "112.26",
       },
     ];
     const rows = buildLedgerRowsFromTimeline(timeline, today, 942.04, false);
@@ -1033,6 +1041,7 @@ describe("signedTimelineLedgerAmount", () => {
         rule_id: 48,
         transaction_id: 2,
         running_balance: "0",
+        balance_after: "42.44",
       },
     ];
     const rows = buildLedgerRowsFromTimeline(timeline, "2026-07-07", 200, false);
@@ -1279,9 +1288,9 @@ describe("buildLedgerRowsFromTimeline", () => {
       .map((r) => (r.type === "transaction_from_timeline" ? r.balance : 0));
     expect(pastBalances).toHaveLength(3);
     expect(pastBalances[0]).toBeCloseTo(1385.78, 2);
-    expect(pastBalances[1]).toBeCloseTo(1285.78, 2);
-    expect(pastBalances[2]).toBeCloseTo(1108.65, 2);
-    expect(sections.today?.balance).toBeCloseTo(1108.65, 2);
+    expect(pastBalances[1]).toBeCloseTo(1185.78, 2);
+    expect(pastBalances[2]).toBeCloseTo(1008.65, 2);
+    expect(sections.today?.balance).toBeCloseTo(1008.65, 2);
   });
 
   it("drops superseded planned row when cleared payment exists same day", () => {
@@ -1398,9 +1407,9 @@ describe("buildLedgerRowsFromTimeline", () => {
     const lastPast = sections.past[sections.past.length - 1];
     expect(lastPast.type).toBe("transaction_from_timeline");
     if (lastPast.type === "transaction_from_timeline") {
-      expect(lastPast.balance).toBeCloseTo(89.09, 2);
+      expect(lastPast.balance).toBeCloseTo(-351.79, 2);
     }
-    expect(sections.today?.balance).toBeCloseTo(89.09, 2);
+    expect(sections.today?.balance).toBeCloseTo(-351.79, 2);
     expect(sections.future).toHaveLength(0);
   });
 });

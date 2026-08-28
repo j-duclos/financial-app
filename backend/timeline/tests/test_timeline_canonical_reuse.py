@@ -1,4 +1,4 @@
-"""Timeline endpoint reuses canonical forecast cache; ledger_anchor owns Bal."""
+"""Timeline endpoint reuses canonical forecast cache; balance_after is server-owned."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -175,40 +175,13 @@ def test_timeline_endpoint_reuses_canonical_forecast_after_home(
 
 
 @pytest.mark.django_db
-def test_timeline_ledger_anchor_sets_balance_after(
+def test_timeline_rejects_client_ledger_anchor(
     user, household, main_checking, auth_client
 ):
+    """Clients must not override canonical server balance_after."""
     today = date.today()
-    expense = Category.objects.create(
-        household=household,
-        name="Bills",
-        category_type=Category.CategoryType.EXPENSE,
-        sort_order=1,
-    )
-    post_transaction(
-        user=user,
-        account_id=main_checking.pk,
-        date=today - timedelta(days=1),
-        payee="Posted",
-        amount=Decimal("-50.00"),
-        category_id=expense.id,
-    )
-    RecurringRule.objects.create(
-        household=household,
-        name="Due Bill",
-        account=main_checking,
-        category=expense,
-        direction=RecurringRule.Direction.EXPENSE,
-        amount=Decimal("25.00"),
-        currency="USD",
-        frequency=RecurringRule.Frequency.MONTHLY_DAY,
-        interval=1,
-        day_of_month=today.day,
-        start_date=today - timedelta(days=400),
-        active=True,
-    )
-    cache.clear()
     end = today + timedelta(days=14)
+    cache.clear()
     r = auth_client.get(
         "/api/timeline/",
         {
@@ -221,19 +194,8 @@ def test_timeline_ledger_anchor_sets_balance_after(
             "ledger_anchor": "950.00",
         },
     )
-    assert r.status_code == 200, r.content
-    body = r.json()
-    pending = [
-        row
-        for row in body["timeline"]
-        if row["date"] <= today.isoformat()
-        and (row.get("status") or "").upper() == "PLANNED"
-        and "Due Bill" in (row.get("description") or "")
-    ]
-    assert pending, body["timeline"][:5]
-    # 950 - 25 = 925 (ledger_anchor continuation, not chronological RB)
-    assert Decimal(pending[0]["balance_after"]) == Decimal("925.00")
-    assert "balance_after" in pending[0]
+    assert r.status_code == 400
+    assert "ledger_anchor" in r.json()["detail"].lower()
 
 
 @pytest.mark.django_db
@@ -291,7 +253,6 @@ def test_account_filter_preserves_transfer_legs_via_household_canonical(
             "account_id": main_checking.pk,
             "household_id": household.id,
             "exclude_reconciled_past": "true",
-            "ledger_anchor": "1000.00",
         },
     )
     assert r.status_code == 200

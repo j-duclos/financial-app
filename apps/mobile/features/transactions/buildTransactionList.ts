@@ -224,7 +224,7 @@ export function buildTransactionListRows(input: {
     }
   }
 
-  // --- Pending then Upcoming: Bal from backend balance_after (ledger_anchor) ---
+  // --- Pending then Upcoming: Bal from backend balance_after only ---
   if (showPendingUpcoming) {
     if (input.timelineLoading) {
       rows.push({ kind: "section", id: "section-pending", title: "Pending" });

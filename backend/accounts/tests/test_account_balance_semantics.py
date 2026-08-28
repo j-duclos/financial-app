@@ -143,3 +143,55 @@ def test_matched_pending_twin_is_not_double_counted_in_balance(auth_client, chec
     # Only the imported twin affects the ledger (planned is hidden).
     assert Decimal(r.json()["available_balance"]) == Decimal("500.00")
     assert app_current_balance(checking, today) == Decimal("500.00")
+
+
+@pytest.mark.django_db
+def test_recent_running_balance_matches_posted_before_pending_anchor(checking):
+    """Last Recent running_balance must equal forecast posted-before-pending anchor."""
+    from datetime import date as date_cls
+
+    from transactions.services.ledger_running_balances import (
+        posted_ledger_running_after_walk,
+        running_balances_for_account_transactions,
+    )
+
+    today = date_cls.today()
+    Transaction.objects.create(
+        account=checking,
+        date=today - timedelta(days=3),
+        payee="Groceries",
+        amount=Decimal("-40.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-groc-1",
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today - timedelta(days=1),
+        payee="Paycheck",
+        amount=Decimal("200.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-pay-1",
+    )
+    pending = Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Pending bill",
+        amount=Decimal("-25.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    cleared_ids = [
+        t.id
+        for t in Transaction.objects.filter(account=checking, status=Transaction.Status.CLEARED)
+    ]
+    balances = running_balances_for_account_transactions(checking, cleared_ids, as_of=today)
+    last_posted_id = max(cleared_ids)
+    last_recent = Decimal(balances[last_posted_id])
+    anchor = ledger_today_balance_before_pending(checking, today)
+    walk_anchor = posted_ledger_running_after_walk(checking, as_of=today)
+    assert last_recent == anchor
+    assert walk_anchor == anchor
+    assert anchor == Decimal("1160.00")
+    assert pending.amount == Decimal("-25.00")
