@@ -844,9 +844,20 @@ class TimelineView(APIView):
                         return d
                     return date.fromisoformat(str(d)[:10])
 
-                rows = [r for r in rows if start <= _row_date(r) <= end]
                 if account_id is not None:
-                    rows = [r for r in rows if int(r.get("account_id") or 0) == account_id]
+                    from timeline.services.ledger_section_balances import (
+                        finalize_transactions_timeline_slice,
+                    )
+
+                    rows = finalize_transactions_timeline_slice(
+                        rows,
+                        account_id=int(account_id),
+                        as_of=as_of,
+                        projection_start=start,
+                        projection_end=end,
+                    )
+                else:
+                    rows = [r for r in rows if start <= _row_date(r) <= end]
             else:
                 rows = build_timeline(
                     request.user,

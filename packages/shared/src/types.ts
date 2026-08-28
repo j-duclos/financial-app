@@ -1791,6 +1791,16 @@ export interface TimelineRow {
   balance_after?: string | null;
   /** Authoritative: False when superseded/shadowed — excluded from ledger walk and Bal column. */
   financially_active?: boolean;
+  /** Why this row does not carry an independent financial effect (debug / support). */
+  suppression_reason?:
+    | "superseded_by_posting"
+    | "shadow_rule_sibling"
+    | "import_match_fulfilled"
+    | null;
+  /** Transaction id that carries the canonical financial effect when this row is suppressed. */
+  canonical_transaction_id?: number | null;
+  /** Cleared/imported transaction that fulfilled a planned occurrence. */
+  fulfilled_by_transaction_id?: number | null;
   /** Whether this transaction has been reconciled. */
   reconciled?: boolean;
   /** Running balance stored when this row was reconciled (signed; credit = negative debt). */

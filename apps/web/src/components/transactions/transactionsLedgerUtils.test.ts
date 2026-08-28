@@ -1248,6 +1248,7 @@ describe("buildLedgerRowsFromTimeline", () => {
       rule_id: 9,
       transaction_id: 20,
       running_balance: "1285.78",
+      financially_active: false,
     };
     const clearedPay: TimelineRow = {
       date: today,
@@ -1385,6 +1386,7 @@ describe("buildLedgerRowsFromTimeline", () => {
         rule_id: 9,
         transaction_id: 20,
         running_balance: "-251.79",
+        financially_active: false,
       },
       {
         date: today,
@@ -1533,6 +1535,7 @@ describe("creditOwedAsOfDateFromTimeline", () => {
       rule_id: 9,
       transaction_id: 20,
       running_balance: "-150",
+      financially_active: false,
     };
     const cleared: TimelineRow = {
       date: payDate,

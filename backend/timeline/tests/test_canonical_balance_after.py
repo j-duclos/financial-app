@@ -482,3 +482,56 @@ def test_financial_visibility_invariant(user, household):
     for row in acct_rows:
         if row.get("financially_active") is False:
             assert row.get("transaction_id") not in {r.get("transaction_id") for r in walk}
+
+
+@pytest.mark.django_db
+def test_first_pending_balance_matches_posted_anchor(user, household):
+    """first pending balance_after == anchor + signed amount (no invisible walk rows)."""
+    from timeline.services.ledger_section_balances import (
+        finalize_transactions_timeline_slice,
+        signed_timeline_ledger_amount,
+        transactions_timeline_rows_for_ledger,
+    )
+
+    acct = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        role=Account.AccountRole.SPENDING,
+        name="Pending Anchor",
+        starting_balance=POSTED_ANCHOR,
+        currency="USD",
+        include_in_forecast=True,
+    )
+    as_of = date(2026, 8, 28)
+    _planned(acct, date(2026, 8, 26), "Venture C/C Payment", Decimal("-100.00"))
+    _planned(acct, as_of, "Gen's Rent", GENS_RENT_AMOUNT)
+
+    end = as_of + timedelta(days=FORECAST_DAYS)
+    full = build_forecast_projection_timeline(
+        user,
+        today=as_of,
+        end_date=end,
+        caller="test_first_pending",
+        account_id=acct.pk,
+    )
+    anchor = ledger_today_balance_before_pending(acct, as_of)
+    slice_rows = finalize_transactions_timeline_slice(
+        full,
+        account_id=acct.pk,
+        as_of=as_of,
+        projection_start=as_of,
+        projection_end=end,
+    )
+    pending = transactions_timeline_rows_for_ledger(
+        full,
+        account_id=acct.pk,
+        as_of=as_of,
+        projection_start=as_of,
+        projection_end=end,
+    )
+    assert pending[0]["description"] == "Venture C/C Payment"
+    gens = next(r for r in pending if r.get("description") == "Gen's Rent")
+    assert Decimal(str(gens["balance_after"])) == anchor + signed_timeline_ledger_amount(
+        pending[0]
+    ) + signed_timeline_ledger_amount(gens)
+    assert len(slice_rows) == len(pending)

@@ -258,6 +258,81 @@ def assign_canonical_ledger_balance_after(
     return rows
 
 
+def transactions_timeline_rows_for_ledger(
+    rows: list[dict[str, Any]],
+    *,
+    account_id: int,
+    as_of: date,
+    projection_start: date,
+    projection_end: date,
+) -> list[dict[str, Any]]:
+    """
+    Financially-active pending/upcoming rows for the Transactions /timeline/ response.
+
+    Includes overdue pending (date < projection_start) so the API row set matches the
+    canonical balance walk — never assign balances to rows the client will not receive.
+    """
+    from timeline.services.ledger import row_participates_in_ledger_walk
+
+    account_rows = [r for r in rows if int(r.get("account_id") or 0) == int(account_id)]
+    selected: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for row in account_rows:
+        rd = _row_date(row)
+        if rd is None or rd > projection_end:
+            continue
+        in_window = is_pending_expected_timeline_row(row, as_of) and rd <= as_of
+        if not in_window:
+            if not is_forecast_timeline_row(row, as_of) or rd < projection_start:
+                continue
+        if not row_participates_in_ledger_walk(row, account_rows):
+            continue
+        key = row.get("transaction_id")
+        if key is None:
+            key = (row.get("rule_id"), rd, str(row.get("amount")))
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(row)
+    selected.sort(key=_sort_key)
+    return selected
+
+
+def finalize_transactions_timeline_slice(
+    rows: list[dict[str, Any]],
+    *,
+    account_id: int,
+    as_of: date,
+    projection_start: date,
+    projection_end: date,
+) -> list[dict[str, Any]]:
+    """
+    Re-annotate and assign ``balance_after`` on the exact Transactions timeline slice.
+
+    Mutates ``rows`` in place for ``account_id`` only; returns the ledger row subset.
+    """
+    from timeline.services.canonical_ledger import resolve_canonical_financial_state
+
+    account_rows = [r for r in rows if int(r.get("account_id") or 0) == int(account_id)]
+    resolve_canonical_financial_state(account_rows)
+    selected = transactions_timeline_rows_for_ledger(
+        account_rows,
+        account_id=account_id,
+        as_of=as_of,
+        projection_start=projection_start,
+        projection_end=projection_end,
+    )
+    for row in account_rows:
+        row.pop("balance_after", None)
+    assign_canonical_ledger_balance_after(
+        account_rows,
+        today=as_of,
+        account_ids={account_id},
+        force=True,
+    )
+    return selected
+
+
 def rows_need_ledger_balance_after(
     rows: list[dict[str, Any]],
     *,

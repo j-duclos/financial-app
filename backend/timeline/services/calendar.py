@@ -50,6 +50,7 @@ from timeline.services.ledger import (
     build_timeline,
     forecast_account_balance_metrics,
     is_superseded_planned_row,
+    row_participates_in_ledger_walk,
     timeline_row_process_order,
 )
 
@@ -315,7 +316,7 @@ def build_timeline_calendar(
         account_rows = (
             rows_by_account_date.get((int(aid), rd), []) if aid is not None else []
         )
-        if aid and is_superseded_planned_row(row, account_rows):
+        if aid and not row_participates_in_ledger_walk(row, account_rows):
             continue
         row = dict(row)
         row["date"] = date_iso
@@ -339,7 +340,7 @@ def build_timeline_calendar(
         if rd is None or aid is None or int(aid) not in scope_ids or rd >= start_date:
             continue
         account_rows = rows_by_account_date.get((int(aid), rd), [])
-        if is_superseded_planned_row(row, account_rows):
+        if not row_participates_in_ledger_walk(row, account_rows):
             continue
         rb = _row_running_balance(row)
         if rb is not None:

@@ -17,7 +17,7 @@ from common.services.profiler import perf_enabled, perf_print
 from core.utils import get_households_for_user
 from timeline.services.ledger import build_forecast_projection_timeline
 
-CANONICAL_TIMELINE_CACHE_VERSION = "v4"
+CANONICAL_TIMELINE_CACHE_VERSION = "v7"
 CANONICAL_TIMELINE_CACHE_SECONDS = 300
 _LOCK_TIMEOUT_SECONDS = 60
 _LOCK_WAIT_SECONDS = 60.0

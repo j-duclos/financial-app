@@ -234,6 +234,7 @@ export default function Transactions() {
               account: accountId as number,
               date_before: pastRangeEnd,
               page_size: 2000,
+              include_running_balance: true,
               ...(hasUrlCategory ? { category: urlCategoryId } : {}),
               ...(showReconciled
                 ? {

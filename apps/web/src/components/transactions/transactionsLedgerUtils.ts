@@ -505,15 +505,13 @@ function isShadowedByMatchedRuleSibling(
 
 /**
  * Whether a timeline row participates in Transactions ledger display and Bal column.
- * Prefer backend ``financially_active``; fall back to client filters for legacy payloads.
+ * Backend ``financially_active`` from canonical resolution is authoritative.
  */
 export function isFinanciallyActiveTimelineRow(
   row: TimelineRow,
-  timeline: TimelineRow[]
+  _timeline: TimelineRow[]
 ): boolean {
-  if (row.financially_active === false) return false;
-  if (row.financially_active === true) return true;
-  return !isSupersededPlannedTimelineRow(row, timeline) && !isShadowedByMatchedRuleSibling(row, timeline);
+  return row.financially_active !== false;
 }
 
 /** Paired transfer leg — never hide from ledger when matching imports or debt skip logic. */
@@ -555,6 +553,7 @@ export function isSupersededPlannedTimelineRow(
     if (!Number.isNaN(otherAmt) && Math.abs(Math.abs(otherAmt) - absAmt) < 0.01) {
       return true;
     }
+    if (plannedAndPostingLikelySame(row, other)) return true;
   }
   return false;
 }

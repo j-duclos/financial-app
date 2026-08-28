@@ -1831,31 +1831,25 @@ def is_shadowed_by_matched_rule_sibling(row: dict, account_rows: list[dict]) -> 
 
 def is_financially_active_timeline_row(row: dict, account_rows: list[dict]) -> bool:
     """Whether a row participates in balance math and Transactions ledger display."""
-    if is_superseded_planned_row(row, account_rows):
-        return False
     if is_shadowed_by_matched_rule_sibling(row, account_rows):
+        return False
+    if is_superseded_planned_row(row, account_rows):
         return False
     return True
 
 
 def row_participates_in_ledger_walk(row: dict, account_rows: list[dict]) -> bool:
     """Use pre-annotated ``financially_active`` when present; else compute."""
-    if "financially_active" in row:
-        return bool(row["financially_active"])
-    return is_financially_active_timeline_row(row, account_rows)
+    from timeline.services.canonical_ledger import row_participates_financially
+
+    return row_participates_financially(row, account_rows)
 
 
 def annotate_financially_active_rows(rows: list[dict]) -> None:
-    """Mark each row with authoritative ``financially_active`` before the canonical balance walk."""
-    by_account: dict[int, list[dict]] = defaultdict(list)
-    for row in rows:
-        aid = row.get("account_id")
-        if aid is not None:
-            by_account[int(aid)].append(row)
-    for row in rows:
-        aid = row.get("account_id")
-        acct_rows = by_account.get(int(aid), []) if aid is not None else []
-        row["financially_active"] = is_financially_active_timeline_row(row, acct_rows)
+    """Resolve canonical financial identity before the balance walk (delegates to canonical_ledger)."""
+    from timeline.services.canonical_ledger import resolve_canonical_financial_state
+
+    resolve_canonical_financial_state(rows)
 
 
 def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
@@ -1887,7 +1881,59 @@ def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
         if _is_unmatched_plaid_import_row(other) and _planned_and_posting_likely_same(row, other):
             continue
         other_amt = Decimal(str(other.get("amount")))
-        if abs(abs(other_amt) - abs_amt) < Decimal("0.01"):
+        if abs(abs(other_amt) - abs_amt) < Decimal("0.05"):
+            return True
+        if _planned_and_posting_likely_same(row, other):
+            return True
+    return _planned_row_superseded_by_db_posting(row)
+
+
+def _planned_row_superseded_by_db_posting(row: dict) -> bool:
+    """
+    Same-day cleared posting on the account (when timeline rows omit posted history).
+
+    Projection timelines only carry pending/upcoming rows — superseded checks must still
+    see bank postings that cleared the forecast twin.
+    """
+    if (row.get("status") or "").upper() != "PLANNED":
+        return False
+    account_id = row.get("account_id")
+    row_date = _timeline_row_date(row.get("date"))
+    if account_id is None or row_date is None:
+        return False
+    try:
+        amt = Decimal(str(row.get("amount")))
+    except Exception:
+        return False
+    abs_amt = abs(amt)
+    from transactions.models import Transaction
+
+    for txn in Transaction.objects.filter(
+        account_id=int(account_id),
+        date=row_date,
+        status__in=(Transaction.Status.CLEARED, Transaction.Status.RECONCILED),
+        reconciled=False,
+    ):
+        other = {
+            "date": txn.date,
+            "amount": txn.amount,
+            "status": txn.status,
+            "rule_id": txn.rule_id,
+            "account_id": txn.account_id,
+            "description": txn.payee or "",
+            "payee": txn.payee or "",
+            "import_match_status": txn.import_match_status,
+            "txn_source": txn.source.lower() if txn.source else None,
+            "plaid_transaction_id": txn.plaid_transaction_id,
+        }
+        if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
+            return True
+        if _is_unmatched_plaid_import_row(other) and _planned_and_posting_likely_same(row, other):
+            continue
+        other_amt = Decimal(str(txn.amount))
+        if abs(abs(other_amt) - abs_amt) < Decimal("0.05"):
+            return True
+        if _planned_and_posting_likely_same(row, other):
             return True
     return False
 
@@ -2560,16 +2606,15 @@ def build_forecast_projection_timeline(
         caller=caller,
         opening_balances=opening_balances,
     )
-    from timeline.services.ledger_section_balances import assign_canonical_ledger_balance_after
+    from timeline.services.canonical_ledger import build_canonical_ledger_with_balances
 
-    annotate_financially_active_rows(rows)
     anchors = None
     if opening_balances is not None:
         anchors = {
             aid: (raw if isinstance(raw, Decimal) else Decimal(str(raw)))
             for aid, raw in opening_balances.items()
         }
-    assign_canonical_ledger_balance_after(
+    build_canonical_ledger_with_balances(
         rows,
         today=today,
         anchors=anchors,
