@@ -212,6 +212,35 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(future[0].type).toBe("recurring");
   });
 
+  it("computes past balance from opening + amount even when API running_balance is stale", () => {
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [
+        {
+          id: 99,
+          date: "2026-08-17",
+          payee: "Quicksilver C/C Payment",
+          amount: "-329.02",
+          direction: "OUTFLOW",
+          source: "ACTUAL",
+          status: "CLEARED",
+          running_balance: "1828.40",
+        } as never,
+      ],
+      [],
+      "2026-08-28",
+      1828.4,
+      false,
+      { pastOpeningOverride: 1828.4 }
+    );
+    const sections = splitLedgerSections(rows);
+    expect(sections.start?.balance).toBeCloseTo(1828.4, 2);
+    const past = sections.past[0];
+    expect(past.type).toBe("transaction");
+    if (past.type === "transaction") {
+      expect(past.balance).toBeCloseTo(1499.38, 2);
+    }
+  });
+
   it("continues upcoming balances from the last past row (no API balance jump)", () => {
     const today = todayStr();
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(

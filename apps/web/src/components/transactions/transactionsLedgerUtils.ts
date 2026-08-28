@@ -890,13 +890,9 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
   const checkpointPeriodEnd = options?.checkpointPeriodEnd ?? null;
   for (const txn of pastTxns) {
     const sealed = transactionAlreadyInCheckpoint(txn, checkpointPeriodEnd);
-    const apiBal = transactionPostedLedgerBalance(txn);
     let balance: number | null;
     if (sealed) {
       balance = null;
-    } else if (apiBal != null) {
-      running = apiBal;
-      balance = apiBal;
     } else {
       const amt = signedTransactionLedgerAmount(txn);
       if (Number.isNaN(amt)) continue;
