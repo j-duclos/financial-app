@@ -44,7 +44,8 @@ import {
   type GoalFormValues,
 } from "./form";
 import { goalDetailPath, goalsListPath } from "./navigation";
-import { goalsQueryKeys, invalidateGoalsQueries } from "./queryKeys";
+import { goalsQueryKeys, invalidateGoalFundingQueries, invalidateGoalMetadataQueries } from "./queryKeys";
+import { invalidateForecastQueries } from "@/lib/financialQueryRefresh";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
 
@@ -321,7 +322,12 @@ export function GoalFormScreen() {
       return saved;
     },
     onSuccess: (saved) => {
-      invalidateGoalsQueries(queryClient);
+      if (isDebtGoalType(form.goal_type)) {
+        invalidateGoalMetadataQueries(queryClient);
+        invalidateForecastQueries(queryClient);
+      } else {
+        invalidateGoalFundingQueries(queryClient);
+      }
       router.replace(goalDetailPath(saved.id));
     },
     onError: (err) => setSubmitError(describeApiError(err)),

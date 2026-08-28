@@ -54,7 +54,8 @@ describe("profileSettings helpers", () => {
         ["profile"],
         ["dashboard-summary"],
         ["transactions"],
-        ["timeline-calendar"],
+        ["timeline"],
+        ["calendar-chunk"],
         ["accounts"],
         ["recommendations"],
       ])

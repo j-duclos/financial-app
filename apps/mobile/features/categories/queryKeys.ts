@@ -16,7 +16,6 @@ export const categoriesQueryKeys = {
  * After create/edit/archive/delete:
  * - refresh management list + any leftover `["categories", …]` consumers
  * - refresh canonical picker options (`category-options`)
- * - refresh legacy what-if category cache until fully consolidated
  *
  * Does NOT invalidate financial forecast/timeline prefixes — renaming or
  * archiving a category does not change forecast math.
@@ -24,5 +23,4 @@ export const categoriesQueryKeys = {
 export function invalidateAfterCategoryMutation(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: categoriesQueryKeys.all });
   invalidateCategoryOptionsQueries(queryClient);
-  void queryClient.invalidateQueries({ queryKey: ["what-if-categories"] });
 }

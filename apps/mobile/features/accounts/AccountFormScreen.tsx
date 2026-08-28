@@ -14,7 +14,10 @@ import { type AccountType } from "@budget-app/shared";
 import { AppHeader, Button, Card, ConfirmDialog, ErrorState, Screen, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError, fieldErrorsFromApiError } from "@/services/apiErrors";
-import { invalidateFinancialQueries } from "@/lib/financialQueryRefresh";
+import {
+  invalidateAfterAccountFinancialMutation,
+  invalidateAfterAccountMetadataEdit,
+} from "@/lib/financialQueryRefresh";
 
 const ACCOUNT_TYPES: AccountType[] = ["CHECKING", "SAVINGS", "CREDIT", "CASH", "OTHER"];
 
@@ -122,7 +125,21 @@ export function AccountFormScreen() {
       });
     },
     onSuccess: () => {
-      invalidateFinancialQueries(queryClient);
+      if (!isEdit) {
+        invalidateAfterAccountFinancialMutation(queryClient);
+      } else {
+        const acc = accountQuery.data;
+        const financialFieldsChanged =
+          acc != null &&
+          (form.account_type !== acc.account_type ||
+            form.credit_limit !== (acc.credit_limit ?? "") ||
+            form.target_utilization_percent !== (acc.target_utilization_percent ?? "10"));
+        if (financialFieldsChanged) {
+          invalidateAfterAccountFinancialMutation(queryClient);
+        } else {
+          invalidateAfterAccountMetadataEdit(queryClient);
+        }
+      }
       router.back();
     },
     onError: (err) => {
@@ -145,7 +162,7 @@ export function AccountFormScreen() {
       return archiveAccount(editId);
     },
     onSuccess: () => {
-      invalidateFinancialQueries(queryClient);
+      invalidateAfterAccountFinancialMutation(queryClient);
       router.back();
     },
     onError: (err) => Alert.alert("Archive failed", describeApiError(err)),

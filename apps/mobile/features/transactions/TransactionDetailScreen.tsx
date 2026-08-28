@@ -97,7 +97,7 @@ export function TransactionDetailScreen() {
   const deleteMutation = useMutation({
     mutationFn: () => deleteTransaction(txnId),
     onSuccess: () => {
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient);
       router.back();
     },
     onError: (err) => Alert.alert("Delete failed", describeApiError(err)),
@@ -106,7 +106,7 @@ export function TransactionDetailScreen() {
   const skipMutation = useMutation({
     mutationFn: () => skipTransactionOccurrence(txnId),
     onSuccess: () => {
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient);
       router.back();
     },
     onError: (err) => Alert.alert("Could not remove scheduled item", describeApiError(err)),
@@ -156,7 +156,7 @@ export function TransactionDetailScreen() {
     setSavingCategory(true);
     try {
       await updateTransaction(txnId, { category_id: categoryId });
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient, { categoryOnly: true });
       router.back();
     } catch (err) {
       Alert.alert("Could not save category", describeApiError(err));

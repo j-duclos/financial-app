@@ -138,15 +138,13 @@ describe("Category query keys and invalidation", () => {
   it("invalidates category options and management caches without financial forecasts", () => {
     expect(queryKeysSource).toMatch(/invalidateCategoryOptionsQueries/);
     expect(queryKeysSource).not.toMatch(/invalidateFinancialQueries/);
-    expect(financialRefreshSource).not.toMatch(/category-options/);
+    expect(financialRefreshSource).not.toMatch(/invalidateCategoryOptionsQueries/);
 
     const queryClient = new QueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
     invalidateAfterCategoryMutation(queryClient);
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey);
-    expect(keys).toEqual(
-      expect.arrayContaining([["categories"], ["category-options"], ["what-if-categories"]])
-    );
+    expect(keys).toEqual(expect.arrayContaining([["categories"], ["category-options"]]));
     expect(keys.some((k) => Array.isArray(k) && k[0] === "forecast")).toBe(false);
     spy.mockRestore();
   });

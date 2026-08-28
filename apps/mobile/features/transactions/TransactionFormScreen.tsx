@@ -178,7 +178,7 @@ export function TransactionFormScreen() {
       return createTransaction(body);
     },
     onSuccess: () => {
-      refreshAfterTransactionEdit(queryClient, { refreshAccounts: true });
+      refreshAfterTransactionEdit(queryClient);
       router.back();
     },
     onError: (err) => {

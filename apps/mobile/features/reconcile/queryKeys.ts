@@ -1,5 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
-import { invalidateFinancialQueries } from "@/lib/financialQueryRefresh";
+export { invalidateAfterReconcileMutation } from "@/lib/financialQueryRefresh";
 
 export const reconcileQueryKeys = {
   all: ["reconcile"] as const,
@@ -28,9 +27,3 @@ export const reconcileQueryKeys = {
     ] as const,
 };
 
-/** After complete/undo — refresh ledger + reconcile caches. Does not fetch forecast during browse. */
-export function invalidateAfterReconcileMutation(queryClient: QueryClient): void {
-  void queryClient.invalidateQueries({ queryKey: reconcileQueryKeys.all });
-  void queryClient.invalidateQueries({ queryKey: ["reconcile-setup"] });
-  invalidateFinancialQueries(queryClient);
-}

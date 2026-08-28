@@ -52,7 +52,7 @@ import {
 import {
   GOAL_DETAIL_HISTORY_PREVIEW_LIMIT,
   goalsQueryKeys,
-  invalidateGoalsQueries,
+  invalidateGoalLifecycleQueries,
 } from "./queryKeys";
 
 function ForecastRow({
@@ -180,7 +180,7 @@ export function GoalDetailScreen() {
   const linkedAccountId = goal ? goalLinkedAccountId(goal) : null;
   const linkedAccountName = goal ? goalLinkedAccountName(goal) : null;
 
-  const invalidate = () => invalidateGoalsQueries(queryClient);
+  const invalidate = () => invalidateGoalLifecycleQueries(queryClient);
   const pauseMu = useMutation({ mutationFn: pauseBucket, onSuccess: invalidate });
   const completeMu = useMutation({ mutationFn: completeBucket, onSuccess: invalidate });
   const archiveMu = useMutation({ mutationFn: archiveBucket, onSuccess: invalidate });

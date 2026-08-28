@@ -35,6 +35,7 @@ import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
+import { invalidateAfterUtilizationTargetChange } from "@/lib/financialQueryRefresh";
 import { useTheme } from "@/theme";
 import { OptionsPickerSheet } from "@/features/recurring/OptionsPickerSheet";
 import { SettingsRow } from "./SettingsRow";
@@ -141,15 +142,7 @@ export function ProfileSettingsScreen() {
     onSuccess: () => {
       setUtilizationAccount(null);
       setCustomUtilizationOpen(false);
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      void queryClient.invalidateQueries({ queryKey: ["account"] });
-      void queryClient.invalidateQueries({ queryKey: ["account-options"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
-      void queryClient.invalidateQueries({ queryKey: ["recommendations"] });
-      void queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
-      void queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] });
+      invalidateAfterUtilizationTargetChange(queryClient);
     },
     onError: (err) => {
       Alert.alert("Couldn’t update utilization target", describeApiError(err));

@@ -78,9 +78,8 @@ describe("Reconcile query keys", () => {
     ]);
   });
 
-  it("invalidates financial caches only after complete/undo mutations", () => {
-    expect(queryKeysSource).toMatch(/invalidateFinancialQueries/);
+  it("invalidates targeted caches only after complete/undo mutations", () => {
     expect(queryKeysSource).toMatch(/invalidateAfterReconcileMutation/);
-    expect(financialRefreshSource).toMatch(/reconcile-setup/);
+    expect(financialRefreshSource).not.toMatch(/\["reconcile-setup"\]/);
   });
 });

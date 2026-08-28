@@ -1,4 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
+import {
+  invalidateDashboardQueries,
+  invalidateForecastQueries,
+  invalidateLedgerQueries,
+  invalidateReportQueries,
+} from "@/lib/financialQueryRefresh";
 
 export const goalsQueryKeys = {
   overview: (householdId: number | null | undefined) =>
@@ -15,16 +21,45 @@ export const goalsQueryKeys = {
 /** Recent contribution preview size on Goal Detail. */
 export const GOAL_DETAIL_HISTORY_PREVIEW_LIMIT = 5;
 
-export function invalidateGoalsQueries(queryClient: QueryClient): void {
+function invalidateGoalRoots(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["buckets"] });
   void queryClient.invalidateQueries({ queryKey: ["bucket-detail"] });
   void queryClient.invalidateQueries({ queryKey: ["goal-contributions"] });
   void queryClient.invalidateQueries({ queryKey: ["buckets-summary"] });
-  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
-  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
-  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
   void queryClient.invalidateQueries({ queryKey: ["goals-report"] });
-  void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+}
+
+/** Name, notes, target date/amount, priority — not forecast plumbing. */
+export function invalidateGoalMetadataQueries(queryClient: QueryClient): void {
+  invalidateGoalRoots(queryClient);
+  invalidateDashboardQueries(queryClient);
+}
+
+/** Real contribution / withdrawal — may touch ledger and reports. */
+export function invalidateGoalContributionQueries(queryClient: QueryClient): void {
+  invalidateGoalRoots(queryClient);
+  invalidateDashboardQueries(queryClient);
+  invalidateReportQueries(queryClient);
+  invalidateLedgerQueries(queryClient);
+  invalidateForecastQueries(queryClient);
+}
+
+/** Funding rule / allocation / planned contribution changes. */
+export function invalidateGoalFundingQueries(queryClient: QueryClient): void {
+  invalidateGoalMetadataQueries(queryClient);
+  invalidateForecastQueries(queryClient);
+  invalidateLedgerQueries(queryClient);
   void queryClient.invalidateQueries({ queryKey: ["rule-allocations"] });
-  void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+  void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+}
+
+/** Lifecycle (pause, complete, archive) — status affects safe-to-spend forecast. */
+export function invalidateGoalLifecycleQueries(queryClient: QueryClient): void {
+  invalidateGoalMetadataQueries(queryClient);
+  invalidateForecastQueries(queryClient);
+}
+
+/** @deprecated Prefer specific goal invalidation helpers. */
+export function invalidateGoalsQueries(queryClient: QueryClient): void {
+  invalidateGoalFundingQueries(queryClient);
 }

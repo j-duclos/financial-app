@@ -27,7 +27,7 @@ import { describeApiError } from "@/services/api";
 import { GoalCard, GoalSectionHeader } from "./GoalCard";
 import { GoalActionsSheet, type GoalActionId } from "./GoalActionsSheet";
 import { goalCreatePath, goalDetailPath, goalEditPath, goalWhatIfPath } from "./navigation";
-import { goalsQueryKeys, invalidateGoalsQueries } from "./queryKeys";
+import { goalsQueryKeys, invalidateGoalLifecycleQueries } from "./queryKeys";
 import type { FinancialGoal } from "@budget-app/shared";
 
 function SummaryStat({ label, value }: { label: string; value: string }) {
@@ -73,7 +73,7 @@ export function GoalsScreen() {
   const completed = useMemo(() => goals.filter((g) => g.status === "completed"), [goals]);
   const archived = useMemo(() => goals.filter((g) => g.status === "archived"), [goals]);
 
-  const invalidate = () => invalidateGoalsQueries(queryClient);
+  const invalidate = () => invalidateGoalLifecycleQueries(queryClient);
 
   const pauseMu = useMutation({ mutationFn: pauseBucket, onSuccess: invalidate });
   const completeMu = useMutation({ mutationFn: completeBucket, onSuccess: invalidate });
