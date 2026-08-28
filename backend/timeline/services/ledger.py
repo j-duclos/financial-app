@@ -309,59 +309,38 @@ def forecast_lowest_balance_from_rows(
     else:
         opening = {aid: opening.get(aid, Decimal("0")) for aid in account_ids}
 
-    rows_by_account: dict[int, list[dict]] = defaultdict(list)
-    for r in rows:
-        aid = r.get("account_id")
-        if aid is not None:
-            rows_by_account[aid].append(r)
+    from timeline.services.ledger_section_balances import (
+        forecast_balance_metrics_from_transactions_ledger,
+    )
+    from transactions.services.reconciliation import ledger_today_balance_before_pending
 
-    by_date: dict[date, list[dict]] = defaultdict(list)
-    for r in rows:
-        rd = _timeline_row_date(r.get("date"))
-        if rd is None or rd < today or rd > end_date:
-            continue
-        aid = r.get("account_id")
-        if aid not in account_ids:
-            continue
-        if is_superseded_planned_row(r, rows_by_account.get(aid, [])):
-            continue
-        by_date[rd].append(r)
-
-    running = dict(opening)
     global_low: Decimal | None = None
     global_date: date | None = None
     global_aid: int | None = None
 
-    d = today
-    while d <= end_date:
-        day_rows = by_date.get(d, [])
-        day_lowest: Decimal | None = None
-        day_lowest_aid: int | None = None
-
-        for row in sorted(day_rows, key=timeline_row_process_order):
-            aid = row.get("account_id")
-            if aid not in account_ids:
-                continue
-            prev = running.get(aid, opening.get(aid, Decimal("0")))
-            bal, running[aid] = _timeline_row_balance_after(row, running=prev)
-            if day_lowest is None or bal < day_lowest:
-                day_lowest = bal
-                day_lowest_aid = aid
-
-        if day_lowest is not None:
-            if global_low is None or day_lowest < global_low:
-                global_low = day_lowest
-                global_date = d
-                global_aid = day_lowest_aid
+    for aid in account_ids:
+        acc = Account.objects.filter(pk=aid).first()
+        if acc is not None:
+            try:
+                anchor = ledger_today_balance_before_pending(acc, today)
+            except Exception:
+                anchor = opening.get(aid, Decimal("0"))
         else:
-            for aid in account_ids:
-                bal = running.get(aid, opening.get(aid, Decimal("0")))
-                if global_low is None or bal < global_low:
-                    global_low = bal
-                    global_date = d
-                    global_aid = aid
-
-        d += timedelta(days=1)
+            anchor = opening.get(aid, Decimal("0"))
+        metrics = forecast_balance_metrics_from_transactions_ledger(
+            rows,
+            account_id=aid,
+            today=today,
+            end_date=end_date,
+            minimum_buffer=Decimal("0"),
+            ledger_anchor=anchor,
+        )
+        low = metrics["lowest"]
+        low_date = metrics["lowest_date"]
+        if global_low is None or low < global_low:
+            global_low = low
+            global_date = low_date
+            global_aid = aid
 
     return global_low, global_date, global_aid
 
@@ -431,83 +410,32 @@ def forecast_account_balance_metrics(
     minimum_buffer: Decimal,
 ) -> dict[str, Any]:
     """
-    Ledger-aligned balance projection for one account (matches calendar / Transactions).
+    Ledger-aligned balance projection for one account (matches Transactions Bal).
 
-    Consumes canonical timeline ``running_balance`` per row — the same field Transactions
-    renders as ``balance_after``. Does not rebuild balances via ``running += amount`` when
-    precomputed balances exist. Empty days carry forward the prior end-of-day balance.
+    Uses the Transactions ledger walk (Pending → Upcoming from posted anchor) — the
+    same sequence and math as ``annotate_transactions_ledger_balance_after`` /
+    ``balance_after``. Does not use chronological ``running_balance``.
     """
-    timeline_opening = timeline_opening_balance_for_account(rows, account_id, today)
-    if timeline_opening is not None:
-        opening = timeline_opening
+    acc = Account.objects.filter(pk=account_id).first()
+    if acc is not None:
+        from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+        ledger_anchor = ledger_today_balance_before_pending(acc, today)
     else:
-        acc = Account.objects.filter(pk=account_id).first()
-        if acc is not None:
-            from transactions.services.reconciliation import ledger_today_balance_before_pending
+        ledger_anchor = _balance_at_end_of_date(account_id, today - timedelta(days=1))
 
-            opening = ledger_today_balance_before_pending(acc, today)
-        else:
-            opening = _balance_at_end_of_date(account_id, today - timedelta(days=1))
-    account_rows = [r for r in rows if r.get("account_id") == account_id]
+    from timeline.services.ledger_section_balances import (
+        forecast_balance_metrics_from_transactions_ledger,
+    )
 
-    by_date: dict[date, list[dict]] = defaultdict(list)
-    for r in account_rows:
-        rd = _timeline_row_date(r.get("date"))
-        if rd is None or rd < today or rd > end_date:
-            continue
-        if is_superseded_planned_row(r, account_rows):
-            continue
-        by_date[rd].append(r)
-
-    running = opening
-    lowest = running
-    lowest_date = today
-    first_negative_date: date | None = None
-    first_negative_balance: Decimal | None = None
-    first_below_buffer_date: date | None = None
-    first_below_buffer_balance: Decimal | None = None
-    end_of_day: dict[date, Decimal] = {}
-
-    d = today
-    while d <= end_date:
-        day_rows = sorted(by_date.get(d, ()), key=timeline_row_process_order)
-        if day_rows:
-            for row in day_rows:
-                bal, running = _timeline_row_balance_after(row, running=running)
-                if bal < lowest:
-                    lowest = bal
-                    lowest_date = d
-                if first_negative_date is None and bal < Decimal("0"):
-                    first_negative_date = d
-                    first_negative_balance = bal
-                if first_below_buffer_date is None and bal < minimum_buffer:
-                    first_below_buffer_date = d
-                    first_below_buffer_balance = bal
-        else:
-            if running < lowest:
-                lowest = running
-                lowest_date = d
-            if first_negative_date is None and running < Decimal("0"):
-                first_negative_date = d
-                first_negative_balance = running
-            if first_below_buffer_date is None and running < minimum_buffer:
-                first_below_buffer_date = d
-                first_below_buffer_balance = running
-
-        end_of_day[d] = running
-        d += timedelta(days=1)
-
-    return {
-        "opening_balance": opening,
-        "lowest": lowest,
-        "lowest_date": lowest_date,
-        "ending": running,
-        "first_negative_date": first_negative_date,
-        "first_negative_balance": first_negative_balance,
-        "first_below_buffer_date": first_below_buffer_date,
-        "first_below_buffer_balance": first_below_buffer_balance,
-        "end_of_day": end_of_day,
-    }
+    return forecast_balance_metrics_from_transactions_ledger(
+        rows,
+        account_id=account_id,
+        today=today,
+        end_date=end_date,
+        minimum_buffer=minimum_buffer,
+        ledger_anchor=ledger_anchor,
+    )
 
 
 def timeline_rows_chronological_key(row: dict) -> tuple:

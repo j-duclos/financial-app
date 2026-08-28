@@ -38,14 +38,17 @@ from common.services.forecast_horizon import EXTENDED_CASH_RISK_DAYS
 from common.services.profiler import log_perf, perf_enabled, perf_print
 from core.utils import get_households_for_user
 from timeline.services.ledger import (
-    _timeline_row_balance_after,
     _timeline_row_date,
     build_forecast_projection_timeline,
     forecast_account_balance_metrics,
     is_superseded_planned_row,
     timeline_opening_balance_for_account,
-    timeline_row_process_order,
 )
+from timeline.services.ledger_section_balances import (
+    signed_timeline_ledger_amount,
+    transactions_ledger_walk_rows,
+)
+from transactions.services.reconciliation import ledger_today_balance_before_pending
 
 
 def _decimal(val) -> Decimal:
@@ -226,43 +229,47 @@ def scan_first_negative_cash(
     if already:
         return _result_from_hits(as_of, already, start_date, accounts_by_id)
 
-    rows_by_account: dict[int, list[dict]] = defaultdict(list)
-    for row in rows:
-        aid = row.get("account_id")
-        if aid is not None:
-            rows_by_account[aid].append(row)
+    best_date: date | None = None
+    best_hits: dict[int, ExtendedCashRiskAccount] = {}
 
-    by_date: dict[date, list[dict]] = defaultdict(list)
-    for row in rows:
-        rd = _timeline_row_date(row.get("date"))
-        if rd is None or rd < start_date or rd > end_date:
-            continue
-        aid = row.get("account_id")
-        if aid not in eligible_ids:
-            continue
-        if is_superseded_planned_row(row, rows_by_account.get(aid, [])):
-            continue
-        by_date[rd].append(row)
-
-    d = start_date
-    while d <= end_date:
-        day_hits: dict[int, ExtendedCashRiskAccount] = {}
-        for row in sorted(by_date.get(d, ()), key=timeline_row_process_order):
-            aid = row.get("account_id")
-            if aid not in eligible_ids:
+    for aid in eligible_ids:
+        account = accounts_by_id.get(aid)
+        if account is not None:
+            try:
+                anchor = ledger_today_balance_before_pending(account, start_date)
+            except Exception:
+                anchor = opening.get(aid, Decimal("0"))
+        else:
+            anchor = opening.get(aid, Decimal("0"))
+        walk = transactions_ledger_walk_rows(
+            rows, account_id=aid, today=start_date, end_date=end_date
+        )
+        running = anchor
+        for row in walk:
+            rd = _timeline_row_date(row.get("date"))
+            if rd is None:
                 continue
-            prev = running.get(aid, opening.get(aid, Decimal("0")))
-            bal, running[aid] = _timeline_row_balance_after(row, running=prev)
-            if aid not in day_hits and bal < Decimal("0"):
-                account = accounts_by_id.get(aid)
-                day_hits[aid] = ExtendedCashRiskAccount(
-                    account_id=aid,
-                    account_name=account.effective_display_name if account else "",
-                    projected_balance=bal,
-                )
-        if day_hits:
-            return _result_from_hits(as_of, list(day_hits.values()), d, accounts_by_id)
-        d += timedelta(days=1)
+            running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
+            if running < Decimal("0"):
+                if best_date is None or rd < best_date:
+                    best_date = rd
+                    best_hits = {
+                        aid: ExtendedCashRiskAccount(
+                            account_id=aid,
+                            account_name=account.effective_display_name if account else "",
+                            projected_balance=running,
+                        )
+                    }
+                elif rd == best_date and aid not in best_hits:
+                    best_hits[aid] = ExtendedCashRiskAccount(
+                        account_id=aid,
+                        account_name=account.effective_display_name if account else "",
+                        projected_balance=running,
+                    )
+                break
+
+    if best_date is not None and best_hits:
+        return _result_from_hits(as_of, list(best_hits.values()), best_date, accounts_by_id)
 
     return _empty_result(as_of)
 
