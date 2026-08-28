@@ -14,7 +14,6 @@ export const goalsQueryKeys = {
   contributions: (goalId: number, page?: number) =>
     ["goal-contributions", goalId, page ?? 1] as const,
   formAccounts: () => ["accounts", "goals-form"] as const,
-  formRules: () => ["recurring-rules", "goals-funding"] as const,
   formAllocation: (goalId: number) => ["rule-allocations", goalId] as const,
 };
 
@@ -50,7 +49,7 @@ export function invalidateGoalFundingQueries(queryClient: QueryClient): void {
   invalidateForecastQueries(queryClient);
   invalidateLedgerQueries(queryClient);
   void queryClient.invalidateQueries({ queryKey: ["rule-allocations"] });
-  void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+  void queryClient.invalidateQueries({ queryKey: ["rules"] });
 }
 
 /** Lifecycle (pause, complete, archive) — status affects safe-to-spend forecast. */

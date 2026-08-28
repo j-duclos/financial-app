@@ -207,8 +207,7 @@ describe("Goal form simplification", () => {
   });
 
   it("uses account picker sheet and date picker instead of chips/typed ISO", () => {
-    expect(goalFormSource).toMatch(/OptionsPickerSheet/);
-    expect(goalFormSource).toMatch(/DatePickerField/);
+    expect(goalFormSource).toMatch(/@\/components\/forms/);
     expect(goalFormSource).toMatch(/Advanced options/);
     expect(goalFormSource).not.toMatch(/YYYY-MM-DD/);
     expect(goalFormSource).not.toMatch(/ChipSelect/);

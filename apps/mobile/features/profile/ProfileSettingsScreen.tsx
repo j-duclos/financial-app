@@ -37,7 +37,7 @@ import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { invalidateAfterUtilizationTargetChange } from "@/lib/financialQueryRefresh";
 import { useTheme } from "@/theme";
-import { OptionsPickerSheet } from "@/features/recurring/OptionsPickerSheet";
+import { OptionsPickerSheet } from "@/components/forms";
 import { SettingsRow } from "./SettingsRow";
 import {
   applyUpdatedProfileCache,

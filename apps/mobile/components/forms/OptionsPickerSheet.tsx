@@ -96,7 +96,9 @@ export function OptionsPickerSheet({
                     borderColor: selected ? theme.colors.tint : theme.colors.border,
                   }}
                 >
-                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>{opt.title}</Text>
+                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
+                    {opt.title}
+                  </Text>
                   {opt.subtitle ? (
                     <Text
                       style={{

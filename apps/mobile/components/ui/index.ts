@@ -13,4 +13,5 @@ export { ErrorState } from "./ErrorState";
 export { Skeleton, SkeletonBlock } from "./Skeleton";
 export { SectionHeader } from "./SectionHeader";
 export { ListRow } from "./ListRow";
+export { DetailRow } from "./DetailRow";
 export { BottomSheet, ConfirmDialog } from "./BottomSheet";

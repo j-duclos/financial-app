@@ -35,7 +35,6 @@ export const LIVE_QUERY_KEY_ROOTS = {
   bucketsSummary: "buckets-summary",
   goalsReport: "goals-report",
   ruleAllocations: "rule-allocations",
-  recurringRulesGoalsFunding: "recurring-rules",
   monthlyReports: "monthly-reports",
   reconcile: "reconcile",
   categories: "categories",
@@ -154,7 +153,6 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["buckets-summary"],
   ["goals-report"],
   ["rule-allocations"],
-  ["recurring-rules"],
   ["monthly-reports"],
   ["reconcile"],
   ["categories"],
@@ -224,7 +222,6 @@ export function invalidateRecurringRuleDependents(queryClient: QueryClient): voi
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.buckets);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.bucketDetail);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.ruleAllocations);
-  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.recurringRulesGoalsFunding);
 }
 
 /** Spending-limit definition changes — budget summaries and limit performance only. */

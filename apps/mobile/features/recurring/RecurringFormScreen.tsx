@@ -23,8 +23,7 @@ import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { useHouseholds } from "@/hooks/useHouseholds";
 import { useProfile } from "@/lib/profileQuery";
 import { recurringQueryKeys } from "./queryKeys";
-import { DatePickerField, EndsDateField } from "./DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "./OptionsPickerSheet";
+import { DatePickerField, EndsDateField, OptionsPickerSheet, SelectField, type PickerOption } from "@/components/forms";
 import { monthlyWeekdayLabel } from "./recurringDisplay";
 
 type Direction = "INCOME" | "EXPENSE" | "TRANSFER";
@@ -145,46 +144,6 @@ function ruleToForm(rule: Awaited<ReturnType<typeof getRule>>): FormState {
     scheduleChangeLater: !!sched,
     changeEffectiveDate: sched?.effective_from?.slice(0, 10) ?? "",
   };
-}
-
-function SelectRow({
-  label,
-  value,
-  placeholder = "Select",
-  onPress,
-}: {
-  label: string;
-  value: string | null;
-  placeholder?: string;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <View>
-      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>{label}</Text>
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${value ?? placeholder}`}
-        style={{
-          minHeight: theme.touchTarget,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: theme.radius.md,
-          paddingHorizontal: 12,
-          justifyContent: "center",
-          backgroundColor: theme.colors.surfaceMuted,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <Text style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }} numberOfLines={1}>
-          {value ?? placeholder}
-        </Text>
-        <Text style={{ color: theme.colors.textMuted }}>›</Text>
-      </Pressable>
-    </View>
-  );
 }
 
 function ChipRow<T extends string>({
@@ -476,14 +435,14 @@ export function RecurringFormScreen() {
             placeholder="0.00"
           />
 
-          <SelectRow
+          <SelectField
             label={form.direction === "TRANSFER" ? "From account" : "Account"}
             value={selectedAccount ? getEffectiveDisplayName(selectedAccount) : null}
             onPress={() => setAccountPicker("from")}
           />
 
           {showTransferDestination ? (
-            <SelectRow
+            <SelectField
               label={form.direction === "TRANSFER" ? "To account" : "Pay to"}
               value={selectedTo ? getEffectiveDisplayName(selectedTo) : null}
               placeholder="Select destination"
@@ -492,7 +451,7 @@ export function RecurringFormScreen() {
           ) : null}
 
           {form.direction !== "TRANSFER" ? (
-            <SelectRow
+            <SelectField
               label="Category"
               value={selectedCategory?.name ?? null}
               placeholder="Select category"
@@ -500,14 +459,14 @@ export function RecurringFormScreen() {
             />
           ) : null}
 
-          <SelectRow
+          <SelectField
             label="Frequency"
             value={frequencyLabel}
             onPress={() => setFrequencyPickerOpen(true)}
           />
 
           {(form.frequency === "WEEKLY" || form.frequency === "BIWEEKLY") && (
-            <SelectRow
+            <SelectField
               label="On"
               value={WEEKDAYS.find((d) => d.value === (form.day_of_week ?? 0))?.label ?? null}
               onPress={() => setWeekdayPickerOpen(true)}
@@ -532,12 +491,12 @@ export function RecurringFormScreen() {
 
           {form.frequency === "MONTHLY_NTH_WEEKDAY" && (
             <>
-              <SelectRow
+              <SelectField
                 label="Every"
                 value={monthlyWeekdayLabel(form.nth_week, form.day_of_week)}
                 onPress={() => setNthPickerOpen(true)}
               />
-              <SelectRow
+              <SelectField
                 label="Weekday"
                 value={WEEKDAYS.find((d) => d.value === (form.day_of_week ?? 0))?.label ?? null}
                 onPress={() => setWeekdayPickerOpen(true)}

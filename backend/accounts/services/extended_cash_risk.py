@@ -38,6 +38,7 @@ from common.services.forecast_horizon import EXTENDED_CASH_RISK_DAYS
 from common.services.profiler import log_perf, perf_enabled, perf_print
 from core.utils import get_households_for_user
 from timeline.services.ledger import (
+    _timeline_row_balance_after,
     _timeline_row_date,
     build_forecast_projection_timeline,
     forecast_account_balance_metrics,
@@ -250,18 +251,14 @@ def scan_first_negative_cash(
             aid = row.get("account_id")
             if aid not in eligible_ids:
                 continue
-            amt = (
-                row["amount"]
-                if isinstance(row["amount"], Decimal)
-                else Decimal(str(row["amount"]))
-            )
-            running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
-            if aid not in day_hits and running[aid] < Decimal("0"):
+            prev = running.get(aid, opening.get(aid, Decimal("0")))
+            bal, running[aid] = _timeline_row_balance_after(row, running=prev)
+            if aid not in day_hits and bal < Decimal("0"):
                 account = accounts_by_id.get(aid)
                 day_hits[aid] = ExtendedCashRiskAccount(
                     account_id=aid,
                     account_name=account.effective_display_name if account else "",
-                    projected_balance=running[aid],
+                    projected_balance=bal,
                 )
         if day_hits:
             return _result_from_hits(as_of, list(day_hits.values()), d, accounts_by_id)

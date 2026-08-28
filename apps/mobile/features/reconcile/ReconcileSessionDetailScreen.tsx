@@ -13,6 +13,7 @@ import {
   ErrorState,
   Screen,
   SkeletonBlock,
+  DetailRow,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
@@ -80,14 +81,14 @@ export function ReconcileSessionDetailScreen() {
       </Text>
 
       <View style={{ gap: 10, marginBottom: 20 }}>
-        <MetaRow label="Statement ending" value={formatReconcileMoney(session.bank_balance)} />
-        <MetaRow label="Opening balance" value={formatReconcileMoney(session.opening_balance)} />
-        <MetaRow
+        <DetailRow label="Statement ending" value={formatReconcileMoney(session.bank_balance)} />
+        <DetailRow label="Opening balance" value={formatReconcileMoney(session.opening_balance)} />
+        <DetailRow
           label="Calculated ending"
           value={formatReconcileMoney(session.calculated_ending_balance ?? session.bank_balance)}
         />
-        <MetaRow label="Difference" value={formatReconcileMoney(session.difference)} />
-        <MetaRow label="Transactions" value={String(session.transaction_count)} />
+        <DetailRow label="Difference" value={formatReconcileMoney(session.difference)} />
+        <DetailRow label="Transactions" value={String(session.transaction_count)} />
       </View>
 
       <Text style={{ color: theme.colors.textSecondary, fontWeight: "700", marginBottom: 8 }}>
@@ -123,15 +124,5 @@ export function ReconcileSessionDetailScreen() {
         onConfirm={() => undoMutation.mutate()}
       />
     </Screen>
-  );
-}
-
-function MetaRow({ label, value }: { label: string; value: string }) {
-  const theme = useTheme();
-  return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-      <Text style={{ color: theme.colors.textSecondary }}>{label}</Text>
-      <Text style={{ color: theme.colors.text, fontWeight: "600" }}>{value}</Text>
-    </View>
   );
 }

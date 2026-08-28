@@ -30,13 +30,13 @@ import {
   Screen,
   SkeletonBlock,
   TextField,
+  DetailRow,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { describeApiError } from "@/services/api";
-import { DatePickerField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet } from "@/features/recurring/OptionsPickerSheet";
+import { DatePickerField, OptionsPickerSheet } from "@/components/forms";
 import { ReconcileTxnRow } from "./ReconcileTxnRow";
 import {
   bankBalanceHint,
@@ -296,19 +296,19 @@ export function ReconcileScreen() {
           Reconciliation complete
         </Text>
         <View style={{ gap: 10, marginBottom: 24 }}>
-          <MetaRow
+          <DetailRow
             label="Account"
             value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : "—"}
           />
-          <MetaRow
+          <DetailRow
             label="Statement ending"
             value={formatReconcileMoney(completed.bank_current_balance, selectedAccount?.currency)}
           />
-          <MetaRow
+          <DetailRow
             label="Difference"
             value={formatReconcileMoney(completed.difference, selectedAccount?.currency)}
           />
-          <MetaRow
+          <DetailRow
             label="Reconciled through"
             value={formatStatementDate(completed.period_end_date)}
           />
@@ -430,14 +430,14 @@ export function ReconcileScreen() {
             }}
             accessibilityRole="summary"
           >
-            <MetaRow
+            <DetailRow
               label="Statement ending balance"
               value={formatReconcileMoney(
                 previewQuery.data?.bank_current_balance ?? bankBalanceInput,
                 selectedAccount?.currency
               )}
             />
-            <MetaRow
+            <DetailRow
               label="Cleared balance"
               value={
                 previewQuery.isFetching && !previewQuery.data
@@ -448,7 +448,7 @@ export function ReconcileScreen() {
                     )
               }
             />
-            <MetaRow
+            <DetailRow
               label="Difference"
               value={
                 previewQuery.isFetching && !previewQuery.data
@@ -695,16 +695,6 @@ export function ReconcileScreen() {
         }}
       />
     </Screen>
-  );
-}
-
-function MetaRow({ label, value }: { label: string; value: string }) {
-  const theme = useTheme();
-  return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-      <Text style={{ color: theme.colors.textSecondary, flexShrink: 1 }}>{label}</Text>
-      <Text style={{ color: theme.colors.text, fontWeight: "600" }}>{value}</Text>
-    </View>
   );
 }
 

@@ -266,6 +266,23 @@ def recompute_future_timeline_running_balances(
         r["running_balance"] = running[aid]
 
 
+def _timeline_row_balance_after(row: dict, *, running: Decimal) -> tuple[Decimal, Decimal]:
+    """
+    Post-row balance for forecast/risk walks.
+
+    When ``running_balance`` is present (canonical timeline), it is authoritative —
+    the same value Transactions exposes as ``balance_after``. Otherwise fall back to
+    ``running + amount`` for legacy rows without precomputed balances.
+    """
+    rb = row.get("running_balance")
+    if rb is not None:
+        bal = _row_decimal(rb)
+        return bal, bal
+    amt = row["amount"] if isinstance(row["amount"], Decimal) else Decimal(str(row["amount"]))
+    running = running + amt
+    return running, running
+
+
 def forecast_lowest_balance_from_rows(
     rows: list[dict],
     *,
@@ -277,8 +294,8 @@ def forecast_lowest_balance_from_rows(
     """
     Lowest intra-day balance from today through end_date for the given accounts.
 
-    Same walk as build_timeline_calendar and the Transactions ledger: opening at end of
-    yesterday, then apply today+ rows in ledger display order (superseded planned skipped).
+    Uses canonical ``running_balance`` on each row when present (same as Transactions
+    ``balance_after``). Superseded planned rows are skipped.
 
     Pass ``opening`` to skip per-account balance queries (dashboard timeline reuse).
     """
@@ -325,13 +342,8 @@ def forecast_lowest_balance_from_rows(
             aid = row.get("account_id")
             if aid not in account_ids:
                 continue
-            amt = (
-                row["amount"]
-                if isinstance(row["amount"], Decimal)
-                else Decimal(str(row["amount"]))
-            )
-            running[aid] = running.get(aid, opening.get(aid, Decimal("0"))) + amt
-            bal = running[aid]
+            prev = running.get(aid, opening.get(aid, Decimal("0")))
+            bal, running[aid] = _timeline_row_balance_after(row, running=prev)
             if day_lowest is None or bal < day_lowest:
                 day_lowest = bal
                 day_lowest_aid = aid
@@ -421,9 +433,9 @@ def forecast_account_balance_metrics(
     """
     Ledger-aligned balance projection for one account (matches calendar / Transactions).
 
-    When timeline rows include ``running_balance``, opening is derived from those rows
-    so overdue pending already in the timeline are not dropped. Otherwise opens from
-    ``ledger_today_balance_before_pending`` (cleared balance before pending).
+    Consumes canonical timeline ``running_balance`` per row — the same field Transactions
+    renders as ``balance_after``. Does not rebuild balances via ``running += amount`` when
+    precomputed balances exist. Empty days carry forward the prior end-of-day balance.
     """
     timeline_opening = timeline_opening_balance_for_account(rows, account_id, today)
     if timeline_opening is not None:
@@ -461,21 +473,16 @@ def forecast_account_balance_metrics(
         day_rows = sorted(by_date.get(d, ()), key=timeline_row_process_order)
         if day_rows:
             for row in day_rows:
-                amt = (
-                    row["amount"]
-                    if isinstance(row["amount"], Decimal)
-                    else Decimal(str(row["amount"]))
-                )
-                running += amt
-                if running < lowest:
-                    lowest = running
+                bal, running = _timeline_row_balance_after(row, running=running)
+                if bal < lowest:
+                    lowest = bal
                     lowest_date = d
-                if first_negative_date is None and running < Decimal("0"):
+                if first_negative_date is None and bal < Decimal("0"):
                     first_negative_date = d
-                    first_negative_balance = running
-                if first_below_buffer_date is None and running < minimum_buffer:
+                    first_negative_balance = bal
+                if first_below_buffer_date is None and bal < minimum_buffer:
                     first_below_buffer_date = d
-                    first_below_buffer_balance = running
+                    first_below_buffer_balance = bal
         else:
             if running < lowest:
                 lowest = running

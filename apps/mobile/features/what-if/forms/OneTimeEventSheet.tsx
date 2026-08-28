@@ -5,9 +5,7 @@ import { formatAccountOptionLabel } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
-import { DatePickerField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
-import { SelectRow } from "../components/SelectRow";
+import { DatePickerField, OptionsPickerSheet, SelectField, type PickerOption } from "@/components/forms";
 import type { EventPreset } from "../types";
 import {
   createScenarioOneTimeEvent,
@@ -156,13 +154,13 @@ export function OneTimeEventSheet({
           <DatePickerField label="Date" value={date} onChange={setDate} />
           {isTransfer ? (
             <>
-              <SelectRow
+              <SelectField
                 label="From"
                 value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
                 placeholder="Select account"
                 onPress={() => setPicker("account")}
               />
-              <SelectRow
+              <SelectField
                 label="To"
                 value={selectedTo ? formatAccountOptionLabel(selectedTo) : null}
                 placeholder="Select account"
@@ -170,7 +168,7 @@ export function OneTimeEventSheet({
               />
             </>
           ) : (
-            <SelectRow
+            <SelectField
               label="Account"
               value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
               placeholder="Select account"
@@ -180,7 +178,7 @@ export function OneTimeEventSheet({
           <TextField label="Description" value={description} onChangeText={setDescription} />
           <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
           {!isTransfer ? (
-            <SelectRow
+            <SelectField
               label="Category"
               value={selectedCategory?.name ?? null}
               placeholder="Select category"

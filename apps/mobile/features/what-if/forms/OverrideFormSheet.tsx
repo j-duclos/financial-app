@@ -4,9 +4,13 @@ import type { Account, Category, RecurringRule, ScenarioRuleOverride } from "@bu
 import { formatAccountOptionLabel, formatCurrency } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { DatePickerField, EndsDateField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
-import { SelectRow } from "../components/SelectRow";
+import {
+  DatePickerField,
+  EndsDateField,
+  OptionsPickerSheet,
+  SelectField,
+  type PickerOption,
+} from "@/components/forms";
 import type { OverrideContext } from "../types";
 import { createScenarioOverride, updateScenarioOverride } from "@budget-app/api-client";
 
@@ -126,7 +130,7 @@ export function OverrideFormSheet({
             Overrides the simulation only — your real recurring rule stays unchanged.
           </Text>
           {mode === "add" ? (
-            <SelectRow
+            <SelectField
               label={context === "paycheck" ? "Income source" : "Bill or expense"}
               value={
                 selectedRule
@@ -147,7 +151,7 @@ export function OverrideFormSheet({
             onChangeText={setAmount}
             keyboardType="decimal-pad"
           />
-          <SelectRow label="Status" value={statusLabel} onPress={() => setPicker("status")} />
+          <SelectField label="Status" value={statusLabel} onPress={() => setPicker("status")} />
           <DatePickerField
             label="Starts"
             value={startDate}
@@ -155,13 +159,13 @@ export function OverrideFormSheet({
             onChange={setStartDate}
           />
           <EndsDateField value={endDate} onChange={setEndDate} />
-          <SelectRow
+          <SelectField
             label="Account"
             value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
             placeholder="No change"
             onPress={() => setPicker("account")}
           />
-          <SelectRow
+          <SelectField
             label="Category"
             value={selectedCategory?.name ?? null}
             placeholder="No change"

@@ -16,9 +16,9 @@ describe("RecurringFormScreen structure", () => {
     expect(formSrc).toContain("OptionsPickerSheet");
     expect(formSrc).toContain("useAccountOptions");
     expect(formSrc).toContain("useCategoryOptions");
-    expect(formSrc).toContain("SelectRow");
+    expect(formSrc).toContain("SelectField");
     expect(formSrc).toContain('label="Category"');
-    // Category/Account use SelectRow + OptionsPickerSheet, not ChipRow walls
+    // Category/Account use SelectField + OptionsPickerSheet, not ChipRow walls
     expect(formSrc).toContain("setCategoryPickerOpen");
     expect(formSrc).toContain('setAccountPicker("from")');
     expect(formSrc).not.toMatch(/accounts\.map\(\(a\) => \(\{ value: String\(a\.id\)/);

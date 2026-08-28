@@ -345,7 +345,9 @@ def _cash_health(
     first_below_buffer_date = _forecast_date(forecast.get("first_below_buffer_date"))
     lowest_date = _forecast_date(forecast.get("lowest_projected_balance_date"))
 
-    actual_balance_negative = lowest < Decimal("0")
+    actual_balance_negative = first_negative_date is not None and _decimal(
+        forecast.get("first_negative_balance") or 0
+    ) < Decimal("0")
     spending_cushion_negative = (
         available < Decimal("0")
         and lowest >= Decimal("0")
@@ -362,6 +364,9 @@ def _cash_health(
     details["bucket_allocation"] = forecast.get("bucket_allocation")
     details["actual_balance_negative"] = actual_balance_negative
     details["spending_cushion_negative"] = spending_cushion_negative
+    cash_risk = forecast.get("cash_risk")
+    if cash_risk:
+        details["cash_risk"] = cash_risk
 
     if actual_balance_negative:
         shortfall_type = "actual_balance"
@@ -762,19 +767,17 @@ def _recommended_action(
     shortfall_type = details.get("shortfall_type")
     risk_date = forecast.get("risk_date") if forecast else None
     if shortfall_type == "actual_balance" and forecast:
-        shortfall = cash_account_risk_shortfall(forecast)
+        shortfall = cash_account_risk_shortfall(forecast, shortfall_type="actual_balance")
         if shortfall and shortfall > 0:
             date_part = f" before {risk_date}" if risk_date else ""
             return (
                 f"Add ${shortfall.quantize(Decimal('0.01'))} before negative balance{date_part}."
             )
     elif shortfall_type == "buffer" and forecast:
-        lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-        buffer = _decimal(forecast.get("minimum_buffer") or account.minimum_buffer or 0)
-        if lowest < buffer:
-            gap = (buffer - lowest).quantize(Decimal("0.01"))
+        shortfall = cash_account_risk_shortfall(forecast, shortfall_type="buffer")
+        if shortfall and shortfall > 0:
             date_part = f" before {risk_date}" if risk_date else ""
-            return f"Add ${gap} to restore buffer{date_part}."
+            return f"Add ${shortfall} to restore buffer{date_part}."
     elif details.get("spending_cushion_negative") and forecast:
         available = _decimal(forecast.get("available_to_spend") or 0)
         if available < 0:

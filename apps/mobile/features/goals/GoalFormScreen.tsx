@@ -21,7 +21,6 @@ import {
   getBucketsOverview,
   listAccounts,
   listRuleAllocations,
-  listRules,
   updateBucket,
 } from "@budget-app/api-client";
 import {
@@ -32,11 +31,15 @@ import {
   SkeletonBlock,
   TextField,
 } from "@/components/ui";
+import {
+  DatePickerField,
+  OptionsPickerSheet,
+  SelectField,
+  type PickerOption,
+} from "@/components/forms";
 import { useTheme } from "@/theme";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
-import { describeApiError } from "@/services/api";
-import { DatePickerField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
+import { useRules } from "@/hooks/useRules";
 import {
   buildBucketFundingPayload,
   buildGoalBucketPayload,
@@ -46,6 +49,7 @@ import {
 import { goalDetailPath, goalsListPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalFundingQueries, invalidateGoalMetadataQueries } from "./queryKeys";
 import { invalidateForecastQueries } from "@/lib/financialQueryRefresh";
+import { describeApiError } from "@/services/api";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
 
@@ -79,56 +83,6 @@ function accountUsedByAnotherGoal(
     if (linked === accountId) return g.name;
   }
   return null;
-}
-
-function SelectRow({
-  label,
-  value,
-  placeholder = "Select",
-  onPress,
-  error,
-}: {
-  label: string;
-  value: string | null;
-  placeholder?: string;
-  onPress: () => void;
-  error?: string;
-}) {
-  const theme = useTheme();
-  return (
-    <View>
-      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
-        {label}
-      </Text>
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${value ?? placeholder}`}
-        style={{
-          minHeight: theme.touchTarget,
-          borderWidth: 1,
-          borderColor: error ? theme.colors.critical : theme.colors.border,
-          borderRadius: theme.radius.md,
-          paddingHorizontal: 12,
-          justifyContent: "center",
-          backgroundColor: theme.colors.surfaceMuted,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <Text
-          style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }}
-          numberOfLines={1}
-        >
-          {value ?? placeholder}
-        </Text>
-        <Text style={{ color: theme.colors.textMuted }}>›</Text>
-      </Pressable>
-      {error ? (
-        <Text style={{ color: theme.colors.critical, fontSize: 12, marginTop: 4 }}>{error}</Text>
-      ) : null}
-    </View>
-  );
 }
 
 function SwitchRow({
@@ -231,9 +185,7 @@ export function GoalFormScreen() {
     enabled: householdId != null,
   });
 
-  const rulesQuery = useQuery({
-    queryKey: goalsQueryKeys.formRules(),
-    queryFn: () => listRules(),
+  const rulesQuery = useRules({
     enabled: householdId != null && !isDebtGoalType(form.goal_type),
   });
 
@@ -250,7 +202,7 @@ export function GoalFormScreen() {
 
   const accounts = accountsQuery.data?.results ?? [];
   const existingGoals = overviewQuery.data?.goals ?? [];
-  const incomeRules = (rulesQuery.data?.results ?? []).filter(
+  const incomeRules = rulesQuery.rules.filter(
     (r) => r.active !== false && r.direction === "INCOME"
   );
   const isDebt = isDebtGoalType(form.goal_type);
@@ -463,7 +415,7 @@ export function GoalFormScreen() {
             options={GOAL_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           />
         ) : (
-          <SelectRow
+          <SelectField
             label="Goal type"
             value={goalTypeLabel}
             onPress={() => setPicker("type")}
@@ -497,7 +449,7 @@ export function GoalFormScreen() {
           <Text style={{ color: theme.colors.critical, fontSize: 12 }}>{errors.target_date}</Text>
         ) : null}
 
-        <SelectRow
+        <SelectField
           label="Linked account"
           value={linkedAccountLabel}
           placeholder="Select account"
@@ -526,7 +478,7 @@ export function GoalFormScreen() {
 
         {advancedOpen ? (
           <View style={{ gap: theme.spacing.md }}>
-            <SelectRow
+            <SelectField
               label="Priority"
               value={priorityLabel}
               onPress={() => setPicker("priority")}
@@ -544,7 +496,7 @@ export function GoalFormScreen() {
                 />
                 {form.funding.enabled ? (
                   <>
-                    <SelectRow
+                    <SelectField
                       label="Paycheck rule"
                       value={paycheckLabel}
                       placeholder="Select paycheck"

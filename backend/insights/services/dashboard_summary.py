@@ -256,14 +256,15 @@ def _attention_amount(
     if forecast and forecast.get("supports_available_to_spend"):
         shortfall_type = details.get("shortfall_type")
         if shortfall_type == "actual_balance":
-            shortfall = cash_account_risk_shortfall(forecast)
+            shortfall = cash_account_risk_shortfall(
+                forecast, shortfall_type="actual_balance"
+            )
             if shortfall is not None and shortfall > 0:
                 return shortfall
         elif shortfall_type == "buffer":
-            lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-            buffer = _decimal(forecast.get("minimum_buffer") or 0)
-            if lowest < buffer:
-                return (buffer - lowest).quantize(Decimal("0.01"))
+            shortfall = cash_account_risk_shortfall(forecast, shortfall_type="buffer")
+            if shortfall is not None and shortfall > 0:
+                return shortfall
         elif details.get("spending_cushion_negative"):
             available = _decimal(forecast.get("available_to_spend") or 0)
             if available < 0:

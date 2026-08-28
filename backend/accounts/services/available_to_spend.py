@@ -318,6 +318,36 @@ def _calculate_account_forecast_summary(
         end_of_day.get(risk_date) if risk_date is not None else None
     )
     reason = _risk_reason(status, lowest, minimum_buffer, risk_date)
+    forecast_context = {
+        "supports_available_to_spend": True,
+        "minimum_buffer": str(minimum_buffer),
+        "lowest_projected_balance": str(lowest),
+        "lowest_projected_balance_date": lowest_date.isoformat(),
+        "first_negative_date": (
+            first_negative_date.isoformat() if first_negative_date is not None else None
+        ),
+        "first_negative_balance": (
+            str(first_negative_balance) if first_negative_balance is not None else None
+        ),
+        "first_below_buffer_date": (
+            first_below_buffer_date.isoformat()
+            if first_below_buffer_date is not None
+            else None
+        ),
+        "first_below_buffer_balance": (
+            str(first_below_buffer_balance)
+            if first_below_buffer_balance is not None
+            else None
+        ),
+        "available_to_spend": str(available),
+        "bucket_allocation": str(bucket_allocation),
+        "risk_date": risk_date.isoformat() if risk_date is not None else None,
+        "balance_on_risk_date": (
+            str(balance_on_risk_date) if balance_on_risk_date is not None else None
+        ),
+    }
+    cash_risk = build_cash_risk_context(forecast_context)
+    risk_type = cash_risk.get("risk_type") if cash_risk else None
 
     return {
         "account_id": account.id,
@@ -355,53 +385,164 @@ def _calculate_account_forecast_summary(
         ),
         "available_to_spend": str(available),
         "risk_status": status,
+        "risk_type": risk_type,
+        "cash_risk": cash_risk,
+        "actual_balance_shortfall": (
+            str(cash_account_risk_shortfall(
+                {
+                    "supports_available_to_spend": True,
+                    "first_negative_balance": (
+                        str(first_negative_balance)
+                        if first_negative_balance is not None
+                        else None
+                    ),
+                },
+                shortfall_type="actual_balance",
+            ))
+            if first_negative_balance is not None and first_negative_balance < 0
+            else None
+        ),
+        "buffer_shortfall": (
+            str(cash_account_risk_shortfall(
+                {
+                    "supports_available_to_spend": True,
+                    "minimum_buffer": str(minimum_buffer),
+                    "first_below_buffer_date": (
+                        first_below_buffer_date.isoformat()
+                        if first_below_buffer_date is not None
+                        else None
+                    ),
+                    "first_below_buffer_balance": (
+                        str(first_below_buffer_balance)
+                        if first_below_buffer_balance is not None
+                        else None
+                    ),
+                    "risk_date": risk_date.isoformat() if risk_date is not None else None,
+                    "balance_on_risk_date": (
+                        str(balance_on_risk_date)
+                        if balance_on_risk_date is not None
+                        else None
+                    ),
+                },
+                shortfall_type="buffer",
+            ))
+            if first_below_buffer_date is not None
+            and first_below_buffer_balance is not None
+            and first_below_buffer_balance < minimum_buffer
+            else None
+        ),
         "risk_date": risk_date.isoformat() if status != RISK_STATUS_HEALTHY else None,
         "risk_reason": reason,
     }
 
 
-def cash_account_risk_shortfall(forecast: dict[str, Any] | None) -> Decimal | None:
+def cash_account_risk_shortfall(
+    forecast: dict[str, Any] | None,
+    *,
+    shortfall_type: str | None = None,
+) -> Decimal | None:
     """
-    Dollars needed to cover projected balance on the risk date (not spending cushion).
+    Dollars needed to resolve a specific cash-risk type.
 
-    Uses the ledger-aligned balance on ``risk_date``. Never treats a negative
-    safe-to-spend / goal-reservation cushion as if the account balance itself
-    dropped that far.
+    ``shortfall_type`` must be explicit — never mix actual-balance and buffer semantics:
+
+    - ``actual_balance``: only when projected balance is below zero; amount is ``abs(balance)``.
+    - ``buffer``: when balance is below minimum_buffer but not necessarily negative.
+    - ``spending_cushion`` / ``reserved_savings``: gap from negative available_to_spend.
     """
     if not forecast or not forecast.get("supports_available_to_spend"):
         return None
+
+    st = shortfall_type or forecast.get("risk_type") or forecast.get("shortfall_type")
     buffer = _decimal(forecast.get("minimum_buffer") or 0)
-    risk_iso = (forecast.get("risk_date") or "")[:10]
-    bal_on_risk = forecast.get("balance_on_risk_date")
-    if risk_iso and bal_on_risk is not None:
-        bal = _decimal(bal_on_risk)
-        if bal < 0:
-            return abs(bal).quantize(Decimal("0.01"))
-        if bal < buffer:
-            return (buffer - bal).quantize(Decimal("0.01"))
+
+    if st == "actual_balance":
+        first_negative = forecast.get("first_negative_balance")
+        if first_negative is not None:
+            fn = _decimal(first_negative)
+            if fn < 0:
+                return abs(fn).quantize(Decimal("0.01"))
         return None
 
-    first_neg_date = (forecast.get("first_negative_date") or "")[:10]
-    first_negative = forecast.get("first_negative_balance")
-    if risk_iso and first_neg_date and risk_iso == first_neg_date and first_negative is not None:
-        fn = _decimal(first_negative)
+    if st == "buffer":
+        risk_iso = (
+            (forecast.get("first_below_buffer_date") or forecast.get("risk_date") or "")[:10]
+        )
+        bal_on_risk = forecast.get("balance_on_risk_date")
+        if risk_iso and bal_on_risk is not None:
+            bal = _decimal(bal_on_risk)
+            if bal < buffer:
+                return (buffer - bal).quantize(Decimal("0.01"))
+        below_buf_bal = forecast.get("first_below_buffer_balance")
+        if below_buf_bal is not None:
+            bb = _decimal(below_buf_bal)
+            if bb < buffer:
+                return (buffer - bb).quantize(Decimal("0.01"))
+        return None
+
+    if st in ("spending_cushion", "reserved_savings"):
+        available = _decimal(forecast.get("available_to_spend") or 0)
+        if available < 0:
+            return abs(available).quantize(Decimal("0.01"))
+        return None
+
+    return None
+
+
+def build_cash_risk_context(forecast: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Structured cash-risk tuple shared by Dashboard, health, and Action Center."""
+    if not forecast or not forecast.get("supports_available_to_spend"):
+        return None
+
+    buffer = _decimal(forecast.get("minimum_buffer") or 0)
+    first_neg_date = (forecast.get("first_negative_date") or "")[:10] or None
+    first_neg_bal = forecast.get("first_negative_balance")
+    if first_neg_date and first_neg_bal is not None:
+        fn = _decimal(first_neg_bal)
         if fn < 0:
-            return abs(fn).quantize(Decimal("0.01"))
+            return {
+                "risk_type": "actual_balance",
+                "date": first_neg_date,
+                "balance": str(fn.quantize(Decimal("0.01"))),
+                "amount_to_resolve": str(abs(fn).quantize(Decimal("0.01"))),
+            }
 
-    below_buf_date = (forecast.get("first_below_buffer_date") or "")[:10]
-    below_buf_bal = forecast.get("first_below_buffer_balance")
-    if risk_iso and below_buf_date and risk_iso == below_buf_date and below_buf_bal is not None:
-        bb = _decimal(below_buf_bal)
+    first_buf_date = (forecast.get("first_below_buffer_date") or "")[:10] or None
+    first_buf_bal = forecast.get("first_below_buffer_balance")
+    if first_buf_date and first_buf_bal is not None:
+        risk_iso = (forecast.get("risk_date") or first_buf_date)[:10]
+        bal_on_risk = forecast.get("balance_on_risk_date")
+        if bal_on_risk is not None and risk_iso == first_buf_date:
+            bb = _decimal(bal_on_risk)
+        else:
+            bb = _decimal(first_buf_bal)
         if bb < buffer:
-            return (buffer - bb).quantize(Decimal("0.01"))
+            return {
+                "risk_type": "buffer",
+                "date": first_buf_date,
+                "balance": str(bb.quantize(Decimal("0.01"))),
+                "buffer": str(buffer.quantize(Decimal("0.01"))),
+                "amount_to_resolve": str((buffer - bb).quantize(Decimal("0.01"))),
+            }
 
-    lowest_date = (forecast.get("lowest_projected_balance_date") or "")[:10]
+    available = _decimal(forecast.get("available_to_spend") or 0)
+    bucket = _decimal(forecast.get("bucket_allocation") or 0)
     lowest = _decimal(forecast.get("lowest_projected_balance") or 0)
-    if risk_iso and lowest_date and risk_iso == lowest_date:
-        if lowest < 0:
-            return abs(lowest).quantize(Decimal("0.01"))
-        if lowest < buffer:
-            return (buffer - lowest).quantize(Decimal("0.01"))
+    if available < 0 and lowest >= Decimal("0") and lowest >= buffer:
+        risk_type = "reserved_savings" if bucket > 0 else "spending_cushion"
+        risk_date = (
+            (forecast.get("first_below_buffer_date") or forecast.get("lowest_projected_balance_date") or "")[
+                :10
+            ]
+            or None
+        )
+        return {
+            "risk_type": risk_type,
+            "date": risk_date,
+            "balance": str(lowest.quantize(Decimal("0.01"))),
+            "amount_to_resolve": str(abs(available).quantize(Decimal("0.01"))),
+        }
+
     return None
 
 

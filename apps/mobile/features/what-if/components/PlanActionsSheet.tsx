@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import React from "react";
+import { View } from "react-native";
 import { BottomSheet, Button, TextField } from "@/components/ui";
+import { SheetActionRow } from "@/components/forms";
 import { useTheme } from "@/theme";
 
 export type PlanActionId = "duplicate" | "delete";
@@ -14,41 +15,6 @@ type Props = {
   renaming?: boolean;
 };
 
-function ActionRow({
-  label,
-  onPress,
-  destructive,
-}: {
-  label: string;
-  onPress: () => void;
-  destructive?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.7 : 1,
-        paddingVertical: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border,
-      })}
-    >
-      <Text
-        style={{
-          color: destructive ? theme.colors.critical : theme.colors.text,
-          fontSize: 16,
-          fontWeight: destructive ? "600" : "500",
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 export function PlanActionsSheet({
   visible,
   planName,
@@ -58,8 +24,8 @@ export function PlanActionsSheet({
   renaming,
 }: Props) {
   const theme = useTheme();
-  const [renamingOpen, setRenamingOpen] = useState(false);
-  const [draftName, setDraftName] = useState(planName);
+  const [renamingOpen, setRenamingOpen] = React.useState(false);
+  const [draftName, setDraftName] = React.useState(planName);
 
   if (renamingOpen) {
     return (
@@ -98,15 +64,15 @@ export function PlanActionsSheet({
       }}
     >
       <View>
-        <ActionRow
+        <SheetActionRow
           label="Rename plan"
           onPress={() => {
             setDraftName(planName);
             setRenamingOpen(true);
           }}
         />
-        <ActionRow label="Duplicate plan" onPress={() => onAction("duplicate")} />
-        <ActionRow label="Delete plan" destructive onPress={() => onAction("delete")} />
+        <SheetActionRow label="Duplicate plan" onPress={() => onAction("duplicate")} />
+        <SheetActionRow label="Delete plan" destructive onPress={() => onAction("delete")} />
       </View>
     </BottomSheet>
   );

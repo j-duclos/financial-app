@@ -3,9 +3,8 @@ import { ScrollView, Text, View } from "react-native";
 import type { ScenarioTemplateKey } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { OptionsPickerSheet } from "@/features/recurring/OptionsPickerSheet";
+import { OptionsPickerSheet, SelectField } from "@/components/forms";
 import { ChipRow } from "../components/ChipRow";
-import { SelectRow } from "../components/SelectRow";
 import { SCENARIO_TEMPLATES, templateByKey } from "../scenarioTemplates";
 
 type Props = {
@@ -100,7 +99,7 @@ export function CreateScenarioSheet({
           </Text>
 
           {showHouseholdPicker ? (
-            <SelectRow
+            <SelectField
               label="Household"
               value={selectedHousehold?.name ?? null}
               placeholder="Select household"
@@ -108,7 +107,7 @@ export function CreateScenarioSheet({
             />
           ) : null}
 
-          <SelectRow
+          <SelectField
             label="Template"
             value={selectedTemplate.label}
             onPress={() => setTemplatePickerOpen(true)}

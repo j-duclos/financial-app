@@ -58,7 +58,9 @@ export function DatePickerField({
 
   return (
     <View>
-      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>{label}</Text>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
+        {label}
+      </Text>
       <Pressable
         onPress={openPicker}
         accessibilityRole="button"
@@ -75,7 +77,9 @@ export function DatePickerField({
           alignItems: "center",
         }}
       >
-        <Text style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }}>{display}</Text>
+        <Text style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }}>
+          {display}
+        </Text>
         <Text style={{ color: theme.colors.textMuted }}>›</Text>
       </Pressable>
 

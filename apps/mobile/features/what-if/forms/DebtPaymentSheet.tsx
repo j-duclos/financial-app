@@ -5,9 +5,7 @@ import { formatAccountOptionLabel, formatCurrency } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
-import { DatePickerField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
-import { SelectRow } from "../components/SelectRow";
+import { DatePickerField, OptionsPickerSheet, SelectField, type PickerOption } from "@/components/forms";
 import { ChipRow } from "../components/ChipRow";
 import {
   DEBT_OVERRIDE_NOTE,
@@ -182,13 +180,13 @@ export function DebtPaymentSheet({
               onSelect={(v) => setPaymentType(v as "one_time" | "monthly_increase")}
             />
           ) : null}
-          <SelectRow
+          <SelectField
             label="Pay from"
             value={sourceAccount ? formatAccountOptionLabel(sourceAccount) : null}
             placeholder="Select account"
             onPress={() => setPicker("source")}
           />
-          <SelectRow
+          <SelectField
             label="Debt account"
             value={
               debtAccount
@@ -199,7 +197,7 @@ export function DebtPaymentSheet({
             onPress={() => setPicker("debt")}
           />
           {paymentType === "monthly_increase" && debtRules.length > 0 ? (
-            <SelectRow
+            <SelectField
               label="Recurring payment"
               value={
                 selectedRule

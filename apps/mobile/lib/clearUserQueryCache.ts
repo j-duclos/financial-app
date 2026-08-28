@@ -34,7 +34,6 @@ export function clearUserQueryCache(queryClient: QueryClient): void {
           root === "transactions" ||
           root === "spending-target" ||
           root === "spending-target-edit" ||
-          root === "recurring-rules" ||
           root === "rules")
       );
     },

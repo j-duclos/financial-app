@@ -22,7 +22,7 @@ import {
 import { useTheme } from "@/theme";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { describeApiError } from "@/services/api";
-import { OptionsPickerSheet } from "@/features/recurring/OptionsPickerSheet";
+import { OptionsPickerSheet, SelectField } from "@/components/forms";
 import {
   categoryTypeLabel,
   isDefaultCategory,
@@ -91,51 +91,6 @@ function TypeSelector({
           Type is set when the category is created and cannot be changed here.
         </Text>
       ) : null}
-    </View>
-  );
-}
-
-function SelectRow({
-  label,
-  value,
-  placeholder = "None",
-  onPress,
-}: {
-  label: string;
-  value: string | null;
-  placeholder?: string;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <View style={{ marginBottom: theme.spacing.md }}>
-      <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>
-        {label}
-      </Text>
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${value ?? placeholder}`}
-        style={{
-          minHeight: theme.touchTarget,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: theme.radius.md,
-          paddingHorizontal: 12,
-          justifyContent: "center",
-          backgroundColor: theme.colors.surfaceMuted,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <Text
-          style={{ flex: 1, color: value ? theme.colors.text : theme.colors.textMuted }}
-          numberOfLines={1}
-        >
-          {value ?? placeholder}
-        </Text>
-        <Text style={{ color: theme.colors.textMuted }}>›</Text>
-      </Pressable>
     </View>
   );
 }
@@ -298,11 +253,12 @@ export function CategoryFormScreen() {
       />
 
       {parents.length > 0 || parentId != null ? (
-        <SelectRow
+        <SelectField
           label="Parent (optional)"
           value={parentName}
           placeholder="None"
           onPress={() => setParentPickerOpen(true)}
+          style={{ marginBottom: theme.spacing.md }}
         />
       ) : null}
 

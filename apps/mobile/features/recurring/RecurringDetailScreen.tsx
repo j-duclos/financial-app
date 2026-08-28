@@ -21,6 +21,7 @@ import {
   SectionHeader,
   SkeletonBlock,
   StatusChip,
+  DetailRow,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
@@ -229,15 +230,5 @@ export function RecurringDetailScreen() {
         onCancel={() => setConfirmDelete(false)}
       />
     </Screen>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  const theme = useTheme();
-  return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, gap: 12 }}>
-      <Text style={{ color: theme.colors.textMuted, fontSize: 14 }}>{label}</Text>
-      <Text style={{ color: theme.colors.text, fontWeight: "600", flex: 1, textAlign: "right" }}>{value}</Text>
-    </View>
   );
 }

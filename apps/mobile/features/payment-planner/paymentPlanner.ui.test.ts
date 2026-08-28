@@ -17,7 +17,7 @@ const navigation = readFileSync(join(dir, "navigation.ts"), "utf8");
 describe("Payment Planner mobile UI structure", () => {
   it("uses strategy/mode selectors instead of permanent chip walls", () => {
     expect(strategyPanel).toContain("OptionsPickerSheet");
-    expect(strategyPanel).toContain("SelectRow");
+    expect(strategyPanel).toContain("SelectField");
     expect(strategyPanel).not.toContain("borderRadius: 999");
     expect(screen).not.toMatch(/ChipRow/);
   });

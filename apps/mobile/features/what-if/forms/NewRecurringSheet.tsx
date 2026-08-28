@@ -5,9 +5,13 @@ import { formatAccountOptionLabel } from "@budget-app/shared";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
-import { DatePickerField, EndsDateField } from "@/features/recurring/DatePickerField";
-import { OptionsPickerSheet, type PickerOption } from "@/features/recurring/OptionsPickerSheet";
-import { SelectRow } from "../components/SelectRow";
+import {
+  DatePickerField,
+  EndsDateField,
+  OptionsPickerSheet,
+  SelectField,
+  type PickerOption,
+} from "@/components/forms";
 import type { NewRecurringDirection } from "../types";
 import { createScenarioAddedRecurring } from "@budget-app/api-client";
 
@@ -130,19 +134,19 @@ export function NewRecurringSheet({
           </Text>
           <TextField label="Name" value={name} onChangeText={setName} />
           <TextField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-          <SelectRow
+          <SelectField
             label={isIncome ? "Deposit account" : "Paid from"}
             value={selectedAccount ? formatAccountOptionLabel(selectedAccount) : null}
             placeholder="Select account"
             onPress={() => setPicker("account")}
           />
-          <SelectRow
+          <SelectField
             label="Category"
             value={selectedCategory?.name ?? null}
             placeholder="Select category"
             onPress={() => setPicker("category")}
           />
-          <SelectRow
+          <SelectField
             label="Frequency"
             value={frequencyLabel}
             onPress={() => setPicker("frequency")}
