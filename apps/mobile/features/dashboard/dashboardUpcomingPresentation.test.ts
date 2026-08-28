@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { DashboardUpcomingGroup, DashboardUpcomingTransaction } from "@budget-app/shared";
 import { buildUpcomingDashboardPreview, upcomingTransactionNavTarget } from "@budget-app/shared";
+import { upcomingMoneyFlowRowDestination } from "./navigation";
 
 const upcomingSectionSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "DashboardDetailsSections.tsx"),
@@ -85,9 +86,7 @@ describe("Dashboard upcoming presentation", () => {
   });
 
   it("shows amount on the primary row and account with balance on secondary metadata", () => {
-    expect(upcomingRowSource).toMatch(/Balance after/);
-    expect(upcomingRowSource).toMatch(/metaParts\.join\(" · "\)/);
-    expect(upcomingRowSource).toMatch(/account_name/);
+    expect(upcomingRowSource).toMatch(/upcomingPreviewRowMetaLine/);
     expect(upcomingRowSource).toMatch(/flexShrink: 0/);
   });
 
@@ -96,16 +95,36 @@ describe("Dashboard upcoming presentation", () => {
     expect(upcomingRowSource).toMatch(/backgroundColor: theme\.colors\.border/);
   });
 
-  it("retains navigation to transaction detail or calendar date", () => {
-    expect(upcomingSectionSource).toMatch(/upcomingTransactionNavTarget/);
-    expect(upcomingTransactionNavTarget(txn({ id: "99" }))).toEqual({
-      type: "transaction",
-      transactionId: 99,
+  it("navigates money flow rows to the account ledger with event focus", () => {
+    expect(upcomingSectionSource).toMatch(/upcomingMoneyFlowRowDestination/);
+    expect(upcomingSectionSource).not.toMatch(/calendarDatePath\(target\.date\)/);
+    expect(upcomingTransactionNavTarget(txn({ id: "99", transaction_id: 99 }))).toEqual({
+      type: "ledger",
+      accountId: 1,
+      accountName: "Main",
+      focusDate: "2026-08-28",
+      focusTransactionId: 99,
+      focusRuleId: null,
+      focusEventId: "99",
     });
-    expect(upcomingTransactionNavTarget(txn({ id: "xfer-1-2" }))).toEqual({
-      type: "calendar",
-      date: "2026-08-28",
-    });
+    expect(
+      upcomingMoneyFlowRowDestination(
+        txn({
+          id: "xfer-out-in",
+          account_id: 1,
+          transaction_id: 501,
+          is_transfer: true,
+          is_internal_transfer: true,
+          transfer_from_account_name: "Main",
+          transfer_to_account_name: "Savings",
+        })
+      ).params.focusTransactionId
+    ).toBe("501");
+  });
+
+  it("keeps Calendar as the section header action only", () => {
+    expect(upcomingSectionSource).toMatch(/actionLabel="Calendar"/);
+    expect(upcomingSectionSource).toMatch(/\(app\)\/\(tabs\)\/calendar/);
   });
 
   it("provides combined accessibility labels per row", () => {

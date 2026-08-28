@@ -43,13 +43,16 @@ import { filtersFromSearchParams } from "./queryKeys";
 import { useTransactionsData } from "./useTransactionsData";
 import { TransactionListItem } from "./TransactionListItem";
 import { TransactionFiltersSheet } from "./TransactionFiltersSheet";
+import { TransactionSearchSheet } from "./TransactionSearchSheet";
 import { AccountSelectorSheet } from "./AccountSelectorSheet";
 import { AccountLedgerHeader } from "./AccountLedgerHeader";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
   estimateLedgerOffset,
+  findLedgerFocusIndex,
   getLedgerItemLayout,
-  ledgerAnchorScrollIndex,
+  ledgerOpenScrollIndex,
+  type LedgerFocusParams,
 } from "./ledgerScrollAnchor";
 import { markAttentionNavigation } from "@/features/dashboard/attentionNavigationTiming";
 import {
@@ -81,8 +84,30 @@ export function TransactionsScreen() {
     date?: string;
     dateFrom?: string;
     dateTo?: string;
+    focus?: string;
+    focusDate?: string;
+    focusTransactionId?: string;
+    focusRuleId?: string;
+    focusEventId?: string;
   }>();
   const routeAccountId = parseRouteAccountId(params.account);
+  const ledgerFocus = useMemo((): LedgerFocusParams | null => {
+    if (params.focus !== "forecast-risk" && params.focus !== "ledger-event") return null;
+    const txnId = Number(params.focusTransactionId);
+    const ruleId = Number(params.focusRuleId);
+    return {
+      focus: params.focus,
+      focusDate: params.focusDate ?? null,
+      focusTransactionId:
+        Number.isInteger(txnId) && txnId > 0 ? txnId : null,
+      focusRuleId: Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null,
+    };
+  }, [
+    params.focus,
+    params.focusDate,
+    params.focusTransactionId,
+    params.focusRuleId,
+  ]);
   const routeFilters = filtersFromSearchParams({
     account: params.account,
     category: params.category,
@@ -97,6 +122,8 @@ export function TransactionsScreen() {
     accountId: routeAccountId,
   }));
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchDraft, setSearchDraft] = useState("");
   const [accountSelectorOpen, setAccountSelectorOpen] = useState(false);
   const [recentRangeOpen, setRecentRangeOpen] = useState(false);
   const [upcomingRangeOpen, setUpcomingRangeOpen] = useState(false);
@@ -186,13 +213,29 @@ export function TransactionsScreen() {
     !isTimelineLoading &&
     !listIsOnlyPlaceholders(listRows) &&
     listHasActivityRows(listRows);
-  const ledgerAnchorIndex = useMemo(() => {
-    if (!ledgerDataReady) return null;
-    return ledgerAnchorScrollIndex(listRows);
-  }, [listRows, ledgerDataReady]);
-
   /** Remount once data is ready so initialScrollIndex applies (scrollToIndex is unreliable without prior layout). */
   const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}`;
+  const ledgerAnchorIndex = useMemo(() => {
+    if (!ledgerDataReady) return null;
+    return ledgerOpenScrollIndex(listRows, ledgerFocus);
+  }, [listRows, ledgerDataReady, ledgerFocus]);
+
+  const focusHighlightIndex = useMemo(() => {
+    if (!ledgerDataReady || ledgerFocus == null) return null;
+    return findLedgerFocusIndex(listRows, ledgerFocus);
+  }, [listRows, ledgerDataReady, ledgerFocus]);
+
+  const [focusHighlightActive, setFocusHighlightActive] = useState(false);
+  useEffect(() => {
+    if (focusHighlightIndex == null || focusHighlightIndex < 0) {
+      setFocusHighlightActive(false);
+      return;
+    }
+    setFocusHighlightActive(true);
+    const timer = setTimeout(() => setFocusHighlightActive(false), 2400);
+    return () => clearTimeout(timer);
+  }, [listMountKey, focusHighlightIndex]);
+
   const initialScrollIndex = useMemo(() => {
     if (!ledgerDataReady || ledgerAnchorIndex == null) return 0;
     return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
@@ -233,15 +276,16 @@ export function TransactionsScreen() {
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: TransactionListRow }) => (
+    ({ item, index }: { item: TransactionListRow; index: number }) => (
       <TransactionListItem
         item={item}
         onPressTransaction={onPressTransaction}
         onPressRecentRange={() => setRecentRangeOpen(true)}
         onPressUpcomingRange={() => setUpcomingRangeOpen(true)}
+        focusHighlight={focusHighlightActive && index === focusHighlightIndex}
       />
     ),
-    [onPressTransaction]
+    [onPressTransaction, focusHighlightActive, focusHighlightIndex]
   );
 
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
@@ -331,21 +375,38 @@ export function TransactionsScreen() {
               accessibilityLabel={
                 filters.search.trim() ? `Search active: ${filters.search}` : "Search"
               }
+              color={filters.search.trim() ? theme.colors.tint : undefined}
               onPress={() => {
-                setFilterDraft(filters);
-                setFiltersOpen(true);
+                setSearchDraft(filters.search);
+                setSearchOpen(true);
               }}
             />
-            <IconButton
-              name="filter"
-              accessibilityLabel={
-                activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : "Filters"
-              }
-              onPress={() => {
-                setFilterDraft(filters);
-                setFiltersOpen(true);
-              }}
-            />
+            <View>
+              <IconButton
+                name="filter"
+                accessibilityLabel={
+                  activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : "Filters"
+                }
+                onPress={() => {
+                  setFilterDraft(filters);
+                  setFiltersOpen(true);
+                }}
+              />
+              {activeFilterCount > 0 ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: theme.colors.tint,
+                  }}
+                />
+              ) : null}
+            </View>
             <IconButton
               name="plus"
               accessibilityLabel="Add transaction"
@@ -520,6 +581,20 @@ export function TransactionsScreen() {
         onApply={(next) => {
           setFilters(next);
           setFiltersOpen(false);
+        }}
+      />
+
+      <TransactionSearchSheet
+        visible={searchOpen}
+        value={searchDraft}
+        onChange={setSearchDraft}
+        onClose={() => {
+          setFilters((prev) => ({ ...prev, search: searchDraft.trim() }));
+          setSearchOpen(false);
+        }}
+        onClear={() => {
+          setSearchDraft("");
+          setFilters((prev) => ({ ...prev, search: "" }));
         }}
       />
     </Screen>

@@ -520,6 +520,10 @@ def build_attention_items(
             "secondary_action": secondary_action,
             "url": f"/accounts?account={aid}",
         }
+        if forecast:
+            txn_id = forecast.get("first_negative_transaction_id")
+            if txn_id is not None and details.get("actual_balance_negative"):
+                entry["first_negative_transaction_id"] = int(txn_id)
         if details.get("utilization_percent") is not None and (
             account.is_credit_card() or account.role == Account.AccountRole.CREDIT_CARD
         ):

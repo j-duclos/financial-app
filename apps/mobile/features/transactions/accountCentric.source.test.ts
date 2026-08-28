@@ -12,6 +12,7 @@ const rowCard = readFileSync(join(dir, "TransactionRowCard.tsx"), "utf8");
 const header = readFileSync(join(dir, "AccountLedgerHeader.tsx"), "utf8");
 const ledgerDisplay = readFileSync(join(dir, "ledgerHeaderDisplay.ts"), "utf8");
 const buildList = readFileSync(join(dir, "buildTransactionList.ts"), "utf8");
+const formScreen = readFileSync(join(dir, "TransactionFormScreen.tsx"), "utf8");
 const navigationSource = readFileSync(join(dir, "../dashboard/navigation.ts"), "utf8");
 const accountDetailSource = readFileSync(join(dir, "../accounts/AccountDetailScreen.tsx"), "utf8");
 
@@ -35,7 +36,8 @@ describe("account-centric transactions screen", () => {
     expect(transactionsScreen).not.toMatch(/placeholder="Payee or memo"/);
     expect(transactionsScreen).not.toMatch(/label="Search"/);
     expect(transactionsScreen).toMatch(/name="search"/);
-    expect(filtersSheet).toMatch(/label="Search"/);
+    expect(transactionsScreen).toMatch(/TransactionSearchSheet/);
+    expect(filtersSheet).not.toMatch(/label="Search"/);
   });
 
   it("builds Recent, Pending, Upcoming sections", () => {
@@ -97,12 +99,30 @@ describe("account-centric transactions screen", () => {
     expect(rowCard).not.toMatch(/isTransfer \? "neutral"/);
   });
 
-  it("Recent Last-N-days uses include_reconciled_after, not reconcile-floor date_after clamp", () => {
+  it("Recent Last-N-days respects show reconciled toggle", () => {
     expect(transactionsData).toMatch(/include_reconciled_after: historyStart/);
     expect(transactionsData).toMatch(/show_reconciled: true/);
-    expect(transactionsData).not.toMatch(/ledgerPastTransactionStart/);
-    // Must keep reconciled-in-window rows — stripping !reconciled made Last N days a no-op after close.
-    expect(transactionsData).not.toMatch(/\.filter\(\(txn\) => !txn\.reconciled\)/);
+    expect(transactionsData).toMatch(/reconciled: false/);
+    expect(buildList).toMatch(/showReconciled \|\| !txn\.reconciled/);
+  });
+
+  it("search and filter icons open different sheets", () => {
+    expect(transactionsScreen).toMatch(/TransactionSearchSheet/);
+    expect(transactionsScreen).toMatch(/TransactionFiltersSheet/);
+    expect(transactionsScreen).toMatch(/setSearchOpen\(true\)/);
+    expect(transactionsScreen).toMatch(/setFiltersOpen\(true\)/);
+  });
+
+  it("filter sheet omits cleared status chips", () => {
+    expect(filtersSheet).not.toMatch(/Cleared/);
+  });
+
+  it("add transaction uses searchable pickers instead of chip walls", () => {
+    expect(formScreen).toMatch(/SelectField/);
+    expect(formScreen).toMatch(/OptionsPickerSheet/);
+    expect(formScreen).toMatch(/DatePickerField/);
+    expect(formScreen).toMatch(/TransferSourceBalancePreview/);
+    expect(formScreen).not.toMatch(/showsHorizontalScrollIndicator/);
   });
 });
 

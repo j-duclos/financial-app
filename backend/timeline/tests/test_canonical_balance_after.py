@@ -208,6 +208,7 @@ def test_first_negative_sep_2(user, main):
     )
     assert metrics["first_negative_date"] == SEP_2
     assert metrics["first_negative_balance"] == Decimal("-358.26")
+    assert metrics.get("first_negative_transaction_id") is not None
     assert _balance_by_description(rows, main.id, "Exeter") == Decimal("-358.26")
 
 

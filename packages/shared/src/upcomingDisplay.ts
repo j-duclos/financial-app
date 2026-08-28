@@ -6,6 +6,7 @@ import type {
   TimelineCalendarTransaction,
 } from "./types";
 import { dayHeatEmoji, resolveDayHeatLevel } from "./dayHeatDisplay";
+import { formatCurrency } from "./utils";
 import {
   groupItemsByMonth,
   monthKeyFromIsoDate,
@@ -276,6 +277,7 @@ export type UpcomingPreviewNextIssue = {
   account_name?: string;
   reason?: string;
   projected_balance?: string | null;
+  first_negative_transaction_id?: number | null;
 } | null;
 
 function isPreviewableTransaction(txn: DashboardUpcomingTransaction): boolean {
@@ -292,14 +294,155 @@ export function flattenUpcomingPreviewTransactions(
   const rows: UpcomingPreviewTxnRow[] = [];
   for (const txn of transactions) {
     if (!isPreviewableTransaction(txn)) continue;
-    const bal = parseAmount(txn.balance_after);
-    const account = (txn.account_name ?? "").trim();
+    const bal = previewRowBalanceAfter(txn, target);
+    const account = previewRowBalanceAccountName(txn, target);
     const scoped = !target || account === target;
-    const isFirstZeroCross = scoped && !crossed && txn.balance_after != null && bal < 0;
+    const isFirstZeroCross = scoped && !crossed && bal != null && bal < 0;
     if (isFirstZeroCross) crossed = true;
     rows.push({ txn, isFirstZeroCross });
   }
   return rows;
+}
+
+/** Balance-after for preview rows — source leg for collapsed bank transfers. */
+export function previewRowBalanceAfter(
+  txn: DashboardUpcomingTransaction,
+  shortfallAccountName?: string | null
+): number | null {
+  const target = (shortfallAccountName ?? "").trim();
+  const isTransfer = txn.is_transfer || txn.is_internal_transfer;
+  if (isTransfer && !txn.is_credit_card_payment) {
+    const fromBal = txn.transfer_from_balance_after ?? txn.balance_after;
+    const toBal = txn.transfer_to_balance_after;
+    if (target) {
+      const from = (txn.transfer_from_account_name ?? txn.account_name ?? "").trim();
+      const to = (txn.transfer_to_account_name ?? "").trim();
+      if (from === target && fromBal != null) return parseAmount(fromBal);
+      if (to === target && toBal != null) return parseAmount(toBal);
+    }
+    if (fromBal != null) return parseAmount(fromBal);
+  }
+  if (txn.balance_after == null) return null;
+  return parseAmount(txn.balance_after);
+}
+
+function previewRowBalanceAccountName(
+  txn: DashboardUpcomingTransaction,
+  shortfallAccountName?: string | null
+): string {
+  const target = (shortfallAccountName ?? "").trim();
+  const isTransfer = txn.is_transfer || txn.is_internal_transfer;
+  if (isTransfer && !txn.is_credit_card_payment && target) {
+    const from = (txn.transfer_from_account_name ?? txn.account_name ?? "").trim();
+    const to = (txn.transfer_to_account_name ?? "").trim();
+    if (from === target) return from;
+    if (to === target) return to;
+    return from || (txn.account_name ?? "").trim();
+  }
+  return (txn.account_name ?? "").trim();
+}
+
+function compareUpcomingPreviewTransactions(
+  a: DashboardUpcomingTransaction,
+  b: DashboardUpcomingTransaction
+): number {
+  const byDate = a.date.localeCompare(b.date);
+  if (byDate !== 0) return byDate;
+  return a.id.localeCompare(b.id);
+}
+
+/** Chronological display transactions across preview day groups. */
+export function flattenUpcomingDisplayTransactions(
+  groups: DashboardUpcomingGroup[]
+): DashboardUpcomingTransaction[] {
+  const flat: DashboardUpcomingTransaction[] = [];
+  for (const group of groups) {
+    flat.push(...upcomingDisplayTransactions(group));
+  }
+  flat.sort(compareUpcomingPreviewTransactions);
+  return flat;
+}
+
+/**
+ * Select up to maxItems preview rows, guaranteeing the canonical shortfall transaction
+ * when it falls inside the preview horizon.
+ */
+export function selectUpcomingPreviewTransactions(
+  groups: DashboardUpcomingGroup[],
+  maxItems: number = UPCOMING_PREVIEW_MAX_ITEMS,
+  mandatoryTxnId?: string | number | null
+): { transactions: DashboardUpcomingTransaction[]; truncated: boolean } {
+  const flat = flattenUpcomingDisplayTransactions(groups);
+  if (flat.length <= maxItems) {
+    return { transactions: flat, truncated: false };
+  }
+
+  const mandatoryKey =
+    mandatoryTxnId != null && mandatoryTxnId !== "" ? String(mandatoryTxnId) : null;
+  const mandatory = mandatoryKey
+    ? flat.find((txn) => displayTxnMatchesMandatoryId(txn, mandatoryKey))
+    : undefined;
+
+  const head = flat.slice(0, maxItems);
+  if (!mandatory || head.some((txn) => txn.id === mandatory.id)) {
+    return { transactions: head, truncated: true };
+  }
+
+  const preview = [...flat.filter((txn) => txn.id !== mandatory.id).slice(0, maxItems - 1), mandatory];
+  preview.sort(compareUpcomingPreviewTransactions);
+  return { transactions: preview, truncated: true };
+}
+
+function collapsedPairLegIds(displayId: string): [string, string] | null {
+  const prefixes = ["xfer-", "ccpay-"] as const;
+  for (const prefix of prefixes) {
+    if (!displayId.startsWith(prefix)) continue;
+    const rest = displayId.slice(prefix.length);
+    const splitAt = rest.lastIndexOf("-");
+    if (splitAt <= 0) return null;
+    return [rest.slice(0, splitAt), rest.slice(splitAt + 1)];
+  }
+  return null;
+}
+
+function displayTxnMatchesMandatoryId(
+  txn: DashboardUpcomingTransaction,
+  mandatoryKey: string
+): boolean {
+  if (txn.id === mandatoryKey) return true;
+  const legs = collapsedPairLegIds(txn.id);
+  if (legs && (legs[0] === mandatoryKey || legs[1] === mandatoryKey)) return true;
+  return txn.id.endsWith(`-${mandatoryKey}`);
+}
+
+/** Rebuild day groups containing only the selected preview transactions. */
+export function groupsForUpcomingPreviewTransactions(
+  sourceGroups: DashboardUpcomingGroup[],
+  selected: DashboardUpcomingTransaction[]
+): DashboardUpcomingGroup[] {
+  const selectedIds = new Set(selected.map((txn) => txn.id));
+  const out: DashboardUpcomingGroup[] = [];
+  for (const group of sourceGroups) {
+    const display = upcomingDisplayTransactions(group);
+    if (!display.some((txn) => selectedIds.has(txn.id))) continue;
+
+    const keepRawIds = new Set<string>();
+    for (const txn of display) {
+      if (!selectedIds.has(txn.id)) continue;
+      const legs = collapsedPairLegIds(txn.id);
+      if (legs) {
+        keepRawIds.add(legs[0]);
+        keepRawIds.add(legs[1]);
+      } else {
+        keepRawIds.add(txn.id);
+      }
+    }
+    out.push({
+      ...group,
+      transactions: group.transactions.filter((txn) => keepRawIds.has(txn.id)),
+    });
+  }
+  return out;
 }
 
 export type UpcomingAmountTone = "positive" | "negative" | "neutral";
@@ -323,6 +466,17 @@ export function upcomingPreviewBalanceTone(
   if (isFirstZeroCross) return "critical";
   if (balance < 0) return "negative";
   return "neutral";
+}
+
+/** Balance tone for a preview row (uses source leg for collapsed transfers). */
+export function upcomingPreviewRowBalanceTone(
+  txn: DashboardUpcomingTransaction,
+  isFirstZeroCross: boolean,
+  shortfallAccountName?: string | null
+): "critical" | "negative" | "neutral" {
+  const bal = previewRowBalanceAfter(txn, shortfallAccountName);
+  if (bal == null) return "neutral";
+  return upcomingPreviewBalanceTone(bal, isFirstZeroCross);
 }
 
 /** Projected end-of-day balance for a cash account on a grouped day. */
@@ -412,18 +566,18 @@ export function buildUpcomingDashboardPreview(
 ): UpcomingDashboardPreviewLayout {
   const dayFiltered = filterUpcomingGroupsForPreview(groups, UPCOMING_PREVIEW_DAYS, today);
   const dayWindowTruncated = dayFiltered.length < groups.length;
-  const { groups: limitedGroups, truncated: itemTruncated } = limitUpcomingGroupsByItemCount(
-    dayFiltered,
-    UPCOMING_PREVIEW_MAX_ITEMS
-  );
-  const truncated = itemTruncated || dayWindowTruncated;
   const nextRisk = upcomingPreviewNextRiskDay(dayFiltered, nextIssue);
   const riskAccount = nextRisk?.accountName ?? nextIssue?.account_name ?? null;
-  const dayBlocks = buildPreviewDayBlocks(limitedGroups, riskAccount);
-  const transactions = flattenUpcomingPreviewTransactions(
-    dayBlocks.flatMap((block) => block.transactions),
-    riskAccount
+  const mandatoryTxnId = nextIssue?.first_negative_transaction_id ?? null;
+  const { transactions: selectedTxns, truncated: itemTruncated } = selectUpcomingPreviewTransactions(
+    dayFiltered,
+    UPCOMING_PREVIEW_MAX_ITEMS,
+    mandatoryTxnId
   );
+  const truncated = itemTruncated || dayWindowTruncated;
+  const limitedGroups = groupsForUpcomingPreviewTransactions(dayFiltered, selectedTxns);
+  const dayBlocks = buildPreviewDayBlocks(limitedGroups, riskAccount);
+  const transactions = flattenUpcomingPreviewTransactions(selectedTxns, riskAccount);
 
   return {
     groups: limitedGroups,
@@ -504,8 +658,42 @@ export function upcomingTransferAccountsLabel(
 ): string | null {
   const from = txn.transfer_from_account_name?.trim();
   const to = txn.transfer_to_account_name?.trim();
-  if (from && to) return `From ${from} to ${to}`;
+  if (from && to) return `${from} → ${to}`;
   return null;
+}
+
+/** Secondary balance line for dashboard preview rows. */
+export function upcomingPreviewRowMetaLine(
+  txn: DashboardUpcomingTransaction,
+  opts?: { shortfallAccountName?: string | null; isFirstZeroCross?: boolean }
+): string | null {
+  const isTransfer = (txn.is_transfer || txn.is_internal_transfer) && !txn.is_credit_card_payment;
+  const route = upcomingTransferAccountsLabel(txn);
+  const shortfallAccount = (opts?.shortfallAccountName ?? "").trim();
+
+  if (isTransfer && route) {
+    const from = txn.transfer_from_account_name?.trim();
+    const fromBal = txn.transfer_from_balance_after ?? txn.balance_after;
+    if (from && fromBal != null) {
+      return `${route} · ${from} after ${formatCurrency(fromBal)}`;
+    }
+    return route;
+  }
+
+  const account = (txn.account_name ?? "").trim();
+  const bal = txn.balance_after;
+  if (!account && bal == null) return null;
+
+  const parts: string[] = [];
+  if (account) parts.push(account);
+  if (bal != null) {
+    parts.push(`Balance after ${formatCurrency(bal)}`);
+  }
+  const line = parts.join(" · ");
+  if (opts?.isFirstZeroCross && line) {
+    return `${line} · First shortfall`;
+  }
+  return line || null;
 }
 
 function oppositeLegsMatch(
@@ -567,25 +755,30 @@ function mergeTransferPairForDisplay(
   negative: DashboardUpcomingTransaction
 ): DashboardUpcomingTransaction {
   const from =
-    positive.transfer_from_account_name?.trim() ||
+    negative.transfer_from_account_name?.trim() ||
     negative.account_name?.trim() ||
+    positive.transfer_from_account_name?.trim() ||
     "";
   const to =
     positive.transfer_to_account_name?.trim() ||
     positive.account_name?.trim() ||
+    negative.transfer_to_account_name?.trim() ||
     "";
   const abs = Math.abs(parseAmount(positive.amount));
   return {
-    ...positive,
+    ...negative,
     id: `xfer-${negative.id}-${positive.id}`,
     kind: "transfer",
     is_transfer: true,
     is_internal_transfer: true,
     is_credit_card_payment: false,
     amount: abs.toFixed(2),
-    account_name: to || positive.account_name,
-    transfer_from_account_name: from || positive.transfer_from_account_name,
+    account_name: from || negative.account_name,
+    transfer_from_account_name: from || negative.transfer_from_account_name,
     transfer_to_account_name: to || positive.transfer_to_account_name,
+    balance_after: negative.balance_after ?? positive.balance_after,
+    transfer_from_balance_after: negative.balance_after,
+    transfer_to_balance_after: positive.balance_after,
     risk_flag: positive.risk_flag || negative.risk_flag,
   };
 }
@@ -764,6 +957,8 @@ function calendarTxnToUpcoming(
     is_credit_card_payment: Boolean(txn.is_credit_card_payment),
     transfer_from_account_name: txn.transfer_from_account_name,
     transfer_to_account_name: txn.transfer_to_account_name,
+    transaction_id: txn.transaction_id ?? null,
+    rule_id: txn.rule_id ?? null,
     source: txn.source,
     status: txn.status ?? null,
     risk_flag: Boolean(txn.risk_flag),
@@ -832,23 +1027,54 @@ export type UpcomingMoneyFlowFromCalendar = {
  * Build the Calendar page Upcoming Money Flow preview from calendar days
  * (14-day window, 25-transaction cap) without a dashboard summary request.
  */
-export type UpcomingTransactionNavTarget =
-  | { type: "transaction"; transactionId: number }
-  | { type: "calendar"; date: string };
+export type UpcomingTransactionNavTarget = {
+  type: "ledger";
+  accountId: number;
+  accountName?: string;
+  focusDate: string;
+  focusTransactionId?: number | null;
+  focusRuleId?: number | null;
+  focusEventId: string;
+};
 
 /** True when txn.id maps to a persisted transaction detail screen. */
 export function isPersistedUpcomingTransactionId(id: string): boolean {
   return /^\d+$/.test(id);
 }
 
-/** Navigation target for a dashboard upcoming preview row. */
+/** Canonical persisted transaction id for ledger deep links (source leg for collapsed transfers). */
+export function upcomingLedgerFocusTransactionId(
+  txn: DashboardUpcomingTransaction
+): number | null {
+  if (txn.transaction_id != null && txn.transaction_id > 0) {
+    return txn.transaction_id;
+  }
+  if (isPersistedUpcomingTransactionId(txn.id)) {
+    return Number(txn.id);
+  }
+  const legs = collapsedPairLegIds(txn.id);
+  if (legs) {
+    const sourceLegId = legs[0];
+    if (isPersistedUpcomingTransactionId(sourceLegId)) {
+      return Number(sourceLegId);
+    }
+  }
+  return null;
+}
+
+/** Navigation target for a dashboard upcoming preview row — opens the account ledger. */
 export function upcomingTransactionNavTarget(
   txn: DashboardUpcomingTransaction
 ): UpcomingTransactionNavTarget {
-  if (isPersistedUpcomingTransactionId(txn.id)) {
-    return { type: "transaction", transactionId: Number(txn.id) };
-  }
-  return { type: "calendar", date: txn.date };
+  return {
+    type: "ledger",
+    accountId: txn.account_id,
+    accountName: txn.account_name || undefined,
+    focusDate: txn.date,
+    focusTransactionId: upcomingLedgerFocusTransactionId(txn),
+    focusRuleId: txn.rule_id ?? null,
+    focusEventId: txn.id,
+  };
 }
 
 export function buildUpcomingMoneyFlowFromCalendarDays(

@@ -21,7 +21,10 @@ import {
   attentionCardTapDestination,
 } from "./navigation";
 import { attentionPrimaryIssueDisplay } from "./display";
-import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
+import {
+  transactionsForForecastRiskPath,
+} from "@/features/payment-planner/navigation";
+import { upcomingMoneyFlowRowDestination } from "./navigation";
 
 const dashboardSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "DashboardScreen.tsx"),
@@ -156,8 +159,27 @@ describe("Dashboard attention parity", () => {
   it("cash shortfall card opens filtered transactions for Main", () => {
     const cash = sampleAttention();
     expect(attentionCardOpensLedger(cash)).toBe(true);
-    expect(attentionCardTapDestination(cash)).toEqual(transactionsForAccountPath(1, "Main"));
-    expect(attentionCardAccessibilityLabel(cash)).toContain("Opens account transactions.");
+    expect(attentionCardTapDestination(cash)).toEqual(
+      transactionsForForecastRiskPath({
+        accountId: 1,
+        accountName: "Main",
+        focusDate: "2026-08-27",
+        focusTransactionId: null,
+      })
+    );
+    expect(attentionCardAccessibilityLabel(cash)).toContain("Opens account transactions at the forecast risk.");
+  });
+
+  it("cash shortfall with causing transaction preserves risk focus params", () => {
+    const cash = sampleAttention({ first_negative_transaction_id: 99, risk_date: "2026-09-02" });
+    expect(attentionCardTapDestination(cash)).toEqual(
+      transactionsForForecastRiskPath({
+        accountId: 1,
+        accountName: "Main",
+        focusDate: "2026-09-02",
+        focusTransactionId: 99,
+      })
+    );
   });
 
   it("credit utilization card opens account details for Care Credit", () => {
@@ -206,15 +228,21 @@ describe("Dashboard upcoming preview", () => {
     expect(preview.transactions.some((row) => row.txn.description === "Extra")).toBe(false);
   });
 
-  it("navigates persisted transactions to detail and forecasts to calendar date", () => {
-    expect(upcomingTransactionNavTarget(txn({ id: "99" }))).toEqual({
-      type: "transaction",
-      transactionId: 99,
+  it("navigates money flow rows to Transactions ledger focus", () => {
+    expect(upcomingTransactionNavTarget(txn({ id: "99", transaction_id: 99 }))).toEqual({
+      type: "ledger",
+      accountId: 1,
+      accountName: "Main",
+      focusDate: "2026-08-28",
+      focusTransactionId: 99,
+      focusRuleId: null,
+      focusEventId: "99",
     });
-    expect(upcomingTransactionNavTarget(txn({ id: "xfer-1-2" }))).toEqual({
-      type: "calendar",
-      date: "2026-08-28",
-    });
+    expect(upcomingMoneyFlowRowDestination(txn({ id: "xfer-out-in", transaction_id: 501, account_id: 1 })))
+      .toMatchObject({
+        pathname: "/(app)/(tabs)/transactions",
+        params: { account: "1", focus: "ledger-event", focusTransactionId: "501" },
+      });
   });
 });
 

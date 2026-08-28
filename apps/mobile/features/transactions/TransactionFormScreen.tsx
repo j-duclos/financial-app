@@ -1,22 +1,25 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, ScrollView, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createTransaction,
   createTransfer,
   getTransaction,
+  listAccounts,
   updateTransaction,
 } from "@budget-app/api-client";
-import { getEffectiveDisplayName } from "@budget-app/shared";
+import type { Account } from "@budget-app/shared";
+import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
+import { DatePickerField } from "@/components/forms/DatePickerField";
+import { OptionsPickerSheet, type PickerOption } from "@/components/forms/OptionsPickerSheet";
+import { SelectField } from "@/components/forms/SelectField";
 import { useTheme } from "@/theme";
 import {
   coerceToInputDate,
-  formatDateInput,
-  formatIsoDateForInput,
   parseInputDateToIso,
-  todayInputDate,
+  todayStr,
 } from "@/lib/dates";
 import { resolveHouseholdId } from "@/lib/householdContext";
 import { isTransferCategoryName } from "@/lib/transactionsLedger";
@@ -24,31 +27,51 @@ import { transactionEditLockMessage } from "@/lib/transactionStatus";
 import { describeApiError, fieldErrorsFromApiError } from "@/services/apiErrors";
 import { refreshAfterTransactionEdit } from "@/lib/financialQueryRefresh";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
-import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
+import { resolvePostedCurrentBalance } from "@/features/accounts/accountBalanceDisplay";
 import { transactionQueryKeys } from "./queryKeys";
+import { TransferSourceBalancePreview } from "./TransferSourceBalancePreview";
+
+type TransactionEntryType = "expense" | "income" | "transfer";
 
 type FormState = {
   account_id: number | "";
-  date: string;
+  dateIso: string;
   payee: string;
   amount: string;
-  direction: "INFLOW" | "OUTFLOW";
+  entryType: TransactionEntryType;
   category_id: number | "";
   memo: string;
   transfer_to_account_id: number | "";
 };
 
+type PickerKind = "account" | "category" | "transferTo" | null;
+
+function accountHouseholdId(account: Account | undefined): number | undefined {
+  if (!account) return undefined;
+  const h = account.household as Account["household"] | number | undefined;
+  if (typeof h === "object" && h != null && "id" in h) return h.id;
+  if (typeof h === "number") return h;
+  return undefined;
+}
+
 const emptyForm = (accountId?: number): FormState => ({
   account_id: accountId ?? "",
-  date: todayInputDate(),
+  dateIso: todayStr(),
   payee: "",
   amount: "",
-  direction: "OUTFLOW",
+  entryType: "expense",
   category_id: "",
   memo: "",
   transfer_to_account_id: "",
 });
+
+function balanceSubtitle(account: Account | undefined): string | undefined {
+  if (!account) return undefined;
+  const amount = resolvePostedCurrentBalance(account);
+  if (!amount) return undefined;
+  return `Current balance ${formatCurrency(amount, account.currency ?? "USD")}`;
+}
 
 export function TransactionFormScreen() {
   const theme = useTheme();
@@ -74,6 +97,7 @@ export function TransactionFormScreen() {
     emptyForm(Number.isInteger(prefillAccount) && prefillAccount > 0 ? prefillAccount : undefined)
   );
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [picker, setPicker] = useState<PickerKind>(null);
 
   const txnQuery = useQuery({
     queryKey: transactionQueryKeys.detail(editId ?? 0),
@@ -82,15 +106,48 @@ export function TransactionFormScreen() {
   });
 
   const { householdId: defaultHouseholdId } = useDefaultHouseholdId();
-  const { accounts } = useAccountOptions({ householdId: defaultHouseholdId });
+  const accountsQuery = useQuery({
+    queryKey: ["transaction-form-accounts", defaultHouseholdId],
+    queryFn: () =>
+      listAccounts({
+        balance: "true",
+        active_only: true,
+        household: defaultHouseholdId ?? undefined,
+        page_size: 500,
+      }),
+    enabled: defaultHouseholdId != null,
+    staleTime: 60_000,
+  });
+  const accounts = accountsQuery.data?.results ?? [];
+
   const householdId = resolveHouseholdId(
     defaultHouseholdId,
     typeof form.account_id === "number" ? form.account_id : null,
     accounts
   );
   const { categories } = useCategoryOptions({ householdId });
+
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.id === form.account_id) ?? null,
+    [accounts, form.account_id]
+  );
+  const selectedDestAccount = useMemo(
+    () => accounts.find((a) => a.id === form.transfer_to_account_id) ?? null,
+    [accounts, form.transfer_to_account_id]
+  );
   const selectedCategory = categories.find((c) => c.id === form.category_id);
-  const isTransfer = isTransferCategoryName(selectedCategory?.name);
+  const isTransferEntry = form.entryType === "transfer" || isTransferCategoryName(selectedCategory?.name);
+  const isCreditCardPayment =
+    isTransferEntry && selectedDestAccount?.account_type === "CREDIT";
+
+  const bankTransferCategory = useMemo(
+    () => categories.find((c) => c.name === "Bank Transfer") ?? null,
+    [categories]
+  );
+  const creditCardPaymentCategory = useMemo(
+    () => categories.find((c) => c.name === "Credit Card Payment") ?? null,
+    [categories]
+  );
 
   useEffect(() => {
     if (isEdit || !transferMode) return;
@@ -99,34 +156,50 @@ export function TransactionFormScreen() {
     if (!toId || !Number.isInteger(toId) || toId <= 0) return;
     setForm((prev) => ({
       ...prev,
+      entryType: "transfer",
       account_id: fromId ?? prev.account_id,
       transfer_to_account_id: toId,
       amount: params.amount?.trim() || prev.amount,
-      date: params.date?.trim() ? coerceToInputDate(params.date) : prev.date,
+      dateIso: params.date?.trim()
+        ? /^\d{4}-\d{2}-\d{2}/.test(params.date.trim())
+          ? params.date.trim().slice(0, 10)
+          : coerceToInputDate(params.date)
+        : prev.dateIso,
       payee: prev.payee || "Transfer",
     }));
   }, [isEdit, transferMode, presetFrom, presetTo, prefillAccount, params.amount, params.date]);
 
   useEffect(() => {
-    if (isEdit || !transferMode || categories.length === 0) return;
-    const bankTransfer = categories.find((c) => c.name === "Bank Transfer");
-    if (bankTransfer) {
+    if (isEdit || form.entryType !== "transfer" || categories.length === 0) return;
+    const dest = selectedDestAccount;
+    const nextCategory =
+      dest?.account_type === "CREDIT" ? creditCardPaymentCategory : bankTransferCategory;
+    if (nextCategory) {
       setForm((prev) =>
-        prev.category_id === "" ? { ...prev, category_id: bankTransfer.id } : prev
+        prev.category_id === "" ? { ...prev, category_id: nextCategory.id } : prev
       );
     }
-  }, [isEdit, transferMode, categories]);
+  }, [
+    isEdit,
+    form.entryType,
+    categories.length,
+    selectedDestAccount?.id,
+    selectedDestAccount?.account_type,
+    bankTransferCategory,
+    creditCardPaymentCategory,
+  ]);
 
   useEffect(() => {
     const txn = txnQuery.data;
     if (!txn) return;
     const abs = Math.abs(parseFloat(txn.amount));
+    const xfer = isTransferCategoryName(txn.category?.name);
     setForm({
       account_id: txn.account?.id ?? txn.account_id ?? "",
-      date: formatIsoDateForInput(txn.date),
+      dateIso: txn.date.slice(0, 10),
       payee: txn.payee,
       amount: Number.isFinite(abs) ? String(abs) : "",
-      direction: txn.direction,
+      entryType: xfer ? "transfer" : txn.direction === "INFLOW" ? "income" : "expense",
       category_id: txn.category?.id ?? txn.category_id ?? "",
       memo: txn.memo ?? "",
       transfer_to_account_id: txn.transfer_to_account?.id ?? "",
@@ -137,37 +210,93 @@ export function TransactionFormScreen() {
     ? transactionEditLockMessage(txnQuery.data, getEffectiveDisplayName(txnQuery.data.account))
     : null;
 
+  const transferDestinations = useMemo((): Account[] => {
+    if (!selectedAccount) return [];
+    const hid = accountHouseholdId(selectedAccount);
+    return accounts.filter((a) => {
+      if (accountHouseholdId(a) !== hid) return false;
+      return a.id !== selectedAccount.id;
+    });
+  }, [accounts, selectedAccount]);
+
+  const accountPickerOptions = useMemo(
+    (): PickerOption[] =>
+      accounts.map((a) => ({
+        id: String(a.id),
+        title: getEffectiveDisplayName(a),
+        subtitle: balanceSubtitle(a),
+        searchText: getEffectiveDisplayName(a),
+      })),
+    [accounts]
+  );
+
+  const categoryPickerOptions = useMemo(
+    (): PickerOption[] =>
+      categories
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((c) => ({
+          id: String(c.id),
+          title: c.name,
+          searchText: c.name,
+        })),
+    [categories]
+  );
+
+  const transferDestOptions = useMemo(
+    (): PickerOption[] =>
+      transferDestinations.map((a) => ({
+        id: String(a.id),
+        title: getEffectiveDisplayName(a),
+        subtitle: balanceSubtitle(a),
+        searchText: getEffectiveDisplayName(a),
+      })),
+    [transferDestinations]
+  );
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (typeof form.account_id !== "number") throw new Error("Account is required");
-      const isoDate = parseInputDateToIso(form.date);
-      if (!isoDate) throw new Error("Enter a valid date (MM-DD-YYYY)");
-      const signedAmount =
-        form.direction === "OUTFLOW" ? `-${form.amount}` : form.amount;
+      const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(form.dateIso)
+        ? form.dateIso
+        : parseInputDateToIso(form.dateIso);
+      if (!isoDate) throw new Error("Enter a valid date");
 
-      if (isTransfer && !isEdit) {
+      if (isTransferEntry && !isEdit) {
         if (typeof form.transfer_to_account_id !== "number") {
           throw new Error("Destination account is required for transfers");
         }
+        if (form.transfer_to_account_id === form.account_id) {
+          throw new Error("Choose two different accounts");
+        }
+        const xferCategory = isCreditCardPayment ? creditCardPaymentCategory : bankTransferCategory;
         return createTransfer({
           from_account: form.account_id,
           to_account: form.transfer_to_account_id,
           amount: form.amount,
           date: isoDate,
-          payee: form.payee,
+          payee:
+            form.payee.trim() ||
+            (isCreditCardPayment ? "Credit card payment" : "Transfer"),
           memo: form.memo,
-          from_category_id: typeof form.category_id === "number" ? form.category_id : null,
+          from_category_id:
+            typeof form.category_id === "number"
+              ? form.category_id
+              : xferCategory?.id ?? null,
         });
       }
+
+      const signedAmount =
+        form.entryType === "income" ? form.amount : `-${form.amount}`;
 
       const body = {
         account_id: form.account_id,
         date: isoDate,
-        payee: form.payee,
+        payee: form.payee.trim() || "—",
         amount: signedAmount,
         category_id: typeof form.category_id === "number" ? form.category_id : null,
         memo: form.memo,
-        ...(isEdit && isTransfer && typeof form.transfer_to_account_id === "number"
+        ...(isEdit && isTransferEntry && typeof form.transfer_to_account_id === "number"
           ? { transfer_to_account_id: form.transfer_to_account_id }
           : {}),
       };
@@ -188,10 +317,6 @@ export function TransactionFormScreen() {
         return;
       }
       const message = describeApiError(err);
-      if (message.toLowerCase().includes("valid date")) {
-        setFieldErrors((prev) => ({ ...prev, date: "Use MM-DD-YYYY" }));
-        return;
-      }
       Alert.alert("Save failed", message);
     },
   });
@@ -205,10 +330,14 @@ export function TransactionFormScreen() {
     });
   };
 
-  const accountOptions = useMemo(
-    () => accounts.map((a) => ({ id: a.id, label: getEffectiveDisplayName(a) })),
-    [accounts]
-  );
+  const onSelectEntryType = (entryType: TransactionEntryType) => {
+    setForm((prev) => ({
+      ...prev,
+      entryType,
+      transfer_to_account_id: entryType === "transfer" ? prev.transfer_to_account_id : "",
+      category_id: entryType === "transfer" ? "" : prev.category_id,
+    }));
+  };
 
   if (isEdit && txnQuery.isLoading) {
     return (
@@ -227,6 +356,17 @@ export function TransactionFormScreen() {
     );
   }
 
+  const typeChip = (label: string, type: TransactionEntryType) => (
+    <View style={{ flex: 1 }}>
+      <Button
+        label={label}
+        variant={form.entryType === type ? "primary" : "secondary"}
+        onPress={() => onSelectEntryType(type)}
+        disabled={isEdit && isTransferEntry && type !== "transfer"}
+      />
+    </View>
+  );
+
   return (
     <Screen scroll>
       <AppHeader title={isEdit ? "Edit transaction" : "Add transaction"} onBack={() => router.back()} />
@@ -237,75 +377,102 @@ export function TransactionFormScreen() {
       ) : null}
 
       <Card>
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>Account</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {accountOptions.map((a) => (
-              <Button
-                key={a.id}
-                label={a.label}
-                variant={form.account_id === a.id ? "primary" : "secondary"}
-                onPress={() => setField("account_id", a.id)}
-              />
-            ))}
-          </View>
-        </ScrollView>
-
-        <TextField
-          label="Date (MM-DD-YYYY)"
-          value={form.date}
-          onChangeText={(v) => setField("date", formatDateInput(v))}
-          keyboardType="number-pad"
-          maxLength={10}
-          placeholder="MM-DD-YYYY"
-          error={fieldErrors.date}
+        <View style={{ gap: theme.spacing.md }}>
+        <SelectField
+          label="Account"
+          value={selectedAccount ? getEffectiveDisplayName(selectedAccount) : null}
+          placeholder="Select account"
+          onPress={() => setPicker("account")}
+          error={fieldErrors.account_id}
         />
-        <TextField label="Payee" value={form.payee} onChangeText={(v) => setField("payee", v)} error={fieldErrors.payee} />
-        <TextField label="Amount" value={form.amount} onChangeText={(v) => setField("amount", v)} keyboardType="decimal-pad" error={fieldErrors.amount} />
+        {selectedAccount ? (
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: -4 }}>
+            {balanceSubtitle(selectedAccount) ?? "Balance unavailable"}
+          </Text>
+        ) : null}
 
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>Direction</Text>
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.spacing.md }}>
-          <Button label="Expense" variant={form.direction === "OUTFLOW" ? "primary" : "secondary"} onPress={() => setField("direction", "OUTFLOW")} />
-          <Button label="Income" variant={form.direction === "INFLOW" ? "primary" : "secondary"} onPress={() => setField("direction", "INFLOW")} />
-        </View>
+        <DatePickerField
+          label="Date"
+          value={form.dateIso}
+          onChange={(iso) => setField("dateIso", iso)}
+        />
 
-        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>Category</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {categories.slice(0, 30).map((c) => (
-              <Button
-                key={c.id}
-                label={c.name}
-                variant={form.category_id === c.id ? "primary" : "secondary"}
-                onPress={() => setField("category_id", c.id)}
-              />
-            ))}
-          </View>
-        </ScrollView>
-
-        {isTransfer ? (
+        {!isEdit ? (
           <>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
-              Transfer destination
+              Type
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {accountOptions
-                  .filter((a) => a.id !== form.account_id)
-                  .map((a) => (
-                    <Button
-                      key={a.id}
-                      label={a.label}
-                      variant={form.transfer_to_account_id === a.id ? "primary" : "secondary"}
-                      onPress={() => setField("transfer_to_account_id", a.id)}
-                    />
-                  ))}
-              </View>
-            </ScrollView>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.spacing.sm }}>
+              {typeChip("Expense", "expense")}
+              {typeChip("Income", "income")}
+              {typeChip("Transfer", "transfer")}
+            </View>
           </>
         ) : null}
 
-        <TextField label="Notes" value={form.memo} onChangeText={(v) => setField("memo", v)} multiline />
+        <TextField
+          label="Amount"
+          value={form.amount}
+          onChangeText={(v) => setField("amount", v)}
+          keyboardType="decimal-pad"
+          error={fieldErrors.amount}
+        />
+
+        <TextField
+          label={isTransferEntry ? "Memo" : "Payee"}
+          value={form.payee}
+          onChangeText={(v) => setField("payee", v)}
+          error={fieldErrors.payee}
+          placeholder={isTransferEntry ? "Optional memo" : undefined}
+        />
+
+        {!isTransferEntry ? (
+          <SelectField
+            label="Category"
+            value={selectedCategory?.name ?? null}
+            placeholder="Select category"
+            onPress={() => setPicker("category")}
+            error={fieldErrors.category_id}
+          />
+        ) : null}
+
+        {isTransferEntry ? (
+          <>
+            <SelectField
+              label={isCreditCardPayment ? "To credit account" : "To account"}
+              value={selectedDestAccount ? getEffectiveDisplayName(selectedDestAccount) : null}
+              placeholder="Select account"
+              onPress={() => setPicker("transferTo")}
+              error={fieldErrors.transfer_to_account_id}
+            />
+            {selectedDestAccount ? (
+              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: -4 }}>
+                {balanceSubtitle(selectedDestAccount) ?? "Balance unavailable"}
+              </Text>
+            ) : null}
+            {isCreditCardPayment ? (
+              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+                Transfer / Card payment
+              </Text>
+            ) : null}
+            {selectedAccount && form.dateIso ? (
+              <TransferSourceBalancePreview
+                sourceAccount={selectedAccount}
+                transferDateIso={form.dateIso}
+                transferAmount={form.amount}
+                label={getEffectiveDisplayName(selectedAccount)}
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        <TextField
+          label="Notes"
+          value={form.memo}
+          onChangeText={(v) => setField("memo", v)}
+          multiline
+        />
+        </View>
       </Card>
 
       <View style={{ marginTop: theme.spacing.lg }}>
@@ -316,6 +483,46 @@ export function TransactionFormScreen() {
           disabled={Boolean(lockMessage?.includes("Reconciled"))}
         />
       </View>
+
+      <OptionsPickerSheet
+        visible={picker === "account"}
+        title="Account"
+        options={accountPickerOptions}
+        selectedId={typeof form.account_id === "number" ? String(form.account_id) : null}
+        searchPlaceholder="Search accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => {
+          setField("account_id", Number(id));
+          if (Number(id) === form.transfer_to_account_id) {
+            setField("transfer_to_account_id", "");
+          }
+        }}
+      />
+
+      <OptionsPickerSheet
+        visible={picker === "category"}
+        title="Category"
+        options={categoryPickerOptions}
+        selectedId={typeof form.category_id === "number" ? String(form.category_id) : null}
+        searchPlaceholder="Search categories"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => setField("category_id", Number(id))}
+      />
+
+      <OptionsPickerSheet
+        visible={picker === "transferTo"}
+        title={isCreditCardPayment ? "Credit account" : "Transfer to"}
+        options={transferDestOptions}
+        selectedId={
+          typeof form.transfer_to_account_id === "number"
+            ? String(form.transfer_to_account_id)
+            : null
+        }
+        searchPlaceholder="Search accounts"
+        emptyMessage="No valid destination accounts"
+        onClose={() => setPicker(null)}
+        onSelect={(id) => setField("transfer_to_account_id", Number(id))}
+      />
     </Screen>
   );
 }

@@ -131,6 +131,8 @@ export function DashboardScreen() {
           risk_date: summaryFast.first_cash_shortfall.date,
           account_name: summaryFast.first_cash_shortfall.account_name ?? undefined,
           projected_balance: summaryFast.first_cash_shortfall.amount ?? null,
+          first_negative_transaction_id:
+            summaryFast.first_cash_shortfall.first_negative_transaction_id ?? null,
         }
       : undefined;
     return buildUpcomingDashboardPreview(upcomingGroups, nextIssue);

@@ -64,25 +64,34 @@ describe("shared goal status", () => {
 });
 
 describe("shared upcomingTransactionNavTarget", () => {
-  it("detects persisted transaction ids", () => {
+  it("returns ledger focus targets for money flow rows", () => {
     expect(
       upcomingTransactionNavTarget({
         id: "12",
         date: "2026-08-28",
         account_id: 1,
         account_name: "Main",
-        description: "Test",
-        amount: "-1",
+        description: "Electric bill",
+        amount: "-405.00",
         kind: "bill",
         category: null,
         balance_after: null,
         is_transfer: false,
         is_internal_transfer: false,
         is_credit_card_payment: false,
+        transaction_id: 12,
         source: null,
         status: null,
         risk_flag: false,
-      }).type
-    ).toBe("transaction");
+      })
+    ).toEqual({
+      type: "ledger",
+      accountId: 1,
+      accountName: "Main",
+      focusDate: "2026-08-28",
+      focusTransactionId: 12,
+      focusRuleId: null,
+      focusEventId: "12",
+    });
   });
 });

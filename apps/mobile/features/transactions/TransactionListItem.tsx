@@ -11,6 +11,7 @@ type Props = {
   onPressTransaction: (id: number) => void;
   onPressRecentRange?: () => void;
   onPressUpcomingRange?: () => void;
+  focusHighlight?: boolean;
 };
 
 export const TransactionListItem = memo(function TransactionListItem({
@@ -18,8 +19,16 @@ export const TransactionListItem = memo(function TransactionListItem({
   onPressTransaction,
   onPressRecentRange,
   onPressUpcomingRange,
+  focusHighlight,
 }: Props) {
   const theme = useTheme();
+
+  const wrapFocusHighlight = (node: React.ReactNode) =>
+    focusHighlight ? (
+      <View style={{ backgroundColor: theme.colors.warningBg }}>{node}</View>
+    ) : (
+      node
+    );
 
   if (item.kind === "section") {
     const onRangePress =
@@ -65,7 +74,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   }
   if (item.kind === "upcoming") {
     const txnId = item.row.transaction_id;
-    return (
+    return wrapFocusHighlight(
       <Pressable onPress={() => txnId != null && onPressTransaction(txnId)} disabled={txnId == null}>
         <TransactionRowCard
           timelineRow={item.row}
@@ -77,7 +86,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   }
   if (item.kind === "pending") {
     const txnId = item.row.transaction_id;
-    return (
+    return wrapFocusHighlight(
       <Pressable onPress={() => txnId != null && onPressTransaction(txnId)} disabled={txnId == null}>
         <TransactionRowCard
           timelineRow={item.row}
@@ -87,7 +96,7 @@ export const TransactionListItem = memo(function TransactionListItem({
       </Pressable>
     );
   }
-  return (
+  return wrapFocusHighlight(
     <Pressable onPress={() => onPressTransaction(item.txn.id)}>
       <TransactionRowCard txn={item.txn} runningBalance={item.runningBalance} />
     </Pressable>

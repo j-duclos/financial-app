@@ -290,6 +290,7 @@ def _calculate_account_forecast_summary(
     ending = metrics["ending"]
     first_negative_date = metrics["first_negative_date"]
     first_negative_balance = metrics["first_negative_balance"]
+    first_negative_transaction_id = metrics.get("first_negative_transaction_id")
     first_below_buffer_date = metrics["first_below_buffer_date"]
     first_below_buffer_balance = metrics["first_below_buffer_balance"]
     end_of_day = metrics["end_of_day"]
@@ -329,6 +330,7 @@ def _calculate_account_forecast_summary(
         "first_negative_balance": (
             str(first_negative_balance) if first_negative_balance is not None else None
         ),
+        "first_negative_transaction_id": first_negative_transaction_id,
         "first_below_buffer_date": (
             first_below_buffer_date.isoformat()
             if first_below_buffer_date is not None
@@ -370,6 +372,7 @@ def _calculate_account_forecast_summary(
         "first_negative_balance": (
             str(first_negative_balance) if first_negative_balance is not None else None
         ),
+        "first_negative_transaction_id": first_negative_transaction_id,
         "first_below_buffer_date": (
             first_below_buffer_date.isoformat()
             if first_below_buffer_date is not None
@@ -887,6 +890,7 @@ def serialize_forecast_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "lowest_projected_balance_date_30_days": summary.get("lowest_projected_balance_date"),
         "first_negative_balance": summary.get("first_negative_balance"),
         "first_negative_date": summary.get("first_negative_date"),
+        "first_negative_transaction_id": summary.get("first_negative_transaction_id"),
         "first_below_buffer_balance": summary.get("first_below_buffer_balance"),
         "first_below_buffer_date": summary.get("first_below_buffer_date"),
         "balance_on_risk_date": summary.get("balance_on_risk_date"),

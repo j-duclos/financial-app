@@ -170,6 +170,8 @@ export default function Dashboard() {
                           account_name: summaryFast.first_cash_shortfall.account_name ?? undefined,
                           reason: "Projected balance drops below zero",
                           projected_balance: summaryFast.first_cash_shortfall.amount,
+                          first_negative_transaction_id:
+                            summaryFast.first_cash_shortfall.first_negative_transaction_id ?? null,
                         }
                       : null
                   }

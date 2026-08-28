@@ -1,4 +1,4 @@
-import type { DashboardAttentionItem } from "@budget-app/shared";
+import type { DashboardAttentionItem, DashboardFirstCashShortfall, DashboardUpcomingTransaction } from "@budget-app/shared";
 import {
   attentionAccountTypeLabel,
   attentionActionLine,
@@ -7,8 +7,14 @@ import {
   attentionSeverityLabel,
   attentionShowsActionLine,
   ATTENTION_VIEW_ALL_PATH,
+  upcomingTransactionNavTarget,
 } from "@budget-app/shared";
-import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
+import {
+  transactionsForAccountPath,
+  transactionsForForecastRiskPath,
+  transactionsForLedgerFocusPath,
+  type TransactionsTabPath,
+} from "@/features/payment-planner/navigation";
 
 export { ATTENTION_VIEW_ALL_PATH };
 
@@ -29,12 +35,50 @@ export function attentionCardOpensLedger(item: DashboardAttentionItem): boolean 
   return depository;
 }
 
+function attentionForecastRiskPath(item: DashboardAttentionItem): TransactionsTabPath {
+  return transactionsForForecastRiskPath({
+    accountId: item.account_id,
+    accountName: item.account_name,
+    focusDate: item.risk_date,
+    focusTransactionId: item.first_negative_transaction_id ?? null,
+  });
+}
+
+export function firstCashShortfallTapDestination(
+  shortfall: DashboardFirstCashShortfall
+): TransactionsTabPath | null {
+  if (shortfall.account_id == null) return null;
+  return transactionsForForecastRiskPath({
+    accountId: shortfall.account_id,
+    accountName: shortfall.account_name ?? undefined,
+    focusDate: shortfall.date,
+    focusTransactionId: shortfall.first_negative_transaction_id ?? null,
+  });
+}
+
+/** Individual Upcoming Money Flow row → account ledger with row focus. */
+export function upcomingMoneyFlowRowDestination(
+  txn: DashboardUpcomingTransaction
+): TransactionsTabPath {
+  const target = upcomingTransactionNavTarget(txn);
+  return transactionsForLedgerFocusPath({
+    accountId: target.accountId,
+    accountName: target.accountName,
+    focus: "ledger-event",
+    focusDate: target.focusDate,
+    focusTransactionId: target.focusTransactionId,
+    focusRuleId: target.focusRuleId,
+    focusEventId: target.focusEventId,
+  });
+}
+
 export function attentionCardTapDestination(
   item: DashboardAttentionItem
-):
-  | `/account/${number}`
-  | ReturnType<typeof transactionsForAccountPath> {
+): `/account/${number}` | TransactionsTabPath {
   if (attentionCardOpensLedger(item)) {
+    if (item.risk_date || item.first_negative_transaction_id != null) {
+      return attentionForecastRiskPath(item);
+    }
     return transactionsForAccountPath(item.account_id, item.account_name);
   }
   return accountDetailPath(item.account_id);
@@ -44,7 +88,7 @@ export function attentionCardAccessibilityLabel(item: DashboardAttentionItem): s
   const issue = attentionPrimaryIssue(item);
   const action = attentionShowsActionLine(item) ? attentionActionLine(item) : null;
   const destination = attentionCardOpensLedger(item)
-    ? "Opens account transactions."
+    ? "Opens account transactions at the forecast risk."
     : "Opens account details.";
   return [
     item.account_name,

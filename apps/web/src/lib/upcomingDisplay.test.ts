@@ -26,6 +26,8 @@ import {
   flattenUpcomingPreviewTransactions,
   upcomingTransferAccountsLabel,
   upcomingPreviewTruncatedMessage,
+  upcomingPreviewRowMetaLine,
+  upcomingTransactionNavTarget,
   upcomingTruncatedMessage,
   groupUpcomingByMonth,
   upcomingMonthLabel,
@@ -232,7 +234,7 @@ describe("upcomingDisplay", () => {
     expect(collapsed).toHaveLength(1);
     expect(upcomingKindLabel(collapsed[0])).toBe("Credit card payment");
     expect(collapsed[0].amount).toBe("-650.00");
-    expect(upcomingTransferAccountsLabel(collapsed[0])).toBe("From Main to Savor");
+    expect(upcomingTransferAccountsLabel(collapsed[0])).toBe("Main → Savor");
   });
 
   it("labels rule and imported sources", () => {
@@ -479,6 +481,90 @@ describe("upcomingDisplay", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.txn.id).toBe("pay");
     expect(rows[0]!.isFirstZeroCross).toBe(false);
+  });
+
+  it("cannot truncate the canonical first cash-shortfall transaction from the preview", () => {
+    const groups = [
+      group({ date: "2026-08-28", transactions: [txn({ id: "1", date: "2026-08-28", description: "A" })] }),
+      group({ date: "2026-08-29", transactions: [txn({ id: "2", date: "2026-08-29", description: "B" })] }),
+      group({ date: "2026-08-30", transactions: [txn({ id: "3", date: "2026-08-30", description: "C" })] }),
+      group({ date: "2026-08-31", transactions: [txn({ id: "4", date: "2026-08-31", description: "D" })] }),
+      group({ date: "2026-09-01", transactions: [txn({ id: "5", date: "2026-09-01", description: "E" })] }),
+      group({
+        date: "2026-09-02",
+        transactions: [
+          txn({
+            id: "99",
+            date: "2026-09-02",
+            description: "Exeterfina Loan",
+            amount: "-393.79",
+            balance_after: "-378.80",
+          }),
+        ],
+      }),
+    ];
+    const preview = buildUpcomingDashboardPreview(
+      groups,
+      {
+        risk_date: "2026-09-02",
+        account_name: "Main",
+        projected_balance: "-378.80",
+        first_negative_transaction_id: 99,
+      },
+      "2026-08-26"
+    );
+    expect(preview.transactions).toHaveLength(5);
+    expect(preview.transactions.some((row) => row.txn.description === "Exeterfina Loan")).toBe(true);
+  });
+
+  it("collapsed bank transfers expose source-account balance impact", () => {
+    const negative = txn({
+      id: "out",
+      description: "Move to Savings",
+      amount: "-497.00",
+      account_name: "Main",
+      balance_after: "78.64",
+      is_transfer: true,
+      is_internal_transfer: true,
+      transfer_from_account_name: "Main",
+      transfer_to_account_name: "Savings",
+    });
+    const positive = txn({
+      id: "in",
+      description: "Move to Savings",
+      amount: "497.00",
+      account_name: "Savings",
+      balance_after: "2728.64",
+      is_transfer: true,
+      is_internal_transfer: true,
+      transfer_from_account_name: "Main",
+      transfer_to_account_name: "Savings",
+    });
+    const collapsed = collapseUpcomingTransferPairs([negative, positive])[0]!;
+    expect(collapsed.transfer_from_balance_after).toBe("78.64");
+    expect(collapsed.transfer_to_balance_after).toBe("2728.64");
+    expect(upcomingPreviewRowMetaLine(collapsed, { shortfallAccountName: "Main" })).toContain(
+      "Main → Savings"
+    );
+    expect(upcomingPreviewRowMetaLine(collapsed, { shortfallAccountName: "Main" })).toContain(
+      "Main after"
+    );
+  });
+
+  it("upcomingTransactionNavTarget opens ledger context instead of calendar", () => {
+    expect(
+      upcomingTransactionNavTarget(
+        txn({ id: "99", transaction_id: 99, description: "Electric bill" })
+      )
+    ).toEqual({
+      type: "ledger",
+      accountId: 1,
+      accountName: "Main",
+      focusDate: "2025-05-28",
+      focusTransactionId: 99,
+      focusRuleId: null,
+      focusEventId: "99",
+    });
   });
 });
 

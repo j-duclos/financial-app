@@ -1,10 +1,10 @@
 import React, { memo, useMemo } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
   buildUpcomingDashboardPreview,
   formatShortMonthDay,
-  upcomingTransactionNavTarget,
   type DashboardFirstCashShortfall,
   type DashboardGoalSummary,
   type DashboardUpcomingGroup,
@@ -20,7 +20,8 @@ import {
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { DASHBOARD_SECTION } from "./terminology";
-import { calendarDatePath, goalDetailPath, goalsListPath } from "./navigation";
+import { firstCashShortfallTapDestination, goalDetailPath, goalsListPath, upcomingMoneyFlowRowDestination } from "./navigation";
+import { markAttentionNavigation } from "./attentionNavigationTiming";
 import { DashboardUpcomingRow } from "./DashboardUpcomingRow";
 import { DashboardGoalCard } from "./DashboardGoalCard";
 import { GoalCardSkeleton, UpcomingPreviewSkeleton } from "./DashboardSkeletons";
@@ -52,18 +53,21 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
           risk_date: firstCashShortfall.date,
           account_name: firstCashShortfall.account_name ?? undefined,
           projected_balance: firstCashShortfall.amount ?? null,
+          first_negative_transaction_id: firstCashShortfall.first_negative_transaction_id ?? null,
         }
       : undefined;
     return buildUpcomingDashboardPreview(upcomingGroups, nextIssue);
   }, [upcomingGroups, firstCashShortfall]);
 
+  const shortfallDestination = useMemo(
+    () => (firstCashShortfall ? firstCashShortfallTapDestination(firstCashShortfall) : null),
+    [firstCashShortfall]
+  );
+
   const onTxnPress = (txn: DashboardUpcomingTransaction) => {
-    const target = upcomingTransactionNavTarget(txn);
-    if (target.type === "transaction") {
-      router.push(`/transaction/${target.transactionId}`);
-      return;
-    }
-    router.push(calendarDatePath(target.date));
+    markAttentionNavigation("attention-tap");
+    router.push(upcomingMoneyFlowRowDestination(txn) as never);
+    markAttentionNavigation("navigation-started");
   };
 
   if (sectionState === "hidden") {
@@ -87,41 +91,65 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
       ) : (
         <View style={{ gap: theme.spacing.sm }}>
           {preview.nextRisk ? (
-            <Card style={{ backgroundColor: theme.colors.warningBg }}>
-              <StatusChip label="First cash shortfall" tone="warning" />
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginTop: 8,
-                  gap: 12,
-                }}
-              >
-                <View style={{ flex: 1 }}>
-                  {preview.nextRisk.accountName ? (
-                    <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                      {preview.nextRisk.accountName}
+            <Pressable
+              onPress={() => {
+                if (!shortfallDestination) return;
+                markAttentionNavigation("attention-tap");
+                router.push(shortfallDestination as never);
+                markAttentionNavigation("navigation-started");
+              }}
+              disabled={!shortfallDestination}
+              accessibilityRole="button"
+              accessibilityLabel="First cash shortfall. Opens account transactions at the forecast risk."
+              style={({ pressed }) => ({ opacity: pressed ? 0.88 : 1 })}
+            >
+              <Card style={{ backgroundColor: theme.colors.warningBg }}>
+                <StatusChip label="First cash shortfall" tone="warning" />
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginTop: 8,
+                    gap: 12,
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    {preview.nextRisk.accountName ? (
+                      <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
+                        {preview.nextRisk.accountName}
+                      </Text>
+                    ) : null}
+                    <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body }}>
+                      {formatShortMonthDay(preview.nextRisk.date)}
                     </Text>
-                  ) : null}
-                  <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body }}>
-                    {formatShortMonthDay(preview.nextRisk.date)}
-                  </Text>
-                </View>
-                {preview.nextRisk.projectedEndBalance != null ? (
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                      Projected balance
-                    </Text>
-                    <CurrencyDisplay
-                      amount={preview.nextRisk.projectedEndBalance}
-                      tone="negative"
-                      style={{ marginTop: 2 }}
-                    />
                   </View>
-                ) : null}
-              </View>
-            </Card>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+                    {preview.nextRisk.projectedEndBalance != null ? (
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+                          Projected balance
+                        </Text>
+                        <CurrencyDisplay
+                          amount={preview.nextRisk.projectedEndBalance}
+                          tone="negative"
+                          style={{ marginTop: 2 }}
+                        />
+                      </View>
+                    ) : null}
+                    {shortfallDestination ? (
+                      <FontAwesome
+                        name="chevron-right"
+                        size={12}
+                        color={theme.colors.textMuted}
+                        style={{ marginTop: 4 }}
+                        accessibilityElementsHidden
+                      />
+                    ) : null}
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
           ) : null}
 
           {preview.truncated && preview.truncatedMessage ? (
@@ -142,6 +170,7 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
                 key={txn.id}
                 txn={txn}
                 isFirstZeroCross={isFirstZeroCross}
+                shortfallAccountName={preview.nextRisk?.accountName}
                 showDivider={index > 0}
                 onPress={() => onTxnPress(txn)}
               />

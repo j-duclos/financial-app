@@ -73,9 +73,6 @@ function matchesClientFilters(
   if (filters.flow === "expense" && txn.direction !== "OUTFLOW") return false;
   if (filters.flow === "transfer" && !isTransferTransaction(txn)) return false;
 
-  if (filters.cleared === "cleared" && !txn.cleared) return false;
-  if (filters.cleared === "pending" && txn.cleared) return false;
-
   const status = (txn.status ?? timelineRow?.status ?? "").toUpperCase();
   const isForecast =
     status === "PLANNED" || (timelineRow?.source === "rule" && !timelineRow.transaction_id);
@@ -93,8 +90,18 @@ function matchesClientFilters(
 
 function matchesTimelineClientFilters(row: TimelineRow, filters: TransactionFilters): boolean {
   const amount = Math.abs(parseFloat(row.amount));
+  const signed = parseFloat(row.amount);
   if (filters.amountMin != null && amount < filters.amountMin) return false;
   if (filters.amountMax != null && amount > filters.amountMax) return false;
+  if (filters.flow === "income" && signed <= 0) return false;
+  if (filters.flow === "expense" && signed >= 0) return false;
+  if (filters.flow === "transfer") {
+    const xfer =
+      row.type === "transfer" ||
+      (row.category_name ?? "").trim() === "Bank Transfer" ||
+      (row.category_name ?? "").trim() === "Credit Card Payment";
+    if (!xfer) return false;
+  }
   if (filters.search.trim()) {
     const q = filters.search.trim().toLowerCase();
     if (!row.description.toLowerCase().includes(q)) return false;
@@ -181,7 +188,7 @@ export function buildTransactionListRows(input: {
 }): TransactionListRow[] {
   const rows: TransactionListRow[] = [];
   const showRecent = input.filters.forecast !== "forecast";
-  const showPendingUpcoming = input.filters.forecast !== "posted" && !input.isSearchMode;
+  const showPendingUpcoming = input.filters.forecast !== "posted";
 
   // --- Recent (posted / historical) — API already returns ascending ledger order ---
   if (showRecent) {
@@ -197,6 +204,7 @@ export function buildTransactionListRows(input: {
     } else {
       const filteredHistory = input.history
         .filter((txn) => !isPendingExpectedTransaction(txn, input.today))
+        .filter((txn) => input.filters.showReconciled || !txn.reconciled)
         .filter((txn) => matchesClientFilters(txn, input.filters));
 
       if (filteredHistory.length > 0 || input.recentRangeLabel) {
@@ -286,7 +294,6 @@ export function buildTransactionListRows(input: {
 export function hasActiveClientOnlyFilters(filters: TransactionFilters): boolean {
   return (
     filters.flow !== "all" ||
-    filters.cleared !== "all" ||
     filters.forecast !== "all" ||
     filters.amountMin != null ||
     filters.amountMax != null

@@ -60,7 +60,6 @@ export function countActiveTransactionFilters(filters: TransactionFilters): numb
   else if (filters.timeFilter !== "14d") n += 1;
   if (filters.showReconciled) n += 1;
   if (filters.flow !== "all") n += 1;
-  if (filters.cleared !== "all") n += 1;
   if (filters.forecast !== "all") n += 1;
   if (filters.amountMin != null || filters.amountMax != null) n += 1;
   return n;

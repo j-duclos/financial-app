@@ -499,6 +499,7 @@ def forecast_balance_metrics_from_transactions_ledger(
     lowest_date = today
     first_negative_date: date | None = None
     first_negative_balance: Decimal | None = None
+    first_negative_transaction_id: int | None = None
     first_below_buffer_date: date | None = None
     first_below_buffer_balance: Decimal | None = None
     end_of_day: dict[date, Decimal] = {}
@@ -582,6 +583,7 @@ def forecast_balance_metrics_from_transactions_ledger(
             )
         balance_before_row = bal
         end_of_day[rd] = bal
+        prev_first_negative_date = first_negative_date
         (
             lowest,
             lowest_date,
@@ -602,6 +604,10 @@ def forecast_balance_metrics_from_transactions_ledger(
             first_below_buffer_date=first_below_buffer_date,
             first_below_buffer_balance=first_below_buffer_balance,
         )
+        if prev_first_negative_date is None and first_negative_date is not None:
+            tid = row.get("transaction_id")
+            if tid is not None:
+                first_negative_transaction_id = int(tid)
         last_metric_date = rd
 
     fill_from = today if last_metric_date is None else last_metric_date + timedelta(days=1)
@@ -637,6 +643,7 @@ def forecast_balance_metrics_from_transactions_ledger(
         "ending": balance_before_row,
         "first_negative_date": first_negative_date,
         "first_negative_balance": first_negative_balance,
+        "first_negative_transaction_id": first_negative_transaction_id,
         "first_below_buffer_date": first_below_buffer_date,
         "first_below_buffer_balance": first_below_buffer_balance,
         "end_of_day": end_of_day,

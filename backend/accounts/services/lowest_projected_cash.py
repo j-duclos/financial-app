@@ -172,6 +172,7 @@ def get_first_cash_shortfall_from_forecasts(
     best_date: str | None = None
     best_amount: Decimal | None = None
     best_aid: int | None = None
+    best_txn_id: int | None = None
 
     for aid, summary in forecast_summaries.items():
         account = accounts_by_id.get(aid)
@@ -194,19 +195,23 @@ def get_first_cash_shortfall_from_forecasts(
             best_date = first_date
             best_amount = first_amount
             best_aid = aid
+            best_txn_id = summary.get("first_negative_transaction_id")
 
     if best_date is None or best_amount is None or best_aid is None:
         return None
 
     account = accounts_by_id.get(best_aid)
     amount = best_amount.quantize(Decimal("0.01"))
-    return {
+    payload: dict[str, Any] = {
         "amount": str(amount),
         "account_id": best_aid,
         "account_name": account.effective_display_name if account else "",
         "date": best_date,
         "is_negative": True,
     }
+    if best_txn_id is not None:
+        payload["first_negative_transaction_id"] = int(best_txn_id)
+    return payload
 
 
 def get_lowest_projected_cash(

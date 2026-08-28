@@ -490,6 +490,8 @@ export interface DashboardAttentionItem {
   recommended_action: string | null;
   amount: string | null;
   risk_date: string | null;
+  /** Persisted transaction that first crosses below zero (cash risk deep links). */
+  first_negative_transaction_id?: number | null;
   primary_action: DashboardAttentionAction;
   secondary_action: DashboardAttentionAction | null;
   url: string;
@@ -523,6 +525,14 @@ export interface DashboardUpcomingTransaction {
   transfer_from_account_name?: string | null;
   /** Set for transfer-rule legs: receiving account name. */
   transfer_to_account_name?: string | null;
+  /** Persisted transaction id when the upcoming row maps to a ledger row. */
+  transaction_id?: number | null;
+  /** Recurring rule id for forecast rows without a persisted transaction. */
+  rule_id?: number | null;
+  /** Source leg balance after an internal transfer (collapsed pair). */
+  transfer_from_balance_after?: string | null;
+  /** Destination leg balance after an internal transfer (collapsed pair). */
+  transfer_to_balance_after?: string | null;
   source: string | null;
   status: string | null;
   risk_flag: boolean;
@@ -969,6 +979,7 @@ export interface DashboardFirstCashShortfall {
   account_name: string | null;
   date: string | null;
   is_negative: boolean;
+  first_negative_transaction_id?: number | null;
 }
 
 /** One additional cash account that also goes negative on the same extended-risk date. */

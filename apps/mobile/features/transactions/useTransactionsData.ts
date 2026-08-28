@@ -41,19 +41,15 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
   const isSearchMode = debouncedSearch.trim().length > 0;
 
   /**
-   * Recent "Last N days" must change the fetch window.
-   * Always use include_reconciled_after = historyStart (web History Range behavior)
-   * so expanding 14→90 loads older activity. Do NOT clamp to reconcile day-after —
-   * that made every range resolve to the same date_after and the picker did nothing.
+   * Recent "Last N days" uses date_after = historyStart.
+   * show_reconciled ON → reconciled rows inside the window plus unreconciled.
+   * show_reconciled OFF → reconciled=false within the same date window (web parity).
    */
   const dateAfter = useMemo(() => {
     if (filters.specificDate) return filters.specificDate;
     if (filters.dateFrom) return filters.dateFrom;
-    if (isSearchMode) return historyStart;
-    // Ledger mode: lower bound is the selected Recent range start (via include_reconciled_after).
-    // Omit date_after so reconciled-in-window rows are not excluded by a hard floor.
-    return undefined;
-  }, [filters.specificDate, filters.dateFrom, isSearchMode, historyStart]);
+    return historyStart;
+  }, [filters.specificDate, filters.dateFrom, historyStart]);
 
   const dateBefore = filters.specificDate ?? filters.dateTo ?? historyEnd;
 
@@ -62,7 +58,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     categoryId: filters.categoryId,
     dateAfter: dateAfter ?? historyStart,
     dateBefore,
-    showReconciled: true,
+    showReconciled: filters.showReconciled,
     historyStart,
     search: debouncedSearch,
     ordering: isSearchMode ? "-date,-id" : TRANSACTIONS_LEDGER_ORDERING,
@@ -78,18 +74,16 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
       listTransactions({
         account: filters.accountId ?? undefined,
         category: filters.categoryId ?? undefined,
-        ...(dateAfter ? { date_after: dateAfter } : {}),
+        date_after: dateAfter,
         date_before: dateBefore,
         search: debouncedSearch.trim() || undefined,
         page: pageParam,
         page_size: pageSize,
         ordering: isSearchMode ? "-date,-id" : TRANSACTIONS_LEDGER_ORDERING,
         include_running_balance: !isSearchMode,
-        // Recent "Last N days" = History Range: include reconciled on/after historyStart.
-        // Do not client-strip reconciled afterward — that made the range a no-op after
-        // the last reconcile (everything older is reconciled and was discarded).
-        show_reconciled: true,
-        include_reconciled_after: historyStart,
+        ...(filters.showReconciled
+          ? { show_reconciled: true, include_reconciled_after: historyStart }
+          : { reconciled: false }),
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, _pages, lastPageParam) =>

@@ -294,6 +294,12 @@ def _serialize_transaction(
     if from_name and to_name:
         payload["transfer_from_account_name"] = from_name
         payload["transfer_to_account_name"] = to_name
+    txn_id = event.get("transaction_id")
+    if txn_id is not None:
+        payload["transaction_id"] = int(txn_id)
+    rule_id = event.get("rule_id")
+    if rule_id is not None:
+        payload["rule_id"] = int(rule_id)
     return payload
 
 
@@ -353,6 +359,12 @@ def _merge_credit_card_payment_pair_for_display(
         merged["transfer_from_account_name"] = from_name
     if to_name:
         merged["transfer_to_account_name"] = to_name
+    neg_txn = negative.get("transaction_id")
+    if neg_txn is not None:
+        merged["transaction_id"] = int(neg_txn)
+    neg_rule = negative.get("rule_id")
+    if neg_rule is not None:
+        merged["rule_id"] = int(neg_rule)
     return merged
 
 
@@ -371,19 +383,28 @@ def _merge_transfer_pair_for_display(
         or ""
     ).strip()
     amt = abs(_decimal(positive.get("amount") or 0))
-    merged = dict(positive)
+    merged = dict(negative)
     merged["id"] = f"xfer-{negative.get('id')}-{positive.get('id')}"
     merged["kind"] = "transfer"
     merged["is_transfer"] = True
     merged["is_internal_transfer"] = True
     merged["is_credit_card_payment"] = False
     merged["amount"] = str(amt.quantize(Decimal("0.01")))
-    merged["account_name"] = to_name or positive.get("account_name") or ""
+    merged["account_name"] = from_name or negative.get("account_name") or ""
+    merged["balance_after"] = negative.get("balance_after") or positive.get("balance_after")
+    merged["transfer_from_balance_after"] = negative.get("balance_after")
+    merged["transfer_to_balance_after"] = positive.get("balance_after")
     merged["risk_flag"] = bool(positive.get("risk_flag") or negative.get("risk_flag"))
     if from_name:
         merged["transfer_from_account_name"] = from_name
     if to_name:
         merged["transfer_to_account_name"] = to_name
+    neg_txn = negative.get("transaction_id")
+    if neg_txn is not None:
+        merged["transaction_id"] = int(neg_txn)
+    neg_rule = negative.get("rule_id")
+    if neg_rule is not None:
+        merged["rule_id"] = int(neg_rule)
     return merged
 
 

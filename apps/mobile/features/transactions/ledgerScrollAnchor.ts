@@ -8,6 +8,18 @@ export const LEDGER_SECTION_HEIGHT = 48;
 export const LEDGER_ROW_HEIGHT = 76;
 export const LEDGER_SKELETON_HEIGHT = 56;
 
+export type LedgerFocusKind = "forecast-risk" | "ledger-event";
+
+export type LedgerFocusParams = {
+  focus: LedgerFocusKind;
+  focusDate?: string | null;
+  focusTransactionId?: number | null;
+  focusRuleId?: number | null;
+};
+
+/** @deprecated Use LedgerFocusParams */
+export type LedgerForecastFocus = LedgerFocusParams;
+
 /**
  * Index of the ledger "today" boundary: Pending section, else Upcoming section.
  * Returns null when the list has no boundary to anchor (Recent-only / empty).
@@ -49,6 +61,84 @@ export function ledgerAnchorScrollIndex(rows: TransactionListRow[]): number | nu
     }
   }
   return target;
+}
+
+function rowMatchesFocusTransaction(
+  row: TransactionListRow,
+  focusTransactionId: number
+): boolean {
+  if (row.kind === "history") {
+    return row.txn.id === focusTransactionId;
+  }
+  if (row.kind === "pending" || row.kind === "upcoming") {
+    return row.row.transaction_id === focusTransactionId;
+  }
+  return false;
+}
+
+function rowMatchesFocusRule(
+  row: TransactionListRow,
+  focusRuleId: number,
+  focusDate: string
+): boolean {
+  if (row.kind !== "pending" && row.kind !== "upcoming") return false;
+  if (row.row.date.slice(0, 10) !== focusDate.slice(0, 10)) return false;
+  return row.row.rule_id === focusRuleId;
+}
+
+/** Prefer an exact ledger row; fall back to rule+date, then first Upcoming row on focusDate. */
+export function findLedgerFocusIndex(
+  rows: TransactionListRow[],
+  focus: LedgerFocusParams
+): number | null {
+  if (focus.focusTransactionId != null) {
+    const exact = rows.findIndex((row) =>
+      rowMatchesFocusTransaction(row, focus.focusTransactionId!)
+    );
+    if (exact >= 0) return exact;
+  }
+
+  const focusDate = focus.focusDate?.slice(0, 10);
+  if (focusDate && focus.focusRuleId != null) {
+    const byRule = rows.findIndex((row) =>
+      rowMatchesFocusRule(row, focus.focusRuleId!, focusDate)
+    );
+    if (byRule >= 0) return byRule;
+  }
+
+  if (focusDate) {
+    const onDate = rows.findIndex(
+      (row) =>
+        (row.kind === "upcoming" || row.kind === "pending") &&
+        row.row.date.slice(0, 10) === focusDate
+    );
+    if (onDate >= 0) return onDate;
+  }
+
+  return null;
+}
+
+/** @deprecated Use findLedgerFocusIndex */
+export function findLedgerForecastFocusIndex(
+  rows: TransactionListRow[],
+  focus: LedgerFocusParams
+): number | null {
+  return findLedgerFocusIndex(rows, focus);
+}
+
+/**
+ * Scroll target on open — deep links prefer the focused row;
+ * normal tab opens keep the Recent/Pending boundary anchor.
+ */
+export function ledgerOpenScrollIndex(
+  rows: TransactionListRow[],
+  focus?: LedgerFocusParams | null
+): number | null {
+  if (focus?.focus === "forecast-risk" || focus?.focus === "ledger-event") {
+    const focused = findLedgerFocusIndex(rows, focus);
+    if (focused != null) return focused;
+  }
+  return ledgerAnchorScrollIndex(rows);
 }
 
 export function ledgerRowHeight(row: TransactionListRow | undefined): number {
