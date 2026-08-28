@@ -117,3 +117,71 @@ def test_lowest_matches_balance_after_not_chronological_running_balance(
     assert metrics["lowest"] != (hulu_bal - main_checking.minimum_buffer)
     if hulu_rb != hulu_bal:
         assert metrics["lowest"] != hulu_rb
+
+
+@pytest.mark.django_db
+def test_overdue_pending_not_double_counted(user, main_checking):
+    """Overdue pending rows must be applied once — not twice (was causing -2847-style lows)."""
+    today = date(2026, 8, 27)
+    anchor = Decimal("1784.18")
+    overdue = date(2026, 8, 20)
+    upcoming = date(2026, 8, 28)
+
+    Transaction.objects.create(
+        account=main_checking,
+        date=overdue,
+        payee="Overdue bill",
+        amount=Decimal("-500.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    Transaction.objects.create(
+        account=main_checking,
+        date=upcoming,
+        payee="Future bill",
+        amount=Decimal("-200.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+
+    end = today + timedelta(days=30)
+    rows = build_forecast_projection_timeline(
+        user,
+        today=today,
+        end_date=end,
+        caller="test_overdue_pending",
+        account_id=main_checking.pk,
+    )
+    annotate_transactions_ledger_balance_after(
+        rows,
+        account_id=main_checking.pk,
+        as_of=today,
+        posted_ending_balance=anchor,
+    )
+    future = next(r for r in rows if "Future bill" in (r.get("description") or ""))
+    expected_low = Decimal(str(future["balance_after"]))
+
+    metrics = forecast_account_balance_metrics(
+        rows,
+        account_id=main_checking.pk,
+        today=today,
+        end_date=end,
+        minimum_buffer=main_checking.minimum_buffer,
+    )
+
+    from timeline.services.ledger_section_balances import (
+        forecast_balance_metrics_from_transactions_ledger,
+    )
+
+    direct = forecast_balance_metrics_from_transactions_ledger(
+        rows,
+        account_id=main_checking.pk,
+        today=today,
+        end_date=end,
+        minimum_buffer=main_checking.minimum_buffer,
+        ledger_anchor=anchor,
+    )
+
+    assert direct["lowest"] == expected_low
+    assert metrics["lowest"] == direct["lowest"]
+    assert metrics["lowest"] == anchor - Decimal("200.00")

@@ -37,6 +37,23 @@ def checking(household):
 
 
 @pytest.mark.django_db
+def test_ledger_today_excludes_pending_without_reconcile(checking):
+    """Anchor must be before pending even when the account has no reconcile session."""
+    today = date.today()
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Pending bill",
+        amount=Decimal("-50.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    before = ledger_today_balance_before_pending(checking, today)
+    assert before == Decimal("1000.00")
+    assert app_current_balance(checking, today) == Decimal("950.00")
+
+
+@pytest.mark.django_db
 def test_list_balance_includes_unresolved_same_day_pending(auth_client, checking):
     today = date.today()
     Transaction.objects.create(

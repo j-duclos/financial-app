@@ -41,13 +41,19 @@ def _is_planned_scheduled(row: dict[str, Any]) -> bool:
         return False
     if str(row.get("plaid_transaction_id") or "").strip():
         return False
-    source = str(row.get("source") or "").lower()
-    if source == "rule":
+    source = str(row.get("source") or "").upper()
+    if source == "INTEREST":
+        return False
+    if source == "RULE":
         return True
-    txn_src = str(row.get("txn_source") or "").lower()
-    if txn_src == "rule":
+    txn_src = str(row.get("txn_source") or "").upper()
+    if txn_src == "RULE":
         return True
-    return row.get("rule_id") is not None and source == "actual"
+    if row.get("rule_id") is not None:
+        return True
+    if source == "ONE_TIME":
+        return True
+    return False
 
 
 def is_pending_expected_timeline_row(row: dict[str, Any], today: date) -> bool:
@@ -233,11 +239,6 @@ def forecast_balance_metrics_from_transactions_ledger(
     )
 
     running = _decimal(ledger_anchor).quantize(Decimal("0.01"))
-
-    for row in walk:
-        if _row_date(row) >= today:
-            break
-        running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
 
     lowest = running
     lowest_date = today

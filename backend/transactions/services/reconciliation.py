@@ -329,20 +329,61 @@ def past_ledger_opening_balance(account: Account, as_of: Optional[date] = None) 
     return bal
 
 
+def _timeline_row_from_transaction(txn: Transaction) -> dict:
+    """Minimal timeline row shape for pending / superseded helpers."""
+    source = (txn.source or "").lower()
+    return {
+        "date": txn.date,
+        "status": txn.status,
+        "source": source,
+        "txn_source": source,
+        "rule_id": txn.rule_id,
+        "import_match_status": txn.import_match_status,
+        "plaid_transaction_id": (txn.plaid_transaction_id or "").strip() or None,
+        "amount": txn.amount,
+        "account_id": txn.account_id,
+        "description": txn.payee or "",
+    }
+
+
 def ledger_today_balance_before_pending(
     account: Account, as_of: Optional[date] = None
 ) -> Decimal:
     """
     Balance after unreconciled cleared activity through ``as_of``, before pending planned rows.
 
-    Matches the Transactions ledger ``today_balance`` when reconciled past is hidden.
-    Falls back to ledger end-of-day balance when the account has no reconciliation anchor.
+    Matches the Transactions ledger ``today_balance`` / Recent ending Bal — the anchor for
+    Pending → Upcoming ``balance_after``. Never includes pending planned rows that the
+    forecast walk will apply separately.
     """
     as_of = _as_of_date(as_of)
     if last_reconcile_period_end(account) is None:
-        from timeline.services.ledger import _balance_at_end_of_date
+        from timeline.services.ledger import _signed_starting_balance, is_superseded_planned_row
+        from timeline.services.ledger_section_balances import is_pending_expected_timeline_row
 
-        return _balance_at_end_of_date(account.pk, as_of)
+        opening, credit_opening_pre_negated = _signed_starting_balance(account)
+        txns = list(
+            ledger_visible_transactions(
+                Transaction.objects.filter(account=account, date__lte=as_of).order_by(
+                    "date", "id"
+                )
+            )
+        )
+        compare_rows = [_timeline_row_from_transaction(t) for t in txns]
+        total = opening
+        for txn, row in zip(txns, compare_rows):
+            if is_pending_expected_timeline_row(row, as_of):
+                continue
+            if is_superseded_planned_row(row, compare_rows):
+                continue
+            total += txn.amount
+        if (
+            account.account_type == Account.AccountType.CREDIT
+            and total > 0
+            and not credit_opening_pre_negated
+        ):
+            total = -total
+        return total
 
     balance = past_ledger_opening_balance(account, as_of)
     txns = filter_superseded_planned_transactions(
