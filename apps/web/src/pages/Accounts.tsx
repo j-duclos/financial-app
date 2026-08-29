@@ -32,6 +32,8 @@ import {
   groupAccounts,
   reorderAccountsInGroup,
   accountsForPageStats,
+  isAttentionHealthFilter,
+  needsAttention,
 } from "../lib/accountOrganization";
 import {
   computeAccountsPageStats,
@@ -64,7 +66,7 @@ function formatBillingCycleEndPreview(closingDay: string): string {
 
 export default function Accounts() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -243,13 +245,18 @@ export default function Accounts() {
     resetPreferences,
   } = useAccountOrganizationPreferences();
 
+  const attentionFilterActive = searchParams.get("attention") === "1";
+
+  // Attention is URL-scoped (like mobile) — do not persist into localStorage prefs.
+  // Heal older sessions where `/accounts?attention=1` wrote watch/risk/critical forever.
   useEffect(() => {
-    if (searchParams.get("attention") === "1") {
-      setFilters((f) => ({
-        ...f,
-        healthStatuses: ["watch", "risk", "critical"],
-      }));
-    }
+    if (attentionFilterActive) return;
+    setFilters((f) =>
+      isAttentionHealthFilter(f.healthStatuses) ? { ...f, healthStatuses: [] } : f
+    );
+  }, [attentionFilterActive, setFilters]);
+
+  useEffect(() => {
     if (searchParams.get("debtOnly") === "1") {
       setFilters((f) => ({ ...f, debtOnly: true, spendingOnly: false }));
     }
@@ -590,13 +597,24 @@ export default function Accounts() {
     accountRoleForQuickActions: roleForQuick,
   } = useAccountsQuickActions(accounts, householdId, forecastDays, openEdit);
 
-  const filteredAccounts = useMemo(
-    () =>
-      filterAccounts(accounts, orgPrefs.filters, {
-        plaidLinkedAccountIds: quickActionsContext.plaidLinkedAccountIds,
-      }),
-    [accounts, orgPrefs.filters, quickActionsContext.plaidLinkedAccountIds]
-  );
+  const filteredAccounts = useMemo(() => {
+    const base = filterAccounts(accounts, orgPrefs.filters, {
+      plaidLinkedAccountIds: quickActionsContext.plaidLinkedAccountIds,
+    });
+    if (!attentionFilterActive) return base;
+    return base.filter(needsAttention);
+  }, [
+    accounts,
+    orgPrefs.filters,
+    quickActionsContext.plaidLinkedAccountIds,
+    attentionFilterActive,
+  ]);
+
+  const clearAttentionFilter = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("attention");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const accountGroups = useMemo(
     () => groupAccounts(filteredAccounts, orgPrefs.groupBy, orgPrefs.sortBy),
@@ -697,6 +715,25 @@ export default function Accounts() {
         onReset={resetPreferences}
       />
 
+      {attentionFilterActive ? (
+        <div
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2"
+          data-testid="accounts-attention-banner"
+        >
+          <p className="text-sm text-amber-900">
+            Showing accounts that need attention (watch, at risk, or critical). Healthy credit
+            cards and other accounts are hidden.
+          </p>
+          <button
+            type="button"
+            onClick={clearAttentionFilter}
+            className="shrink-0 text-sm font-medium text-blue-700 hover:underline"
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : null}
+
       <AccountsForecastAlertsPanel
         accounts={accounts}
         forecastDays={forecastDays}
@@ -762,6 +799,18 @@ export default function Accounts() {
         >
           {accounts.length === 0 ? (
             <p>No accounts yet. Add your first account or link a bank.</p>
+          ) : attentionFilterActive ? (
+            <p>
+              No accounts need attention right now.{" "}
+              <button
+                type="button"
+                onClick={clearAttentionFilter}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                Clear filter
+              </button>
+              .
+            </p>
           ) : (
             <p>
               No accounts match these filters.{" "}

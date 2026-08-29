@@ -35,6 +35,9 @@ export type AccountLayoutMode = "compact" | "comfortable" | "detailed";
 
 export type HealthStatus = "healthy" | "watch" | "risk" | "critical";
 
+/** Health statuses used by Dashboard → “View all accounts needing attention”. */
+export const ATTENTION_HEALTH_STATUSES: HealthStatus[] = ["watch", "risk", "critical"];
+
 export type AccountLifecycleStatus = "active" | "archived" | "closed" | "deleted";
 
 export type PlaidSourceFilter = "all" | "plaid" | "manual";
@@ -183,6 +186,17 @@ export function isAtRisk(acc: Account): boolean {
   /** At Risk + Critical. Watch is not counted as "at risk". */
   const s = accountHealthStatus(acc);
   return s === "risk" || s === "critical";
+}
+
+/** True when health matches Dashboard attention (watch / risk / critical). */
+export function needsAttention(acc: Account): boolean {
+  return ATTENTION_HEALTH_STATUSES.includes(accountHealthStatus(acc));
+}
+
+/** Exact health-status set written by the old `/accounts?attention=1` deep link. */
+export function isAttentionHealthFilter(healthStatuses: HealthStatus[]): boolean {
+  if (healthStatuses.length !== ATTENTION_HEALTH_STATUSES.length) return false;
+  return ATTENTION_HEALTH_STATUSES.every((s) => healthStatuses.includes(s));
 }
 
 export function isDebtAccount(acc: Account): boolean {

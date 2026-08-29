@@ -7,6 +7,9 @@ import {
   reorderAccountsInGroup,
   sortAccounts,
   DEFAULT_ACCOUNT_ORG_PREFERENCES,
+  ATTENTION_HEALTH_STATUSES,
+  isAttentionHealthFilter,
+  needsAttention,
 } from "./accountOrganization";
 
 function mockAccount(overrides: Partial<Account> & { id: number }): Account {
@@ -187,5 +190,43 @@ describe("load/save preferences", () => {
   it("defaults groupBy to role", () => {
     expect(DEFAULT_ACCOUNT_ORG_PREFERENCES.groupBy).toBe("role");
     expect(DEFAULT_ACCOUNT_ORG_PREFERENCES.sortBy).toBe("health_worst_first");
+  });
+});
+
+describe("attention health filter", () => {
+  it("matches the dashboard attention deep-link status set", () => {
+    expect(isAttentionHealthFilter(ATTENTION_HEALTH_STATUSES)).toBe(true);
+    expect(isAttentionHealthFilter(["watch", "risk", "critical"])).toBe(true);
+    expect(isAttentionHealthFilter(["risk", "critical"])).toBe(false);
+    expect(isAttentionHealthFilter([])).toBe(false);
+  });
+
+  it("treats watch/risk/critical as needing attention and healthy as not", () => {
+    expect(needsAttention(mockAccount({ id: 1, health_status: "watch" }))).toBe(true);
+    expect(needsAttention(mockAccount({ id: 2, health_status: "risk" }))).toBe(true);
+    expect(needsAttention(mockAccount({ id: 3, health_status: "critical" }))).toBe(true);
+    expect(needsAttention(mockAccount({ id: 4, health_status: "healthy" }))).toBe(false);
+  });
+
+  it("keeps healthy credit cards visible unless attention overlay filters them", () => {
+    const accounts = [
+      mockAccount({
+        id: 7,
+        account_type: "CREDIT",
+        role: "credit_card",
+        health_status: "healthy",
+        name: "Quicksilver",
+      }),
+      mockAccount({
+        id: 6,
+        account_type: "CREDIT",
+        role: "credit_card",
+        health_status: "risk",
+        name: "Savor",
+      }),
+    ];
+    const all = filterAccounts(accounts, DEFAULT_ACCOUNT_ORG_PREFERENCES.filters);
+    expect(all.map((a) => a.id).sort()).toEqual([6, 7]);
+    expect(all.filter(needsAttention).map((a) => a.id)).toEqual([6]);
   });
 });
