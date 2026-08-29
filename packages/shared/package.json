@@ -22,6 +22,9 @@
     "./resolveRiskDisplay": "./src/resolveRiskDisplay.ts",
     "./paymentPlannerDisplay": "./src/paymentPlannerDisplay.ts",
     "./monthGroupDisplay": "./src/monthGroupDisplay.ts",
-    "./dayHeatDisplay": "./src/dayHeatDisplay.ts"
+    "./dayHeatDisplay": "./src/dayHeatDisplay.ts",
+    "./dashboardDisplay": "./src/dashboardDisplay.ts",
+    "./dashboardTerminology": "./src/dashboardTerminology.ts",
+    "./extendedCashRiskQuery": "./src/extendedCashRiskQuery.ts"
   }
 }

@@ -78,6 +78,7 @@ describe("Attention navigation and prefetch", () => {
     expect(dashboardSource).toMatch(/isHomeReadyForTransactionsPrefetch/);
     expect(dashboardSource).toMatch(/InteractionManager\.runAfterInteractions/);
     expect(dashboardSource).toMatch(/home-fully-useful/);
+    expect(dashboardSource).not.toMatch(/extendedSettled/);
     expect(dashboardSource).not.toMatch(/prefetchVisibleAttentionDestinations\(queryClient, attention\)/);
   });
 

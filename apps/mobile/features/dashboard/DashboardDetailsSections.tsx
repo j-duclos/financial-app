@@ -3,12 +3,11 @@ import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
-  buildUpcomingDashboardPreview,
   formatShortMonthDay,
   type DashboardFirstCashShortfall,
   type DashboardGoalSummary,
-  type DashboardUpcomingGroup,
   type DashboardUpcomingTransaction,
+  type UpcomingDashboardPreviewLayout,
 } from "@budget-app/shared";
 import {
   Card,
@@ -31,7 +30,8 @@ type UpcomingProps = {
   sectionState: DashboardDetailsSectionState;
   errorMessage: string;
   onRetry: () => void;
-  upcomingGroups: DashboardUpcomingGroup[];
+  /** Precomputed once in DashboardScreen — do not rebuild here. */
+  preview: UpcomingDashboardPreviewLayout;
   firstCashShortfall?: DashboardFirstCashShortfall | null;
   recalculating?: boolean;
 };
@@ -40,24 +40,12 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
   sectionState,
   errorMessage,
   onRetry,
-  upcomingGroups,
+  preview,
   firstCashShortfall,
   recalculating,
 }: UpcomingProps) {
   const theme = useTheme();
   const router = useRouter();
-
-  const preview = useMemo(() => {
-    const nextIssue = firstCashShortfall?.date
-      ? {
-          risk_date: firstCashShortfall.date,
-          account_name: firstCashShortfall.account_name ?? undefined,
-          projected_balance: firstCashShortfall.amount ?? null,
-          first_negative_transaction_id: firstCashShortfall.first_negative_transaction_id ?? null,
-        }
-      : undefined;
-    return buildUpcomingDashboardPreview(upcomingGroups, nextIssue);
-  }, [upcomingGroups, firstCashShortfall]);
 
   const shortfallDestination = useMemo(
     () => (firstCashShortfall ? firstCashShortfallTapDestination(firstCashShortfall) : null),

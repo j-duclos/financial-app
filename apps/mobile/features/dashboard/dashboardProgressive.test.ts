@@ -65,7 +65,9 @@ describe("Dashboard progressive loading architecture", () => {
 
   it("passes first cash shortfall independently to upcoming preview", () => {
     expect(dashboardSource).toMatch(/firstCashShortfall=\{summaryFast\?\.first_cash_shortfall\}/);
-    expect(detailsSource).toMatch(/buildUpcomingDashboardPreview\(upcomingGroups/);
+    expect(dashboardSource).toMatch(/buildUpcomingDashboardPreview\(upcomingGroups/);
+    expect(dashboardSource).toMatch(/preview=\{upcomingPreview\}/);
+    expect(detailsSource).not.toMatch(/buildUpcomingDashboardPreview/);
   });
 
   it("shows recalculating state when forecast window changes with prior data", () => {

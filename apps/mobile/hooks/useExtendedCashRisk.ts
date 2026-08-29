@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { getExtendedCashRisk } from "@budget-app/api-client";
+import { extendedCashRiskQueryDefaults } from "@budget-app/shared";
 
 export function useExtendedCashRisk(enabled: boolean) {
   return useQuery({
-    queryKey: ["extended-cash-risk"],
+    ...extendedCashRiskQueryDefaults,
     queryFn: () => getExtendedCashRisk(),
     enabled,
-    staleTime: 60_000,
   });
 }

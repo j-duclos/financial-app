@@ -116,11 +116,7 @@ export function DashboardScreen() {
   const {
     data: extendedCashRisk,
     isFetching: extendedFetching,
-    isFetched: extendedFetched,
-    isError: extendedError,
   } = useExtendedCashRisk(dependentQueriesEnabled);
-  const extendedSettled =
-    !dependentQueriesEnabled || extendedFetched || extendedError;
   const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   // Summary-fast includes top_summary; snapshot from details is an optional legacy fallback only.
@@ -242,7 +238,6 @@ export function DashboardScreen() {
     detailsFetching,
     upcomingSectionState,
     goalsSectionState,
-    extendedSettled,
   });
 
   useEffect(() => {
@@ -252,7 +247,7 @@ export function DashboardScreen() {
   }, [homeReadyForPrefetch]);
 
   // Low-priority Transactions prefetch after Home is fully useful — must not compete
-  // with summary-fast, details, extended risk, or goals/upcoming first paint.
+  // with summary-fast, details, or goals/upcoming first paint. Extended risk may still run.
   useEffect(() => {
     if (transactionsPrefetchedRef.current) return;
     if (!homeReadyForPrefetch) return;
@@ -374,7 +369,7 @@ export function DashboardScreen() {
         onRetry={() => {
           void refetchDetails();
         }}
-        upcomingGroups={upcomingGroups}
+        preview={upcomingPreview}
         firstCashShortfall={summaryFast?.first_cash_shortfall}
         recalculating={recalculating && !!details}
       />

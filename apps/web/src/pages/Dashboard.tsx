@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FinancialGoal } from "@budget-app/shared";
-import { getDashboardDetails, getDashboardSummaryFast, listAccounts, listAllBuckets } from "@budget-app/api-client";
+import {
+  EXTENDED_CASH_RISK_QUERY_KEY,
+  type FinancialGoal,
+} from "@budget-app/shared";
+import { getDashboardDetails, getDashboardSummaryFast, listAccounts } from "@budget-app/api-client";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import DashboardTopSummaryBar from "../components/dashboard/DashboardTopSummaryBar";
 import DashboardSkeleton, { DashboardSectionSkeleton } from "../components/dashboard/DashboardSkeleton";
@@ -49,38 +52,67 @@ function DashboardOnboarding() {
   );
 }
 
+/** Defer non-critical work until the browser is idle (or next tick as fallback). */
+function runWhenIdle(task: () => void): () => void {
+  const idle = typeof window !== "undefined" ? window.requestIdleCallback : undefined;
+  if (typeof idle === "function") {
+    const id = idle(() => task(), { timeout: 2000 });
+    return () => {
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(id);
+      }
+    };
+  }
+  const timeoutId = window.setTimeout(task, 0);
+  return () => window.clearTimeout(timeoutId);
+}
+
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [extendedRiskEnabled, setExtendedRiskEnabled] = useState(false);
   const needsAccounts = txnPreset != null;
 
-  const { data: summaryFast, isLoading: fastLoading, isError: fastError } = useQuery({
+  const {
+    data: summaryFast,
+    isLoading: fastLoading,
+    isError: fastError,
+    isSuccess: fastSuccess,
+  } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
     enabled: forecastReady,
   });
 
-  const { data: extendedCashRisk } = useExtendedCashRisk(forecastReady && !!summaryFast);
-  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
-
-  const [detailsEnabled, setDetailsEnabled] = useState(false);
-  useEffect(() => {
-    if (!summaryFast || fastError) {
-      setDetailsEnabled(false);
-      return;
-    }
-    setDetailsEnabled(false);
-    const timer = window.setTimeout(() => setDetailsEnabled(true), 350);
-    return () => window.clearTimeout(timer);
-  }, [summaryFast, fastError, forecastDays]);
+  // Details starts immediately after summary-fast succeeds (no artificial delay).
+  const detailsEnabled = forecastReady && fastSuccess && !fastError;
 
   const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery({
     queryKey: ["dashboard-summary-details", forecastDays],
     queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
-    enabled: detailsEnabled && forecastReady,
+    enabled: detailsEnabled,
   });
+
+  const detailsSettled =
+    detailsEnabled && ((!detailsLoading && !!details) || detailsError);
+
+  // Extended risk is secondary — defer until details settled (or use cache immediately).
+  useEffect(() => {
+    if (!detailsSettled) {
+      setExtendedRiskEnabled(false);
+      return;
+    }
+    if (queryClient.getQueryData(EXTENDED_CASH_RISK_QUERY_KEY) != null) {
+      setExtendedRiskEnabled(true);
+      return;
+    }
+    return runWhenIdle(() => setExtendedRiskEnabled(true));
+  }, [detailsSettled, queryClient, forecastDays]);
+
+  const { data: extendedCashRisk } = useExtendedCashRisk(extendedRiskEnabled);
+  const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "dashboard"],
@@ -89,18 +121,11 @@ export default function Dashboard() {
   });
   const accounts = accountsData?.results ?? [];
 
-  const { data: allGoals = [], isLoading: goalsLoading } = useQuery({
-    queryKey: ["buckets", "all"],
-    queryFn: () => listAllBuckets(),
-    enabled: !!details && !(details.goals?.length),
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
-  const dashboardGoals = useMemo(() => {
-    if (details?.goals?.length) return details.goals as FinancialGoal[];
-    return allGoals;
-  }, [details?.goals, allGoals]);
-  const goalsPreviewLoading = goalsLoading && !(details?.goals?.length);
+  const dashboardGoals = useMemo(
+    () => (details?.goals ?? []) as FinancialGoal[],
+    [details?.goals]
+  );
+
   const showOnboarding =
     summaryFast &&
     parseFloat(summaryFast.top_summary?.liquid_cash ?? "0") === 0 &&
@@ -186,7 +211,7 @@ export default function Dashboard() {
               ) : (
                 <section aria-label="Goals Progress">
                   <GoalsPreviewSectionHeader />
-                  <GoalsPreviewSection goals={dashboardGoals} loading={goalsPreviewLoading} />
+                  <GoalsPreviewSection goals={dashboardGoals} loading={false} />
                 </section>
               )}
             </>
@@ -205,7 +230,7 @@ export default function Dashboard() {
           setToast(message);
           await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
           await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
-          await queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] });
+          await queryClient.invalidateQueries({ queryKey: EXTENDED_CASH_RISK_QUERY_KEY });
         }}
       />
     </div>

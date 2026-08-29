@@ -10,7 +10,7 @@ const source = readFileSync(
 
 describe("useExtendedCashRisk", () => {
   it("uses a shared query key that does not include Forecast Window days", () => {
-    expect(source).toMatch(/\["extended-cash-risk"\]/);
+    expect(source).toMatch(/extendedCashRiskQueryDefaults/);
     expect(source).toMatch(/getExtendedCashRisk/);
     expect(source).not.toMatch(/forecastDays/);
     expect(source).not.toMatch(/forecast_days/);

@@ -145,17 +145,15 @@ describe("isHomeReadyForTransactionsPrefetch", () => {
     detailsFetching: false,
     upcomingSectionState: "data" as const,
     goalsSectionState: "data" as const,
-    extendedSettled: true,
   };
 
-  it("requires summary-fast, details, sections, and extended risk settled", () => {
+  it("requires summary-fast, details, and Upcoming/Goals settled — not extended risk", () => {
     expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, fastFetching: true })).toBe(false);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, detailsFetching: true })).toBe(false);
     expect(
       isHomeReadyForTransactionsPrefetch({ ...base, upcomingSectionState: "loading" })
     ).toBe(false);
-    expect(isHomeReadyForTransactionsPrefetch({ ...base, extendedSettled: false })).toBe(false);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, onboarding: true })).toBe(false);
   });
 });

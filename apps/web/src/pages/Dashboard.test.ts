@@ -19,7 +19,7 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).toMatch(/enabled: forecastReady/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-details", forecastDays\]/);
-    expect(dashboardSource).toMatch(/\["extended-cash-risk"\]/);
+    expect(dashboardSource).toMatch(/EXTENDED_CASH_RISK_QUERY_KEY|extended-cash-risk/);
     expect(dashboardSource).not.toMatch(/\["extended-cash-risk", forecastDays\]/);
     expect(dashboardSource).toMatch(/getDashboardSummaryFast\(\{ forecast_days: forecastDays \}\)/);
     expect(dashboardSource).not.toMatch(/updateProfile/);
@@ -76,6 +76,24 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).not.toMatch(/InsightsSection/);
     expect(dashboardSource).not.toMatch(/Forecast-aware command center/);
     expect(dashboardSource).not.toMatch(/<h1[^>]*>Dashboard<\/h1>/);
+  });
+
+  it("enables details immediately after summary-fast success without a fixed delay", () => {
+    expect(dashboardSource).toMatch(/detailsEnabled = forecastReady && fastSuccess/);
+    expect(dashboardSource).not.toMatch(/setTimeout\(\(\) => setDetailsEnabled\(true\), 350\)/);
+    expect(dashboardSource).not.toMatch(/window\.setTimeout\(\(\) => setDetailsEnabled/);
+  });
+
+  it("does not fall back to listAllBuckets when details goals are empty", () => {
+    expect(dashboardSource).not.toMatch(/listAllBuckets/);
+    expect(dashboardSource).not.toMatch(/\["buckets", "all"\]/);
+    expect(dashboardSource).toMatch(/details\?\.goals \?\? \[\]/);
+  });
+
+  it("defers extended cash risk until after details settle", () => {
+    expect(dashboardSource).toMatch(/requestIdleCallback|runWhenIdle/);
+    expect(dashboardSource).toMatch(/extendedRiskEnabled/);
+    expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(forecastReady && !!summaryFast\)/);
   });
 });
 

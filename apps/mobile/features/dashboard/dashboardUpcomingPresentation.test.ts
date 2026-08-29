@@ -67,8 +67,9 @@ describe("Dashboard upcoming presentation", () => {
     expect(upcomingSectionSource).toMatch(/warningBg/);
   });
 
-  it("does not change buildUpcomingDashboardPreview selection logic", () => {
-    expect(upcomingSectionSource).toMatch(/buildUpcomingDashboardPreview\(upcomingGroups/);
+  it("receives a parent-built upcoming preview once (does not rebuild)", () => {
+    expect(upcomingSectionSource).toMatch(/preview: UpcomingDashboardPreviewLayout/);
+    expect(upcomingSectionSource).not.toMatch(/buildUpcomingDashboardPreview/);
     const groups = Array.from({ length: 6 }, (_, i) =>
       group({
         date: `2026-08-${28 + i}`,
