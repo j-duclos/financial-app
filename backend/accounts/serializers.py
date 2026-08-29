@@ -100,6 +100,7 @@ class AccountSerializer(serializers.ModelSerializer):
     health_status = serializers.CharField(read_only=True, required=False, allow_null=True)
     health_score = serializers.IntegerField(read_only=True, required=False, allow_null=True)
     health_reason = serializers.CharField(read_only=True, required=False, allow_null=True)
+    health_reason_code = serializers.CharField(read_only=True, required=False, allow_null=True)
     health_risk_date = serializers.DateField(read_only=True, required=False, allow_null=True)
     health_details = serializers.JSONField(read_only=True, required=False, allow_null=True)
     health_recommended_action = serializers.CharField(
@@ -138,8 +139,8 @@ class AccountSerializer(serializers.ModelSerializer):
             "available_to_spend", "projected_balance_30_days",
             "lowest_projected_balance_30_days", "upcoming_inflows_30_days",
             "upcoming_outflows_30_days", "risk_status", "risk_date", "risk_reason",
-            "health_status", "health_score", "health_reason", "health_risk_date",
-            "health_details", "health_recommended_action",
+            "health_status", "health_score", "health_reason", "health_reason_code",
+            "health_risk_date", "health_details", "health_recommended_action",
             "outgoing_relationships", "incoming_relationships",
             "last_activity_date",
             "payoff_estimate",
@@ -155,8 +156,8 @@ class AccountSerializer(serializers.ModelSerializer):
             "available_to_spend", "projected_balance_30_days",
             "lowest_projected_balance_30_days", "upcoming_inflows_30_days",
             "upcoming_outflows_30_days", "risk_status", "risk_date", "risk_reason",
-            "health_status", "health_score", "health_reason", "health_risk_date",
-            "health_details", "health_recommended_action",
+            "health_status", "health_score", "health_reason", "health_reason_code",
+            "health_risk_date", "health_details", "health_recommended_action",
             "outgoing_relationships", "incoming_relationships",
             "last_activity_date",
         ]

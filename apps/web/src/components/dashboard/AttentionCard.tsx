@@ -153,7 +153,7 @@ export function AttentionCardGrid({
       {attentionShowsViewAllLink(cards.length, totalCount) && (
         <div className="flex justify-end">
           <Link to={ATTENTION_VIEW_ALL_PATH} className="text-sm text-blue-600 hover:underline">
-            View all accounts needing attention
+            View all
           </Link>
         </div>
       )}

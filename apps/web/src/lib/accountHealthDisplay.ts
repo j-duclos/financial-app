@@ -67,87 +67,72 @@ export function buildAccountListHealthReason(
   reason: string | null | undefined,
   account: Account
 ): string | null {
-  const base = reason?.trim();
-  if (!base) return null;
+  const code = account.health_reason_code ?? null;
+  const base = reason?.trim() || account.health_details?.utilization_label?.trim() || null;
+  if (!base && !code) return null;
 
   const currency = account.currency;
   const displayName = getEffectiveDisplayName(account);
   const riskDate = account.health_risk_date ?? account.risk_date;
   const dateFmt = riskDate ? formatProjectionDate(riskDate) : null;
 
+  if (
+    code === "forecast_negative" ||
+    (base &&
+      (base.toLowerCase().startsWith("projected negative") ||
+        base.toLowerCase().includes("drops below zero")))
+  ) {
+    const firstDate = firstShortfallDate(account);
+    const firstDateFmt = firstDate ? formatProjectionDate(firstDate) : dateFmt;
+    return firstDateFmt ? `Projected negative ${firstDateFmt}` : "Projected negative";
+  }
+
   if (account.account_type === "CREDIT") {
     const owed = parseAmount(account.balance_owed ?? account.current_balance);
     const limit = parseAmount(account.credit_limit);
     if (limit > 0 && owed > limit) {
       const payAmount = owed - limit;
-      const util = account.utilization_percent;
       const target = parseAmount(
         account.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
       );
-      const utilPart =
-        util != null && account.utilization_percent != null
-          ? `Utilization is ${parseFloat(account.utilization_percent).toFixed(0)}% (target ${target.toFixed(0)}%)`
-          : "Over credit limit";
-      return `${utilPart}: Pay ${formatCurrency(String(payAmount), currency)} toward ${displayName}`;
+      return `Over credit limit · Above ${target.toFixed(0)}% target: Pay ${formatCurrency(String(payAmount), currency)} toward ${displayName}`;
     }
 
-    if (base.toLowerCase().includes("past due")) {
+    if (code === "payment_past_due" || (base && base.toLowerCase().includes("past due"))) {
       const since = account.next_payment_due_date
         ? formatProjectionDate(account.next_payment_due_date)
         : null;
       return since ? `Past due since ${since}` : "Past due";
     }
 
-    if (base.toLowerCase().includes("outdated")) {
+    if (code === "due_date_stale" || (base && base.toLowerCase().includes("outdated"))) {
       const lastKnown = account.next_payment_due_date
         ? formatProjectionDate(account.next_payment_due_date)
         : null;
       return lastKnown ? `Last known due ${lastKnown}` : base;
     }
+
+    if (
+      code === "near_limit" ||
+      code === "high_utilization" ||
+      code === "utilization_above_target" ||
+      (base && (base.includes("Utilization") || base.includes("High utilization") || base.includes("Near limit") || base.includes("Above")))
+    ) {
+      return base;
+    }
   }
 
-  if (
-    account.account_type === "CREDIT" &&
-    base.includes("Utilization is") &&
-    account.utilization_percent != null
-  ) {
-    const target = parseAmount(
-      account.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
-    );
-    const utilPct = parseFloat(account.utilization_percent).toFixed(0);
-    const prefix = `Utilization is ${utilPct}% (target ${target.toFixed(0)}%)`;
-    const colon = base.indexOf(":");
-    if (colon >= 0) {
-      return `${prefix}${base.slice(colon)}`;
-    }
-    return prefix;
-  }
+  if (!base) return null;
 
   const lowest = lowestProjectedBalance(account);
   if (lowest != null && (dateFmt || lowestProjectedDate(account) || firstShortfallDate(account))) {
     const lowestFmt = formatCurrency(lowest, currency);
     const lowNum = parseAmount(lowest);
 
-    if (lowNum < 0 && base.includes("drops below zero")) {
-      const firstNegative = parseAmount(
-        account.health_details?.first_negative_balance ?? account.first_negative_balance
-      );
-      const moveAmt = firstNegative < 0 ? Math.abs(firstNegative) : Math.abs(lowNum);
-      const moveFmt = formatCurrency(String(moveAmt), currency);
-      const firstDate = firstShortfallDate(account);
-      const lowestDate = lowestProjectedDate(account);
-      const firstDateFmt = firstDate ? formatProjectionDate(firstDate) : dateFmt;
-      const lowestDateFmt = lowestDate ? formatProjectionDate(lowestDate) : null;
-      const datesDiffer = Boolean(firstDate && lowestDate && firstDate !== lowestDate);
-
-      if (datesDiffer && firstDateFmt && lowestDateFmt) {
-        return `First shortfall ${firstDateFmt}: add ${moveFmt}. Lowest projected ${lowestFmt} on ${lowestDateFmt}`;
-      }
-      return firstDateFmt ? `First shortfall ${firstDateFmt}: add ${moveFmt}` : `Add ${moveFmt}`;
-    }
-
     if (
-      (base.includes("below buffer") || base.includes("falls below your")) &&
+      (base.includes("below buffer") ||
+        base.includes("falls below your") ||
+        code === "forecast_below_buffer") &&
       lowNum >= 0
     ) {
       const buffer = parseAmount(

@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { accountsAttentionFilterPath } from "./navigation";
+import { attentionViewAllPath } from "./navigation";
+import { ATTENTION_VIEW_ALL_PATH } from "@budget-app/shared";
 
 const dashboardSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "DashboardScreen.tsx"),
@@ -99,10 +100,8 @@ describe("Dashboard progressive loading architecture", () => {
 });
 
 describe("Dashboard navigation fixes", () => {
-  it("routes view-all attention to Accounts tab with filter param", () => {
-    expect(accountsAttentionFilterPath()).toEqual({
-      pathname: "/(app)/(tabs)/accounts",
-      params: { attention: "1" },
-    });
+  it("routes view-all attention to Action Center", () => {
+    expect(attentionViewAllPath()).toBe("/action-center");
+    expect(ATTENTION_VIEW_ALL_PATH).toBe("/action-center");
   });
 });

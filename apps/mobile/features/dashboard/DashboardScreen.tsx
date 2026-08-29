@@ -27,7 +27,7 @@ import {
 import { DashboardGoalsSection, DashboardUpcomingSection } from "./DashboardDetailsSections";
 import { FinancialHealthSection } from "./FinancialHealthSection";
 import { AttentionRequiredSection } from "./AttentionRequiredSection";
-import { accountsAttentionFilterPath } from "./navigation";
+import { attentionViewAllPath } from "./navigation";
 import { markDashboardTiming } from "./dashboardTiming";
 import {
   buildUpcomingDashboardPreview,
@@ -183,7 +183,7 @@ export function DashboardScreen() {
     extendedFetching;
 
   const onViewAllAttention = useCallback(() => {
-    router.push(accountsAttentionFilterPath());
+    router.push(attentionViewAllPath());
   }, [router]);
 
   useEffect(() => {

@@ -160,6 +160,8 @@ export interface Account {
   health_status?: "healthy" | "watch" | "risk" | "critical" | null;
   health_score?: number | null;
   health_reason?: string | null;
+  /** Canonical machine-readable health cause (e.g. forecast_negative, near_limit). */
+  health_reason_code?: string | null;
   health_risk_date?: string | null;
   health_details?: AccountHealthDetails | null;
   health_recommended_action?: string | null;
@@ -408,6 +410,9 @@ export interface AccountHealthDetails {
   minimum_buffer?: string | null;
   utilization_percent?: string | null;
   target_utilization_percent?: string | null;
+  /** Soft credit label when util is above target but below severity floors. */
+  utilization_state?: string | null;
+  utilization_label?: string | null;
   days_until_due?: number | null;
   payment_due_is_stale?: boolean;
   past_due_amount?: string | null;

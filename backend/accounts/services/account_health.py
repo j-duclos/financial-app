@@ -15,6 +15,8 @@ from django.db.models import Count, Q, Sum
 from accounts.models import Account
 from accounts.relationship_models import AccountRelationship
 from accounts.services.account_health_constants import (
+    CREDIT_MEANINGFUL_OWED,
+    CREDIT_UTILIZATION_NEAR_LIMIT,
     CREDIT_UTILIZATION_RISK,
     CREDIT_UTILIZATION_WATCH,
     DEFAULT_TARGET_UTILIZATION_PERCENT,
@@ -27,7 +29,23 @@ from accounts.services.account_health_constants import (
     LARGE_OUTFLOW_WINDOW_DAYS,
     PAYMENT_DUE_RISK_DAYS,
     PAYMENT_DUE_WATCH_DAYS,
-    SAFE_TO_SPEND_LOW_AMOUNT,
+    REASON_BALANCE_TRENDING_DOWN,
+    REASON_DUE_DATE_STALE,
+    REASON_FORECAST_BELOW_BUFFER,
+    REASON_FORECAST_NEGATIVE,
+    REASON_HIGH_APR,
+    REASON_HIGH_UTILIZATION,
+    REASON_LARGE_OUTFLOW,
+    REASON_NEAR_LIMIT,
+    REASON_NO_PAYMENT_LINK,
+    REASON_OVER_LIMIT,
+    REASON_PAYMENT_BELOW_INTEREST,
+    REASON_PAYMENT_DUE_SOON,
+    REASON_PAYMENT_PAST_DUE,
+    REASON_PROJECTED_INTEREST,
+    REASON_SAFE_TO_SPEND_LOW,
+    REASON_SPENDING_CUSHION_SHORT,
+    REASON_UTILIZATION_ABOVE_TARGET,
     SAFE_TO_SPEND_LOW_PERCENT,
     STATUS_SEVERITY,
 )
@@ -254,8 +272,45 @@ def _credit_utilization_thresholds(target: Decimal) -> tuple[Decimal, Decimal, D
     return CREDIT_UTILIZATION_WATCH, CREDIT_UTILIZATION_RISK, Decimal("100")
 
 
+def _utilization_reason_code(util_dec: Decimal) -> str:
+    if util_dec >= CREDIT_UTILIZATION_NEAR_LIMIT:
+        return REASON_NEAR_LIMIT
+    if util_dec >= CREDIT_UTILIZATION_WATCH:
+        return REASON_HIGH_UTILIZATION
+    return REASON_UTILIZATION_ABOVE_TARGET
+
+
 def _utilization_reason(util_dec: Decimal, target: Decimal) -> str:
+    target_label = f"{target:.0f}%"
+    if util_dec >= CREDIT_UTILIZATION_NEAR_LIMIT:
+        return f"Near limit · Above {target_label} target"
+    if util_dec >= CREDIT_UTILIZATION_RISK:
+        return f"High utilization · Above {target_label} target"
+    if util_dec >= CREDIT_UTILIZATION_WATCH:
+        return f"High utilization · Above {target_label} target"
+    if util_dec > target:
+        return f"Above {target_label} target"
     return f"Utilization is {util_dec:.0f}% (target {target:.0f}%)"
+
+
+def _credit_owed_is_meaningful(
+    owed: Decimal,
+    *,
+    limit: Decimal,
+    min_payment: Decimal,
+) -> bool:
+    """Soft credit watches need real debt — ignore pocket-change balances."""
+    if owed <= 0:
+        return False
+    if owed >= CREDIT_MEANINGFUL_OWED:
+        return True
+    if min_payment > 0 and owed >= min_payment:
+        return True
+    if limit > 0:
+        util = owed / limit * Decimal("100")
+        if util >= CREDIT_UTILIZATION_WATCH:
+            return True
+    return False
 
 
 def _credit_utilization_percent(owed: Decimal, limit: Decimal) -> Decimal | None:
@@ -319,7 +374,7 @@ def _cash_health(
     timeline_rows: list[dict] | None,
     *,
     unmatched_import_count: int | None = None,
-) -> tuple[str, str | None, date | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, date | None, dict[str, Any]]:
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
         "available_to_spend": None,
@@ -334,7 +389,7 @@ def _cash_health(
         "spending_cushion_negative": False,
     }
     if not forecast or not forecast.get("supports_available_to_spend"):
-        return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
 
     lowest = _decimal(forecast["lowest_projected_balance"])
     available = _decimal(forecast["available_to_spend"])
@@ -381,67 +436,98 @@ def _cash_health(
     if shortfall_type:
         details["shortfall_type"] = shortfall_type
 
-    statuses: list[str] = []
-    reasons: list[str] = []
+    # (status, reason, reason_code)
+    issues: list[tuple[str, str, str]] = []
     risk_date: date | None = None
 
     if actual_balance_negative:
-        statuses.append(HEALTH_STATUS_CRITICAL)
         risk_date = first_negative_date or lowest_date
         date_label = risk_date.isoformat() if risk_date else "the forecast window"
-        reasons.append(f"Projected balance drops below zero on {date_label}")
+        issues.append(
+            (
+                HEALTH_STATUS_CRITICAL,
+                f"Projected negative {date_label}",
+                REASON_FORECAST_NEGATIVE,
+            )
+        )
     elif lowest < minimum_buffer:
-        statuses.append(HEALTH_STATUS_RISK)
         risk_date = first_below_buffer_date or lowest_date
         date_label = risk_date.isoformat() if risk_date else "the forecast window"
-        reasons.append(f"Projected below buffer on {date_label}")
+        issues.append(
+            (
+                HEALTH_STATUS_RISK,
+                f"Projected below buffer on {date_label}",
+                REASON_FORECAST_BELOW_BUFFER,
+            )
+        )
     elif (
         spending_cushion_negative
         and account.role in (Account.AccountRole.SPENDING, Account.AccountRole.BILLS)
     ):
-        statuses.append(HEALTH_STATUS_CRITICAL)
         risk_date = first_below_buffer_date or lowest_date
         if shortfall_type == "reserved_savings":
-            reasons.append("Reserved savings/buffer exceeds projected cushion")
+            issues.append(
+                (
+                    HEALTH_STATUS_CRITICAL,
+                    "Reserved savings/buffer exceeds projected cushion",
+                    REASON_SPENDING_CUSHION_SHORT,
+                )
+            )
         else:
-            reasons.append("Spending cushion is short")
+            issues.append(
+                (
+                    HEALTH_STATUS_CRITICAL,
+                    "Spending cushion is short",
+                    REASON_SPENDING_CUSHION_SHORT,
+                )
+            )
 
-    if available <= SAFE_TO_SPEND_LOW_AMOUNT and not spending_cushion_negative:
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append("Safe-to-spend is near zero")
-    elif (
-        current_balance > 0
-        and available <= current_balance * SAFE_TO_SPEND_LOW_PERCENT
+    # Relative ATS pressure only — do NOT watch solely because nominal cash is small.
+    has_forecast_pressure = any(
+        s in (HEALTH_STATUS_CRITICAL, HEALTH_STATUS_RISK) for s, _, _ in issues
+    )
+    if (
+        not has_forecast_pressure
         and not spending_cushion_negative
+        and current_balance > 0
+        and available <= current_balance * SAFE_TO_SPEND_LOW_PERCENT
+        and available < current_balance
     ):
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append("Safe-to-spend is low relative to balance")
-
-    if _has_large_outflow_soon(timeline_rows, account.pk, today, current_balance):
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append("Large upcoming outflow within 7 days")
-
-    if not statuses:
-        return HEALTH_STATUS_HEALTHY, None, None, details
-
-    status = _worst_status(*statuses)
-    reason = reasons[0]
-    if status == HEALTH_STATUS_CRITICAL:
-        for preferred in reasons:
-            lower = preferred.lower()
-            if "below zero" in lower or "drops below zero" in lower:
-                reason = preferred
-                break
-            if "cushion" in lower or "reserved savings" in lower:
-                reason = preferred
-                break
-    elif status == HEALTH_STATUS_RISK:
-        reason = next(
-            (r for r in reasons if "buffer" in r.lower()),
-            reason,
+        issues.append(
+            (
+                HEALTH_STATUS_WATCH,
+                "Safe-to-spend is low relative to balance",
+                REASON_SAFE_TO_SPEND_LOW,
+            )
         )
 
-    return status, reason, risk_date, details
+    if _has_large_outflow_soon(timeline_rows, account.pk, today, current_balance):
+        issues.append(
+            (
+                HEALTH_STATUS_WATCH,
+                "Large upcoming outflow within 7 days",
+                REASON_LARGE_OUTFLOW,
+            )
+        )
+
+    if not issues:
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
+
+    status = _worst_status(*(s for s, _, _ in issues))
+    reason = issues[0][1]
+    reason_code = issues[0][2]
+    if status == HEALTH_STATUS_CRITICAL:
+        for _s, r, code in issues:
+            if code in (REASON_FORECAST_NEGATIVE, REASON_SPENDING_CUSHION_SHORT):
+                reason, reason_code = r, code
+                break
+    elif status == HEALTH_STATUS_RISK:
+        for _s, r, code in issues:
+            if code == REASON_FORECAST_BELOW_BUFFER:
+                reason, reason_code = r, code
+                break
+
+    return status, reason, reason_code, risk_date, details
 
 
 def _credit_card_health(
@@ -452,7 +538,7 @@ def _credit_card_health(
     unmatched_import_count: int | None = None,
     has_payment_link: bool | None = None,
     payments_since_statement: Decimal | None = None,
-) -> tuple[str, str | None, date | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, date | None, dict[str, Any]]:
     owed = ledger_owed_balance(account, today) if owed_balance is None else owed_balance
     limit = _decimal(account.credit_limit or 0)
     util_dec = _credit_utilization_percent(owed, limit)
@@ -463,6 +549,8 @@ def _credit_card_health(
     payoff = _payoff_to_avoid_interest(
         account, payments_since_statement=payments_since_statement
     )
+    min_pay = _decimal(account.minimum_payment_amount or 0)
+    meaningful_owed = _credit_owed_is_meaningful(owed, limit=limit, min_payment=min_pay)
 
     past_due_amount = Decimal("0")
     if (
@@ -490,27 +578,46 @@ def _credit_card_health(
         ),
     }
 
-    statuses: list[str] = []
-    reasons: list[str] = []
+    issues: list[tuple[str, str, str]] = []
     risk_date: date | None = due if due and due >= today else None
 
     if past_due_amount > 0:
-        statuses.append(HEALTH_STATUS_CRITICAL)
-        reasons.append("Payment is past due")
-    elif due_is_stale and owed > 0:
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append("Last known due date is outdated")
+        issues.append(
+            (HEALTH_STATUS_CRITICAL, "Payment is past due", REASON_PAYMENT_PAST_DUE)
+        )
+    elif due_is_stale and meaningful_owed:
+        issues.append(
+            (
+                HEALTH_STATUS_WATCH,
+                "Last known due date is outdated",
+                REASON_DUE_DATE_STALE,
+            )
+        )
 
     if limit > 0 and owed > limit:
-        statuses.append(HEALTH_STATUS_CRITICAL)
-        reasons.append("Balance exceeds credit limit")
+        issues.append(
+            (HEALTH_STATUS_CRITICAL, "Balance exceeds credit limit", REASON_OVER_LIMIT)
+        )
 
     if util_dec is not None and util_dec >= risk_at:
-        statuses.append(HEALTH_STATUS_RISK)
-        reasons.append(_utilization_reason(util_dec, target_util))
+        issues.append(
+            (
+                HEALTH_STATUS_RISK,
+                _utilization_reason(util_dec, target_util),
+                _utilization_reason_code(util_dec),
+            )
+        )
     elif util_dec is not None and util_dec >= watch_at:
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append(_utilization_reason(util_dec, target_util))
+        issues.append(
+            (
+                HEALTH_STATUS_WATCH,
+                _utilization_reason(util_dec, target_util),
+                _utilization_reason_code(util_dec),
+            )
+        )
+    elif util_dec is not None and util_dec > target_util:
+        details["utilization_state"] = "above_target"
+        details["utilization_label"] = _utilization_reason(util_dec, target_util)
 
     if (
         days_until is not None
@@ -518,17 +625,27 @@ def _credit_card_health(
         and payoff > 0
         and not account.autopay_enabled
     ):
-        statuses.append(HEALTH_STATUS_RISK)
-        reasons.append(f"Payment due in {days_until} day{'s' if days_until != 1 else ''}")
+        issues.append(
+            (
+                HEALTH_STATUS_RISK,
+                f"Payment due in {days_until} day{'s' if days_until != 1 else ''}",
+                REASON_PAYMENT_DUE_SOON,
+            )
+        )
 
     if (
         days_until is not None
         and 0 <= days_until <= PAYMENT_DUE_WATCH_DAYS
         and payoff > 0
     ):
-        if not any("Payment due" in r for r in reasons):
-            statuses.append(HEALTH_STATUS_WATCH)
-            reasons.append(f"Payment due in {days_until} day{'s' if days_until != 1 else ''}")
+        if not any(code == REASON_PAYMENT_DUE_SOON for _, _, code in issues):
+            issues.append(
+                (
+                    HEALTH_STATUS_WATCH,
+                    f"Payment due in {days_until} day{'s' if days_until != 1 else ''}",
+                    REASON_PAYMENT_DUE_SOON,
+                )
+            )
 
     projected_interest = _projected_interest_from_payoff(account, payoff)
     if (
@@ -537,17 +654,22 @@ def _credit_card_health(
         and not account.autopay_enabled
         and (days_until is None or days_until > PAYMENT_DUE_WATCH_DAYS)
     ):
-        statuses.append(HEALTH_STATUS_RISK)
-        reasons.append("Projected interest if statement balance remains unpaid")
+        issues.append(
+            (
+                HEALTH_STATUS_RISK,
+                "Projected interest if statement balance remains unpaid",
+                REASON_PROJECTED_INTEREST,
+            )
+        )
 
-    min_pay = _decimal(account.minimum_payment_amount or 0)
     if owed > 0 and min_pay > 0:
         from credit_cards.services.payoff import payment_below_interest_details
 
         below = payment_below_interest_details(account, min_pay, owed)
         if below:
-            statuses.append(HEALTH_STATUS_RISK)
-            reasons.append(below["message"])
+            issues.append(
+                (HEALTH_STATUS_RISK, below["message"], REASON_PAYMENT_BELOW_INTEREST)
+            )
             details["payoff_impossible"] = True
             details["estimated_monthly_interest"] = str(below["estimated_monthly_interest"])
             details["min_payment_to_reduce_principal"] = str(
@@ -556,10 +678,14 @@ def _credit_card_health(
             details["planned_payment_amount"] = str(below["payment_amount"])
 
     apr = _decimal(account.apr or 0)
-    if apr >= HIGH_APR_THRESHOLD and owed > 0 and payoff > 0:
-        statuses.append(HEALTH_STATUS_WATCH)
-        if not any("interest" in r.lower() or "APR" in r for r in reasons):
-            reasons.append("High APR with carried balance")
+    if apr >= HIGH_APR_THRESHOLD and meaningful_owed and payoff > 0:
+        if not any(
+            code in (REASON_PROJECTED_INTEREST, REASON_PAYMENT_BELOW_INTEREST)
+            for _, _, code in issues
+        ):
+            issues.append(
+                (HEALTH_STATUS_WATCH, "High APR with carried balance", REASON_HIGH_APR)
+            )
 
     if has_payment_link is None:
         has_payment_link = account.autopay_enabled or AccountRelationship.objects.filter(
@@ -567,13 +693,14 @@ def _credit_card_health(
             is_active=True,
             relationship_type__in=PAYMENT_LINK_RELATIONSHIP_TYPES,
         ).exists()
-    if owed > 0 and not has_payment_link:
-        statuses.append(HEALTH_STATUS_WATCH)
-        reasons.append("No payment account linked.")
+    if meaningful_owed and not has_payment_link:
+        issues.append(
+            (HEALTH_STATUS_WATCH, "No payment account linked.", REASON_NO_PAYMENT_LINK)
+        )
 
-    due_needs_attention = past_due_amount > 0 or due_is_stale
+    due_needs_attention = past_due_amount > 0 or (due_is_stale and meaningful_owed)
     if account.autopay_enabled and payoff <= 0 and not due_needs_attention:
-        return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
 
     if (
         util_dec is not None
@@ -582,23 +709,35 @@ def _credit_card_health(
         and not due_needs_attention
         and not details.get("payoff_impossible")
     ):
-        return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
 
-    if not statuses:
-        return HEALTH_STATUS_HEALTHY, None, None, details
+    if not issues:
+        soft_label = details.get("utilization_label")
+        soft_code = REASON_UTILIZATION_ABOVE_TARGET if soft_label else None
+        return HEALTH_STATUS_HEALTHY, soft_label, soft_code, None, details
 
-    status = _worst_status(*statuses)
-    reason = reasons[0]
-    priority_phrases = ("past due", "limit", "Payment due", "Utilization", "interest")
-    for phrase in priority_phrases:
-        for r in reasons:
-            if phrase.lower() in r.lower():
-                reason = r
+    status = _worst_status(*(s for s, _, _ in issues))
+    reason = issues[0][1]
+    reason_code = issues[0][2]
+    priority_codes = (
+        REASON_PAYMENT_PAST_DUE,
+        REASON_OVER_LIMIT,
+        REASON_PAYMENT_DUE_SOON,
+        REASON_NEAR_LIMIT,
+        REASON_HIGH_UTILIZATION,
+        REASON_UTILIZATION_ABOVE_TARGET,
+        REASON_PROJECTED_INTEREST,
+    )
+    for code in priority_codes:
+        for _s, r, c in issues:
+            if c == code:
+                reason, reason_code = r, c
                 break
         else:
             continue
         break
-    return status, reason, risk_date, details
+    return status, reason, reason_code, risk_date, details
+
 
 
 def _savings_health(
@@ -608,7 +747,7 @@ def _savings_health(
     *,
     unmatched_import_count: int | None = None,
     signed_balance: Decimal | None = None,
-) -> tuple[str, str | None, date | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, date | None, dict[str, Any]]:
     details: dict[str, Any] = {
         "lowest_projected_balance": None,
         "available_to_spend": None,
@@ -632,7 +771,8 @@ def _savings_health(
         if lowest < Decimal("0"):
             return (
                 HEALTH_STATUS_CRITICAL,
-                "Projected balance drops below zero",
+                "Projected negative",
+                REASON_FORECAST_NEGATIVE,
                 risk_date,
                 details,
             )
@@ -641,6 +781,7 @@ def _savings_health(
             return (
                 HEALTH_STATUS_RISK,
                 f"Projected below buffer on {date_label}",
+                REASON_FORECAST_BELOW_BUFFER,
                 risk_date,
                 details,
             )
@@ -649,10 +790,11 @@ def _savings_health(
             return (
                 HEALTH_STATUS_WATCH,
                 "Balance trending down in forecast window",
+                REASON_BALANCE_TRENDING_DOWN,
                 risk_date,
                 details,
             )
-        return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
 
     balance = (
         signed_balance
@@ -662,8 +804,8 @@ def _savings_health(
     minimum_buffer = _decimal(account.minimum_buffer or 0)
     details["lowest_projected_balance"] = str(balance)
     if balance < minimum_buffer:
-        return HEALTH_STATUS_RISK, "Balance below minimum buffer", None, details
-    return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_RISK, "Balance below minimum buffer", REASON_FORECAST_BELOW_BUFFER, None, details
+    return HEALTH_STATUS_HEALTHY, None, None, None, details
 
 
 def _loan_health(
@@ -672,7 +814,7 @@ def _loan_health(
     *,
     unmatched_import_count: int | None = None,
     has_planned_payment: bool | None = None,
-) -> tuple[str, str | None, date | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, date | None, dict[str, Any]]:
     due = account.next_payment_due_date
     days_until = (due - today).days if due else None
     details: dict[str, Any] = {
@@ -687,10 +829,10 @@ def _loan_health(
         ),
     }
     if not due:
-        return HEALTH_STATUS_HEALTHY, None, None, details
+        return HEALTH_STATUS_HEALTHY, None, None, None, details
 
     if days_until is not None and days_until < 0:
-        return HEALTH_STATUS_CRITICAL, "Payment is past due", due, details
+        return HEALTH_STATUS_CRITICAL, "Payment is past due", REASON_PAYMENT_PAST_DUE, due, details
 
     if has_planned_payment is None:
         has_planned = Transaction.objects.filter(
@@ -707,6 +849,7 @@ def _loan_health(
         return (
             HEALTH_STATUS_RISK,
             f"Payment due in {days_until} day{'s' if days_until != 1 else ''}",
+            REASON_PAYMENT_DUE_SOON,
             due,
             details,
         )
@@ -715,11 +858,12 @@ def _loan_health(
         return (
             HEALTH_STATUS_WATCH,
             f"Payment due in {days_until} day{'s' if days_until != 1 else ''}",
+            REASON_PAYMENT_DUE_SOON,
             due,
             details,
         )
 
-    return HEALTH_STATUS_HEALTHY, None, None, details
+    return HEALTH_STATUS_HEALTHY, None, None, None, details
 
 
 def _recommended_action(
@@ -814,12 +958,13 @@ def calculate_account_health(
 
     if account.status != Account.Status.ACTIVE:
         return {
-            "health_status": None,
-            "health_score": None,
-            "health_reason": None,
-            "health_risk_date": None,
-            "health_details": {"lifecycle_inactive": True, "status": account.status},
-            "health_recommended_action": None,
+            "status": None,
+            "score": None,
+            "reason": None,
+            "reason_code": None,
+            "risk_date": None,
+            "details": {"lifecycle_inactive": True, "status": account.status},
+            "recommended_action": None,
         }
 
     if forecast_summary is None and account_supports_available_to_spend(account):
@@ -851,7 +996,7 @@ def calculate_account_health(
             if signed_balance is not None
             else None
         )
-        status, reason, risk_date, details = _credit_card_health(
+        status, reason, reason_code, risk_date, details = _credit_card_health(
             account,
             today,
             owed_balance=owed,
@@ -861,7 +1006,7 @@ def calculate_account_health(
         )
         forecast = None
     elif account.role == Account.AccountRole.LOAN:
-        status, reason, risk_date, details = _loan_health(
+        status, reason, reason_code, risk_date, details = _loan_health(
             account,
             today,
             unmatched_import_count=unmatched_import_count,
@@ -869,7 +1014,7 @@ def calculate_account_health(
         )
         forecast = forecast_summary
     elif account.role in SAVINGS_ROLES or account.account_type == Account.AccountType.SAVINGS:
-        status, reason, risk_date, details = _savings_health(
+        status, reason, reason_code, risk_date, details = _savings_health(
             account,
             forecast_summary,
             today,
@@ -878,7 +1023,7 @@ def calculate_account_health(
         )
         forecast = forecast_summary
     elif account_supports_available_to_spend(account):
-        status, reason, risk_date, details = _cash_health(
+        status, reason, reason_code, risk_date, details = _cash_health(
             account,
             forecast_summary,
             today,
@@ -887,8 +1032,9 @@ def calculate_account_health(
         )
         forecast = forecast_summary
     else:
-        status, reason, risk_date, details = (
+        status, reason, reason_code, risk_date, details = (
             HEALTH_STATUS_HEALTHY,
+            None,
             None,
             None,
             {
@@ -919,6 +1065,7 @@ def calculate_account_health(
         "status": status,
         "score": score,
         "reason": reason,
+        "reason_code": reason_code,
         "risk_date": risk_date.isoformat() if risk_date else None,
         "recommended_action": action,
         "details": details,
@@ -983,6 +1130,7 @@ def serialize_account_health(health: dict[str, Any]) -> dict[str, Any]:
         "health_status": health.get("status"),
         "health_score": health.get("score"),
         "health_reason": health.get("reason"),
+        "health_reason_code": health.get("reason_code"),
         "health_risk_date": health.get("risk_date"),
         "health_details": health.get("details"),
         "health_recommended_action": health.get("recommended_action"),

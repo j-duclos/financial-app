@@ -237,7 +237,10 @@ export default function AccountListItem({
           ) : null}
 
           <div className="space-y-0.5 min-w-0">
-            {healthStatus ? (
+            {healthStatus &&
+            (healthStatus === "watch" ||
+              healthStatus === "risk" ||
+              healthStatus === "critical") ? (
               <div className="flex flex-wrap items-start gap-2">
                 <AccountHealthBadge
                   status={healthStatus}
@@ -257,6 +260,14 @@ export default function AccountListItem({
                   </button>
                 )}
               </div>
+            ) : acc.health_details?.utilization_label ||
+              (acc.health_reason_code === "utilization_above_target" && healthReason) ? (
+              <p
+                className={`text-amber-800 ${layoutMode === "compact" ? "text-[10px]" : "text-sm"}`}
+                data-testid="account-utilization-label"
+              >
+                {acc.health_details?.utilization_label || healthReason}
+              </p>
             ) : null}
 
             {projectionLineText ? (

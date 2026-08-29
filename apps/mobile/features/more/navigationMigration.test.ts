@@ -63,7 +63,7 @@ describe("Accounts tab root", () => {
     expect(accountDetailSource).toMatch(/onBack=\{\(\) => router\.back\(\)\}/);
   });
 
-  it("attention View All opens Accounts tab with filter", () => {
+  it("Accounts still supports attention filter; Home View all uses Action Center", () => {
     expect(accountsAttentionFilterPath()).toEqual({
       pathname: "/(app)/(tabs)/accounts",
       params: { attention: "1" },

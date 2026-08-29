@@ -69,9 +69,23 @@ export const AccountRow = React.memo(function AccountRow({ account, onPress }: P
           </Text>
           {shouldShowAccountHealthBadge(health) ? (
             <StatusChip
-              label={health}
+              label={
+                account.health_reason?.trim() ||
+                account.health_details?.utilization_label?.trim() ||
+                (health === "critical"
+                  ? "Critical"
+                  : health === "risk"
+                    ? "At risk"
+                    : "Needs attention")
+              }
               tone={health === "watch" ? "warning" : "critical"}
             />
+          ) : account.health_details?.utilization_label ||
+            (account.health_reason_code === "utilization_above_target" &&
+              account.health_reason) ? (
+            <Text style={{ color: theme.colors.warning, ...theme.typography.caption }}>
+              {account.health_details?.utilization_label || account.health_reason}
+            </Text>
           ) : null}
           {isCredit && account.utilization_percent != null ? (
             <View style={{ marginTop: 6 }}>

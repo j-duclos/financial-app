@@ -61,7 +61,7 @@ describe("attentionCardDisplay", () => {
   });
 
   it("limits view-all link to accounts health filter", () => {
-    expect(ATTENTION_VIEW_ALL_PATH).toBe("/accounts?attention=1");
+    expect(ATTENTION_VIEW_ALL_PATH).toBe("/action-center");
   });
 
   it("passes ledger navigation state for account", () => {

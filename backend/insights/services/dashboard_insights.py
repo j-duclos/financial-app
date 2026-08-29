@@ -101,8 +101,8 @@ def _insights_safe_to_spend_negative(
         f"Household safe-to-spend is {total.quantize(Decimal('0.01'))} across spending accounts. Review upcoming bills and transfers.",
         metric_label="Safe to spend",
         metric_value=str(abs(total).quantize(Decimal("0.01"))),
-        action_label="View accounts",
-        action_url="/accounts?attention=1",
+        action_label="View Action Center",
+        action_url="/action-center",
     )
 
 

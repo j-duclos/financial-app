@@ -10,8 +10,11 @@ export const ATTENTION_FIX_SHORTFALL_LABEL = "Fix Shortfall";
 
 export const ATTENTION_MAX_CARDS = 3;
 
-/** Web path; mobile opens Accounts tab via `accountsAttentionFilterPath()`. */
-export const ATTENTION_VIEW_ALL_PATH = "/accounts?attention=1";
+/**
+ * Home “Attention Required → View all” destination.
+ * Action Center is the full recommendation list; Accounts is inventory/health only.
+ */
+export const ATTENTION_VIEW_ALL_PATH = "/action-center";
 
 const ACTIONABLE_STATUSES = new Set<DashboardAttentionItem["status"]>([
   "critical",

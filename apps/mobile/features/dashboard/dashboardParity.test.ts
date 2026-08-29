@@ -15,11 +15,12 @@ import {
 } from "@budget-app/shared";
 import {
   accountDetailPath,
-  accountsAttentionFilterPath,
+  attentionViewAllPath,
   attentionCardAccessibilityLabel,
   attentionCardOpensLedger,
   attentionCardTapDestination,
 } from "./navigation";
+import { ATTENTION_VIEW_ALL_PATH } from "@budget-app/shared";
 import { attentionPrimaryIssueDisplay } from "./display";
 import {
   transactionsForForecastRiskPath,
@@ -109,9 +110,10 @@ function group(overrides: Partial<DashboardUpcomingGroup> = {}): DashboardUpcomi
 }
 
 describe("Dashboard attention parity", () => {
-  it("does not route cards or view all to action center", () => {
-    expect(dashboardSource).not.toMatch(/action-center/);
+  it("routes View all to Action Center; individual cards stay contextual", () => {
+    expect(dashboardSource).toMatch(/attentionViewAllPath/);
     expect(attentionCardSource).not.toMatch(/action-center/);
+    expect(attentionCardSource).not.toMatch(/attentionViewAllPath/);
   });
 
   it("does not render desktop-style action buttons on attention cards", () => {
@@ -193,11 +195,9 @@ describe("Dashboard attention parity", () => {
     });
   });
 
-  it("view all routes to accounts attention filter", () => {
-    expect(accountsAttentionFilterPath()).toEqual({
-      pathname: "/(app)/(tabs)/accounts",
-      params: { attention: "1" },
-    });
+  it("view all routes to Action Center", () => {
+    expect(attentionViewAllPath()).toBe("/action-center");
+    expect(ATTENTION_VIEW_ALL_PATH).toBe("/action-center");
   });
 
   it("filters actionable attention cards", () => {

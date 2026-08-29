@@ -484,6 +484,9 @@ describe("upcomingDisplay", () => {
   });
 
   it("cannot truncate the canonical first cash-shortfall transaction from the preview", () => {
+    // Fixture-local amount only — must stay equal to the mandatory row's balance_after.
+    // Do not treat screenshot values (e.g. stale -$388.80) as expected constants.
+    const canonicalBalance = "-100.00";
     const groups = [
       group({ date: "2026-08-28", transactions: [txn({ id: "1", date: "2026-08-28", description: "A" })] }),
       group({ date: "2026-08-29", transactions: [txn({ id: "2", date: "2026-08-29", description: "B" })] }),
@@ -494,11 +497,20 @@ describe("upcomingDisplay", () => {
         date: "2026-09-02",
         transactions: [
           txn({
-            id: "99",
+            id: "evt-99",
             date: "2026-09-02",
-            description: "Exeterfina Loan",
-            amount: "-393.79",
-            balance_after: "-378.80",
+            description: "First cross",
+            amount: "-500.00",
+            balance_after: canonicalBalance,
+            transaction_id: 99,
+          }),
+          txn({
+            id: "evt-100",
+            date: "2026-09-02",
+            description: "Same-day deeper",
+            amount: "-50.00",
+            balance_after: "-150.00",
+            transaction_id: 100,
           }),
         ],
       }),
@@ -508,13 +520,17 @@ describe("upcomingDisplay", () => {
       {
         risk_date: "2026-09-02",
         account_name: "Main",
-        projected_balance: "-378.80",
+        projected_balance: canonicalBalance,
         first_negative_transaction_id: 99,
       },
       "2026-08-26"
     );
-    expect(preview.transactions).toHaveLength(5);
-    expect(preview.transactions.some((row) => row.txn.description === "Exeterfina Loan")).toBe(true);
+    expect(preview.nextRisk?.projectedEndBalance).toBe(canonicalBalance);
+    const highlighted = preview.transactions.find((row) => row.isFirstZeroCross);
+    expect(highlighted).toBeTruthy();
+    expect(highlighted!.txn.transaction_id).toBe(99);
+    expect(highlighted!.txn.balance_after).toBe(canonicalBalance);
+    expect(preview.transactions.some((row) => row.txn.transaction_id === 100)).toBe(false);
   });
 
   it("collapsed bank transfers expose source-account balance impact", () => {

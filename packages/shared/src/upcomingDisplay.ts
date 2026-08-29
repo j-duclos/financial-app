@@ -284,12 +284,48 @@ function isPreviewableTransaction(txn: DashboardUpcomingTransaction): boolean {
   return txn.kind !== "risk" && txn.amount != null;
 }
 
-/** Flatten preview transactions and mark the first below-zero crossing for the shortfall account. */
+function collapsedPairLegIds(displayId: string): [string, string] | null {
+  const prefixes = ["xfer-", "ccpay-"] as const;
+  for (const prefix of prefixes) {
+    if (!displayId.startsWith(prefix)) continue;
+    const rest = displayId.slice(prefix.length);
+    const splitAt = rest.lastIndexOf("-");
+    if (splitAt <= 0) return null;
+    return [rest.slice(0, splitAt), rest.slice(splitAt + 1)];
+  }
+  return null;
+}
+
+/** Match preview rows to canonical ``first_negative_transaction_id`` (event id or DB id). */
+function displayTxnMatchesMandatoryId(
+  txn: DashboardUpcomingTransaction,
+  mandatoryKey: string
+): boolean {
+  if (txn.id === mandatoryKey) return true;
+  if (txn.transaction_id != null && String(txn.transaction_id) === mandatoryKey) {
+    return true;
+  }
+  const legs = collapsedPairLegIds(txn.id);
+  if (legs && (legs[0] === mandatoryKey || legs[1] === mandatoryKey)) return true;
+  return txn.id.endsWith(`-${mandatoryKey}`);
+}
+
+/** Flatten preview transactions and mark the canonical first below-zero crossing.
+ *
+ * Prefer ``firstNegativeTransactionId`` from the backend risk event so the
+ * highlighted row matches Home / Attention / Transactions ``balance_after``.
+ * Fall back to the first scoped row with ``balance_after < 0`` only when no id.
+ */
 export function flattenUpcomingPreviewTransactions(
   transactions: DashboardUpcomingTransaction[],
-  shortfallAccountName?: string | null
+  shortfallAccountName?: string | null,
+  firstNegativeTransactionId?: string | number | null
 ): UpcomingPreviewTxnRow[] {
   const target = (shortfallAccountName ?? "").trim();
+  const targetId =
+    firstNegativeTransactionId != null && firstNegativeTransactionId !== ""
+      ? String(firstNegativeTransactionId)
+      : null;
   let crossed = false;
   const rows: UpcomingPreviewTxnRow[] = [];
   for (const txn of transactions) {
@@ -297,8 +333,13 @@ export function flattenUpcomingPreviewTransactions(
     const bal = previewRowBalanceAfter(txn, target);
     const account = previewRowBalanceAccountName(txn, target);
     const scoped = !target || account === target;
-    const isFirstZeroCross = scoped && !crossed && bal != null && bal < 0;
-    if (isFirstZeroCross) crossed = true;
+    let isFirstZeroCross = false;
+    if (targetId) {
+      isFirstZeroCross = displayTxnMatchesMandatoryId(txn, targetId);
+    } else if (scoped && !crossed && bal != null && bal < 0) {
+      isFirstZeroCross = true;
+      crossed = true;
+    }
     rows.push({ txn, isFirstZeroCross });
   }
   return rows;
@@ -391,28 +432,6 @@ export function selectUpcomingPreviewTransactions(
   const preview = [...flat.filter((txn) => txn.id !== mandatory.id).slice(0, maxItems - 1), mandatory];
   preview.sort(compareUpcomingPreviewTransactions);
   return { transactions: preview, truncated: true };
-}
-
-function collapsedPairLegIds(displayId: string): [string, string] | null {
-  const prefixes = ["xfer-", "ccpay-"] as const;
-  for (const prefix of prefixes) {
-    if (!displayId.startsWith(prefix)) continue;
-    const rest = displayId.slice(prefix.length);
-    const splitAt = rest.lastIndexOf("-");
-    if (splitAt <= 0) return null;
-    return [rest.slice(0, splitAt), rest.slice(splitAt + 1)];
-  }
-  return null;
-}
-
-function displayTxnMatchesMandatoryId(
-  txn: DashboardUpcomingTransaction,
-  mandatoryKey: string
-): boolean {
-  if (txn.id === mandatoryKey) return true;
-  const legs = collapsedPairLegIds(txn.id);
-  if (legs && (legs[0] === mandatoryKey || legs[1] === mandatoryKey)) return true;
-  return txn.id.endsWith(`-${mandatoryKey}`);
 }
 
 /** Rebuild day groups containing only the selected preview transactions. */
@@ -577,7 +596,11 @@ export function buildUpcomingDashboardPreview(
   const truncated = itemTruncated || dayWindowTruncated;
   const limitedGroups = groupsForUpcomingPreviewTransactions(dayFiltered, selectedTxns);
   const dayBlocks = buildPreviewDayBlocks(limitedGroups, riskAccount);
-  const transactions = flattenUpcomingPreviewTransactions(selectedTxns, riskAccount);
+  const transactions = flattenUpcomingPreviewTransactions(
+    selectedTxns,
+    riskAccount,
+    mandatoryTxnId
+  );
 
   return {
     groups: limitedGroups,

@@ -107,6 +107,12 @@ export function accountsTabPath(): "/(app)/(tabs)/accounts" {
   return "/(app)/(tabs)/accounts";
 }
 
+/** Home Attention “View all” → Action Center (full recommendation list). */
+export function attentionViewAllPath(): "/action-center" {
+  return "/action-center";
+}
+
+/** @deprecated Prefer attentionViewAllPath — Accounts attention filter is not the recommendation list. */
 export function accountsAttentionFilterPath(): {
   pathname: "/(app)/(tabs)/accounts";
   params: { attention: string };

@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from accounts.models import Account
 from categories.models import Category
 from core.models import Household, HouseholdMembership
+from django.core.cache import cache
 from insights.services.dashboard_summary import (
     build_dashboard_summary_details,
     build_dashboard_summary_fast,
@@ -20,6 +21,13 @@ AS_OF = date(2026, 8, 15)
 AUG_20 = date(2026, 8, 20)
 AUG_21 = date(2026, 8, 21)
 SEP_10 = date(2026, 9, 10)
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture
@@ -362,3 +370,88 @@ def test_recommendation_context_uses_reconciliation_aware_timeline(user, househo
     kwargs = mock_build.call_args.kwargs
     assert kwargs["today"] == AS_OF
     assert kwargs["end_date"] == AS_OF + timedelta(days=30)
+
+
+def _find_upcoming_txn_by_id(groups, txn_id: int):
+    needle = str(txn_id)
+    for group in groups:
+        for txn in group.get("transactions") or []:
+            candidates = (
+                txn.get("transaction_id"),
+                txn.get("id"),
+            )
+            if any(c is not None and str(c) == needle for c in candidates):
+                return txn
+    raise AssertionError(f"No upcoming transaction id={txn_id}")
+
+
+def test_home_attention_upcoming_transactions_share_canonical_first_shortfall(
+    user, main, expense_category
+):
+    """Home / Attention / Upcoming / Transactions all use the same first-negative event.
+
+    Expected amounts come from the live canonical walk for this fixture — never from a
+    UI screenshot (e.g. stale -$388.80). Same-day later outflows may deepen the day low;
+    those must not replace the first-crossing balance_after.
+    """
+    from django.core.cache import cache
+
+    from timeline.services.ledger import build_forecast_projection_timeline
+
+    # Opening 1000:
+    #   Pre-cross -600 → 400 (still positive)
+    #   First cross -500 → -100  ← canonical first shortfall
+    #   Same-day deeper -50 → -150 (day low; must not win)
+    #   Later worse -500 → deeper still (window low; must not win)
+    _txn(main, AUG_20, "Pre-cross", Decimal("-600.00"), expense_category)
+    first_cross = _txn(main, AUG_20, "First cross", Decimal("-500.00"), expense_category)
+    _txn(main, AUG_20, "Same-day deeper", Decimal("-50.00"), expense_category)
+    _txn(main, SEP_10, "Later worse", Decimal("-500.00"), expense_category)
+
+    cache.clear()
+    fast = build_dashboard_summary_fast(user, days=30, as_of_date=AS_OF)
+    details = build_dashboard_summary_details(user, days=30, as_of_date=AS_OF)
+    risk = fast["first_cash_shortfall"]
+    assert risk is not None
+
+    tid = risk.get("first_negative_transaction_id")
+    assert tid is not None
+    assert int(tid) == first_cross.id
+
+    timeline = build_forecast_projection_timeline(
+        user,
+        today=AS_OF,
+        end_date=AS_OF + timedelta(days=30),
+        account_id=main.id,
+        caller="test_first_shortfall_consistency",
+    )
+    ledger_row = next(
+        (r for r in timeline if int(r.get("transaction_id") or 0) == int(tid)),
+        None,
+    )
+    assert ledger_row is not None
+    canonical_balance = Decimal(str(ledger_row["balance_after"])).quantize(Decimal("0.01"))
+    assert canonical_balance < 0
+    # Sanity for this fixture: first crossing is -100; day/window lows are worse.
+    assert canonical_balance == Decimal("-100.00")
+    assert Decimal(fast["lowest_projected_cash"]["amount"]) < canonical_balance
+
+    # Home First cash shortfall card
+    assert risk["date"] == AUG_20.isoformat()
+    assert Decimal(risk["amount"]) == canonical_balance
+    assert int(risk["account_id"]) == main.id
+
+    # Upcoming Money Flow row for the same transaction
+    upcoming_txn = _find_upcoming_txn_by_id(details["upcoming_groups"], int(tid))
+    assert upcoming_txn["date"] == AUG_20.isoformat()
+    assert Decimal(str(upcoming_txn["balance_after"])) == canonical_balance
+
+    # Attention Required (dollars-to-add = abs of the same balance_after)
+    attention = next(
+        (a for a in (fast.get("attention") or []) if a.get("account_id") == main.id),
+        None,
+    )
+    assert attention is not None
+    assert attention.get("risk_date") == risk["date"]
+    assert Decimal(attention["amount"]) == abs(canonical_balance)
+    assert int(attention.get("first_negative_transaction_id")) == int(tid)

@@ -21,12 +21,20 @@ from accounts.services.account_health_constants import (
 )
 from categories.models import Category
 from core.models import Household, HouseholdMembership
+from django.core.cache import cache
 from transactions.models import Transaction
 from transactions.services.posting import post_transaction
 
 User = get_user_model()
 
 AS_OF = date(2025, 5, 1)
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture
@@ -196,40 +204,45 @@ def test_credit_custom_target_utilization_does_not_create_watch(user, credit_car
     h = _health(user, credit_card, days=30, has_payment_link=True)
     assert h["status"] == HEALTH_STATUS_HEALTHY
     assert Decimal(h["details"]["target_utilization_percent"]) == Decimal("20")
+    assert h["reason_code"] == "utilization_above_target"
+    assert "Above 20% target" in (h["reason"] or "")
 
 
 def test_credit_utilization_watch(user, credit_card):
     _set_credit_owed(user, credit_card, Decimal("2500"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_WATCH
-    assert "Utilization" in (h["reason"] or "")
-    assert "50" in (h["reason"] or "")
-    assert "target 10" in (h["reason"] or "").lower()
+    assert h["reason_code"] == "high_utilization"
+    assert "High utilization" in (h["reason"] or "")
+    assert "Above 10% target" in (h["reason"] or "")
 
 
 def test_credit_utilization_risk(user, credit_card):
     _set_credit_owed(user, credit_card, Decimal("3600"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_RISK
-    assert "72" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
+    assert h["reason_code"] == "high_utilization"
+    assert "High utilization" in (h["reason"] or "")
 
 
 def test_credit_high_utilization_is_not_critical(user, credit_card):
-    """98% utilization vs a 10% target is At Risk, not Critical."""
+    """98% utilization vs a 10% target is At Risk (near limit), not Critical."""
     _set_credit_owed(user, credit_card, Decimal("4900"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_RISK
     assert h["status"] != HEALTH_STATUS_CRITICAL
-    assert "target 10" in (h["reason"] or "").lower()
-    assert "98" in (h["reason"] or "")
+    assert h["reason_code"] == "near_limit"
+    assert "Near limit" in (h["reason"] or "")
+    assert "Above 10% target" in (h["reason"] or "")
 
 
 def test_credit_utilization_watch_at_absolute_floor(user, credit_card):
     _set_credit_owed(user, credit_card, Decimal("3400"))
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_WATCH
-    assert "68" in (h["reason"] or "") or "Utilization" in (h["reason"] or "")
-    assert "target 10" in (h["reason"] or "").lower()
+    assert h["reason_code"] == "high_utilization"
+    assert "High utilization" in (h["reason"] or "")
+    assert "Above 10% target" in (h["reason"] or "")
 
 
 def test_credit_health_uses_ledger_not_stale_db_balance(user, credit_card):
@@ -238,7 +251,7 @@ def test_credit_health_uses_ledger_not_stale_db_balance(user, credit_card):
     Account.objects.filter(pk=credit_card.pk).update(current_balance=Decimal("4600"))
     credit_card.refresh_from_db()
     h = _health(user, credit_card, days=30)
-    assert "50" in (h["reason"] or "")
+    assert h["reason_code"] == "high_utilization"
     assert "92" not in (h["reason"] or "")
     assert h["details"]["utilization_percent"] == "50.00"
 
@@ -261,8 +274,8 @@ def test_credit_target_change_does_not_make_utilization_critical(user, credit_ca
     assert h10["status"] == HEALTH_STATUS_RISK
     assert h30["status"] == HEALTH_STATUS_RISK
     assert h10["status"] != HEALTH_STATUS_CRITICAL
-    assert "target 10" in (h10["reason"] or "").lower()
-    assert "target 30" in (h30["reason"] or "").lower()
+    assert "Above 10% target" in (h10["reason"] or "")
+    assert "Above 30% target" in (h30["reason"] or "")
     assert "Reduce card utilization toward your 10% target." in (h10["recommended_action"] or "")
     assert "Reduce card utilization toward your 30% target." in (h30["recommended_action"] or "")
 
@@ -366,9 +379,76 @@ def test_credit_stale_due_date_is_not_permanently_critical(user, credit_card):
     credit_card.refresh_from_db()
     h = _health(user, credit_card, days=30)
     assert h["status"] == HEALTH_STATUS_WATCH
+    assert h["reason_code"] == "due_date_stale"
     assert h["details"].get("payment_due_is_stale") is True
     assert "outdated" in (h["reason"] or "").lower()
     assert "past due" not in (h["reason"] or "").lower()
+
+
+def test_credit_near_zero_owed_stale_due_is_healthy(user, credit_card):
+    """Pocket-change balances must not trigger stale-due / missing-link watches."""
+    _set_credit_owed(user, credit_card, Decimal("8.28"))
+    Account.objects.filter(pk=credit_card.pk).update(
+        current_balance=Decimal("8.28"),
+        credit_limit=Decimal("2000"),
+        statement_balance=Decimal("0"),
+        minimum_payment_amount=Decimal("30"),
+        last_statement_date=AS_OF - timedelta(days=90),
+        next_payment_due_date=AS_OF - timedelta(days=60),
+        autopay_enabled=False,
+        apr=Decimal("31.99"),
+    )
+    credit_card.refresh_from_db()
+    h = _health(user, credit_card, days=30, has_payment_link=False)
+    assert h["status"] == HEALTH_STATUS_HEALTHY
+    assert h["reason_code"] in (None, "utilization_above_target")
+
+
+def test_cash_low_nominal_balance_without_forecast_pressure_is_healthy(user, checking):
+    """A $40 balance with no projected shortfall is not Watch."""
+    Account.objects.filter(pk=checking.pk).update(
+        starting_balance=Decimal("40.15"),
+        minimum_buffer=Decimal("0"),
+    )
+    checking.refresh_from_db()
+    h = _health(user, checking, days=30)
+    assert h["status"] == HEALTH_STATUS_HEALTHY
+    assert h["reason_code"] is None
+
+
+def test_cash_projected_negative_exposes_reason_code(user, checking, expense_category):
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF + timedelta(days=4),
+        payee="Large bill",
+        amount=Decimal("-5000"),
+        category=expense_category,
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    h = _health(user, checking, days=30)
+    assert h["status"] == HEALTH_STATUS_CRITICAL
+    assert h["reason_code"] == "forecast_negative"
+    assert "Projected negative" in (h["reason"] or "")
+    assert h["risk_date"] is not None
+
+
+def test_credit_past_due_is_critical_not_utilization(user, credit_card):
+    _set_credit_owed(user, credit_card, Decimal("1070"))
+    Account.objects.filter(pk=credit_card.pk).update(
+        current_balance=Decimal("1070"),
+        credit_limit=Decimal("4800"),
+        statement_balance=Decimal("1070"),
+        minimum_payment_amount=Decimal("63"),
+        next_payment_due_date=AS_OF - timedelta(days=34),
+        last_statement_date=AS_OF - timedelta(days=10),
+        autopay_enabled=False,
+    )
+    credit_card.refresh_from_db()
+    h = _health(user, credit_card, days=30, has_payment_link=True)
+    assert h["status"] == HEALTH_STATUS_CRITICAL
+    assert h["reason_code"] == "payment_past_due"
+    assert "past due" in (h["reason"] or "").lower()
 
 
 def test_savings_below_buffer_risk(user, savings, expense_category):
