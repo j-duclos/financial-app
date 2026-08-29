@@ -248,6 +248,34 @@ def test_biweekly_and_weekly_and_nth_and_yearly(hh, checking, rent_cat):
 
 
 @pytest.mark.django_db
+def test_weekly_interval_phases_from_rule_start_not_window(hh, checking, rent_cat):
+    """Regression: every-3-weeks must not emit mid-cycle ghosts when the window starts mid-series.
+
+    Chewy-style bug: window starting Aug 29 previously emitted Sep 4 (first Friday in window)
+    instead of staying on the Aug 7 + 3-week phase (Aug 28, Sep 18, …).
+    """
+    rule = RecurringRule.objects.create(
+        household=hh,
+        name="Chewy",
+        account=checking,
+        category=rent_cat,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("119.14"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.WEEKLY,
+        interval=3,
+        day_of_week=4,  # Friday
+        start_date=date(2026, 8, 7),  # Friday
+        active=True,
+    )
+    occ = generate_rule_occurrences(rule, date(2026, 8, 29), date(2026, 9, 28))
+    assert date(2026, 9, 4) not in occ
+    assert date(2026, 9, 25) not in occ
+    assert date(2026, 9, 18) in occ
+    assert occ == [date(2026, 9, 18)]
+
+
+@pytest.mark.django_db
 def test_transfer_rule_next_and_two_sided_timeline(user, hh, checking, savings, bank_transfer_cat):
     today = timezone.localdate()
     # Anchor to a known weekday

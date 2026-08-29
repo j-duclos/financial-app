@@ -17,7 +17,7 @@ from common.services.profiler import perf_enabled, perf_print
 from timeline.services.calendar import build_timeline_calendar
 from timeline.services.calendar_chunks import SHORT_RANGE_DAYS, calendar_chunk_windows
 
-CALENDAR_CACHE_VERSION = "v3"
+CALENDAR_CACHE_VERSION = "v6"
 CALENDAR_CACHE_SECONDS = 300
 # Wait for an in-progress full-range build instead of starting a second one.
 _LOCK_TIMEOUT_SECONDS = 60

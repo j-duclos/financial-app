@@ -1548,12 +1548,12 @@ def generate_rule_occurrences(
 
     if freq == RecurringRule.Frequency.WEEKLY:
         dow = rule.day_of_week if rule.day_of_week is not None else (rule.start_date.weekday() % 7)
-        # First occurrence of target weekday on or after start
-        d = start
+        # Phase from the rule's own start weekday — never restart the interval from the
+        # query window (that created ghost mid-cycle dates like Chewy on Sep 4).
+        d = rule.start_date
         while d.weekday() != dow:
             d += timedelta(days=1)
-        # If that date is before rule.start_date, advance by full weeks to keep weekday correct
-        while d < rule.start_date:
+        while d < start:
             d += timedelta(weeks=interval)
         while d <= end:
             if d >= rule.start_date and (not rule.end_date or d <= rule.end_date):
@@ -1562,10 +1562,10 @@ def generate_rule_occurrences(
 
     elif freq == RecurringRule.Frequency.BIWEEKLY:
         dow = rule.day_of_week if rule.day_of_week is not None else (rule.start_date.weekday() % 7)
-        d = start
+        d = rule.start_date
         while d.weekday() != dow:
             d += timedelta(days=1)
-        while d < rule.start_date:
+        while d < start:
             d += timedelta(weeks=2 * interval)
         while d <= end:
             if d >= rule.start_date and (not rule.end_date or d <= rule.end_date):

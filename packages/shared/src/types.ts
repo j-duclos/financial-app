@@ -558,6 +558,8 @@ export interface DayLowestBalanceMarker {
   lowest_projected_balance_transaction_id?: string | number | null;
   lowest_projected_balance_after_description?: string | null;
   lowest_projected_balance_date?: string | null;
+  /** First future day this marker account went negative (for First vs later shortfall copy). */
+  first_account_shortfall_date?: string | null;
   amount_needed_to_zero?: string | null;
   amount_needed_to_buffer?: string | null;
   show_lowest_balance_marker?: boolean;

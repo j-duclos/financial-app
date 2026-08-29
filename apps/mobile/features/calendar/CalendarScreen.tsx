@@ -272,6 +272,7 @@ export function CalendarScreen() {
                 forecastDays={forecastDays}
                 eventFilter={eventFilter}
                 accountName={selectedAccountName}
+                nextRiskDate={summary?.next_risk_date ?? null}
                 onEventPress={onEventPress}
                 onAccountRiskPress={onAccountRiskPress}
               />

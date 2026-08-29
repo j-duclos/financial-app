@@ -382,6 +382,47 @@ def _seed_running_from_canonical(
     return running
 
 
+def _annotate_first_account_shortfall_dates(
+    days: list[dict[str, Any]], today: date
+) -> None:
+    """Record each cash account's first future negative date without rewriting day markers.
+
+    Day-local ``lowest_projected_balance`` / ``_date`` stay on the day they were measured
+    (so Sep 4 can show -522.54 after Hulu). ``first_account_shortfall_date`` is used only
+    for \"First cash shortfall\" copy vs later shortfalls.
+    """
+    today_iso = today.isoformat()
+    first_neg_date: dict[int, str] = {}
+    for day in days:
+        day_iso = day.get("date") or ""
+        if day_iso < today_iso:
+            continue
+        for txn in day.get("transactions") or []:
+            aid = txn.get("account_id")
+            bal_raw = txn.get("balance_after")
+            if aid is None or bal_raw is None:
+                continue
+            try:
+                aid_i = int(aid)
+                bal = _decimal(bal_raw)
+            except (TypeError, ValueError):
+                continue
+            if bal < 0 and aid_i not in first_neg_date:
+                first_neg_date[aid_i] = day_iso
+
+    for day in days:
+        raw_aid = day.get("lowest_projected_balance_account_id")
+        if raw_aid is None:
+            day["first_account_shortfall_date"] = None
+            continue
+        try:
+            aid_i = int(raw_aid)
+        except (TypeError, ValueError):
+            day["first_account_shortfall_date"] = None
+            continue
+        day["first_account_shortfall_date"] = first_neg_date.get(aid_i)
+
+
 def _bind_day_markers_to_canonical_events(days: list[dict[str, Any]]) -> None:
     """Force marker balance/account/description to one calendar event's balance_after.
 
@@ -734,7 +775,10 @@ def build_timeline_calendar(
         if account_id is not None:
             ending = running.get(account_id, Decimal("0"))
         else:
-            ending = sum(running.get(aid, Decimal("0")) for aid in scope_ids)
+            ending = sum(
+                (running.get(aid, Decimal("0")) for aid in scope_ids),
+                Decimal("0"),
+            )
 
         eod_worst: Decimal | None = None
         for aid in scope_ids:
@@ -911,6 +955,7 @@ def build_timeline_calendar(
 
     _bind_day_markers_to_canonical_events(days_out)
     carry_forward_lowest_markers(days_out)
+    _annotate_first_account_shortfall_dates(days_out, today)
     attach_recovery_to_days(days_out, accounts_by_id=accounts_by_id)
 
     scenario_name = None

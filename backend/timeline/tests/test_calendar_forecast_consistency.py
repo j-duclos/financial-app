@@ -478,3 +478,35 @@ def test_calendar_historical_event_balance_matches_timeline_running_balance(
             )
             matched += 1
     assert matched >= 1
+
+
+def test_annotate_first_shortfall_keeps_day_local_marker_date():
+    """Sep 4 keeps its -522.54 day marker; first_account_shortfall_date points at Sep 2."""
+    from timeline.services.calendar import _annotate_first_account_shortfall_dates
+
+    days = [
+        {
+            "date": "2026-09-02",
+            "show_lowest_balance_marker": True,
+            "lowest_projected_balance_account_id": 1,
+            "lowest_projected_balance_date": "2026-09-02",
+            "transactions": [
+                {"account_id": 1, "balance_after": "-378.80", "description": "Exeterfina Loan"},
+            ],
+        },
+        {
+            "date": "2026-09-04",
+            "show_lowest_balance_marker": True,
+            "lowest_projected_balance_account_id": 1,
+            "lowest_projected_balance_date": "2026-09-04",
+            "lowest_projected_balance": "-522.54",
+            "lowest_projected_balance_after_description": "Hulu",
+            "transactions": [
+                {"account_id": 1, "balance_after": "-522.54", "description": "Hulu"},
+            ],
+        },
+    ]
+    _annotate_first_account_shortfall_dates(days, date(2026, 8, 28))
+    assert days[1]["lowest_projected_balance_date"] == "2026-09-04"
+    assert days[1]["first_account_shortfall_date"] == "2026-09-02"
+    assert days[0]["first_account_shortfall_date"] == "2026-09-02"

@@ -353,9 +353,85 @@ describe("household vs account risk", () => {
       lowest_projected_balance: "-641.68",
       lowest_projected_balance_account_name: "Chase",
       lowest_projected_balance_date: "2026-09-02",
+      lowest_projected_balance_after_description: "Hulu",
     });
     expect(calendarDayShowsAccountRisk(day, "2026-09-04", TODAY)).toBe(false);
     expect(calendarAccountRiskPresentation(day, "2026-09-04", TODAY)).toBeNull();
+  });
+
+  it("shows Sep 4 day-local shortfall (-522.54) without First wording when first risk is Sep 2", () => {
+    const day = sampleDay({
+      date: "2026-09-04",
+      is_forecast: true,
+      presentation_status: "critical",
+      is_negative: true,
+      has_risk: true,
+      risk_level: "critical",
+      heat_level: "dangerous",
+      lowest_projected_balance: "-522.54",
+      lowest_projected_balance_account_name: "Chase",
+      lowest_projected_balance_account_id: 1,
+      lowest_projected_balance_date: "2026-09-04",
+      lowest_projected_balance_transaction_id: 5996,
+      lowest_projected_balance_after_description: "Hulu",
+      first_account_shortfall_date: "2026-09-02",
+      transactions: [
+        {
+          id: 5996,
+          transaction_id: 5996,
+          account_id: 1,
+          account_name: "Chase",
+          description: "Hulu",
+          amount: "-35.00",
+          category: null,
+          kind: "bill",
+          source: "RULE",
+          balance_after: "-522.54",
+          is_transfer: false,
+        },
+      ],
+    });
+    const risk = calendarAccountRiskPresentation(day, "2026-09-04", TODAY, "2026-09-02");
+    expect(risk?.balanceAmount).toBe("-522.54");
+    expect(risk?.detail).toBe("Cash shortfall · after Hulu");
+  });
+
+  it("risk card balance always equals the focus event balance_after", () => {
+    const day = sampleDay({
+      date: TOMORROW,
+      is_forecast: true,
+      presentation_status: "critical",
+      is_negative: true,
+      has_risk: true,
+      risk_level: "critical",
+      heat_level: "dangerous",
+      // Stale wrong marker balance must not win over event Bal.
+      lowest_projected_balance: "-641.68",
+      lowest_projected_balance_account_name: "Chase",
+      lowest_projected_balance_account_id: 1,
+      lowest_projected_balance_date: TOMORROW,
+      lowest_projected_balance_transaction_id: 5996,
+      lowest_projected_balance_after_description: "Hulu",
+      transactions: [
+        {
+          id: 5996,
+          transaction_id: 5996,
+          account_id: 1,
+          account_name: "Chase",
+          description: "Hulu",
+          amount: "-35.00",
+          category: null,
+          kind: "bill",
+          source: "RULE",
+          balance_after: "-522.54",
+          is_transfer: false,
+        },
+      ],
+    });
+    const risk = calendarAccountRiskPresentation(day, TOMORROW, TODAY, TOMORROW);
+    expect(risk?.balanceAmount).toBe("-522.54");
+    expect(risk?.accountName).toBe("Chase");
+    expect(risk?.detail).toBe("First cash shortfall · after Hulu");
   });
 
   it("shows account risk only on the actual shortfall date", () => {

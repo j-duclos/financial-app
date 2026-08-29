@@ -26,6 +26,8 @@ type Props = {
   forecastDays: number;
   eventFilter: CalendarEventFilter;
   accountName?: string | null;
+  /** Canonical Home/ATS next shortfall date — gates the account-risk card. */
+  nextRiskDate?: string | null;
   onEventPress: (txn: TimelineCalendarTransaction) => void;
   onAccountRiskPress?: () => void;
 };
@@ -37,6 +39,7 @@ export function CalendarDaySummary({
   forecastDays,
   eventFilter,
   accountName,
+  nextRiskDate = null,
   onEventPress,
   onAccountRiskPress,
 }: Props) {
@@ -45,7 +48,7 @@ export function CalendarDaySummary({
   const dateState = calendarDateState(dateIso);
   const hasActivity = dayHasActivity(resolved);
   const filtered = filterCalendarTransactions(resolved.transactions, eventFilter);
-  const accountRisk = calendarAccountRiskPresentation(resolved, dateIso);
+  const accountRisk = calendarAccountRiskPresentation(resolved, dateIso, undefined, nextRiskDate);
   /** Account filter only — canonical backend ending_balance, never derived. */
   const isAccountScope = resolved.balance_scope === "account";
   const showCanonicalAccountEnding = isAccountScope;
