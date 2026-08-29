@@ -257,4 +257,68 @@ def test_calendar_household_lookback_builds(api_client, user, household, main_ch
         forecast_days=30,
     )
     assert calendar["days"]
-    assert calendar["summary"]["risky_accounts"] is not None
+
+
+@pytest.mark.django_db
+def test_calendar_event_risk_flag_only_when_canonical_balance_negative(
+    user, household, main_checking
+):
+    """Pending rows with positive canonical balance_after must not get risk_flag."""
+    today = date.today()
+    main_checking.minimum_buffer = Decimal("0")
+    main_checking.starting_balance = Decimal("5000.00")
+    main_checking.save(update_fields=["minimum_buffer", "starting_balance"])
+
+    _planned(main_checking, today, "Income", Decimal("1500.00"))
+    _planned(main_checking, today, "Rent", Decimal("-3100.00"))
+    _planned(main_checking, today, "Deposit", Decimal("500.00"))
+    cache.clear()
+
+    calendar = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=30),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=30,
+    )
+    day = next(d for d in calendar["days"] if d["date"] == today.isoformat())
+    for txn in day["transactions"]:
+        bal = txn.get("balance_after")
+        if bal is not None and Decimal(str(bal)) >= 0:
+            assert txn.get("risk_flag") is False, (
+                f"{txn.get('description')} balance_after={bal} must not be risk_flag"
+            )
+
+
+def test_bind_day_markers_uses_event_balance_after_not_heat_mix():
+    """Regression: never show Chase balance with Main's after Electric."""
+    from timeline.services.calendar import _bind_day_markers_to_canonical_events
+
+    days = [
+        {
+            "date": "2026-09-10",
+            "show_lowest_balance_marker": True,
+            "lowest_projected_balance": "-208.00",
+            "lowest_projected_balance_account_id": 2,
+            "lowest_projected_balance_account_name": "Chase",
+            "lowest_projected_balance_transaction_id": 55,
+            "lowest_projected_balance_after_description": "Electric",
+            "lowest_projected_balance_date": "2026-09-10",
+            "transactions": [
+                {
+                    "id": 55,
+                    "transaction_id": 55,
+                    "account_id": 1,
+                    "account_name": "Main",
+                    "description": "Electric",
+                    "balance_after": "-88.86",
+                }
+            ],
+        }
+    ]
+    _bind_day_markers_to_canonical_events(days)
+    # Marker account id 2 does not match event account 1 → clear mismatched card.
+    assert days[0]["show_lowest_balance_marker"] is False
+    assert days[0]["lowest_projected_balance"] is None

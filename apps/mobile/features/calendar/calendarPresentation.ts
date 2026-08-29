@@ -152,9 +152,22 @@ export function calendarDayShowsAccountRisk(
   dateIso: string,
   todayIso: string = todayStr()
 ): boolean {
-  // Red account-risk cards are for actionable FUTURE shortfalls only — not today.
+  // Red account-risk cards are for actionable FUTURE shortfalls only — not today/past.
   if (calendarDateState(dateIso, todayIso) !== "future") return false;
-  return isFutureCritical(day) || isFutureWarning(day);
+  if (!(isFutureCritical(day) || isFutureWarning(day))) return false;
+
+  // Only the actual first shortfall day — never a quiet day that inherited a carried marker.
+  const shortfallDate = day.lowest_projected_balance_date ?? null;
+  if (shortfallDate != null && shortfallDate !== dateIso) return false;
+
+  // Require a real negative (or below-buffer) projected balance for a cash account.
+  const balance = parseCalendarAmount(
+    day.lowest_projected_balance ?? (day.is_negative ? day.lowest_balance : null)
+  );
+  if (day.is_negative || day.risk_level === "critical" || day.heat_level === "dangerous") {
+    return balance < 0;
+  }
+  return balance >= 0 && parseCalendarAmount(day.below_buffer_amount) > 0;
 }
 
 /**
@@ -181,7 +194,7 @@ export type AccountRiskPresentation = {
   focusTransactionId: number | null;
 };
 
-/** Account-level risk copy for today/future days (household or account scope). */
+/** Account-level risk copy for future shortfall days only (never household day net). */
 export function calendarAccountRiskPresentation(
   day: TimelineCalendarDay,
   dateIso: string,
@@ -189,47 +202,76 @@ export function calendarAccountRiskPresentation(
 ): AccountRiskPresentation | null {
   if (!calendarDayShowsAccountRisk(day, dateIso, todayIso)) return null;
 
-  const accountName =
-    day.lowest_projected_balance_account_name ??
-    day.affected_account_name ??
-    "Account";
-  const balance =
-    day.lowest_projected_balance ??
-    (day.is_negative ? day.lowest_balance : null) ??
-    day.lowest_balance;
-  const balanceNum = parseCalendarAmount(balance);
-  const tone: "critical" | "warning" =
-    day.is_negative === true || day.risk_level === "critical" || day.heat_level === "dangerous"
-      ? "critical"
-      : "warning";
-
-  const state = calendarDateState(dateIso, todayIso);
-  const balanceLabel =
-    state === "today" ? "Projected ending" : "Projected balance";
-
-  let detail: string | null = null;
-  if (tone === "critical") {
-    detail =
-      state === "today" && dateIso === todayIso
-        ? "First cash shortfall today"
-        : "First cash shortfall";
-  } else if (day.risk_reason) {
-    detail = day.risk_reason;
-  } else {
-    detail = "Projected below buffer";
-  }
-
   const rawTxnId = day.lowest_projected_balance_transaction_id;
   const focusTransactionId =
     rawTxnId != null && rawTxnId !== "" ? Number(rawTxnId) : null;
+  const focusIdStr = rawTxnId != null && rawTxnId !== "" ? String(rawTxnId) : null;
+  const focusAccountId = day.lowest_projected_balance_account_id ?? null;
+
+  // Prefer the matching calendar event's canonical balance_after — same Bal as Transactions.
+  const focusTxn = (day.transactions ?? []).find((txn) => {
+    if (focusIdStr == null) return false;
+    const matchesId =
+      String(txn.id ?? "") === focusIdStr || String(txn.transaction_id ?? "") === focusIdStr;
+    if (!matchesId) return false;
+    if (focusAccountId != null && txn.account_id != null && txn.account_id !== focusAccountId) {
+      return false;
+    }
+    return txn.balance_after != null && txn.balance_after !== "";
+  });
+
+  if (focusTxn?.balance_after != null) {
+    const bal = parseCalendarAmount(focusTxn.balance_after);
+    const tone: "critical" | "warning" = bal < 0 ? "critical" : "warning";
+    const afterDesc = (focusTxn.description || "").trim();
+    return {
+      accountName: focusTxn.account_name || "Account",
+      balanceLabel: "Projected balance",
+      balanceAmount: focusTxn.balance_after,
+      detail:
+        tone === "critical"
+          ? afterDesc
+            ? `First cash shortfall · after ${afterDesc}`
+            : "First cash shortfall"
+          : "Projected below buffer",
+      tone,
+      accountId: focusTxn.account_id ?? focusAccountId,
+      focusTransactionId: Number.isFinite(focusTransactionId)
+        ? focusTransactionId
+        : focusTxn.transaction_id ?? null,
+    };
+  }
+
+  // Focus txn id present but no same-account event match — refuse mismatched cards.
+  if (focusIdStr != null) {
+    return null;
+  }
+
+  // No matching event with balance_after — do not invent a mixed Chase/Main risk card.
+  if (
+    day.lowest_projected_balance == null ||
+    day.lowest_projected_balance_account_name == null
+  ) {
+    return null;
+  }
+
+  const balance = day.lowest_projected_balance;
+  const balNum = parseCalendarAmount(balance);
+  const tone: "critical" | "warning" = balNum < 0 ? "critical" : "warning";
+  const afterDesc = day.lowest_projected_balance_after_description?.trim();
 
   return {
-    accountName,
-    balanceLabel,
-    balanceAmount: balance ?? "0",
-    detail,
+    accountName: day.lowest_projected_balance_account_name,
+    balanceLabel: "Projected balance",
+    balanceAmount: balance,
+    detail:
+      tone === "critical"
+        ? afterDesc
+          ? `First cash shortfall · after ${afterDesc}`
+          : "First cash shortfall"
+        : day.risk_reason ?? "Projected below buffer",
     tone,
-    accountId: day.lowest_projected_balance_account_id ?? null,
+    accountId: focusAccountId,
     focusTransactionId: Number.isFinite(focusTransactionId) ? focusTransactionId : null,
   };
 }

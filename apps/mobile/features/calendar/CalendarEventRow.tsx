@@ -2,7 +2,6 @@ import React from "react";
 import { Pressable, Text, View } from "react-native";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/theme";
 import { StatusChip } from "@/components/ui";
 import type { CalendarDateState } from "./calendarPresentation";
@@ -71,9 +70,6 @@ export function CalendarEventRow({ txn, dateState, onPress }: Props) {
             label={status}
             tone={status === "Forecast" || status === "Pending" ? "neutral" : "neutral"}
           />
-        ) : null}
-        {txn.risk_flag && dateState !== "past" ? (
-          <FontAwesome name="exclamation-triangle" size={12} color={theme.colors.critical} accessibilityLabel="Risk" />
         ) : null}
       </View>
     </Pressable>

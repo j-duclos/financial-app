@@ -183,6 +183,8 @@ def test_carry_forward_marker_on_quiet_negative_days():
     assert days[1]["lowest_projected_balance_account_name"] == "Main"
     assert days[1]["lowest_projected_balance_after_description"] == "Netflix"
     assert days[1]["amount_needed_to_zero"] == "562.88"
+    # Quiet follow-on days keep the ORIGINAL shortfall date, not the quiet day.
+    assert days[1]["lowest_projected_balance_date"] == "2025-06-17"
     assert days[2]["show_lowest_balance_marker"] is False
 
 

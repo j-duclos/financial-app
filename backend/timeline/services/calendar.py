@@ -178,6 +178,88 @@ def _row_running_balance(row: dict) -> Decimal | None:
     return _row_canonical_balance(row)
 
 
+def _calendar_event_risk_flag(
+    *,
+    canonical_balance: Decimal | None,
+    is_forecast_day: bool,
+) -> bool:
+    """Use canonical ledger balance_after only — never dashboard buffer heuristics."""
+    if not is_forecast_day or canonical_balance is None:
+        return False
+    return canonical_balance < 0
+
+
+def _bind_day_markers_to_canonical_events(days: list[dict[str, Any]]) -> None:
+    """Force marker balance/account/description to one calendar event's balance_after.
+
+    Prevents heat/snapshot mixups like Chase balance + Main \"after Electric\".
+    """
+    for day in days:
+        if not day.get("show_lowest_balance_marker"):
+            continue
+        tid = day.get("lowest_projected_balance_transaction_id")
+        aid = day.get("lowest_projected_balance_account_id")
+        events = day.get("transactions") or []
+        focus: dict[str, Any] | None = None
+        if tid is not None:
+            tid_s = str(tid)
+            for ev in events:
+                if str(ev.get("id")) != tid_s and str(ev.get("transaction_id") or "") != tid_s:
+                    continue
+                if aid is not None and ev.get("account_id") is not None:
+                    try:
+                        if int(ev["account_id"]) != int(aid):
+                            continue
+                    except (TypeError, ValueError):
+                        continue
+                focus = ev
+                break
+        if focus is None and aid is not None:
+            # Fall back to the worst (lowest) balance_after on that account that day.
+            candidates = []
+            for ev in events:
+                if ev.get("account_id") is None or ev.get("balance_after") is None:
+                    continue
+                try:
+                    if int(ev["account_id"]) != int(aid):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                candidates.append(ev)
+            if candidates:
+                focus = min(candidates, key=lambda e: _decimal(e.get("balance_after")))
+        if focus is None or focus.get("balance_after") is None:
+            # Incomplete marker — do not show a mismatched risk card.
+            day["show_lowest_balance_marker"] = False
+            day["lowest_projected_balance"] = None
+            day["lowest_projected_balance_account_id"] = None
+            day["lowest_projected_balance_account_name"] = None
+            day["lowest_projected_balance_transaction_id"] = None
+            day["lowest_projected_balance_after_description"] = None
+            day["lowest_projected_balance_date"] = None
+            day["below_buffer_amount"] = None
+            continue
+        day["lowest_projected_balance"] = str(
+            _decimal(focus["balance_after"]).quantize(Decimal("0.01"))
+        )
+        day["lowest_projected_balance_account_name"] = focus.get("account_name") or day.get(
+            "lowest_projected_balance_account_name"
+        )
+        if focus.get("account_id") is not None:
+            try:
+                day["lowest_projected_balance_account_id"] = int(focus["account_id"])
+            except (TypeError, ValueError):
+                pass
+        day["lowest_projected_balance_after_description"] = (
+            (focus.get("description") or "").strip() or None
+        )
+        if focus.get("transaction_id") is not None:
+            day["lowest_projected_balance_transaction_id"] = focus.get("transaction_id")
+        elif focus.get("id") is not None:
+            day["lowest_projected_balance_transaction_id"] = focus.get("id")
+        day["lowest_projected_balance_date"] = day.get("date")
+
+
 def _normalize_forecast_days(today: date, end_date: date, forecast_days: int | None) -> int:
     if forecast_days is not None:
         raw = forecast_days
@@ -404,10 +486,12 @@ def build_timeline_calendar(
             )
             amt = _decimal(row.get("amount") or 0)
             aid = row.get("account_id")
+            canonical_bal: Decimal | None = None
 
             if aid in scope_ids:
                 rb = _row_canonical_balance(row)
                 if rb is not None:
+                    canonical_bal = rb
                     acct_bal = rb
                     if day_lowest is None or acct_bal < day_lowest:
                         day_lowest = acct_bal
@@ -442,7 +526,10 @@ def build_timeline_calendar(
                     "is_transfer": txn.get("is_transfer", False),
                     "is_internal_transfer": bool(txn.get("is_internal_transfer")),
                     "is_credit_card_payment": bool(txn.get("is_credit_card_payment")),
-                    "risk_flag": bool(txn.get("risk_flag")),
+                    "risk_flag": _calendar_event_risk_flag(
+                        canonical_balance=canonical_bal,
+                        is_forecast_day=is_forecast_day,
+                    ),
                     "transfer_from_account_name": txn.get("transfer_from_account_name"),
                     "transfer_to_account_name": txn.get("transfer_to_account_name"),
                 }
@@ -500,7 +587,7 @@ def build_timeline_calendar(
         account_snapshots: list[AccountDayBalance] = []
         for aid in scope_ids:
             acc = accounts_by_id.get(aid)
-            if not acc:
+            if not acc or acc.is_credit_card() or not account_supports_available_to_spend(acc):
                 continue
             bal = running.get(aid, Decimal("0"))
             account_snapshots.append(
@@ -604,36 +691,57 @@ def build_timeline_calendar(
                 "heat_label": heat["heat_label"],
                 "heat_reason": heat["heat_reason"],
                 "affected_account_name": heat["affected_account_name"],
-                "lowest_projected_balance": lowest_marker["lowest_projected_balance"]
-                or heat["lowest_projected_balance"],
-                "below_buffer_amount": lowest_marker["below_buffer_amount"]
-                or heat["below_buffer_amount"],
+                # Account-risk marker fields are atomic — never fill balance from heat
+                # while keeping another account's after_description (caused Chase/Main mixups).
+                "lowest_projected_balance": (
+                    lowest_marker["lowest_projected_balance"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
+                "below_buffer_amount": (
+                    lowest_marker["below_buffer_amount"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
                 "is_negative": heat["is_negative"],
-                "lowest_projected_balance_account_id": lowest_marker[
-                    "lowest_projected_balance_account_id"
-                ],
-                "lowest_projected_balance_account_name": lowest_marker[
-                    "lowest_projected_balance_account_name"
-                ],
-                "lowest_projected_balance_transaction_id": lowest_marker[
-                    "lowest_projected_balance_transaction_id"
-                ],
-                "lowest_projected_balance_after_description": lowest_marker[
-                    "lowest_projected_balance_after_description"
-                ],
-                "lowest_projected_balance_date": lowest_marker[
-                    "lowest_projected_balance_date"
-                ],
+                "lowest_projected_balance_account_id": (
+                    lowest_marker["lowest_projected_balance_account_id"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
+                "lowest_projected_balance_account_name": (
+                    lowest_marker["lowest_projected_balance_account_name"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
+                "lowest_projected_balance_transaction_id": (
+                    lowest_marker["lowest_projected_balance_transaction_id"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
+                "lowest_projected_balance_after_description": (
+                    lowest_marker["lowest_projected_balance_after_description"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
+                "lowest_projected_balance_date": (
+                    lowest_marker["lowest_projected_balance_date"]
+                    if lowest_marker.get("show_lowest_balance_marker")
+                    else None
+                ),
                 "amount_needed_to_zero": lowest_marker["amount_needed_to_zero"],
                 "amount_needed_to_buffer": lowest_marker["amount_needed_to_buffer"],
                 "show_lowest_balance_marker": lowest_marker["show_lowest_balance_marker"],
                 "credit_balance_warnings": credit_balance_warnings,
                 "biggest_drivers": compute_biggest_drivers(events),
                 "transactions": events,
+                # Public alias for carry_forward "still negative?" checks.
+                "account_balances": account_balance_map,
             }
         )
         d += timedelta(days=1)
 
+    _bind_day_markers_to_canonical_events(days_out)
     carry_forward_lowest_markers(days_out)
     attach_recovery_to_days(days_out, accounts_by_id=accounts_by_id)
 

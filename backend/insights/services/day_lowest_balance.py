@@ -208,14 +208,25 @@ def calculate_day_lowest_marker_from_snapshots(
     if not snapshots:
         return _empty_marker(date_iso)
 
-    scoped = snapshots
+    cash_names = {
+        acc.effective_display_name
+        for acc in accounts_by_id.values()
+        if not acc.is_credit_card() and account_supports_available_to_spend(acc)
+    }
+    scoped = [row for row in snapshots if row.account_name in cash_names]
+    if not scoped:
+        return _empty_marker(date_iso)
+
     if scope_account_id is not None:
         name = accounts_by_id.get(scope_account_id)
         if name is not None:
             label = name.effective_display_name
-            scoped = [row for row in snapshots if row.account_name == label]
-            if not scoped:
-                scoped = snapshots
+            scoped_account = [row for row in scoped if row.account_name == label]
+            if scoped_account:
+                scoped = scoped_account
+
+    if not scoped:
+        return _empty_marker(date_iso)
 
     worst = min(scoped, key=lambda row: row.balance)
     account_id: int | None = None
@@ -242,6 +253,7 @@ _CARRIED_MARKER_KEYS = (
     "lowest_projected_balance_account_name",
     "lowest_projected_balance_transaction_id",
     "lowest_projected_balance_after_description",
+    "lowest_projected_balance_date",
     "amount_needed_to_zero",
     "amount_needed_to_buffer",
     "below_buffer_amount",
@@ -265,15 +277,18 @@ def _marker_has_detail(day: dict[str, Any]) -> bool:
 
 
 def _extract_carried_marker(day: dict[str, Any]) -> dict[str, Any]:
-    return {key: day.get(key) for key in _CARRIED_MARKER_KEYS if day.get(key) is not None}
+    carried = {key: day.get(key) for key in _CARRIED_MARKER_KEYS if day.get(key) is not None}
+    # Preserve the original shortfall date — never rewrite it to quiet follow-on days.
+    if "lowest_projected_balance_date" not in carried and day.get("date"):
+        carried["lowest_projected_balance_date"] = day.get("date")
+    return carried
 
 
 def _apply_carried_marker(day: dict[str, Any], carried: dict[str, Any]) -> None:
     for key, value in carried.items():
         day[key] = value
     day["show_lowest_balance_marker"] = True
-    day["lowest_projected_balance_date"] = day.get("date")
-
+    # Do NOT overwrite lowest_projected_balance_date with this quiet day.
 
 def _day_account_still_negative(day: dict[str, Any], account_id: int | None) -> bool:
     if day.get("is_negative"):

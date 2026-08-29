@@ -284,13 +284,30 @@ describe("household vs account risk", () => {
       heat_level: "dangerous",
       lowest_projected_balance: "-2439.36",
       lowest_projected_balance_account_name: "Main",
+      lowest_projected_balance_date: TODAY,
     });
     expect(calendarDayShowsAccountRisk(day, TODAY, TODAY)).toBe(false);
     expect(calendarAccountRiskPresentation(day, TODAY, TODAY)).toBeNull();
     expect(calendarGridTone(calendarDayPresentationStatus(day, TODAY, TODAY))).toBe("healthy");
   });
 
-  it("shows account risk when Main is negative on a future day but household cash is healthy", () => {
+  it("does not show First cash shortfall on a later day that inherited a carried marker", () => {
+    const day = sampleDay({
+      date: "2026-09-04",
+      is_forecast: true,
+      is_negative: true,
+      has_risk: true,
+      risk_level: "critical",
+      heat_level: "dangerous",
+      lowest_projected_balance: "-641.68",
+      lowest_projected_balance_account_name: "Chase",
+      lowest_projected_balance_date: "2026-09-02",
+    });
+    expect(calendarDayShowsAccountRisk(day, "2026-09-04", TODAY)).toBe(false);
+    expect(calendarAccountRiskPresentation(day, "2026-09-04", TODAY)).toBeNull();
+  });
+
+  it("shows account risk only on the actual shortfall date", () => {
     const day = sampleDay({
       date: TOMORROW,
       balance_scope: "household_cash",
@@ -302,11 +319,103 @@ describe("household vs account risk", () => {
       lowest_projected_balance: "-378.80",
       lowest_projected_balance_account_name: "Main",
       lowest_projected_balance_account_id: 1,
+      lowest_projected_balance_date: TOMORROW,
+      lowest_projected_balance_transaction_id: 99,
+      lowest_projected_balance_after_description: "Exeterfina Loan",
+      transactions: [
+        {
+          id: 99,
+          transaction_id: 99,
+          account_id: 1,
+          account_name: "Main",
+          description: "Exeterfina Loan",
+          amount: "-393.79",
+          category: null,
+          kind: "bill",
+          source: "RULE",
+          balance_after: "-378.80",
+          is_transfer: false,
+        },
+      ],
     });
     const risk = calendarAccountRiskPresentation(day, TOMORROW, TODAY);
     expect(risk?.accountName).toBe("Main");
     expect(risk?.balanceAmount).toBe("-378.80");
+    expect(risk?.detail).toMatch(/First cash shortfall/);
     expect(parseFloat(day.ending_balance)).toBeGreaterThan(0);
+  });
+
+  it("never pairs one account's balance with another account's after-description", () => {
+    const day = sampleDay({
+      date: TOMORROW,
+      is_forecast: true,
+      is_negative: true,
+      has_risk: true,
+      risk_level: "critical",
+      heat_level: "dangerous",
+      // Stale mixed fields (the bug): Chase balance + Main Electric description
+      lowest_projected_balance: "-208.00",
+      lowest_projected_balance_account_name: "Chase",
+      lowest_projected_balance_account_id: 2,
+      lowest_projected_balance_date: TOMORROW,
+      lowest_projected_balance_transaction_id: 55,
+      lowest_projected_balance_after_description: "Electric",
+      affected_account_name: "Chase",
+      transactions: [
+        {
+          id: 55,
+          transaction_id: 55,
+          account_id: 1,
+          account_name: "Main",
+          description: "Electric",
+          amount: "-500.00",
+          category: null,
+          kind: "bill",
+          source: "RULE",
+          balance_after: "-88.86",
+          is_transfer: false,
+        },
+      ],
+    });
+    // Focus txn id 55 is on Main, not Chase — do not show a mismatched Chase/-208 card.
+    expect(calendarAccountRiskPresentation(day, TOMORROW, TODAY)).toBeNull();
+  });
+
+  it("uses the focus event canonical balance_after when account matches", () => {
+    const day = sampleDay({
+      date: TOMORROW,
+      is_forecast: true,
+      is_negative: true,
+      has_risk: true,
+      risk_level: "critical",
+      heat_level: "dangerous",
+      lowest_projected_balance: "-208.00",
+      lowest_projected_balance_account_name: "Chase",
+      lowest_projected_balance_account_id: 1,
+      lowest_projected_balance_date: TOMORROW,
+      lowest_projected_balance_transaction_id: 55,
+      lowest_projected_balance_after_description: "Electric",
+      transactions: [
+        {
+          id: 55,
+          transaction_id: 55,
+          account_id: 1,
+          account_name: "Main",
+          description: "Electric",
+          amount: "-500.00",
+          category: null,
+          kind: "bill",
+          source: "RULE",
+          balance_after: "-88.86",
+          is_transfer: false,
+        },
+      ],
+    });
+    // account_id on marker is 1 and event account_id is 1 → use event Bal
+    const risk = calendarAccountRiskPresentation(day, TOMORROW, TODAY);
+    expect(risk?.accountName).toBe("Main");
+    expect(risk?.balanceAmount).toBe("-88.86");
+    expect(risk?.detail).toBe("First cash shortfall · after Electric");
   });
 });
 
@@ -512,5 +621,14 @@ describe("month grid styling source", () => {
     expect(source).toMatch(/resolveCalendarDayCellChrome/);
     expect(source).toMatch(/todayStr\(\)/);
     expect(source).not.toMatch(/daySeverity/);
+  });
+
+  it("CalendarEventRow does not show per-event risk_flag triangles", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "CalendarEventRow.tsx"),
+      "utf8"
+    );
+    expect(source).not.toMatch(/risk_flag/);
+    expect(source).not.toMatch(/exclamation-triangle/);
   });
 });
