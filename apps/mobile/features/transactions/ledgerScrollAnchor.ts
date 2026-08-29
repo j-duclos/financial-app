@@ -3,11 +3,13 @@ import type { TransactionListRow } from "./buildTransactionList";
 /** How many posted Recent rows to keep visible above Pending/Upcoming on open. */
 export const LEDGER_ANCHOR_PAST_ROWS = 4;
 
-/** Approximate heights for getItemLayout / initialScrollIndex (variable UI → close enough). */
-export const LEDGER_SECTION_HEIGHT = 52;
-export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 64;
-export const LEDGER_ROW_HEIGHT = 78;
-export const LEDGER_PENDING_ROW_HEIGHT = 92;
+/** Approximate heights for getItemLayout / initialScrollIndex (variable UI → close enough).
+ * Prefer slightly tall estimates — short estimates overshoot deep links (Aug 30 → Sep 4).
+ */
+export const LEDGER_SECTION_HEIGHT = 56;
+export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 68;
+export const LEDGER_ROW_HEIGHT = 88;
+export const LEDGER_PENDING_ROW_HEIGHT = 100;
 export const LEDGER_SKELETON_HEIGHT = 56;
 
 export type LedgerFocusKind = "forecast-risk" | "ledger-event";
@@ -73,7 +75,12 @@ function rowMatchesFocusTransaction(
     return row.txn.id === focusTransactionId;
   }
   if (row.kind === "pending" || row.kind === "upcoming") {
-    return row.row.transaction_id === focusTransactionId;
+    const r = row.row;
+    return (
+      r.transaction_id === focusTransactionId ||
+      r.canonical_transaction_id === focusTransactionId ||
+      r.fulfilled_by_transaction_id === focusTransactionId
+    );
   }
   return false;
 }
@@ -88,7 +95,20 @@ function rowMatchesFocusRule(
   return row.row.rule_id === focusRuleId;
 }
 
-/** Prefer an exact ledger row; fall back to rule+date, then first Upcoming row on focusDate. */
+function rowMatchesFocusDate(
+  row: TransactionListRow,
+  focusDate: string
+): boolean {
+  if (row.kind === "pending" || row.kind === "upcoming") {
+    return row.row.date.slice(0, 10) === focusDate;
+  }
+  if (row.kind === "history") {
+    return row.txn.date.slice(0, 10) === focusDate;
+  }
+  return false;
+}
+
+/** Prefer an exact ledger row; fall back to rule+date, then first row on focusDate. */
 export function findLedgerFocusIndex(
   rows: TransactionListRow[],
   focus: LedgerFocusParams
@@ -109,12 +129,17 @@ export function findLedgerFocusIndex(
   }
 
   if (focusDate) {
+    // Prefer pending/upcoming on that date (Money Flow rows), then posted history.
     const onDate = rows.findIndex(
       (row) =>
         (row.kind === "upcoming" || row.kind === "pending") &&
-        row.row.date.slice(0, 10) === focusDate
+        rowMatchesFocusDate(row, focusDate)
     );
     if (onDate >= 0) return onDate;
+    const historyOnDate = rows.findIndex(
+      (row) => row.kind === "history" && rowMatchesFocusDate(row, focusDate)
+    );
+    if (historyOnDate >= 0) return historyOnDate;
   }
 
   return null;

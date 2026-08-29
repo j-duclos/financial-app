@@ -10,7 +10,8 @@ export type TransactionsTabPath = {
   params: {
     account: string;
     accountName?: string;
-    focus?: LedgerFocusKind;
+    /** Always set on deep links so Expo Router does not keep a stale prior focus. */
+    focus?: LedgerFocusKind | "";
     focusDate?: string;
     focusTransactionId?: string;
     focusRuleId?: string;
@@ -27,6 +28,12 @@ export function transactionsForAccountPath(
     params: {
       account: String(accountId),
       ...(accountName ? { accountName } : {}),
+      // Clear leftover Money Flow / Attention focus when opening the account ledger.
+      focus: "",
+      focusDate: "",
+      focusTransactionId: "",
+      focusRuleId: "",
+      focusEventId: "",
     },
   };
 }
@@ -47,12 +54,12 @@ export function transactionsForLedgerFocusPath(input: {
       account: String(input.accountId),
       ...(input.accountName ? { accountName: input.accountName } : {}),
       focus: input.focus ?? "ledger-event",
-      ...(input.focusDate ? { focusDate: input.focusDate } : {}),
-      ...(input.focusTransactionId != null
-        ? { focusTransactionId: String(input.focusTransactionId) }
-        : {}),
-      ...(input.focusRuleId != null ? { focusRuleId: String(input.focusRuleId) } : {}),
-      ...(input.focusEventId ? { focusEventId: input.focusEventId } : {}),
+      // Always write every focus field (including "") so prior deep-link params cannot stick.
+      focusDate: input.focusDate ?? "",
+      focusTransactionId:
+        input.focusTransactionId != null ? String(input.focusTransactionId) : "",
+      focusRuleId: input.focusRuleId != null ? String(input.focusRuleId) : "",
+      focusEventId: input.focusEventId ?? "",
     },
   };
 }

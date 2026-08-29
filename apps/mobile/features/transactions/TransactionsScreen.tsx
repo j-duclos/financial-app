@@ -97,15 +97,20 @@ export function TransactionsScreen() {
   }>();
   const routeAccountId = parseRouteAccountId(params.account);
   const ledgerFocus = useMemo((): LedgerFocusParams | null => {
-    if (params.focus !== "forecast-risk" && params.focus !== "ledger-event") return null;
-    const txnId = Number(params.focusTransactionId);
-    const ruleId = Number(params.focusRuleId);
+    const focusKind = params.focus;
+    if (focusKind !== "forecast-risk" && focusKind !== "ledger-event") return null;
+    const txnRaw = (params.focusTransactionId ?? "").trim();
+    const ruleRaw = (params.focusRuleId ?? "").trim();
+    const dateRaw = (params.focusDate ?? "").trim();
+    const txnId = Number(txnRaw);
+    const ruleId = Number(ruleRaw);
     return {
-      focus: params.focus,
-      focusDate: params.focusDate ?? null,
+      focus: focusKind,
+      focusDate: dateRaw || null,
       focusTransactionId:
-        Number.isInteger(txnId) && txnId > 0 ? txnId : null,
-      focusRuleId: Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null,
+        txnRaw !== "" && Number.isInteger(txnId) && txnId > 0 ? txnId : null,
+      focusRuleId:
+        ruleRaw !== "" && Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null,
     };
   }, [
     params.focus,
@@ -113,6 +118,13 @@ export function TransactionsScreen() {
     params.focusTransactionId,
     params.focusRuleId,
   ]);
+  const focusMountKey = [
+    params.focus ?? "",
+    params.focusDate ?? "",
+    params.focusTransactionId ?? "",
+    params.focusRuleId ?? "",
+    params.focusEventId ?? "",
+  ].join(":");
   const routeFilters = filtersFromSearchParams({
     account: params.account,
     category: params.category,
@@ -226,8 +238,8 @@ export function TransactionsScreen() {
     if (!ledgerDataReady) return null;
     return findLedgerBoundaryIndex(listRows);
   }, [ledgerDataReady, listRows]);
-  /** Remount once data is ready so initialScrollIndex applies (scrollToIndex is unreliable without prior layout). */
-  const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}`;
+  /** Remount when account/data OR deep-link focus changes so Aug 30 taps cannot keep a Sep 2 scroll. */
+  const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}:${focusMountKey}`;
   const ledgerAnchorIndex = useMemo(() => {
     if (!ledgerDataReady) return null;
     return ledgerOpenScrollIndex(listRows, ledgerFocus);
@@ -240,6 +252,7 @@ export function TransactionsScreen() {
     return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
   }, [ledgerListReady, ledgerAnchorIndex, listRows.length]);
   const anchorAppliedRef = useRef<string | null>(null);
+  const hasLedgerDeepLinkFocus = ledgerFocus != null;
 
   const focusHighlightIndex = useMemo(() => {
     if (!ledgerDataReady || ledgerFocus == null) return null;
@@ -261,9 +274,23 @@ export function TransactionsScreen() {
 
   const applyLedgerAnchorScroll = useCallback(() => {
     if (anchorScrollIndex <= 0) return;
+    // Prefer index-based scroll for deep links — estimated offsets overshoot when
+    // Recent rows are taller than getItemLayout assumes (Aug 30 → lands on Sep 4).
+    if (hasLedgerDeepLinkFocus) {
+      try {
+        listRef.current?.scrollToIndex({
+          index: anchorScrollIndex,
+          animated: false,
+          viewPosition: 0,
+        });
+        return;
+      } catch {
+        // Fall through to offset estimate.
+      }
+    }
     const offset = estimateLedgerOffset(listRows, anchorScrollIndex);
     listRef.current?.scrollToOffset({ offset, animated: false });
-  }, [anchorScrollIndex, listRows]);
+  }, [anchorScrollIndex, listRows, hasLedgerDeepLinkFocus]);
 
   useEffect(() => {
     anchorAppliedRef.current = null;
@@ -524,6 +551,13 @@ export function TransactionsScreen() {
           onScrollToIndexFailed={(info) => {
             const offset = getLedgerItemLayout(listRows, info.index).offset;
             listRef.current?.scrollToOffset({ offset, animated: false });
+            setTimeout(() => {
+              listRef.current?.scrollToIndex({
+                index: info.index,
+                animated: false,
+                viewPosition: 0,
+              });
+            }, 80);
           }}
           refreshControl={
             <RefreshControl

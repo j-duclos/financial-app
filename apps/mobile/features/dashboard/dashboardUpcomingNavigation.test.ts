@@ -52,6 +52,12 @@ describe("Upcoming Money Flow row navigation", () => {
         focusEventId: "99",
       })
     );
+    expect(upcomingMoneyFlowRowDestination(txn({ id: "99", transaction_id: 99 })).params).toMatchObject({
+      focusDate: "2026-09-02",
+      focusTransactionId: "99",
+      focusRuleId: "",
+      focusEventId: "99",
+    });
   });
 
   it("focuses collapsed transfer rows on the source-account leg", () => {

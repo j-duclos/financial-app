@@ -173,4 +173,54 @@ describe("ledgerScrollAnchor", () => {
       })
     ).toBe(1);
   });
+
+  it("date fallback finds Aug 30 pending before later Sep rows", () => {
+    const rows: TransactionListRow[] = [
+      section("section-upcoming", "Upcoming"),
+      {
+        kind: "upcoming",
+        id: "vivint",
+        row: {
+          date: "2026-08-30",
+          description: "VIVINT",
+          transaction_id: 50,
+        } as TimelineRow,
+        runningBalance: "4.99",
+      },
+      {
+        kind: "upcoming",
+        id: "exeter",
+        row: {
+          date: "2026-09-02",
+          description: "Exeterfina Loan",
+          transaction_id: 99,
+        } as TimelineRow,
+        runningBalance: "-388.80",
+      },
+      {
+        kind: "upcoming",
+        id: "hulu",
+        row: {
+          date: "2026-09-04",
+          description: "Hulu",
+          transaction_id: 120,
+        } as TimelineRow,
+        runningBalance: "-532.54",
+      },
+    ];
+    expect(
+      ledgerOpenScrollIndex(rows, {
+        focus: "ledger-event",
+        focusDate: "2026-08-30",
+        focusTransactionId: 50,
+      })
+    ).toBe(1);
+    expect(
+      ledgerOpenScrollIndex(rows, {
+        focus: "ledger-event",
+        focusDate: "2026-08-30",
+        focusTransactionId: null,
+      })
+    ).toBe(1);
+  });
 });
