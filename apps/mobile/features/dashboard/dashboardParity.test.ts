@@ -237,6 +237,7 @@ describe("Dashboard upcoming preview", () => {
       focusTransactionId: 99,
       focusRuleId: null,
       focusEventId: "99",
+      focusDescription: "Chewy",
     });
     expect(upcomingMoneyFlowRowDestination(txn({ id: "xfer-out-in", transaction_id: 501, account_id: 1 })))
       .toMatchObject({

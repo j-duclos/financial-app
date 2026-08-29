@@ -40,6 +40,7 @@ describe("Upcoming Money Flow row navigation", () => {
       focusTransactionId: 99,
       focusRuleId: null,
       focusEventId: "99",
+      focusDescription: "Exeterfina Loan",
     });
     expect(upcomingMoneyFlowRowDestination(txn({ id: "99", transaction_id: 99 }))).toEqual(
       transactionsForLedgerFocusPath({
@@ -50,13 +51,15 @@ describe("Upcoming Money Flow row navigation", () => {
         focusTransactionId: 99,
         focusRuleId: null,
         focusEventId: "99",
+        focusDescription: "Exeterfina Loan",
       })
     );
     expect(upcomingMoneyFlowRowDestination(txn({ id: "99", transaction_id: 99 })).params).toMatchObject({
       focusDate: "2026-09-02",
       focusTransactionId: "99",
-      focusRuleId: "",
+      focusRuleId: "__none__",
       focusEventId: "99",
+      focusDescription: "Exeterfina Loan",
     });
   });
 

@@ -1,68 +1,134 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { DashboardAttentionItem } from "@budget-app/shared";
-import { listTransactions } from "@budget-app/api-client";
-import { pastTransactionsRange } from "@/lib/transactionsLedger";
-import { transactionListQueryParams, transactionQueryKeys } from "@/features/transactions/queryKeys";
-import {
-  DEFAULT_TRANSACTION_FILTERS,
-  TRANSACTIONS_LEDGER_ORDERING,
-  TRANSACTIONS_LEDGER_PAGE_SIZE,
-} from "@/features/transactions/types";
+import type {
+  DashboardAttentionItem,
+  OperationalForecastDays,
+} from "@budget-app/shared";
+import { prefetchDefaultLedgerQueries } from "@/features/transactions/defaultLedgerPrefetch";
 import { attentionCardOpensLedger } from "./navigation";
+import { markTransactionsPrefetchTiming } from "./transactionsPrefetchTiming";
 
-const PREFETCH_PAGE_SIZE = TRANSACTIONS_LEDGER_PAGE_SIZE;
+export type HomeTransactionsPrefetchAccountInput = {
+  /** Earliest cash shortfall account from summary-fast (highest priority). */
+  firstCashShortfallAccountId?: number | null;
+  /** Visible Attention cards — first cash-risk / ledger card is fallback priority. */
+  attention: DashboardAttentionItem[];
+  /**
+   * Current/default Transactions account (session last-viewed, else profile default).
+   * Prefetched second when different from the shortfall/risk account.
+   */
+  defaultTransactionsAccountId?: number | null;
+};
 
-function prefetchCashAccountTransactions(
+/**
+ * Priority account selection for Home → Transactions prefetch.
+ *
+ * 1. First cash-shortfall / cash-risk account
+ * 2. Current/default Transactions account if different
+ *
+ * Never returns every Attention account — at most two ledgers.
+ */
+export function selectHomeTransactionsPrefetchAccountIds(
+  input: HomeTransactionsPrefetchAccountInput
+): number[] {
+  const ordered: number[] = [];
+  const push = (id: number | null | undefined) => {
+    if (id == null || !Number.isInteger(id) || id <= 0) return;
+    if (!ordered.includes(id)) ordered.push(id);
+  };
+
+  push(input.firstCashShortfallAccountId ?? null);
+
+  if (ordered.length === 0) {
+    for (const item of input.attention) {
+      if (attentionCardOpensLedger(item)) {
+        push(item.account_id);
+        break;
+      }
+    }
+  }
+
+  push(input.defaultTransactionsAccountId ?? null);
+  return ordered;
+}
+
+export type PrefetchHomeTransactionsInput = HomeTransactionsPrefetchAccountInput & {
+  forecastDays: OperationalForecastDays;
+  householdId?: number | null;
+};
+
+/**
+ * Low-priority prefetch of the default Transactions ledger queries for the
+ * highest-priority account(s). Credit Attention destinations are skipped
+ * (they open Account Detail, not Transactions).
+ *
+ * Prefetches raw API results only — no balance transforms on Home.
+ */
+export async function prefetchHomeTransactionsDestinations(
   queryClient: QueryClient,
-  accountId: number
+  input: PrefetchHomeTransactionsInput
 ): Promise<void> {
-  const filters = { ...DEFAULT_TRANSACTION_FILTERS, accountId };
-  const { start: historyStart, end: historyEnd } = pastTransactionsRange(filters.timeFilter);
-  const dateBefore = historyEnd;
+  const accountIds = selectHomeTransactionsPrefetchAccountIds(input);
+  if (accountIds.length === 0) return;
 
-  const listParams = transactionListQueryParams({
-    accountId: filters.accountId,
-    categoryId: filters.categoryId,
-    dateAfter: historyStart,
-    dateBefore,
-    showReconciled: true,
-    historyStart,
-    search: filters.search,
-    ordering: TRANSACTIONS_LEDGER_ORDERING,
-    includeRunningBalance: true,
+  markTransactionsPrefetchTiming("prefetch-start", {
+    accounts: accountIds.join(","),
   });
 
-  return queryClient
-    .prefetchInfiniteQuery({
-      queryKey: transactionQueryKeys.list({ ...listParams, pageSize: PREFETCH_PAGE_SIZE }),
-      queryFn: ({ pageParam = 1 }) =>
-        listTransactions({
-          account: accountId,
-          date_before: dateBefore,
-          page: pageParam,
-          page_size: PREFETCH_PAGE_SIZE,
-          ordering: TRANSACTIONS_LEDGER_ORDERING,
-          include_running_balance: true,
-          show_reconciled: true,
-          include_reconciled_after: historyStart,
-        }),
-      initialPageParam: 1,
-    })
-    .catch(() => undefined);
+  for (const accountId of accountIds) {
+    const result = await prefetchDefaultLedgerQueries(queryClient, {
+      accountId,
+      forecastDays: input.forecastDays,
+      householdId: input.householdId ?? null,
+    });
+
+    if (result.recentMs != null) {
+      markTransactionsPrefetchTiming("recent-prefetch-done", {
+        accountId: String(accountId),
+        ms: String(result.recentMs),
+      });
+    } else if (result.recentSkipped) {
+      markTransactionsPrefetchTiming("recent-prefetch-skipped", {
+        accountId: String(accountId),
+      });
+    }
+
+    if (result.timelineMs != null) {
+      markTransactionsPrefetchTiming("timeline-prefetch-done", {
+        accountId: String(accountId),
+        ms: String(result.timelineMs),
+      });
+    } else if (result.timelineSkipped) {
+      markTransactionsPrefetchTiming("timeline-prefetch-skipped", {
+        accountId: String(accountId),
+      });
+    }
+  }
+
+  markTransactionsPrefetchTiming("prefetch-complete", {
+    accounts: accountIds.join(","),
+  });
 }
 
 /**
- * Low-priority prefetch for visible cash Attention cards only.
- * Credit account details are not prefetched — navigation is immediate and the
- * destination loads progressively.
+ * @deprecated Prefer `prefetchHomeTransactionsDestinations` — kept for source-scan tests.
+ * Credit account details are not prefetched.
  */
 export function prefetchVisibleAttentionDestinations(
   queryClient: QueryClient,
-  items: DashboardAttentionItem[]
-): void {
-  for (const item of items) {
-    if (attentionCardOpensLedger(item)) {
-      void prefetchCashAccountTransactions(queryClient, item.account_id);
-    }
+  items: DashboardAttentionItem[],
+  options?: {
+    forecastDays: OperationalForecastDays;
+    householdId?: number | null;
+    firstCashShortfallAccountId?: number | null;
+    defaultTransactionsAccountId?: number | null;
   }
+): void {
+  if (!options?.forecastDays) return;
+  void prefetchHomeTransactionsDestinations(queryClient, {
+    attention: items,
+    forecastDays: options.forecastDays,
+    householdId: options.householdId,
+    firstCashShortfallAccountId: options.firstCashShortfallAccountId,
+    defaultTransactionsAccountId: options.defaultTransactionsAccountId,
+  }).catch(() => undefined);
 }

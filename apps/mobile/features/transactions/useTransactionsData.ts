@@ -23,6 +23,10 @@ import {
   TRANSACTIONS_LEDGER_PAGE_SIZE,
   type TransactionFilters,
 } from "./types";
+import {
+  DEFAULT_LEDGER_HISTORY_STALE_MS,
+  DEFAULT_LEDGER_TIMELINE_STALE_MS,
+} from "./defaultLedgerPrefetch";
 
 type Options = {
   forecastDays: OperationalForecastDays;
@@ -89,7 +93,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     getNextPageParam: (lastPage, _pages, lastPageParam) =>
       lastPage.next ? lastPageParam + 1 : undefined,
     enabled: filters.accountId != null,
-    staleTime: 30_000,
+    staleTime: DEFAULT_LEDGER_HISTORY_STALE_MS,
   });
 
   const historyTransactions = useMemo(
@@ -121,7 +125,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
         exclude_reconciled_past: hideReconciledPast,
       }),
     enabled: timelineEnabled,
-    staleTime: 60_000,
+    staleTime: DEFAULT_LEDGER_TIMELINE_STALE_MS,
   });
 
 

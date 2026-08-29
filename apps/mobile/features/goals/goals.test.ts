@@ -158,8 +158,22 @@ describe("Goal detail presentation", () => {
     expect(goalContributionHistoryPath(7)).toBe("/goal/7/contributions");
     expect(goalRelatedTransactionsPath(5)).toEqual({
       pathname: "/(app)/(tabs)/transactions",
-      params: { account: "5" },
+      params: {
+        account: "5",
+        focus: "__none__",
+        focusDate: "__none__",
+        focusTransactionId: "__none__",
+        focusRuleId: "__none__",
+        focusEventId: "__none__",
+        focusDescription: "__none__",
+      },
     });
+    // Nested layout so Expo resolves Stack.Screen name="goal/[id]" (without it, nav traps).
+    const layoutPath = join(dir, "../../app/(app)/goal/[id]/_layout.tsx");
+    expect(readFileSync(layoutPath, "utf8")).toMatch(/Stack\.Screen name="index"/);
+    expect(goalDetailSource).toMatch(/showBack/);
+    expect(goalDetailSource).toMatch(/backFallbackHref=\{goalsListPath\(\)\}/);
+    expect(goalDetailSource).not.toMatch(/onBack=\{\(\) => router\.push\(goalsListPath/);
   });
 
   it("detail uses overflow menu instead of giant Edit/What-If buttons", () => {

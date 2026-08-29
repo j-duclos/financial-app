@@ -56,12 +56,11 @@ describe("Attention navigation and prefetch", () => {
     expect(attentionCardSource).not.toMatch(/prefetch/);
   });
 
-  it("prefetches visible cash attention transactions with canonical list key", () => {
-    expect(prefetchSource).toMatch(/transactionQueryKeys\.list/);
-    expect(prefetchSource).toMatch(/prefetchInfiniteQuery/);
+  it("prefetches priority Transactions ledgers with canonical list + timeline keys", () => {
+    expect(prefetchSource).toMatch(/transactionQueryKeys\.list|defaultLedgerHistoryQueryOptions|prefetchDefaultLedgerQueries/);
+    expect(prefetchSource).toMatch(/prefetchHomeTransactionsDestinations|prefetchDefaultLedgerQueries/);
+    expect(prefetchSource).toMatch(/selectHomeTransactionsPrefetchAccountIds/);
     expect(prefetchSource).toMatch(/attentionCardOpensLedger/);
-    expect(prefetchSource).toMatch(/TRANSACTIONS_LEDGER_PAGE_SIZE/);
-    expect(prefetchSource).toMatch(/TRANSACTIONS_LEDGER_ORDERING/);
   });
 
   it("does not prefetch enriched credit account details", () => {
@@ -70,13 +69,16 @@ describe("Attention navigation and prefetch", () => {
   });
 
   it("does not surface prefetch failures on Home", () => {
-    expect(prefetchSource).toMatch(/\.catch\(\(\) => undefined\)/);
+    expect(dashboardSource).toMatch(/\.catch\(\(\) => undefined\)/);
     expect(dashboardSource).not.toMatch(/prefetch.*ErrorState/);
   });
 
-  it("prefetches only after Details completes so it does not compete with dashboard/details", () => {
-    expect(dashboardSource).toMatch(/prefetchVisibleAttentionDestinations/);
-    expect(dashboardSource).toMatch(/!details \|\| detailsFetching/);
+  it("prefetches only after Home is fully useful and after interactions", () => {
+    expect(dashboardSource).toMatch(/prefetchHomeTransactionsDestinations/);
+    expect(dashboardSource).toMatch(/isHomeReadyForTransactionsPrefetch/);
+    expect(dashboardSource).toMatch(/InteractionManager\.runAfterInteractions/);
+    expect(dashboardSource).toMatch(/home-fully-useful/);
+    expect(dashboardSource).not.toMatch(/prefetchVisibleAttentionDestinations\(queryClient, attention\)/);
   });
 
   it("passes account name to transactions deep link for immediate ledger context", () => {
@@ -94,8 +96,8 @@ describe("Attention navigation and prefetch", () => {
 });
 
 describe("Dashboard query key alignment", () => {
-  it("uses the same transaction list key shape as Transactions screen", () => {
-    expect(prefetchSource).toMatch(/transactionListQueryParams/);
-    expect(prefetchSource).toMatch(/DEFAULT_TRANSACTION_FILTERS/);
+  it("reuses Transactions default ledger prefetch helpers", () => {
+    expect(prefetchSource).toMatch(/prefetchDefaultLedgerQueries/);
+    expect(prefetchSource).toMatch(/DEFAULT_TRANSACTION_FILTERS|defaultLedger/);
   });
 });

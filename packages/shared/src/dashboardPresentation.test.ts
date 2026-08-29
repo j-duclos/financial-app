@@ -92,6 +92,7 @@ describe("shared upcomingTransactionNavTarget", () => {
       focusTransactionId: 12,
       focusRuleId: null,
       focusEventId: "12",
+      focusDescription: "Electric bill",
     });
   });
 });

@@ -243,7 +243,8 @@ export function GoalDetailScreen() {
     <Screen scroll>
       <AppHeader
         title={goal?.name ?? "Goal"}
-        onBack={() => router.push(goalsListPath())}
+        showBack
+        backFallbackHref={goalsListPath()}
         right={
           goal ? (
             <IconButton

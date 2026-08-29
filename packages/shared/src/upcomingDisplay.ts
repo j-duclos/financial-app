@@ -1067,6 +1067,7 @@ export type UpcomingTransactionNavTarget = {
   focusTransactionId?: number | null;
   focusRuleId?: number | null;
   focusEventId: string;
+  focusDescription: string;
 };
 
 /** True when txn.id maps to a persisted transaction detail screen. */
@@ -1106,6 +1107,7 @@ export function upcomingTransactionNavTarget(
     focusTransactionId: upcomingLedgerFocusTransactionId(txn),
     focusRuleId: txn.rule_id ?? null,
     focusEventId: txn.id,
+    focusDescription: txn.description ?? "",
   };
 }
 

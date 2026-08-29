@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { formatCurrency, formatShortMonthDay } from "@budget-app/shared";
 import { listGoalContributions } from "@budget-app/api-client";
@@ -20,7 +20,6 @@ const PAGE_SIZE = 25;
 
 export function GoalContributionHistoryScreen() {
   const theme = useTheme();
-  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const goalId = Number(id);
   const [refreshing, setRefreshing] = useState(false);
@@ -52,7 +51,8 @@ export function GoalContributionHistoryScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg }}>
         <AppHeader
           title="Contribution history"
-          onBack={() => router.push(goalDetailPath(goalId))}
+          showBack
+          backFallbackHref={goalDetailPath(goalId)}
         />
       </View>
 

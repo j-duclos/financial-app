@@ -376,7 +376,10 @@ export function GoalFormScreen() {
     <Screen scroll={false}>
       <AppHeader
         title={isEdit ? "Edit goal" : "Create goal"}
-        onBack={() => (isEdit && editingId ? router.push(goalDetailPath(editingId)) : router.back())}
+        showBack
+        backFallbackHref={
+          isEdit && editingId ? goalDetailPath(editingId) : goalsListPath()
+        }
       />
       <ScrollView
         contentContainerStyle={{ paddingBottom: theme.spacing.xxl, gap: theme.spacing.md }}

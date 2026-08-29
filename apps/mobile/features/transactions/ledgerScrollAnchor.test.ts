@@ -8,6 +8,7 @@ import {
   estimateLedgerOffset,
   findLedgerBoundaryIndex,
   findLedgerFocusIndex,
+  firstSearchParam,
   ledgerAnchorScrollIndex,
   ledgerOpenScrollIndex,
 } from "./ledgerScrollAnchor";
@@ -222,5 +223,81 @@ describe("ledgerScrollAnchor", () => {
         focusTransactionId: null,
       })
     ).toBe(1);
+  });
+
+  it("ignores a stale transaction id when focusDate is a different day", () => {
+    const rows: TransactionListRow[] = [
+      section("section-upcoming", "Upcoming"),
+      {
+        kind: "upcoming",
+        id: "vivint",
+        row: {
+          date: "2026-08-30",
+          description: "VIVINT",
+          transaction_id: 50,
+        } as TimelineRow,
+        runningBalance: "4.99",
+      },
+      {
+        kind: "upcoming",
+        id: "hulu",
+        row: {
+          date: "2026-09-04",
+          description: "Hulu",
+          transaction_id: 120,
+        } as TimelineRow,
+        runningBalance: "-532.54",
+      },
+    ];
+    // Stale Sep 4 id from a prior Attention tap + Aug 30 date/description from Money Flow.
+    expect(
+      findLedgerFocusIndex(rows, {
+        focus: "ledger-event",
+        focusDate: "2026-08-30",
+        focusTransactionId: 120,
+        focusDescription: "VIVINT",
+      })
+    ).toBe(1);
+  });
+
+  it("matches date + description when transaction id is missing", () => {
+    const rows: TransactionListRow[] = [
+      section("section-upcoming", "Upcoming"),
+      {
+        kind: "upcoming",
+        id: "vivint",
+        row: {
+          date: "2026-08-30",
+          description: "VIVINT SMART HOME",
+          transaction_id: null,
+        } as TimelineRow,
+        runningBalance: "4.99",
+      },
+      {
+        kind: "upcoming",
+        id: "hulu",
+        row: {
+          date: "2026-09-04",
+          description: "Hulu",
+          transaction_id: null,
+        } as TimelineRow,
+        runningBalance: "-10.00",
+      },
+    ];
+    expect(
+      findLedgerFocusIndex(rows, {
+        focus: "ledger-event",
+        focusDate: "2026-08-30",
+        focusTransactionId: null,
+        focusDescription: "VIVINT",
+      })
+    ).toBe(1);
+  });
+
+  it("firstSearchParam uses the latest array value (Expo param accumulation)", () => {
+    expect(firstSearchParam(["120", "50"])).toBe("50");
+    expect(firstSearchParam(["forecast-risk", "ledger-event"])).toBe("ledger-event");
+    expect(firstSearchParam(["120", "__none__"])).toBe("");
+    expect(firstSearchParam("__none__")).toBe("");
   });
 });

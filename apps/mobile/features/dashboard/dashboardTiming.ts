@@ -9,7 +9,9 @@ type DashboardTimingMark =
   | "details-response"
   | "upcoming-rendered"
   | "goals-rendered"
-  | "home-settled";
+  | "home-settled"
+  /** First useful Home render complete — safe to start low-priority Transactions prefetch. */
+  | "home-fully-useful";
 
 const marks = new Map<DashboardTimingMark, number>();
 let mountTime: number | null = null;

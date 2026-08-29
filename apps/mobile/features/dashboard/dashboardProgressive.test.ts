@@ -91,6 +91,7 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).toMatch(/details-response/);
     expect(dashboardSource).toMatch(/financial-health-rendered/);
     expect(dashboardSource).toMatch(/upcoming-rendered/);
+    expect(dashboardSource).toMatch(/home-fully-useful/);
   });
 
   it("keeps cached dashboard visible during background refresh", () => {

@@ -69,6 +69,7 @@ export function upcomingMoneyFlowRowDestination(
     focusTransactionId: target.focusTransactionId,
     focusRuleId: target.focusRuleId,
     focusEventId: target.focusEventId,
+    focusDescription: target.focusDescription,
   });
 }
 

@@ -1,3 +1,5 @@
+import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
+
 export function goalsListPath(): "/goals" {
   return "/goals";
 }
@@ -18,14 +20,8 @@ export function goalContributionHistoryPath(id: number): `/goal/${number}/contri
   return `/goal/${id}/contributions`;
 }
 
-export function goalRelatedTransactionsPath(accountId: number): {
-  pathname: "/(app)/(tabs)/transactions";
-  params: { account: string };
-} {
-  return {
-    pathname: "/(app)/(tabs)/transactions",
-    params: { account: String(accountId) },
-  };
+export function goalRelatedTransactionsPath(accountId: number) {
+  return transactionsForAccountPath(accountId);
 }
 
 export function goalAccountPath(accountId: number): `/account/${number}` {

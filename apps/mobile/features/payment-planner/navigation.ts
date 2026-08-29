@@ -10,14 +10,21 @@ export type TransactionsTabPath = {
   params: {
     account: string;
     accountName?: string;
-    /** Always set on deep links so Expo Router does not keep a stale prior focus. */
-    focus?: LedgerFocusKind | "";
+    /**
+     * Always set on deep links so Expo Router does not keep a stale prior focus.
+     * Use "__none__" (not "") when clearing — empty strings are often dropped on merge.
+     */
+    focus?: LedgerFocusKind | string;
     focusDate?: string;
     focusTransactionId?: string;
     focusRuleId?: string;
     focusEventId?: string;
+    focusDescription?: string;
   };
 };
+
+/** Non-empty sentinel so Expo/React Navigation cannot strip the key and keep a stale prior focus. */
+const FOCUS_CLEAR = "__none__";
 
 export function transactionsForAccountPath(
   accountId: number,
@@ -28,12 +35,12 @@ export function transactionsForAccountPath(
     params: {
       account: String(accountId),
       ...(accountName ? { accountName } : {}),
-      // Clear leftover Money Flow / Attention focus when opening the account ledger.
-      focus: "",
-      focusDate: "",
-      focusTransactionId: "",
-      focusRuleId: "",
-      focusEventId: "",
+      focus: FOCUS_CLEAR,
+      focusDate: FOCUS_CLEAR,
+      focusTransactionId: FOCUS_CLEAR,
+      focusRuleId: FOCUS_CLEAR,
+      focusEventId: FOCUS_CLEAR,
+      focusDescription: FOCUS_CLEAR,
     },
   };
 }
@@ -47,6 +54,7 @@ export function transactionsForLedgerFocusPath(input: {
   focusTransactionId?: number | null;
   focusRuleId?: number | null;
   focusEventId?: string | null;
+  focusDescription?: string | null;
 }): TransactionsTabPath {
   return {
     pathname: "/(app)/(tabs)/transactions",
@@ -54,12 +62,17 @@ export function transactionsForLedgerFocusPath(input: {
       account: String(input.accountId),
       ...(input.accountName ? { accountName: input.accountName } : {}),
       focus: input.focus ?? "ledger-event",
-      // Always write every focus field (including "") so prior deep-link params cannot stick.
-      focusDate: input.focusDate ?? "",
+      focusDate: input.focusDate ?? FOCUS_CLEAR,
       focusTransactionId:
-        input.focusTransactionId != null ? String(input.focusTransactionId) : "",
-      focusRuleId: input.focusRuleId != null ? String(input.focusRuleId) : "",
-      focusEventId: input.focusEventId ?? "",
+        input.focusTransactionId != null
+          ? String(input.focusTransactionId)
+          : FOCUS_CLEAR,
+      focusRuleId:
+        input.focusRuleId != null ? String(input.focusRuleId) : FOCUS_CLEAR,
+      focusEventId: input.focusEventId ?? FOCUS_CLEAR,
+      focusDescription: input.focusDescription?.trim()
+        ? input.focusDescription.trim()
+        : FOCUS_CLEAR,
     },
   };
 }

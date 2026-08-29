@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshControl, Text, View } from "react-native";
+import { InteractionManager, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getDashboardDetails, getDashboardSummaryFast } from "@budget-app/api-client";
@@ -15,7 +15,10 @@ import {
 import { useTheme } from "@/theme";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useExtendedCashRisk } from "@/hooks/useExtendedCashRisk";
+import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
+import { getLastViewedTransactionAccountId } from "@/features/transactions/transactionsSession";
 import { ForecastWindowSelect } from "./ForecastWindowSelect";
 import { DASHBOARD_SECTION } from "./terminology";
 import {
@@ -36,15 +39,18 @@ import {
   dashboardDetailsSectionState,
   isDashboardAttentionLoading,
 } from "./dashboardSectionState";
-import { prefetchVisibleAttentionDestinations } from "./attentionPrefetch";
+import { prefetchHomeTransactionsDestinations } from "./attentionPrefetch";
+import { isHomeReadyForTransactionsPrefetch } from "./homeTransactionsPrefetchGate";
 
 export function DashboardScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
+  const { householdId } = useDefaultHouseholdId();
+  const { data: profile } = useProfile();
   const [pullRefreshing, setPullRefreshing] = useState(false);
-  const attentionPrefetchedRef = useRef(false);
+  const transactionsPrefetchedRef = useRef(false);
 
   useEffect(() => {
     markDashboardTiming("home-mounted");
@@ -107,8 +113,14 @@ export function DashboardScreen() {
     }
   }, [details, detailsIsPlaceholderData]);
 
-  const { data: extendedCashRisk, isFetching: extendedFetching } =
-    useExtendedCashRisk(dependentQueriesEnabled);
+  const {
+    data: extendedCashRisk,
+    isFetching: extendedFetching,
+    isFetched: extendedFetched,
+    isError: extendedError,
+  } = useExtendedCashRisk(dependentQueriesEnabled);
+  const extendedSettled =
+    !dependentQueriesEnabled || extendedFetched || extendedError;
   const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   // Summary-fast includes top_summary; snapshot from details is an optional legacy fallback only.
@@ -220,26 +232,62 @@ export function DashboardScreen() {
     }
   }, [summaryFast, details, fastFetching, detailsFetching]);
 
-  // Low-priority prefetch after Details completes — must not compete with dashboard/details.
-  useEffect(() => {
-    if (attentionPrefetchedRef.current) return;
-    if (!summaryFast || fastIsPlaceholderData || onboarding || attention.length === 0) return;
-    if (!details || detailsFetching) return;
+  const homeReadyForPrefetch = isHomeReadyForTransactionsPrefetch({
+    onboarding,
+    summaryFast,
+    fastIsPlaceholderData,
+    fastFetching,
+    details,
+    detailsIsPlaceholderData,
+    detailsFetching,
+    upcomingSectionState,
+    goalsSectionState,
+    extendedSettled,
+  });
 
-    attentionPrefetchedRef.current = true;
-    prefetchVisibleAttentionDestinations(queryClient, attention);
+  useEffect(() => {
+    if (homeReadyForPrefetch) {
+      markDashboardTiming("home-fully-useful");
+    }
+  }, [homeReadyForPrefetch]);
+
+  // Low-priority Transactions prefetch after Home is fully useful — must not compete
+  // with summary-fast, details, extended risk, or goals/upcoming first paint.
+  useEffect(() => {
+    if (transactionsPrefetchedRef.current) return;
+    if (!homeReadyForPrefetch) return;
+
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (cancelled || transactionsPrefetchedRef.current) return;
+      transactionsPrefetchedRef.current = true;
+      const defaultTransactionsAccountId =
+        getLastViewedTransactionAccountId() ?? profile?.default_account ?? null;
+      void prefetchHomeTransactionsDestinations(queryClient, {
+        attention,
+        forecastDays,
+        householdId,
+        firstCashShortfallAccountId: summaryFast?.first_cash_shortfall?.account_id ?? null,
+        defaultTransactionsAccountId,
+      }).catch(() => undefined);
+    });
+
+    return () => {
+      cancelled = true;
+      handle.cancel();
+    };
   }, [
     attention,
-    details,
-    detailsFetching,
-    fastIsPlaceholderData,
-    onboarding,
+    forecastDays,
+    homeReadyForPrefetch,
+    householdId,
+    profile?.default_account,
     queryClient,
-    summaryFast,
+    summaryFast?.first_cash_shortfall?.account_id,
   ]);
 
   useEffect(() => {
-    attentionPrefetchedRef.current = false;
+    transactionsPrefetchedRef.current = false;
   }, [forecastDays]);
 
   return (

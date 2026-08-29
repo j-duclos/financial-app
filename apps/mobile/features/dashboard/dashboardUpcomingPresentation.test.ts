@@ -106,6 +106,7 @@ describe("Dashboard upcoming presentation", () => {
       focusTransactionId: 99,
       focusRuleId: null,
       focusEventId: "99",
+      focusDescription: "2930 JOHN GALT S PAYROLL PPD ID: 14409866",
     });
     expect(
       upcomingMoneyFlowRowDestination(
