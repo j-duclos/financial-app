@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   EXTENDED_CASH_RISK_QUERY_KEY,
+  isDashboardOnboarding,
   type FinancialGoal,
 } from "@budget-app/shared";
 import { getDashboardDetails, getDashboardSummaryFast, listAccounts } from "@budget-app/api-client";
@@ -126,12 +127,7 @@ export default function Dashboard() {
     [details?.goals]
   );
 
-  const showOnboarding =
-    summaryFast &&
-    parseFloat(summaryFast.top_summary?.liquid_cash ?? "0") === 0 &&
-    parseFloat(summaryFast.top_summary?.available_credit ?? "0") === 0 &&
-    summaryFast.attention.length === 0 &&
-    (summaryFast.recommendations?.length ?? summaryFast.insights.length) === 0;
+  const showOnboarding = isDashboardOnboarding(summaryFast);
 
   usePerfPageLoad("dashboard", !fastLoading && !fastError, { forecast_days: forecastDays });
 

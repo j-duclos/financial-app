@@ -5,6 +5,8 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { getDashboardDetails, getDashboardSummaryFast } from "@budget-app/api-client";
 import {
   attentionCardsForDisplay,
+  EXTENDED_CASH_RISK_QUERY_KEY,
+  buildUpcomingDashboardPreview,
 } from "@budget-app/shared";
 import {
   Card,
@@ -33,14 +35,14 @@ import { AttentionRequiredSection } from "./AttentionRequiredSection";
 import { attentionViewAllPath } from "./navigation";
 import { markDashboardTiming } from "./dashboardTiming";
 import {
-  buildUpcomingDashboardPreview,
-} from "@budget-app/shared";
-import {
   dashboardDetailsSectionState,
   isDashboardAttentionLoading,
 } from "./dashboardSectionState";
 import { prefetchHomeTransactionsDestinations } from "./attentionPrefetch";
-import { isHomeReadyForTransactionsPrefetch } from "./homeTransactionsPrefetchGate";
+import {
+  homeTransactionsPrefetchSignature,
+  isHomeReadyForTransactionsPrefetch,
+} from "./homeTransactionsPrefetchGate";
 
 export function DashboardScreen() {
   const theme = useTheme();
@@ -50,7 +52,8 @@ export function DashboardScreen() {
   const { householdId } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
   const [pullRefreshing, setPullRefreshing] = useState(false);
-  const transactionsPrefetchedRef = useRef(false);
+  const [extendedRiskEnabled, setExtendedRiskEnabled] = useState(false);
+  const transactionsPrefetchSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     markDashboardTiming("home-mounted");
@@ -84,7 +87,8 @@ export function DashboardScreen() {
     }
   }, [summaryFast, fastIsPlaceholderData]);
 
-  // Details and extended risk reuse forecast/timeline context seeded by summary-fast.
+  // Details reuses forecast/timeline context seeded by summary-fast.
+  // Extended risk is deferred separately so it does not compete with Details first paint.
   const dependentQueriesEnabled = forecastReady && fastSuccess && !fastIsPlaceholderData;
 
   useEffect(() => {
@@ -113,10 +117,38 @@ export function DashboardScreen() {
     }
   }, [details, detailsIsPlaceholderData]);
 
-  const {
-    data: extendedCashRisk,
-    isFetching: extendedFetching,
-  } = useExtendedCashRisk(dependentQueriesEnabled);
+  const detailsSettled =
+    dependentQueriesEnabled &&
+    !detailsFetching &&
+    (detailsError || (!!details && !detailsIsPlaceholderData));
+
+  // Extended risk is secondary — defer until details settled (or use cache immediately).
+  useEffect(() => {
+    if (!detailsSettled) {
+      setExtendedRiskEnabled(false);
+      return;
+    }
+    if (queryClient.getQueryData(EXTENDED_CASH_RISK_QUERY_KEY) != null) {
+      setExtendedRiskEnabled(true);
+      return;
+    }
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (!cancelled) setExtendedRiskEnabled(true);
+    });
+    return () => {
+      cancelled = true;
+      handle.cancel();
+    };
+  }, [detailsSettled, queryClient, forecastDays]);
+
+  useEffect(() => {
+    if (extendedRiskEnabled) {
+      markDashboardTiming("extended-risk-enabled");
+    }
+  }, [extendedRiskEnabled]);
+
+  const { data: extendedCashRisk } = useExtendedCashRisk(extendedRiskEnabled);
   const lookingAhead = isLookingAheadVisible(extendedCashRisk, forecastDays);
 
   // Summary-fast includes top_summary; snapshot from details is an optional legacy fallback only.
@@ -184,12 +216,6 @@ export function DashboardScreen() {
     }
   }, [queryClient, refetchDetails, refetchFast]);
 
-  const refreshing =
-    pullRefreshing ||
-    (fastFetching && !financialHealthLoading) ||
-    (detailsFetching && upcomingSectionState !== "loading") ||
-    extendedFetching;
-
   const onViewAllAttention = useCallback(() => {
     router.push(attentionViewAllPath());
   }, [router]);
@@ -223,18 +249,21 @@ export function DashboardScreen() {
   }, [goalsSectionState]);
 
   useEffect(() => {
-    if (summaryFast && details && !fastFetching && !detailsFetching) {
+    if (
+      summaryFast &&
+      !fastFetching &&
+      !detailsFetching &&
+      (details || detailsError)
+    ) {
       markDashboardTiming("home-settled");
     }
-  }, [summaryFast, details, fastFetching, detailsFetching]);
+  }, [summaryFast, details, detailsError, fastFetching, detailsFetching]);
 
   const homeReadyForPrefetch = isHomeReadyForTransactionsPrefetch({
     onboarding,
     summaryFast,
     fastIsPlaceholderData,
     fastFetching,
-    details,
-    detailsIsPlaceholderData,
     detailsFetching,
     upcomingSectionState,
     goalsSectionState,
@@ -246,23 +275,33 @@ export function DashboardScreen() {
     }
   }, [homeReadyForPrefetch]);
 
+  const defaultTransactionsAccountId =
+    getLastViewedTransactionAccountId() ?? profile?.default_account ?? null;
+  const firstCashShortfallAccountId =
+    summaryFast?.first_cash_shortfall?.account_id ?? null;
+  const prefetchSignature = homeTransactionsPrefetchSignature({
+    forecastDays,
+    householdId,
+    firstCashShortfallAccountId,
+    defaultTransactionsAccountId,
+  });
+
   // Low-priority Transactions prefetch after Home is fully useful — must not compete
-  // with summary-fast, details, or goals/upcoming first paint. Extended risk may still run.
+  // with summary-fast or details first paint. Independent of Extended Risk.
   useEffect(() => {
-    if (transactionsPrefetchedRef.current) return;
     if (!homeReadyForPrefetch) return;
+    if (transactionsPrefetchSignatureRef.current === prefetchSignature) return;
 
     let cancelled = false;
     const handle = InteractionManager.runAfterInteractions(() => {
-      if (cancelled || transactionsPrefetchedRef.current) return;
-      transactionsPrefetchedRef.current = true;
-      const defaultTransactionsAccountId =
-        getLastViewedTransactionAccountId() ?? profile?.default_account ?? null;
+      if (cancelled) return;
+      if (transactionsPrefetchSignatureRef.current === prefetchSignature) return;
+      transactionsPrefetchSignatureRef.current = prefetchSignature;
       void prefetchHomeTransactionsDestinations(queryClient, {
         attention,
         forecastDays,
         householdId,
-        firstCashShortfallAccountId: summaryFast?.first_cash_shortfall?.account_id ?? null,
+        firstCashShortfallAccountId,
         defaultTransactionsAccountId,
       }).catch(() => undefined);
     });
@@ -273,24 +312,25 @@ export function DashboardScreen() {
     };
   }, [
     attention,
+    defaultTransactionsAccountId,
+    firstCashShortfallAccountId,
     forecastDays,
     homeReadyForPrefetch,
     householdId,
-    profile?.default_account,
+    prefetchSignature,
     queryClient,
-    summaryFast?.first_cash_shortfall?.account_id,
   ]);
-
-  useEffect(() => {
-    transactionsPrefetchedRef.current = false;
-  }, [forecastDays]);
 
   return (
     <Screen
       scroll
       scrollProps={{
         refreshControl: (
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.tint} />
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.tint}
+          />
         ),
       }}
     >

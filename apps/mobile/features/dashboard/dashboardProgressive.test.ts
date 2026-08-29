@@ -94,11 +94,14 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).toMatch(/financial-health-rendered/);
     expect(dashboardSource).toMatch(/upcoming-rendered/);
     expect(dashboardSource).toMatch(/home-fully-useful/);
+    expect(dashboardSource).toMatch(/extended-risk-enabled/);
   });
 
-  it("keeps cached dashboard visible during background refresh", () => {
+  it("keeps cached dashboard visible during background refresh via Updating… not RefreshControl", () => {
     expect(dashboardSource).toMatch(/pullRefreshing/);
-    expect(dashboardSource).toMatch(/fastFetching && !financialHealthLoading/);
+    expect(dashboardSource).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(dashboardSource).toMatch(/Updating…/);
+    expect(dashboardSource).not.toMatch(/refreshing=\{\s*pullRefreshing\s*\|\|/);
   });
 });
 

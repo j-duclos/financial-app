@@ -11,7 +11,9 @@ type DashboardTimingMark =
   | "goals-rendered"
   | "home-settled"
   /** First useful Home render complete — safe to start low-priority Transactions prefetch. */
-  | "home-fully-useful";
+  | "home-fully-useful"
+  /** Extended cash risk query enabled (after details settle / idle, or cache HIT). */
+  | "extended-risk-enabled";
 
 const marks = new Map<DashboardTimingMark, number>();
 let mountTime: number | null = null;

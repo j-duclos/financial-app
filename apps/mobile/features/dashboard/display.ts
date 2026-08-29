@@ -1,9 +1,9 @@
-import type { DashboardSummaryFast } from "@budget-app/shared";
 import { normalizeSeverity } from "@budget-app/shared";
 
 export {
   availableCreditSubtitle,
   creditUtilizationSummary,
+  isDashboardOnboarding,
   isLookingAheadVisible,
   lookingAheadMessage,
   lowestProjectedCashDisplayValue,
@@ -13,20 +13,6 @@ export {
 
 export function attentionItemsLimited<T>(items: T[], limit = 3): T[] {
   return items.slice(0, limit);
-}
-
-export function isDashboardOnboarding(
-  summary: Pick<DashboardSummaryFast, "attention" | "recommendations" | "top_summary"> | undefined
-): boolean {
-  if (!summary) return false;
-  const top = summary.top_summary;
-  const liquid = parseFloat(top?.liquid_cash ?? "0");
-  const credit = parseFloat(top?.available_credit ?? "0");
-  const noMoney =
-    (!Number.isFinite(liquid) || liquid === 0) && (!Number.isFinite(credit) || credit === 0);
-  const noAttention = (summary.attention?.length ?? 0) === 0;
-  const noRecs = (summary.recommendations?.length ?? 0) === 0;
-  return noMoney && noAttention && noRecs;
 }
 
 export function attentionStatusTone(

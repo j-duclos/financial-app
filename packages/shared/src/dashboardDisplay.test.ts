@@ -3,6 +3,7 @@ import type { DashboardLowestProjectedCash, ExtendedCashRisk } from "../types";
 import {
   availableCreditSubtitle,
   creditUtilizationSummary,
+  isDashboardOnboarding,
   isLookingAheadVisible,
   lookingAheadMessage,
   lowestProjectedCashDisplayValue,
@@ -62,6 +63,47 @@ describe("shared dashboardDisplay", () => {
     expect(lookingAheadMessage(risk)).toBe(
       "Main is projected to fall below $0 on Sep 23, 38 days from now."
     );
+  });
+
+  it("detects onboarding with canonical combined recommendation count", () => {
+    const emptyTop = {
+      liquid_cash: "0",
+      available_credit: "0",
+      total_credit_limit: null,
+      credit_utilization: null,
+      net_position: "0",
+    };
+    expect(
+      isDashboardOnboarding({
+        attention: [],
+        recommendations: [],
+        insights: [],
+        top_summary: emptyTop,
+      })
+    ).toBe(true);
+    // Empty recommendations + insights present → not onboarding (canonical source).
+    expect(
+      isDashboardOnboarding({
+        attention: [],
+        recommendations: [],
+        insights: [
+          {
+            id: "i1",
+            severity: "info",
+            title: "Tip",
+            message: "Add income",
+            metric_label: null,
+            metric_value: null,
+            action_label: null,
+            action_url: null,
+            secondary_action_label: null,
+            secondary_action_url: null,
+          },
+        ],
+        top_summary: emptyTop,
+      })
+    ).toBe(false);
+    expect(isDashboardOnboarding(undefined)).toBe(false);
   });
 });
 

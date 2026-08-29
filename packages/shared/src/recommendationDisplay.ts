@@ -51,7 +51,8 @@ export function compareRecommendationsByPriority(
   return (a.id || "").localeCompare(b.id || "");
 }
 
-function recommendationSource(
+/** Canonical combined recommendations: prefer `recommendations`, else map `insights`. */
+export function recommendationSource(
   recommendations: DashboardRecommendation[] | undefined,
   insights: DashboardInsight[] | undefined
 ): DashboardRecommendation[] {

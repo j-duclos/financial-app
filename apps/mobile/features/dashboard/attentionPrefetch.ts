@@ -108,27 +108,3 @@ export async function prefetchHomeTransactionsDestinations(
     accounts: accountIds.join(","),
   });
 }
-
-/**
- * @deprecated Prefer `prefetchHomeTransactionsDestinations` — kept for source-scan tests.
- * Credit account details are not prefetched.
- */
-export function prefetchVisibleAttentionDestinations(
-  queryClient: QueryClient,
-  items: DashboardAttentionItem[],
-  options?: {
-    forecastDays: OperationalForecastDays;
-    householdId?: number | null;
-    firstCashShortfallAccountId?: number | null;
-    defaultTransactionsAccountId?: number | null;
-  }
-): void {
-  if (!options?.forecastDays) return;
-  void prefetchHomeTransactionsDestinations(queryClient, {
-    attention: items,
-    forecastDays: options.forecastDays,
-    householdId: options.householdId,
-    firstCashShortfallAccountId: options.firstCashShortfallAccountId,
-    defaultTransactionsAccountId: options.defaultTransactionsAccountId,
-  }).catch(() => undefined);
-}

@@ -79,7 +79,13 @@ describe("Attention navigation and prefetch", () => {
     expect(dashboardSource).toMatch(/InteractionManager\.runAfterInteractions/);
     expect(dashboardSource).toMatch(/home-fully-useful/);
     expect(dashboardSource).not.toMatch(/extendedSettled/);
-    expect(dashboardSource).not.toMatch(/prefetchVisibleAttentionDestinations\(queryClient, attention\)/);
+    expect(dashboardSource).not.toMatch(/prefetchVisibleAttentionDestinations/);
+  });
+
+  it("defers extended risk independently of transactions prefetch", () => {
+    expect(dashboardSource).toMatch(/extendedRiskEnabled/);
+    expect(dashboardSource).toMatch(/detailsSettled/);
+    expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(dependentQueriesEnabled\)/);
   });
 
   it("passes account name to transactions deep link for immediate ledger context", () => {

@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { formatCurrency } from "./utils";
 import { formatShortMonthDay } from "./dateDisplay";
+import { recommendationSource } from "./recommendationDisplay";
 
 /** Prefer `top_summary`; fall back to legacy snapshot fields when needed. */
 export function topSummaryFromDashboard(
@@ -93,4 +94,33 @@ export function lookingAheadMessage(risk: ExtendedCashRisk): string {
     return `${risk.account_name} and ${extras[0].account_name} are projected to fall below $0 on ${when}.`;
   }
   return `${risk.account_name} and ${extras.length} other accounts are projected to fall below $0 on ${when}.`;
+}
+
+/**
+ * Empty-state onboarding for Dashboard/Home.
+ *
+ * True when liquid cash and available credit are both zero, Attention is empty,
+ * and the canonical combined recommendation count is zero (recommendations
+ * preferred; otherwise insights mapped via `recommendationSource`).
+ */
+export function isDashboardOnboarding(
+  summary:
+    | Pick<
+        DashboardSummaryFast,
+        "attention" | "recommendations" | "insights" | "top_summary"
+      >
+    | undefined
+    | null
+): boolean {
+  if (!summary) return false;
+  const top = summary.top_summary;
+  const liquid = parseFloat(top?.liquid_cash ?? "0");
+  const credit = parseFloat(top?.available_credit ?? "0");
+  const noMoney =
+    (!Number.isFinite(liquid) || liquid === 0) &&
+    (!Number.isFinite(credit) || credit === 0);
+  const noAttention = (summary.attention?.length ?? 0) === 0;
+  const noRecs =
+    recommendationSource(summary.recommendations, summary.insights).length === 0;
+  return noMoney && noAttention && noRecs;
 }

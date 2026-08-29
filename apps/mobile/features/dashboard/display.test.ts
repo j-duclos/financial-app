@@ -66,6 +66,7 @@ describe("dashboard display helpers", () => {
       isDashboardOnboarding({
         attention: [],
         recommendations: [],
+        insights: [],
         top_summary: {
           liquid_cash: "0",
           available_credit: "0",
@@ -75,5 +76,35 @@ describe("dashboard display helpers", () => {
         },
       })
     ).toBe(true);
+  });
+
+  it("uses canonical combined recommendations (insights when recommendations empty)", () => {
+    expect(
+      isDashboardOnboarding({
+        attention: [],
+        recommendations: [],
+        insights: [
+          {
+            id: "i1",
+            severity: "info",
+            title: "Tip",
+            message: "Add income",
+            metric_label: null,
+            metric_value: null,
+            action_label: null,
+            action_url: null,
+            secondary_action_label: null,
+            secondary_action_url: null,
+          },
+        ],
+        top_summary: {
+          liquid_cash: "0",
+          available_credit: "0",
+          total_credit_limit: null,
+          credit_utilization: null,
+          net_position: "0",
+        },
+      })
+    ).toBe(false);
   });
 });

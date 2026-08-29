@@ -95,6 +95,13 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).toMatch(/extendedRiskEnabled/);
     expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(forecastReady && !!summaryFast\)/);
   });
+
+  it("uses shared isDashboardOnboarding for empty-state detection", () => {
+    expect(dashboardSource).toMatch(/isDashboardOnboarding/);
+    expect(dashboardSource).not.toMatch(
+      /summaryFast\.recommendations\?\.length \?\? summaryFast\.insights\.length/
+    );
+  });
 });
 
 describe("Accounts page structure", () => {

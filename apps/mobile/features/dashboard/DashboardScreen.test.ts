@@ -14,12 +14,16 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
   });
 
-  it("waits for summary-fast success before details and extended risk", () => {
+  it("starts details after summary-fast success; defers extended risk until details settle", () => {
     expect(dashboardSource).toMatch(/dependentQueriesEnabled/);
     expect(dashboardSource).toMatch(/forecastReady && fastSuccess && !fastIsPlaceholderData/);
     expect(dashboardSource).toMatch(/enabled: dependentQueriesEnabled/);
-    expect(dashboardSource).toMatch(/useExtendedCashRisk\(dependentQueriesEnabled\)/);
+    expect(dashboardSource).toMatch(/useExtendedCashRisk\(extendedRiskEnabled\)/);
+    expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(dependentQueriesEnabled\)/);
     expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(forecastReady\)/);
+    expect(dashboardSource).toMatch(/detailsSettled/);
+    expect(dashboardSource).toMatch(/InteractionManager\.runAfterInteractions/);
+    expect(dashboardSource).toMatch(/EXTENDED_CASH_RISK_QUERY_KEY/);
   });
 
   it("does not gate details on summary-fast data presence alone", () => {
@@ -27,7 +31,7 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).toMatch(/isSuccess: fastSuccess/);
   });
 
-  it("does not artificially delay dependent requests", () => {
+  it("does not artificially delay details with a fixed timeout", () => {
     expect(dashboardSource).not.toMatch(/setTimeout/);
     expect(dashboardSource).not.toMatch(/350/);
   });
@@ -36,6 +40,15 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).toMatch(/await refetchFast\(\)/);
     expect(dashboardSource).not.toMatch(
       /await Promise\.all\(\[\s*refetchFast\(\),\s*refetchDetails\(\)/
+    );
+    expect(dashboardSource).toMatch(/invalidateQueries\(\{ queryKey: \["extended-cash-risk"\] \}\)/);
+  });
+
+  it("keeps RefreshControl tied to explicit pull lifecycle only", () => {
+    expect(dashboardSource).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(dashboardSource).not.toMatch(/extendedFetching/);
+    expect(dashboardSource).not.toMatch(
+      /refreshing=\{\s*pullRefreshing\s*\|\|/
     );
   });
 
@@ -48,5 +61,11 @@ describe("DashboardScreen request ordering", () => {
   it("does not launch dependent requests when summary-fast fails", () => {
     expect(dashboardSource).toMatch(/isSuccess: fastSuccess/);
     expect(dashboardSource).toMatch(/enabled: dependentQueriesEnabled/);
+  });
+
+  it("uses a prefetch signature lock instead of a boolean once-flag", () => {
+    expect(dashboardSource).toMatch(/homeTransactionsPrefetchSignature/);
+    expect(dashboardSource).toMatch(/transactionsPrefetchSignatureRef/);
+    expect(dashboardSource).not.toMatch(/transactionsPrefetchedRef/);
   });
 });

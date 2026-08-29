@@ -23,7 +23,10 @@ import {
   selectHomeTransactionsPrefetchAccountIds,
   prefetchHomeTransactionsDestinations,
 } from "./attentionPrefetch";
-import { isHomeReadyForTransactionsPrefetch } from "./homeTransactionsPrefetchGate";
+import {
+  homeTransactionsPrefetchSignature,
+  isHomeReadyForTransactionsPrefetch,
+} from "./homeTransactionsPrefetchGate";
 import type { DashboardAttentionItem } from "@budget-app/shared";
 
 vi.mock("@budget-app/api-client", () => ({
@@ -140,14 +143,12 @@ describe("isHomeReadyForTransactionsPrefetch", () => {
     summaryFast: { ok: true },
     fastIsPlaceholderData: false,
     fastFetching: false,
-    details: { ok: true },
-    detailsIsPlaceholderData: false,
     detailsFetching: false,
     upcomingSectionState: "data" as const,
     goalsSectionState: "data" as const,
   };
 
-  it("requires summary-fast, details, and Upcoming/Goals settled — not extended risk", () => {
+  it("requires summary-fast settled and Upcoming/Goals settled — not extended risk or details success", () => {
     expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, fastFetching: true })).toBe(false);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, detailsFetching: true })).toBe(false);
@@ -155,6 +156,63 @@ describe("isHomeReadyForTransactionsPrefetch", () => {
       isHomeReadyForTransactionsPrefetch({ ...base, upcomingSectionState: "loading" })
     ).toBe(false);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, onboarding: true })).toBe(false);
+  });
+
+  it("allows prefetch after Details error once sections settle", () => {
+    expect(
+      isHomeReadyForTransactionsPrefetch({
+        ...base,
+        upcomingSectionState: "error",
+        goalsSectionState: "error",
+      })
+    ).toBe(true);
+  });
+
+  it("does not require a truthy details payload", () => {
+    // Gate no longer accepts a `details` field — settled section state is enough.
+    expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
+  });
+});
+
+describe("homeTransactionsPrefetchSignature", () => {
+  it("changes when the first-risk or default account changes", () => {
+    const a = homeTransactionsPrefetchSignature({
+      forecastDays: 30,
+      householdId: 1,
+      firstCashShortfallAccountId: 10,
+      defaultTransactionsAccountId: 10,
+    });
+    const b = homeTransactionsPrefetchSignature({
+      forecastDays: 30,
+      householdId: 1,
+      firstCashShortfallAccountId: 11,
+      defaultTransactionsAccountId: 10,
+    });
+    const c = homeTransactionsPrefetchSignature({
+      forecastDays: 30,
+      householdId: 1,
+      firstCashShortfallAccountId: 10,
+      defaultTransactionsAccountId: 12,
+    });
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("is stable for the same destination identity (no balance fields)", () => {
+    const a = homeTransactionsPrefetchSignature({
+      forecastDays: 30,
+      householdId: 1,
+      firstCashShortfallAccountId: 10,
+      defaultTransactionsAccountId: 10,
+    });
+    const b = homeTransactionsPrefetchSignature({
+      forecastDays: 30,
+      householdId: 1,
+      firstCashShortfallAccountId: 10,
+      defaultTransactionsAccountId: 10,
+    });
+    expect(a).toBe(b);
+    expect(a).toBe("30:1:10:10");
   });
 });
 
