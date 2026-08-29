@@ -31,7 +31,7 @@ type UpcomingProps = {
   errorMessage: string;
   onRetry: () => void;
   /** Precomputed once in DashboardScreen — do not rebuild here. */
-  preview: UpcomingDashboardPreviewLayout;
+  preview?: UpcomingDashboardPreviewLayout | null;
   firstCashShortfall?: DashboardFirstCashShortfall | null;
   recalculating?: boolean;
 };
@@ -62,19 +62,38 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
     return null;
   }
 
+  const header = (
+    <SectionHeader
+      title={DASHBOARD_SECTION.upcoming}
+      actionLabel="Calendar"
+      onAction={() => router.push("/(app)/(tabs)/calendar")}
+      subtitle={recalculating ? "Updating…" : undefined}
+    />
+  );
+
+  if (sectionState === "error") {
+    return (
+      <>
+        {header}
+        <ErrorState message={errorMessage} onRetry={onRetry} />
+      </>
+    );
+  }
+
+  // Guard missing preview (hot reload / incomplete props) — never read .transactions blindly.
+  if (sectionState === "loading" || preview == null) {
+    return (
+      <>
+        {header}
+        <UpcomingPreviewSkeleton />
+      </>
+    );
+  }
+
   return (
     <>
-      <SectionHeader
-        title={DASHBOARD_SECTION.upcoming}
-        actionLabel="Calendar"
-        onAction={() => router.push("/(app)/(tabs)/calendar")}
-        subtitle={recalculating ? "Updating…" : undefined}
-      />
-      {sectionState === "loading" ? (
-        <UpcomingPreviewSkeleton />
-      ) : sectionState === "error" ? (
-        <ErrorState message={errorMessage} onRetry={onRetry} />
-      ) : preview.transactions.length === 0 ? (
+      {header}
+      {preview.transactions.length === 0 ? (
         <EmptyState title={`No upcoming transactions in the next ${preview.daysHorizon} days.`} />
       ) : (
         <View style={{ gap: theme.spacing.sm }}>

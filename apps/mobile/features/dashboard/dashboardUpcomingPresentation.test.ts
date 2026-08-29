@@ -68,7 +68,8 @@ describe("Dashboard upcoming presentation", () => {
   });
 
   it("receives a parent-built upcoming preview once (does not rebuild)", () => {
-    expect(upcomingSectionSource).toMatch(/preview: UpcomingDashboardPreviewLayout/);
+    expect(upcomingSectionSource).toMatch(/preview\?: UpcomingDashboardPreviewLayout/);
+    expect(upcomingSectionSource).toMatch(/preview == null/);
     expect(upcomingSectionSource).not.toMatch(/buildUpcomingDashboardPreview/);
     const groups = Array.from({ length: 6 }, (_, i) =>
       group({
