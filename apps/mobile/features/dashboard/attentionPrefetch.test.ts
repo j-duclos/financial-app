@@ -181,38 +181,77 @@ describe("homeTransactionsPrefetchSignature", () => {
       householdId: 1,
       firstCashShortfallAccountId: 10,
       defaultTransactionsAccountId: 10,
+      attention: [cashAttention({ account_id: 10 })],
     });
     const b = homeTransactionsPrefetchSignature({
       forecastDays: 30,
       householdId: 1,
       firstCashShortfallAccountId: 11,
       defaultTransactionsAccountId: 10,
+      attention: [cashAttention({ account_id: 11 })],
     });
     const c = homeTransactionsPrefetchSignature({
       forecastDays: 30,
       householdId: 1,
       firstCashShortfallAccountId: 10,
       defaultTransactionsAccountId: 12,
+      attention: [cashAttention({ account_id: 10 })],
     });
     expect(a).not.toBe(b);
     expect(a).not.toBe(c);
+    expect(a).toBe("30:1:10");
+    expect(c).toBe("30:1:10,12");
   });
 
-  it("is stable for the same destination identity (no balance fields)", () => {
-    const a = homeTransactionsPrefetchSignature({
-      forecastDays: 30,
+  it("changes when Attention fallback destination changes without shortfall or default change", () => {
+    const shared = {
+      forecastDays: 30 as const,
       householdId: 1,
-      firstCashShortfallAccountId: 10,
-      defaultTransactionsAccountId: 10,
+      firstCashShortfallAccountId: null,
+      defaultTransactionsAccountId: 7,
+    };
+    const a = homeTransactionsPrefetchSignature({
+      ...shared,
+      attention: [cashAttention({ account_id: 10, amount: "50.00" })],
     });
     const b = homeTransactionsPrefetchSignature({
-      forecastDays: 30,
+      ...shared,
+      attention: [cashAttention({ account_id: 11, amount: "50.00" })],
+    });
+    expect(a).toBe("30:1:10,7");
+    expect(b).toBe("30:1:11,7");
+    expect(a).not.toBe(b);
+  });
+
+  it("is stable when Attention card content/balances change but destinations do not", () => {
+    const shared = {
+      forecastDays: 30 as const,
       householdId: 1,
-      firstCashShortfallAccountId: 10,
-      defaultTransactionsAccountId: 10,
+      firstCashShortfallAccountId: null as number | null,
+      defaultTransactionsAccountId: 7,
+    };
+    const a = homeTransactionsPrefetchSignature({
+      ...shared,
+      attention: [
+        cashAttention({
+          account_id: 10,
+          amount: "50.00",
+          reason: "Projected negative balance",
+        }),
+      ],
+    });
+    const b = homeTransactionsPrefetchSignature({
+      ...shared,
+      attention: [
+        cashAttention({
+          account_id: 10,
+          amount: "999.99",
+          reason: "Projected negative: Sep 2",
+        }),
+      ],
     });
     expect(a).toBe(b);
-    expect(a).toBe("30:1:10:10");
+    expect(a).toBe("30:1:10,7");
   });
 });
 

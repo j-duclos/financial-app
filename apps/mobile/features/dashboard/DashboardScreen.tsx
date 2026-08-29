@@ -209,7 +209,7 @@ export function DashboardScreen() {
       await refetchFast();
       await Promise.all([
         refetchDetails(),
-        queryClient.invalidateQueries({ queryKey: ["extended-cash-risk"] }),
+        queryClient.invalidateQueries({ queryKey: EXTENDED_CASH_RISK_QUERY_KEY }),
       ]);
     } finally {
       setPullRefreshing(false);
@@ -284,6 +284,7 @@ export function DashboardScreen() {
     householdId,
     firstCashShortfallAccountId,
     defaultTransactionsAccountId,
+    attention,
   });
 
   // Low-priority Transactions prefetch after Home is fully useful — must not compete

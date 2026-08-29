@@ -1,4 +1,8 @@
 import type { DashboardDetailsSectionState } from "./dashboardSectionState";
+import {
+  selectHomeTransactionsPrefetchAccountIds,
+  type HomeTransactionsPrefetchAccountInput,
+} from "./attentionPrefetch";
 
 /** Section states that mean Upcoming/Goals are no longer competing for first paint. */
 const SECTION_SETTLED: ReadonlySet<DashboardDetailsSectionState> = new Set([
@@ -37,19 +41,16 @@ export function isHomeReadyForTransactionsPrefetch(input: {
 }
 
 /**
- * Prefetch lock identity: which destination ledger(s) Home should warm.
+ * Prefetch lock identity from the actual selected destination ledger IDs
+ * (`selectHomeTransactionsPrefetchAccountIds`), not a partial reimplementation.
  * Does not include balances or other transient presentation values.
  */
-export function homeTransactionsPrefetchSignature(input: {
-  forecastDays: number;
-  householdId?: number | null;
-  firstCashShortfallAccountId?: number | null;
-  defaultTransactionsAccountId?: number | null;
-}): string {
-  return [
-    input.forecastDays,
-    input.householdId ?? "",
-    input.firstCashShortfallAccountId ?? "",
-    input.defaultTransactionsAccountId ?? "",
-  ].join(":");
+export function homeTransactionsPrefetchSignature(
+  input: HomeTransactionsPrefetchAccountInput & {
+    forecastDays: number;
+    householdId?: number | null;
+  }
+): string {
+  const selectedAccountIds = selectHomeTransactionsPrefetchAccountIds(input);
+  return `${input.forecastDays}:${input.householdId ?? ""}:${selectedAccountIds.join(",")}`;
 }

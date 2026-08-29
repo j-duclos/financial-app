@@ -41,7 +41,9 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).not.toMatch(
       /await Promise\.all\(\[\s*refetchFast\(\),\s*refetchDetails\(\)/
     );
-    expect(dashboardSource).toMatch(/invalidateQueries\(\{ queryKey: \["extended-cash-risk"\] \}\)/);
+    expect(dashboardSource).toMatch(
+      /invalidateQueries\(\{ queryKey: EXTENDED_CASH_RISK_QUERY_KEY \}\)/
+    );
   });
 
   it("keeps RefreshControl tied to explicit pull lifecycle only", () => {
@@ -67,5 +69,8 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).toMatch(/homeTransactionsPrefetchSignature/);
     expect(dashboardSource).toMatch(/transactionsPrefetchSignatureRef/);
     expect(dashboardSource).not.toMatch(/transactionsPrefetchedRef/);
+    expect(dashboardSource).toMatch(
+      /homeTransactionsPrefetchSignature\(\{[\s\S]*attention,/
+    );
   });
 });
