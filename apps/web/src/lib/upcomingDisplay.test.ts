@@ -483,6 +483,63 @@ describe("upcomingDisplay", () => {
     expect(rows[0]!.isFirstZeroCross).toBe(false);
   });
 
+  it("orders same-day rows by transaction_id like Transactions Bal, not event id", () => {
+    // Fortiva has lexicographically earlier event id but later ledger transaction_id —
+    // Money Flow previously showed Fortiva (-431.54) before Exeterfina (-388.80).
+    const groups = [
+      group({
+        date: "2026-09-02",
+        transactions: [
+          txn({
+            id: "aaa-fortiva",
+            date: "2026-09-02",
+            description: "FORTIVA",
+            amount: "-42.74",
+            balance_after: "-431.54",
+            transaction_id: 200,
+          }),
+          txn({
+            id: "zzz-exeter",
+            date: "2026-09-02",
+            description: "Exeterfina Loan",
+            amount: "-393.79",
+            balance_after: "-388.80",
+            transaction_id: 100,
+          }),
+          txn({
+            id: "mmm-cursor",
+            date: "2026-09-02",
+            description: "Cursor - Move to Venture",
+            amount: "-66.00",
+            balance_after: "-497.54",
+            transaction_id: 300,
+          }),
+        ],
+      }),
+    ];
+    const preview = buildUpcomingDashboardPreview(
+      groups,
+      {
+        risk_date: "2026-09-02",
+        account_name: "Main",
+        projected_balance: "-388.80",
+        first_negative_transaction_id: 100,
+      },
+      "2026-08-26"
+    );
+    expect(preview.transactions.map((row) => row.txn.description)).toEqual([
+      "Exeterfina Loan",
+      "FORTIVA",
+      "Cursor - Move to Venture",
+    ]);
+    expect(preview.transactions.map((row) => row.txn.balance_after)).toEqual([
+      "-388.80",
+      "-431.54",
+      "-497.54",
+    ]);
+    expect(preview.transactions.find((row) => row.isFirstZeroCross)?.txn.transaction_id).toBe(100);
+  });
+
   it("cannot truncate the canonical first cash-shortfall transaction from the preview", () => {
     // Fixture-local amount only — must stay equal to the mandatory row's balance_after.
     // Do not treat screenshot values (e.g. stale -$388.80) as expected constants.

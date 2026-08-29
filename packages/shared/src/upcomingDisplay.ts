@@ -383,12 +383,21 @@ function previewRowBalanceAccountName(
   return (txn.account_name ?? "").trim();
 }
 
+/**
+ * Same-day order must match Transactions Bal / canonical ledger walk:
+ * ``(date, transaction_id, description)`` — not lexicographic event ``id``.
+ */
 function compareUpcomingPreviewTransactions(
   a: DashboardUpcomingTransaction,
   b: DashboardUpcomingTransaction
 ): number {
   const byDate = a.date.localeCompare(b.date);
   if (byDate !== 0) return byDate;
+  const tidA = a.transaction_id != null ? Number(a.transaction_id) : Number.POSITIVE_INFINITY;
+  const tidB = b.transaction_id != null ? Number(b.transaction_id) : Number.POSITIVE_INFINITY;
+  if (tidA !== tidB) return tidA - tidB;
+  const byDesc = (a.description || "").localeCompare(b.description || "");
+  if (byDesc !== 0) return byDesc;
   return a.id.localeCompare(b.id);
 }
 

@@ -37,6 +37,23 @@ UPCOMING_MAX_TRANSACTIONS = 25
 UPCOMING_PER_DAY_VISIBLE = 5
 
 
+def _upcoming_event_sort_key(ev: dict[str, Any]) -> tuple:
+    """Match Transactions / ledger_section_balances ``_sort_key`` for same-day order."""
+    d = (ev.get("date") or "")[:10]
+    tid = ev.get("transaction_id")
+    tid_key = int(tid) if tid is not None else 10**18
+    desc = str(ev.get("description") or "")
+    return (d, tid_key, desc)
+
+
+def _upcoming_txn_sort_key(txn: dict[str, Any]) -> tuple:
+    d = (txn.get("date") or "")[:10]
+    tid = txn.get("transaction_id")
+    tid_key = int(tid) if tid is not None else 10**18
+    desc = str(txn.get("description") or "")
+    return (d, tid_key, desc)
+
+
 def load_transfer_rule_context(
     households,
     *,
@@ -551,7 +568,7 @@ def build_upcoming_groups(
 
     groups: list[dict[str, Any]] = []
     for date_iso in sorted(by_date.keys()):
-        day_events = by_date[date_iso]
+        day_events = sorted(by_date[date_iso], key=_upcoming_event_sort_key)
         try:
             d = date.fromisoformat(date_iso[:10])
         except ValueError:
@@ -597,6 +614,7 @@ def build_upcoming_groups(
                 transfer += abs(amt)
 
         serialized = collapse_internal_transfer_pairs_for_display(serialized)
+        serialized.sort(key=_upcoming_txn_sort_key)
 
         net = income - expense
         risk_reason = _day_risk_reason(
