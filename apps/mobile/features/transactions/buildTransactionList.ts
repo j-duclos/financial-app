@@ -79,6 +79,11 @@ function matchesClientFilters(
   if (filters.forecast === "forecast" && !isForecast) return false;
   if (filters.forecast === "posted" && isForecast) return false;
 
+  if (filters.categoryId != null) {
+    const catId = txn.category?.id ?? txn.category_id;
+    if (catId !== filters.categoryId) return false;
+  }
+
   if (filters.search.trim()) {
     const q = filters.search.trim().toLowerCase();
     const hay = `${txn.payee} ${txn.memo ?? ""}`.toLowerCase();
@@ -167,6 +172,32 @@ export function forecastBalanceFromUpcoming(upcoming: TimelineRow[]): string | n
   return timelineRowLedgerBalance(upcoming[upcoming.length - 1]);
 }
 
+/**
+ * Canonical Current balance from unfiltered ledger data (before presentation filters).
+ * Matches web pendingSectionEndingBalance → currentBalanceFromLedgerSections priority.
+ */
+export function currentBalanceFromLedgerData(input: {
+  pending: TimelineRow[];
+  history: Transaction[];
+  today: string;
+  showReconciled: boolean;
+}): string | null {
+  if (input.pending.length > 0) {
+    return timelineRowLedgerBalance(input.pending[input.pending.length - 1]);
+  }
+
+  const canonicalHistory = input.history
+    .filter((txn) => !isPendingExpectedTransaction(txn, input.today))
+    .filter((txn) => input.showReconciled || !txn.reconciled);
+
+  if (canonicalHistory.length === 0) return null;
+  const last = canonicalHistory[canonicalHistory.length - 1];
+  if (last.running_balance != null && String(last.running_balance).trim() !== "") {
+    return String(last.running_balance);
+  }
+  return null;
+}
+
 export function buildTransactionListRows(input: {
   upcoming: TimelineRow[];
   pending: TimelineRow[];
@@ -202,10 +233,18 @@ export function buildTransactionListRows(input: {
       });
       rows.push({ kind: "skeleton", id: "skeleton-recent", section: "recent" });
     } else {
-      const filteredHistory = input.history
+      let filteredHistory = input.history
         .filter((txn) => !isPendingExpectedTransaction(txn, input.today))
         .filter((txn) => input.filters.showReconciled || !txn.reconciled)
         .filter((txn) => matchesClientFilters(txn, input.filters));
+
+      if (input.isSearchMode) {
+        filteredHistory = filteredHistory.slice().sort((a, b) => {
+          const byDate = b.date.localeCompare(a.date);
+          if (byDate !== 0) return byDate;
+          return b.id - a.id;
+        });
+      }
 
       if (filteredHistory.length > 0 || input.recentRangeLabel) {
         rows.push({

@@ -12,24 +12,20 @@ export const transactionQueryKeys = {
 
 export function transactionListQueryParams(input: {
   accountId: number | null;
-  categoryId: number | null;
   dateAfter: string;
   dateBefore: string;
   showReconciled: boolean;
   historyStart: string;
-  search: string;
   ordering?: string;
   includeRunningBalance?: boolean;
 }): Record<string, unknown> {
   return {
     account: input.accountId ?? undefined,
-    category: input.categoryId ?? undefined,
     date_after: input.dateAfter,
     date_before: input.dateBefore,
     ...(input.showReconciled
       ? { show_reconciled: true, include_reconciled_after: input.historyStart }
       : { reconciled: false }),
-    search: input.search.trim() || undefined,
     ordering: input.ordering,
     include_running_balance: input.includeRunningBalance ? true : undefined,
   };

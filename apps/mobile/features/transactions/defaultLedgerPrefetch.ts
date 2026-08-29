@@ -42,12 +42,10 @@ export function defaultLedgerHistoryQueryOptions(accountId: number) {
 
   const listParams = transactionListQueryParams({
     accountId: filters.accountId,
-    categoryId: filters.categoryId,
     dateAfter,
     dateBefore,
     showReconciled: filters.showReconciled,
     historyStart,
-    search: filters.search,
     ordering: TRANSACTIONS_LEDGER_ORDERING,
     includeRunningBalance: true,
   });
@@ -61,10 +59,8 @@ export function defaultLedgerHistoryQueryOptions(accountId: number) {
     queryFn: ({ pageParam = 1 }: { pageParam?: number }) =>
       listTransactions({
         account: accountId,
-        category: filters.categoryId ?? undefined,
         date_after: dateAfter,
         date_before: dateBefore,
-        search: filters.search.trim() || undefined,
         page: pageParam,
         page_size: pageSize,
         ordering: TRANSACTIONS_LEDGER_ORDERING,

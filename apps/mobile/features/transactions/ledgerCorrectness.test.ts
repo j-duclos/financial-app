@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Transaction, TimelineRow } from "@budget-app/shared";
 import {
   buildTransactionListRows,
+  currentBalanceFromLedgerData,
   forecastBalanceFromUpcoming,
   indexTimelineBalances,
   partitionTimelineForLedger,
@@ -258,5 +259,127 @@ describe("current balance must not use future balance_after", () => {
     expect(upcoming && upcoming.kind === "upcoming" ? upcoming.runningBalance : null).toBe(
       futureBalanceAfter
     );
+  });
+});
+
+describe("header balances independent of presentation filters", () => {
+  const today = "2026-08-26";
+  const pendingBalance = "112.26";
+  const forecastEnding = "85.50";
+
+  const history = [
+    txn({
+      id: 20,
+      payee: "Groceries",
+      amount: "-40.00",
+      date: "2026-08-25",
+      running_balance: "90.00",
+      category_id: 1,
+      category: { id: 1, name: "Food" } as Transaction["category"],
+    }),
+    txn({
+      id: 21,
+      payee: "Paycheck",
+      amount: "2000.00",
+      date: "2026-08-24",
+      running_balance: "130.00",
+      direction: "INFLOW",
+      category_id: 2,
+      category: { id: 2, name: "Income" } as Transaction["category"],
+    }),
+  ];
+
+  const pending = [
+    timelineRow({
+      date: today,
+      description: "Due bill",
+      amount: "-10.00",
+      balance_after: pendingBalance,
+      status: "PLANNED",
+      source: "rule",
+      transaction_id: 30,
+    }),
+  ];
+
+  const upcoming = [
+    timelineRow({
+      date: "2026-08-27",
+      description: "Scheduled transfer",
+      amount: "-26.76",
+      balance_after: forecastEnding,
+      status: "PLANNED",
+      source: "rule",
+    }),
+  ];
+
+  function activityRowCount(filters: typeof DEFAULT_TRANSACTION_FILTERS) {
+    const rows = buildTransactionListRows({
+      history,
+      pending,
+      upcoming,
+      balanceMap: new Map(),
+      filters,
+      today,
+    });
+    return rows.filter(
+      (r) => r.kind === "history" || r.kind === "pending" || r.kind === "upcoming"
+    ).length;
+  }
+
+  function headerBalances(filters: typeof DEFAULT_TRANSACTION_FILTERS) {
+    return {
+      current: currentBalanceFromLedgerData({
+        pending,
+        history,
+        today,
+        showReconciled: filters.showReconciled,
+      }),
+      forecast: forecastBalanceFromUpcoming(upcoming),
+      activityRows: activityRowCount(filters),
+    };
+  }
+
+  const base = { ...DEFAULT_TRANSACTION_FILTERS, accountId: 1 };
+
+  it("category filter changes rows but not Current or Forecast header balances", () => {
+    const unfiltered = headerBalances(base);
+    const filtered = headerBalances({ ...base, categoryId: 1 });
+    expect(filtered.activityRows).toBeLessThan(unfiltered.activityRows);
+    expect(filtered.current).toBe(unfiltered.current);
+    expect(filtered.forecast).toBe(unfiltered.forecast);
+  });
+
+  it("amount filter changes rows but not header balances", () => {
+    const unfiltered = headerBalances(base);
+    const filtered = headerBalances({ ...base, amountMin: 100 });
+    expect(filtered.activityRows).toBeLessThan(unfiltered.activityRows);
+    expect(filtered.current).toBe(unfiltered.current);
+    expect(filtered.forecast).toBe(unfiltered.forecast);
+  });
+
+  it("flow filter changes rows but not header balances", () => {
+    const unfiltered = headerBalances(base);
+    const filtered = headerBalances({ ...base, flow: "income" });
+    expect(filtered.activityRows).toBeLessThan(unfiltered.activityRows);
+    expect(filtered.current).toBe(unfiltered.current);
+    expect(filtered.forecast).toBe(unfiltered.forecast);
+  });
+
+  it("search filter changes rows but not header balances", () => {
+    const unfiltered = headerBalances(base);
+    const filtered = headerBalances({ ...base, search: "Groceries" });
+    expect(filtered.activityRows).toBeLessThan(unfiltered.activityRows);
+    expect(filtered.current).toBe(unfiltered.current);
+    expect(filtered.forecast).toBe(unfiltered.forecast);
+  });
+
+  it("Current uses pending ending balance, not last filtered visible row", () => {
+    expect(headerBalances({ ...base, flow: "income" }).current).toBe(pendingBalance);
+    expect(headerBalances({ ...base, search: "missing" }).current).toBe(pendingBalance);
+  });
+
+  it("Forecast uses last unfiltered upcoming balance_after", () => {
+    expect(headerBalances({ ...base, amountMax: 1 }).forecast).toBe(forecastEnding);
+    expect(headerBalances({ ...base, flow: "expense" }).forecast).toBe(forecastEnding);
   });
 });

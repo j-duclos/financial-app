@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
 import type { Transaction, TimelineRow } from "@budget-app/shared";
 import {
@@ -106,6 +106,9 @@ import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 
 export type { TimeFilter, ForecastRange };
 
+/** Matches mobile TRANSACTIONS_LEDGER_PAGE_SIZE — bounded pages instead of a 2k pseudo-page. */
+const WEB_LEDGER_PAGE_SIZE = 500;
+
 type TransactionsLocationState = {
   accountId?: number;
   focus?: string;
@@ -209,6 +212,14 @@ export default function Transactions() {
       reconcileSetupData?.last_reconcile_period_end,
     ]
   );
+  /**
+   * Server-side lower bound for Recent listTransactions.
+   * show_reconciled → pastRangeStart (same as ledgerPastTransactionStart when reconciled visible).
+   * hide reconciled → ledgerPastTransactionStart with reconcile checkpoint metadata so the API
+   * skips pre-checkpoint unreconciled rows already represented in last_reconciled_balance.
+   * pastRangeStart alone is wrong after reconcile — it would over-fetch rows the ledger discards.
+   */
+  const historyDateAfter = pastTransactionsDateAfter;
   const upcomingRange = useMemo(
     () => ledgerProjectionRange(todayStr(), forecastRange),
     [forecastRange]
@@ -216,24 +227,34 @@ export default function Transactions() {
   /** Household / selected-account projection window — not History Range. */
   const hintLedgerRange = upcomingRange;
 
-  const { data: txnsData } = useQuery({
+  const {
+    data: txnsData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: [
       "transactions",
       {
         account: accountId || undefined,
         category: hasUrlCategory ? urlCategoryId : undefined,
+        date_after: historyDateAfter,
         date_before: pastRangeEnd,
         showReconciled,
-        ...(showReconciled ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart } : {}),
+        ...(showReconciled
+          ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart }
+          : {}),
       },
     ],
-    queryFn: () =>
+    queryFn: ({ pageParam = 1 }) =>
       listTransactions({
         ...(accountId
           ? {
               account: accountId as number,
+              date_after: historyDateAfter,
               date_before: pastRangeEnd,
-              page_size: 2000,
+              page: pageParam,
+              page_size: WEB_LEDGER_PAGE_SIZE,
               ordering: "date,id",
               include_running_balance: true,
               ...(hasUrlCategory ? { category: urlCategoryId } : {}),
@@ -246,7 +267,13 @@ export default function Transactions() {
             }
           : {}),
       }),
-    enabled: !!accountId && !!pastRangeEnd,
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, _pages, lastPageParam) =>
+      lastPage.next ? lastPageParam + 1 : undefined,
+    enabled:
+      typeof accountId === "number" &&
+      !!pastRangeEnd &&
+      (!hideReconciledPast || !reconcileSetupFetching),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -347,13 +374,20 @@ export default function Transactions() {
 
   usePerfPageLoad("transactions", ledgerReady, {
     account_id: accountId || "",
-    past_start: pastRangeStart,
+    past_start: historyDateAfter,
     past_end: pastRangeEnd,
     projection_start: upcomingRange.start,
     upcoming_end: upcomingRange.end,
   });
 
-  const transactions = txnsData?.results ?? [];
+  const transactions = useMemo(
+    () => txnsData?.pages.flatMap((p) => p.results) ?? [],
+    [txnsData?.pages]
+  );
+
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
   const account = useMemo(() => {
     if (!accountData) return undefined;
     if (
@@ -1247,6 +1281,8 @@ export default function Transactions() {
         "transactions",
         {
           account: accountId || undefined,
+          category: hasUrlCategory ? urlCategoryId : undefined,
+          date_after: historyDateAfter,
           date_before: pastRangeEnd,
           showReconciled,
           ...(showReconciled
@@ -1254,7 +1290,16 @@ export default function Transactions() {
             : {}),
         },
       ] as const,
-    [accountId, pastRangeEnd, pastRangeStart, showReconciled, timeFilter]
+    [
+      accountId,
+      hasUrlCategory,
+      urlCategoryId,
+      historyDateAfter,
+      pastRangeEnd,
+      pastRangeStart,
+      showReconciled,
+      timeFilter,
+    ]
   );
 
   function afterFinancialEdit(
@@ -1309,23 +1354,26 @@ export default function Transactions() {
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
       queryClient.setQueryData(
         transactionsQueryKey,
-        (old: { results?: Transaction[] } | undefined) => {
-          if (!old?.results) return old;
+        (old: { pages?: { results?: Transaction[] }[] } | undefined) => {
+          if (!old?.pages) return old;
           return {
             ...old,
-            results: old.results.map((t) =>
-              t.id === id
-                ? {
-                    ...t,
-                    ...(data.date != null && { date: data.date }),
-                    ...(data.payee != null && { payee: data.payee }),
-                    ...(data.amount != null && { amount: data.amount }),
-                    ...(data.category_id !== undefined && { category_id: data.category_id }),
-                    ...(data.memo != null && { memo: data.memo }),
-                    ...(data.account_id != null && { account_id: data.account_id }),
-                  }
-                : t
-            ),
+            pages: old.pages.map((page) => ({
+              ...page,
+              results: (page.results ?? []).map((t) =>
+                t.id === id
+                  ? {
+                      ...t,
+                      ...(data.date != null && { date: data.date }),
+                      ...(data.payee != null && { payee: data.payee }),
+                      ...(data.amount != null && { amount: data.amount }),
+                      ...(data.category_id !== undefined && { category_id: data.category_id }),
+                      ...(data.memo != null && { memo: data.memo }),
+                      ...(data.account_id != null && { account_id: data.account_id }),
+                    }
+                  : t
+              ),
+            })),
           };
         }
       );

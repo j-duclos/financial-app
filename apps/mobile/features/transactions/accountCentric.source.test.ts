@@ -74,12 +74,10 @@ describe("account-centric transactions screen", () => {
   it("does not fetch a global mixed ledger by default", () => {
     const params = transactionListQueryParams({
       accountId: 1,
-      categoryId: null,
       dateAfter: "2026-01-01",
       dateBefore: "2026-08-31",
       showReconciled: false,
       historyStart: "2026-06-01",
-      search: "",
     });
     expect(params.account).toBe(1);
   });
