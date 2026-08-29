@@ -8,6 +8,10 @@ import {
   calendarRangeForSelection,
   monthBounds,
 } from "./calendarUtils";
+import {
+  calendarChunkWindows,
+  chunkWindowForMonth,
+} from "./calendarChunks";
 import type { CalendarFilters, CalendarLookbackMonths } from "./types";
 import type { OperationalForecastDays } from "@budget-app/shared";
 
@@ -52,13 +56,24 @@ export function useCalendarData({
     [visibleYear, visibleMonth]
   );
 
+  const chunkWindow = useMemo(() => {
+    const windows = calendarChunkWindows(range.start, range.end, todayIso);
+    return (
+      chunkWindowForMonth(windows, visibleYear, visibleMonth) ??
+      windows[0] ?? {
+        start: visibleBounds.start,
+        end: visibleBounds.end,
+      }
+    );
+  }, [range.start, range.end, todayIso, visibleYear, visibleMonth, visibleBounds.start, visibleBounds.end]);
+
   const enabled = Boolean(filters.householdId);
 
   const visibleChunkQuery = useQuery({
-    queryKey: calendarQueryKeys.chunk(filters, visibleBounds.start, visibleBounds.end),
+    queryKey: calendarQueryKeys.chunk(filters, chunkWindow.start, chunkWindow.end),
     queryFn: ({ signal }) =>
       getTimelineCalendarChunk(
-        chunkParams(filters, range, visibleBounds.start, visibleBounds.end),
+        chunkParams(filters, range, chunkWindow.start, chunkWindow.end),
         { signal }
       ),
     enabled,

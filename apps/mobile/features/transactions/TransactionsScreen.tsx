@@ -49,6 +49,7 @@ import { AccountLedgerHeader } from "./AccountLedgerHeader";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
   estimateLedgerOffset,
+  findLedgerBoundaryIndex,
   findLedgerFocusIndex,
   getLedgerItemLayout,
   ledgerOpenScrollIndex,
@@ -60,6 +61,10 @@ import {
   rememberTransactionAccountSelection,
   resolveInitialTransactionAccount,
 } from "./accountSelection";
+import {
+  getTransactionRowDestination,
+  navigateToTransactionRowDestination,
+} from "./transactionRowNavigation";
 
 function listHasActivityRows(rows: TransactionListRow[]): boolean {
   return rows.some(
@@ -201,6 +206,7 @@ export function TransactionsScreen() {
     headerCurrentFromLedger,
     isRecentLoading,
     isTimelineLoading,
+    wantsTimeline,
   } = useTransactionsData(filters, {
     forecastDays,
     forecastReady,
@@ -208,17 +214,32 @@ export function TransactionsScreen() {
   });
 
   const ledgerListKey = `${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`;
+  const timelineSettled =
+    !wantsTimeline || timelineQuery.isFetched || timelineQuery.isError;
   const ledgerDataReady =
     !isRecentLoading &&
     !isTimelineLoading &&
+    timelineSettled &&
     !listIsOnlyPlaceholders(listRows) &&
     listHasActivityRows(listRows);
+  const ledgerBoundaryIndex = useMemo(() => {
+    if (!ledgerDataReady) return null;
+    return findLedgerBoundaryIndex(listRows);
+  }, [ledgerDataReady, listRows]);
   /** Remount once data is ready so initialScrollIndex applies (scrollToIndex is unreliable without prior layout). */
   const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}`;
   const ledgerAnchorIndex = useMemo(() => {
     if (!ledgerDataReady) return null;
     return ledgerOpenScrollIndex(listRows, ledgerFocus);
   }, [listRows, ledgerDataReady, ledgerFocus]);
+  const ledgerListReady =
+    ledgerDataReady &&
+    (ledgerBoundaryIndex == null || ledgerAnchorIndex != null);
+  const anchorScrollIndex = useMemo(() => {
+    if (!ledgerListReady || ledgerAnchorIndex == null) return 0;
+    return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
+  }, [ledgerListReady, ledgerAnchorIndex, listRows.length]);
+  const anchorAppliedRef = useRef<string | null>(null);
 
   const focusHighlightIndex = useMemo(() => {
     if (!ledgerDataReady || ledgerFocus == null) return null;
@@ -236,10 +257,24 @@ export function TransactionsScreen() {
     return () => clearTimeout(timer);
   }, [listMountKey, focusHighlightIndex]);
 
-  const initialScrollIndex = useMemo(() => {
-    if (!ledgerDataReady || ledgerAnchorIndex == null) return 0;
-    return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
-  }, [ledgerDataReady, ledgerAnchorIndex, listRows.length]);
+  const initialScrollIndex = anchorScrollIndex;
+
+  const applyLedgerAnchorScroll = useCallback(() => {
+    if (anchorScrollIndex <= 0) return;
+    const offset = estimateLedgerOffset(listRows, anchorScrollIndex);
+    listRef.current?.scrollToOffset({ offset, animated: false });
+  }, [anchorScrollIndex, listRows]);
+
+  useEffect(() => {
+    anchorAppliedRef.current = null;
+  }, [listMountKey]);
+
+  useEffect(() => {
+    if (!ledgerListReady || anchorScrollIndex <= 0) return;
+    applyLedgerAnchorScroll();
+    const retry = setTimeout(() => applyLedgerAnchorScroll(), 120);
+    return () => clearTimeout(retry);
+  }, [listMountKey, ledgerListReady, anchorScrollIndex, applyLedgerAnchorScroll]);
 
   const getItemLayout = useCallback(
     (_data: ArrayLike<TransactionListRow> | null | undefined, index: number) =>
@@ -247,14 +282,12 @@ export function TransactionsScreen() {
     [listRows]
   );
 
-  useEffect(() => {
-    if (!ledgerDataReady || initialScrollIndex <= 0) return;
-    const offset = estimateLedgerOffset(listRows, initialScrollIndex);
-    const timer = setTimeout(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 32);
-    return () => clearTimeout(timer);
-  }, [listMountKey, ledgerDataReady, initialScrollIndex, listRows]);
+  const onLedgerContentSizeChange = useCallback(() => {
+    if (!ledgerListReady || anchorScrollIndex <= 0) return;
+    if (anchorAppliedRef.current === listMountKey) return;
+    anchorAppliedRef.current = listMountKey;
+    applyLedgerAnchorScroll();
+  }, [ledgerListReady, anchorScrollIndex, listMountKey, applyLedgerAnchorScroll]);
 
   const activeFilterCount = countActiveTransactionFilters(filters);
   const selectedAccountName =
@@ -268,9 +301,11 @@ export function TransactionsScreen() {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const onPressTransaction = useCallback(
-    (id: number) => {
-      router.push(`/transaction/${id}`);
+  const onPressRow = useCallback(
+    (item: TransactionListRow) => {
+      const destination = getTransactionRowDestination(item);
+      if (destination == null) return;
+      navigateToTransactionRowDestination(router, destination);
     },
     [router]
   );
@@ -279,13 +314,13 @@ export function TransactionsScreen() {
     ({ item, index }: { item: TransactionListRow; index: number }) => (
       <TransactionListItem
         item={item}
-        onPressTransaction={onPressTransaction}
+        onPressRow={onPressRow}
         onPressRecentRange={() => setRecentRangeOpen(true)}
         onPressUpcomingRange={() => setUpcomingRangeOpen(true)}
         focusHighlight={focusHighlightActive && index === focusHighlightIndex}
       />
     ),
-    [onPressTransaction, focusHighlightActive, focusHighlightIndex]
+    [onPressRow, focusHighlightActive, focusHighlightIndex]
   );
 
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
@@ -464,6 +499,11 @@ export function TransactionsScreen() {
               : undefined
           }
         />
+      ) : !ledgerListReady ? (
+        <View style={{ padding: theme.spacing.lg, gap: 8 }}>
+          <SkeletonBlock lines={3} />
+          <SkeletonBlock lines={3} />
+        </View>
       ) : (
         <FlatList
           ref={listRef}
@@ -480,6 +520,7 @@ export function TransactionsScreen() {
           )}
           initialScrollIndex={initialScrollIndex > 0 ? initialScrollIndex : undefined}
           getItemLayout={getItemLayout}
+          onContentSizeChange={onLedgerContentSizeChange}
           onScrollToIndexFailed={(info) => {
             const offset = getLedgerItemLayout(listRows, info.index).offset;
             listRef.current?.scrollToOffset({ offset, animated: false });
@@ -595,6 +636,7 @@ export function TransactionsScreen() {
         onClear={() => {
           setSearchDraft("");
           setFilters((prev) => ({ ...prev, search: "" }));
+          setSearchOpen(false);
         }}
       />
     </Screen>

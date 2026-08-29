@@ -5,12 +5,16 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/theme";
 import { calendarDayCellSizeStyle } from "./calendarLayout";
 import {
-  dayAccessibilityLabel,
-  dayHasActivity,
-  daySeverity,
-  daySeverityLabel,
-  parseCalendarAmount,
-} from "./calendarUtils";
+  calendarDayAccessibilityLabel,
+  calendarDateState,
+  calendarDayPresentationStatus,
+  calendarGridShowsRiskIndicator,
+  calendarGridTone,
+  resolveCalendarDayCellChrome,
+  type CalendarDayCellChrome,
+  type CalendarGridTone,
+} from "./calendarPresentation";
+import { dayHasActivity, parseCalendarAmount } from "./calendarUtils";
 import { todayStr } from "@/lib/dates";
 
 type Props = {
@@ -21,20 +25,33 @@ type Props = {
   onPress: (dateIso: string) => void;
 };
 
-function severityColors(
-  severity: ReturnType<typeof daySeverity>,
+function riskDotColor(tone: CalendarGridTone, theme: ReturnType<typeof useTheme>): string {
+  if (tone === "critical") return theme.colors.critical;
+  if (tone === "warning") return theme.colors.warning;
+  return theme.colors.textMuted;
+}
+
+function chromeColors(
+  chrome: CalendarDayCellChrome,
   theme: ReturnType<typeof useTheme>
-) {
-  switch (severity) {
-    case "critical":
-      return { bg: theme.colors.criticalBg, border: theme.colors.critical, dot: theme.colors.critical };
-    case "watch":
-      return { bg: theme.colors.warningBg, border: theme.colors.warning, dot: theme.colors.warning };
-    case "healthy":
-      return { bg: theme.colors.moneyPositiveBg, border: theme.colors.border, dot: theme.colors.moneyPositive };
-    default:
-      return { bg: theme.colors.surface, border: theme.colors.border, dot: theme.colors.textMuted };
-  }
+): { bg: string; border: string } {
+  const bgByKind: Record<CalendarDayCellChrome["background"], string> = {
+    neutral: theme.colors.surface,
+    today: theme.colors.tintMuted,
+    warning: theme.colors.warningBg,
+    critical: theme.colors.criticalBg,
+  };
+  const borderByKind: Record<CalendarDayCellChrome["border"], string> = {
+    neutral: theme.colors.border,
+    today: theme.colors.tint,
+    selected: theme.colors.tint,
+    warning: theme.colors.warning,
+    critical: theme.colors.critical,
+  };
+  return {
+    bg: bgByKind[chrome.background],
+    border: borderByKind[chrome.border],
+  };
 }
 
 export const CalendarDayCell = React.memo(function CalendarDayCell({
@@ -45,31 +62,44 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
   onPress,
 }: Props) {
   const theme = useTheme();
-  const today = todayStr() === dateIso;
+  const todayIso = todayStr();
   const dayNum = Number(dateIso.slice(8, 10));
-  const severity = day ? daySeverity(day) : "neutral";
-  const colors = severityColors(severity, theme);
+  const presentationStatus = day
+    ? calendarDayPresentationStatus(day, dateIso, todayIso)
+    : calendarDateState(dateIso, todayIso) === "past"
+      ? "historical"
+      : "future_healthy";
+  const riskTone = calendarGridTone(presentationStatus);
+  const chrome = resolveCalendarDayCellChrome({
+    dateIso,
+    isSelected: selected,
+    riskTone,
+    todayIso,
+  });
+  const colors = chromeColors(chrome, theme);
   const active = day ? dayHasActivity(day) : false;
   const income = day ? parseCalendarAmount(day.income_total) : 0;
   const expense = day ? parseCalendarAmount(day.expense_total) : 0;
+  const transfer = day ? parseCalendarAmount(day.transfer_total) : 0;
   const eventCount = day?.transactions.length ?? 0;
+  const showRiskIndicator = calendarGridShowsRiskIndicator(presentationStatus);
   const ariaLabel = day
-    ? dayAccessibilityLabel(day, dateIso)
-    : `${dateIso}, no forecast data`;
+    ? calendarDayAccessibilityLabel(day, dateIso, todayIso)
+    : `${dateIso}, no calendar data`;
 
   return (
     <Pressable
       onPress={() => onPress(dateIso)}
       accessibilityRole="button"
       accessibilityLabel={ariaLabel}
-      accessibilityHint={day?.is_negative ? "Projected negative balance" : undefined}
+      accessibilityHint={showRiskIndicator ? "Future cash risk on this day" : undefined}
       accessibilityState={{ selected }}
       style={({ pressed }) => ({
         ...calendarDayCellSizeStyle(cellWidth),
         padding: 4,
         borderRadius: theme.radius.md,
-        borderWidth: today ? 2 : 1,
-        borderColor: today ? theme.colors.tint : selected ? theme.colors.tint : colors.border,
+        borderWidth: chrome.borderWidth,
+        borderColor: colors.border,
         backgroundColor: pressed ? theme.colors.surfaceMuted : colors.bg,
         alignItems: "center",
         justifyContent: "flex-start",
@@ -79,7 +109,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
       <Text
         style={{
           color: theme.colors.text,
-          fontWeight: today || selected ? "700" : "600",
+          fontWeight: chrome.dayNumberWeight,
           fontSize: 13,
         }}
       >
@@ -93,19 +123,22 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
           {expense < 0 ? (
             <FontAwesome name="arrow-up" size={8} color={theme.colors.moneyNegative} accessibilityLabel="Expense" />
           ) : null}
+          {transfer !== 0 ? (
+            <FontAwesome name="exchange" size={7} color={theme.colors.textMuted} accessibilityLabel="Transfer" />
+          ) : null}
           {eventCount > 0 ? (
             <Text style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: "600" }}>
               {eventCount}
             </Text>
           ) : null}
-          {(severity === "critical" || severity === "watch") && (
+          {showRiskIndicator ? (
             <FontAwesome
               name="exclamation-circle"
               size={9}
-              color={colors.dot}
-              accessibilityLabel={daySeverityLabel(severity)}
+              color={riskDotColor(riskTone, theme)}
+              accessibilityLabel="Forecast risk"
             />
-          )}
+          ) : null}
         </View>
       ) : (
         <Text style={{ color: theme.colors.textMuted, fontSize: 8 }} accessibilityElementsHidden>

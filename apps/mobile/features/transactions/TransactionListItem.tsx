@@ -8,7 +8,7 @@ import type { TransactionListRow } from "./buildTransactionList";
 
 type Props = {
   item: TransactionListRow;
-  onPressTransaction: (id: number) => void;
+  onPressRow: (item: TransactionListRow) => void;
   onPressRecentRange?: () => void;
   onPressUpcomingRange?: () => void;
   focusHighlight?: boolean;
@@ -16,7 +16,7 @@ type Props = {
 
 export const TransactionListItem = memo(function TransactionListItem({
   item,
-  onPressTransaction,
+  onPressRow,
   onPressRecentRange,
   onPressUpcomingRange,
   focusHighlight,
@@ -75,7 +75,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   if (item.kind === "upcoming") {
     const txnId = item.row.transaction_id;
     return wrapFocusHighlight(
-      <Pressable onPress={() => txnId != null && onPressTransaction(txnId)} disabled={txnId == null}>
+      <Pressable onPress={() => onPressRow(item)} disabled={txnId == null}>
         <TransactionRowCard
           timelineRow={item.row}
           runningBalance={item.runningBalance}
@@ -87,7 +87,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   if (item.kind === "pending") {
     const txnId = item.row.transaction_id;
     return wrapFocusHighlight(
-      <Pressable onPress={() => txnId != null && onPressTransaction(txnId)} disabled={txnId == null}>
+      <Pressable onPress={() => onPressRow(item)} disabled={txnId == null}>
         <TransactionRowCard
           timelineRow={item.row}
           runningBalance={item.runningBalance}
@@ -97,7 +97,7 @@ export const TransactionListItem = memo(function TransactionListItem({
     );
   }
   return wrapFocusHighlight(
-    <Pressable onPress={() => onPressTransaction(item.txn.id)}>
+    <Pressable onPress={() => onPressRow(item)}>
       <TransactionRowCard txn={item.txn} runningBalance={item.runningBalance} />
     </Pressable>
   );

@@ -201,14 +201,25 @@ def _load_calendar_timeline_rows(
     ephemeral_events: Optional[list],
     projection_only: bool,
     timeline_rows: Optional[list[dict]],
-) -> list[dict]:
-    """Historical display rows + canonical forecast rows (no duplicate forecast engine)."""
+) -> tuple[list[dict], list[dict]]:
+    """Historical display rows + canonical forecast rows (no duplicate forecast engine).
+
+    Returns ``(merged_rows, forecast_ledger_rows)``. Risk metrics must use
+    ``forecast_ledger_rows`` only — historical display rows may lack canonical
+    ``balance_after`` on past planned occurrences.
+    """
     if timeline_rows is not None:
-        return timeline_rows
+        forecast_ledger_rows = [
+            row
+            for row in timeline_rows
+            if (rd := _parse_date(row.get("date"))) is not None and rd >= today
+        ]
+        return timeline_rows, forecast_ledger_rows
 
     forecast_end = today + timedelta(days=forecast_days)
     effective_end = min(end_date, forecast_end)
     merged: list[dict] = []
+    forecast_ledger_rows: list[dict] = []
 
     if start_date < today:
         hist_end = min(today - timedelta(days=1), end_date)
@@ -241,12 +252,13 @@ def _load_calendar_timeline_rows(
             scenario_id=scenario_id,
             caller="timeline_calendar",
         )
+        forecast_ledger_rows = list(forecast_rows)
         for row in forecast_rows:
             rd = _parse_date(row.get("date"))
             if rd is not None and today <= rd <= effective_end:
                 merged.append(row)
 
-    return merged
+    return merged, forecast_ledger_rows
 
 
 def build_timeline_calendar(
@@ -265,7 +277,7 @@ def build_timeline_calendar(
 ) -> dict[str, Any]:
     today = as_of_date or date.today()
     resolved_forecast_days = _normalize_forecast_days(today, end_date, forecast_days)
-    rows = _load_calendar_timeline_rows(
+    rows, forecast_ledger_rows = _load_calendar_timeline_rows(
         user,
         start_date=start_date,
         end_date=end_date,
@@ -643,7 +655,7 @@ def build_timeline_calendar(
             if not acc:
                 continue
             metrics = forecast_account_balance_metrics(
-                rows,
+                forecast_ledger_rows,
                 account_id=aid,
                 today=today,
                 end_date=forecast_end,

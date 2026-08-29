@@ -50,23 +50,48 @@ describe("calendarUtils", () => {
     ).toBe(true);
   });
 
-  it("daySeverity flags negative balance as critical", () => {
+  it("daySeverity flags future negative balance as critical", () => {
     expect(
-      daySeverity({
-        date: "2026-08-01",
-        income_total: "0",
-        expense_total: "0",
-        transfer_total: "0",
-        net_total: "-50",
-        ending_balance: "-50",
-        lowest_balance: "-50",
-        risk_level: "none",
-        risk_reason: null,
-        has_risk: false,
-        is_negative: true,
-        transactions: [],
-      })
+      daySeverity(
+        {
+          date: "2026-08-29",
+          income_total: "0",
+          expense_total: "0",
+          transfer_total: "0",
+          net_total: "-50",
+          ending_balance: "-50",
+          lowest_balance: "-50",
+          risk_level: "none",
+          risk_reason: null,
+          has_risk: false,
+          is_negative: true,
+          transactions: [],
+        },
+        "2026-08-29"
+      )
     ).toBe("critical");
+  });
+
+  it("daySeverity treats past negative balance as neutral activity styling", () => {
+    expect(
+      daySeverity(
+        {
+          date: "2026-08-27",
+          income_total: "0",
+          expense_total: "-219.14",
+          transfer_total: "0",
+          net_total: "-219.14",
+          ending_balance: "-2535.96",
+          lowest_balance: "-2535.96",
+          risk_level: "critical",
+          risk_reason: "Main projected -2535.96",
+          has_risk: true,
+          is_negative: true,
+          transactions: [],
+        },
+        "2026-08-27"
+      )
+    ).toBe("healthy");
   });
 
   it("isDateWithinForecast respects configured window", () => {

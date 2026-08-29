@@ -29,7 +29,6 @@ import { matchingImportTimelineRange } from "@/lib/transactionsLedger";
 import { resolveHouseholdId } from "@/lib/householdContext";
 import {
   canChangeTransactionCategory,
-  canDeleteTransaction,
   isTransferTransaction,
   resolveTransactionStatusIcons,
   STATUS_ICON_LABELS,
@@ -42,6 +41,12 @@ import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { transactionQueryKeys } from "./queryKeys";
 import { transactionToMatchingTimelineRow } from "./transactionMatchingTimeline";
+import {
+  canOpenRecurringRuleDetail,
+  getTransactionDetailActions,
+  recurringRuleDetailPath,
+  type TransactionDetailAction,
+} from "./transactionDetailActions";
 
 const MATCHING_IMPORT_FORECAST_DAYS = 30;
 
@@ -51,7 +56,7 @@ export function TransactionDetailScreen() {
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const txnId = Number(id);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<TransactionDetailAction | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [savingCategory, setSavingCategory] = useState(false);
@@ -109,12 +114,11 @@ export function TransactionDetailScreen() {
       refreshAfterTransactionEdit(queryClient);
       router.back();
     },
-    onError: (err) => Alert.alert("Could not remove scheduled item", describeApiError(err)),
+    onError: (err) => Alert.alert("Could not skip occurrence", describeApiError(err)),
   });
 
   const lockMessage = txn ? transactionEditLockMessage(txn, getEffectiveDisplayName(txn.account)) : null;
   const isPlanned = (txn?.status ?? "").toUpperCase() === "PLANNED";
-  const canEdit = txn && !txn.reconciled && !lockMessage?.includes("Imported");
   const canChangeCategory = txn ? canChangeTransactionCategory(txn) : false;
 
   const matchingTimelineRange = useMemo(
@@ -146,6 +150,11 @@ export function TransactionDetailScreen() {
     return scheduledRowHasMatchingImport(transactionToMatchingTimelineRow(txn), timeline);
   }, [txn, isPlanned, timelineQuery.data?.timeline]);
 
+  const detailActions = useMemo(() => {
+    if (!txn) return [];
+    return getTransactionDetailActions({ txn, hasMatchingImport });
+  }, [txn, hasMatchingImport]);
+
   const goBackAfterOptionalCategorySave = useCallback(async () => {
     if (savingRef.current) return;
     if (!txn || !categoryDirty || !canChangeCategory) {
@@ -165,6 +174,27 @@ export function TransactionDetailScreen() {
       setSavingCategory(false);
     }
   }, [txn, categoryDirty, canChangeCategory, txnId, categoryId, queryClient, router]);
+
+  const runAction = useCallback(
+    (action: TransactionDetailAction) => {
+      if (action.kind === "edit") {
+        router.push(`/transaction/edit/${txnId}`);
+        return;
+      }
+      if (action.kind === "matchedImport" || action.kind === "skip") {
+        if (action.kind === "skip" && action.confirmationTitle) {
+          setConfirmAction(action);
+          return;
+        }
+        skipMutation.mutate();
+        return;
+      }
+      if (action.kind === "delete") {
+        setConfirmAction(action);
+      }
+    },
+    [router, txnId, skipMutation]
+  );
 
   if (query.isLoading) {
     return (
@@ -186,6 +216,7 @@ export function TransactionDetailScreen() {
 
   const statusIcons = resolveTransactionStatusIcons(txn);
   const transfer = isTransferTransaction(txn);
+  const showRecurringRuleLink = canOpenRecurringRuleDetail(txn);
 
   return (
     <Screen scroll>
@@ -246,7 +277,32 @@ export function TransactionDetailScreen() {
         {txn.linked_transaction_id ? (
           <DetailRow label="Linked transfer leg" value="See paired transaction" />
         ) : null}
-        {txn.rule_id ? <DetailRow label="Recurring rule" value="Linked to scheduled rule" /> : null}
+        {showRecurringRuleLink ? (
+          <Pressable
+            onPress={() => router.push(recurringRuleDetailPath(txn.rule_id!))}
+            accessibilityRole="button"
+            accessibilityLabel="Recurring rule. Tap to open rule detail."
+            style={{
+              paddingVertical: 8,
+              borderBottomWidth: 1,
+              borderBottomColor: theme.colors.border,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+                Recurring rule
+              </Text>
+              <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 2 }}>
+                Linked to scheduled rule
+              </Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color={theme.colors.textMuted} />
+          </Pressable>
+        ) : null}
       </Card>
 
       {lockMessage ? (
@@ -256,27 +312,21 @@ export function TransactionDetailScreen() {
       ) : null}
 
       <View style={{ gap: 8, marginTop: theme.spacing.xl }}>
-        {canEdit ? (
-          <Button label="Edit" onPress={() => router.push(`/transaction/edit/${txn.id}`)} />
-        ) : null}
-        {isPlanned && hasMatchingImport ? (
+        {detailActions.map((action) => (
           <Button
-            label="Matched Import"
-            onPress={() => skipMutation.mutate()}
-            loading={skipMutation.isPending}
+            key={action.kind}
+            label={action.label}
+            variant={
+              action.destructive ? "danger" : action.kind === "skip" ? "secondary" : "primary"
+            }
+            onPress={() => runAction(action)}
+            loading={
+              (action.kind === "skip" || action.kind === "matchedImport") && skipMutation.isPending
+                ? true
+                : action.kind === "delete" && deleteMutation.isPending
+            }
           />
-        ) : null}
-        {isPlanned && !hasMatchingImport ? (
-          <Button
-            label="Skip occurrence"
-            variant="secondary"
-            onPress={() => skipMutation.mutate()}
-            loading={skipMutation.isPending}
-          />
-        ) : null}
-        {canDeleteTransaction(txn) ? (
-          <Button label="Delete" variant="danger" onPress={() => setDeleteOpen(true)} />
-        ) : null}
+        ))}
       </View>
 
       <BottomSheet
@@ -332,17 +382,22 @@ export function TransactionDetailScreen() {
       </BottomSheet>
 
       <ConfirmDialog
-        visible={deleteOpen}
-        title="Delete transaction"
-        message={
-          transfer
-            ? "This may delete or unlink both sides of the transfer, depending on account settings."
-            : "This transaction will be permanently removed."
-        }
-        destructive
-        loading={deleteMutation.isPending}
-        onCancel={() => setDeleteOpen(false)}
-        onConfirm={() => deleteMutation.mutate()}
+        visible={confirmAction != null}
+        title={confirmAction?.confirmationTitle ?? "Confirm"}
+        message={confirmAction?.confirmationMessage ?? ""}
+        confirmLabel={confirmAction?.kind === "skip" ? "Skip" : "Delete"}
+        destructive={confirmAction?.destructive === true}
+        loading={confirmAction?.kind === "delete" ? deleteMutation.isPending : skipMutation.isPending}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (confirmAction?.kind === "delete") {
+            deleteMutation.mutate();
+            return;
+          }
+          if (confirmAction?.kind === "skip") {
+            skipMutation.mutate();
+          }
+        }}
       />
     </Screen>
   );

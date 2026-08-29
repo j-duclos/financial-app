@@ -1,30 +1,24 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import { formatCurrency } from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/theme";
 import { StatusChip } from "@/components/ui";
+import type { CalendarDateState } from "./calendarPresentation";
+import { calendarEventStatusLabel } from "./calendarEventNavigation";
 import { parseCalendarAmount } from "./calendarUtils";
 
 type Props = {
   txn: TimelineCalendarTransaction;
+  dateState: CalendarDateState;
   onPress: () => void;
 };
 
-function eventStatusLabel(txn: TimelineCalendarTransaction): string | null {
-  const status = txn.status?.toUpperCase();
-  if (status === "PLANNED" || txn.kind === "projected") return "Forecast";
-  if (txn.rule_id && !txn.transaction_id) return "Recurring";
-  if (txn.is_transfer) return "Transfer";
-  if (status === "CLEARED" || status === "RECONCILED") return "Posted";
-  return null;
-}
-
-export function CalendarEventRow({ txn, onPress }: Props) {
+export function CalendarEventRow({ txn, dateState, onPress }: Props) {
   const theme = useTheme();
   const amount = parseCalendarAmount(txn.amount);
-  const status = eventStatusLabel(txn);
+  const status = calendarEventStatusLabel(txn, dateState);
   const tone =
     txn.is_transfer ? "neutral" : amount > 0 ? "positive" : amount < 0 ? "negative" : "neutral";
 
@@ -75,10 +69,10 @@ export function CalendarEventRow({ txn, onPress }: Props) {
         {status ? (
           <StatusChip
             label={status}
-            tone={status === "Forecast" || status === "Recurring" ? "neutral" : "neutral"}
+            tone={status === "Forecast" || status === "Pending" ? "neutral" : "neutral"}
           />
         ) : null}
-        {txn.risk_flag ? (
+        {txn.risk_flag && dateState !== "past" ? (
           <FontAwesome name="exclamation-triangle" size={12} color={theme.colors.critical} accessibilityLabel="Risk" />
         ) : null}
       </View>

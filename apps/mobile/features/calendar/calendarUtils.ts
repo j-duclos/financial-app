@@ -101,11 +101,21 @@ export function dayHasActivity(day: TimelineCalendarDay): boolean {
 
 export type DaySeverity = "neutral" | "healthy" | "watch" | "critical";
 
-export function daySeverity(day: TimelineCalendarDay): DaySeverity {
-  if (day.is_negative || day.has_risk || day.risk_level === "critical") return "critical";
-  if (day.heat_level === "dangerous") return "critical";
-  if (day.heat_level === "tight" || parseCalendarAmount(day.lowest_balance) < 0) return "watch";
-  if (day.heat_level === "healthy" || dayHasActivity(day)) return "healthy";
+/** @deprecated Prefer calendarDayPresentationStatus from calendarPresentation.ts */
+export function daySeverity(day: TimelineCalendarDay, dateIso?: string): DaySeverity {
+  // Lazy import pattern avoided — re-export presentation mapping inline for compat.
+  const iso = dateIso ?? day.date;
+  const todayIso = todayStr();
+  if (iso < todayIso) {
+    return dayHasActivity(day) ? "healthy" : "neutral";
+  }
+  if (day.is_negative || day.risk_level === "critical" || day.heat_level === "dangerous") {
+    return "critical";
+  }
+  if (day.has_risk || day.risk_level === "watch" || day.heat_level === "tight") {
+    return "watch";
+  }
+  if (dayHasActivity(day)) return "healthy";
   return "neutral";
 }
 

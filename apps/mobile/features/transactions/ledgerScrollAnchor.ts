@@ -4,8 +4,10 @@ import type { TransactionListRow } from "./buildTransactionList";
 export const LEDGER_ANCHOR_PAST_ROWS = 4;
 
 /** Approximate heights for getItemLayout / initialScrollIndex (variable UI → close enough). */
-export const LEDGER_SECTION_HEIGHT = 48;
-export const LEDGER_ROW_HEIGHT = 76;
+export const LEDGER_SECTION_HEIGHT = 52;
+export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 64;
+export const LEDGER_ROW_HEIGHT = 78;
+export const LEDGER_PENDING_ROW_HEIGHT = 92;
 export const LEDGER_SKELETON_HEIGHT = 56;
 
 export type LedgerFocusKind = "forecast-risk" | "ledger-event";
@@ -143,8 +145,11 @@ export function ledgerOpenScrollIndex(
 
 export function ledgerRowHeight(row: TransactionListRow | undefined): number {
   if (!row) return LEDGER_ROW_HEIGHT;
-  if (row.kind === "section") return LEDGER_SECTION_HEIGHT;
+  if (row.kind === "section") {
+    return row.rangeLabel ? LEDGER_SECTION_WITH_RANGE_HEIGHT : LEDGER_SECTION_HEIGHT;
+  }
   if (row.kind === "skeleton") return LEDGER_SKELETON_HEIGHT;
+  if (row.kind === "pending") return LEDGER_PENDING_ROW_HEIGHT;
   return LEDGER_ROW_HEIGHT;
 }
 

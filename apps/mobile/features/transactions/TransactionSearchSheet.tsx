@@ -1,5 +1,5 @@
 import React from "react";
-import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
@@ -21,52 +21,41 @@ export function TransactionSearchSheet({ visible, value, onChange, onClose, onCl
       visible={visible}
       title="Search transactions"
       onClose={onClose}
-      contentStyle={{ minHeight: "40%", maxHeight: "55%" }}
+      keyboardAware
+      contentStyle={{ minHeight: "36%", maxHeight: "52%" }}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+      <TextField
+        label="Payee or memo"
+        value={value}
+        onChangeText={onChange}
+        placeholder="Search this account ledger"
+        autoFocus={visible}
+        returnKeyType="search"
+      />
+      <Text
+        style={{
+          color: theme.colors.textMuted,
+          ...theme.typography.caption,
+          marginTop: theme.spacing.sm,
+        }}
       >
-        <TextField
-          label="Payee or memo"
-          value={value}
-          onChangeText={onChange}
-          placeholder="Search this account ledger"
-          autoFocus={visible}
-          returnKeyType="search"
-        />
-        <Text
-          style={{
-            color: theme.colors.textMuted,
-            ...theme.typography.caption,
-            marginTop: theme.spacing.sm,
-          }}
-        >
-          Matches Recent, Pending, and Upcoming rows for the selected account.
-        </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            gap: 8,
-            marginTop: theme.spacing.lg,
-            paddingBottom: Math.max(insets.bottom, theme.spacing.md),
-          }}
-        >
-          <View style={{ flex: 1 }}>
-            <Button
-              label="Clear"
-              variant="secondary"
-              onPress={() => {
-                onClear();
-                onClose();
-              }}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Button label="Done" onPress={onClose} />
-          </View>
+        Matches Recent, Pending, and Upcoming rows for the selected account.
+      </Text>
+      <View
+        style={{
+          flexDirection: "row",
+          gap: 8,
+          marginTop: theme.spacing.lg,
+          paddingBottom: Math.max(insets.bottom, theme.spacing.md),
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Button label="Clear" variant="secondary" onPress={onClear} />
         </View>
-      </KeyboardAvoidingView>
+        <View style={{ flex: 1 }}>
+          <Button label="Done" onPress={onClose} />
+        </View>
+      </View>
     </BottomSheet>
   );
 }

@@ -5,13 +5,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createTransaction,
   createTransfer,
+  deleteTransaction,
   getTransaction,
   listAccounts,
   updateTransaction,
 } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
-import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
+import { AppHeader, Button, Card, ConfirmDialog, ErrorState, Screen, TextField } from "@/components/ui";
 import { DatePickerField } from "@/components/forms/DatePickerField";
 import { OptionsPickerSheet, type PickerOption } from "@/components/forms/OptionsPickerSheet";
 import { SelectField } from "@/components/forms/SelectField";
@@ -23,7 +24,11 @@ import {
 } from "@/lib/dates";
 import { resolveHouseholdId } from "@/lib/householdContext";
 import { isTransferCategoryName } from "@/lib/transactionsLedger";
-import { transactionEditLockMessage } from "@/lib/transactionStatus";
+import {
+  canDeleteTransaction,
+  isTransferTransaction,
+  transactionEditLockMessage,
+} from "@/lib/transactionStatus";
 import { describeApiError, fieldErrorsFromApiError } from "@/services/apiErrors";
 import { refreshAfterTransactionEdit } from "@/lib/financialQueryRefresh";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
@@ -31,6 +36,7 @@ import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { resolvePostedCurrentBalance } from "@/features/accounts/accountBalanceDisplay";
 import { transactionQueryKeys } from "./queryKeys";
 import { TransferSourceBalancePreview } from "./TransferSourceBalancePreview";
+import { isPlannedScheduledTransaction } from "./pendingSemantics";
 
 type TransactionEntryType = "expense" | "income" | "transfer";
 
@@ -98,6 +104,7 @@ export function TransactionFormScreen() {
   );
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [picker, setPicker] = useState<PickerKind>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const txnQuery = useQuery({
     queryKey: transactionQueryKeys.detail(editId ?? 0),
@@ -209,6 +216,21 @@ export function TransactionFormScreen() {
   const lockMessage = txnQuery.data
     ? transactionEditLockMessage(txnQuery.data, getEffectiveDisplayName(txnQuery.data.account))
     : null;
+
+  const showDeleteInForm =
+    isEdit &&
+    txnQuery.data != null &&
+    canDeleteTransaction(txnQuery.data) &&
+    !isPlannedScheduledTransaction(txnQuery.data);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteTransaction(editId as number),
+    onSuccess: () => {
+      refreshAfterTransactionEdit(queryClient);
+      router.back();
+    },
+    onError: (err) => Alert.alert("Delete failed", describeApiError(err)),
+  });
 
   const transferDestinations = useMemo((): Account[] => {
     if (!selectedAccount) return [];
@@ -475,14 +497,36 @@ export function TransactionFormScreen() {
         </View>
       </Card>
 
-      <View style={{ marginTop: theme.spacing.lg }}>
+      <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.md }}>
         <Button
           label={isEdit ? "Save changes" : "Create transaction"}
           onPress={() => saveMutation.mutate()}
           loading={saveMutation.isPending}
           disabled={Boolean(lockMessage?.includes("Reconciled"))}
         />
+        {showDeleteInForm ? (
+          <Button
+            label="Delete transaction"
+            variant="danger"
+            onPress={() => setDeleteOpen(true)}
+            loading={deleteMutation.isPending}
+          />
+        ) : null}
       </View>
+
+      <ConfirmDialog
+        visible={deleteOpen}
+        title="Delete transaction"
+        message={
+          txnQuery.data && isTransferTransaction(txnQuery.data)
+            ? "This may delete or unlink both sides of the transfer, depending on account settings."
+            : "This transaction will be permanently removed."
+        }
+        destructive
+        loading={deleteMutation.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
 
       <OptionsPickerSheet
         visible={picker === "account"}

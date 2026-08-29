@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from "react";
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
@@ -79,19 +71,15 @@ export function TransactionFiltersSheet({
       visible={visible}
       title="Filters"
       onClose={onClose}
+      keyboardAware
       contentStyle={{ minHeight: "78%", maxHeight: "85%" }}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+      <ScrollView
+        style={{ maxHeight: 420 }}
+        contentContainerStyle={{ paddingBottom: theme.spacing.md }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: theme.spacing.md }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
           <View style={{ gap: theme.spacing.lg }}>
             <View>
               <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
@@ -159,14 +147,14 @@ export function TransactionFiltersSheet({
           </View>
         </ScrollView>
 
-        <View
-          style={{
-            flexDirection: "row",
-            gap: 8,
-            marginTop: theme.spacing.md,
-            paddingBottom: Math.max(insets.bottom, theme.spacing.sm),
-          }}
-        >
+      <View
+        style={{
+          flexDirection: "row",
+          gap: 8,
+          marginTop: theme.spacing.md,
+          paddingBottom: Math.max(insets.bottom, theme.spacing.sm),
+        }}
+      >
           <View style={{ flex: 1 }}>
             <Button
               label="Clear"
@@ -192,7 +180,6 @@ export function TransactionFiltersSheet({
             />
           </View>
         </View>
-      </KeyboardAvoidingView>
     </BottomSheet>
   );
 }

@@ -44,8 +44,11 @@ describe("Transactions request orchestration", () => {
   });
 
   it("anchors the ledger near Pending on open", () => {
-    expect(transactionsScreen).toMatch(/ledgerAnchorScrollIndex/);
+    expect(transactionsScreen).toMatch(/findLedgerBoundaryIndex/);
+    expect(transactionsScreen).toMatch(/ledgerOpenScrollIndex/);
+    expect(transactionsScreen).toMatch(/ledgerListReady/);
     expect(transactionsScreen).toMatch(/initialScrollIndex/);
     expect(transactionsScreen).toMatch(/getItemLayout/);
+    expect(transactionsScreen).toMatch(/onContentSizeChange/);
   });
 });

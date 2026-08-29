@@ -12,6 +12,7 @@ from accounts.services.available_to_spend import calculate_forecast_summaries_fo
 from common.services.profiler import get_build_timeline_count, reset_build_timeline_count
 from core.models import Household
 from timeline.services.calendar import build_timeline_calendar
+from timeline.services.calendar_chunks import calendar_chunk_windows
 from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
 from timeline.services.ledger import build_forecast_projection_timeline, forecast_account_balance_metrics
 from transactions.models import Transaction
@@ -203,3 +204,57 @@ def test_calendar_summary_and_chunk_share_one_build(user, household, main_checki
     chunk = calendar_chunk_payload(full, today.replace(day=1), end)
     assert summary["summary"]["lowest_balance"] == full["summary"]["lowest_balance"]
     assert chunk["days"]
+
+
+def _lookback_start(today: date) -> date:
+    if today.month == 1:
+        return date(today.year - 1, 12, 1)
+    return date(today.year, today.month - 1, 1)
+
+
+@pytest.mark.django_db
+def test_calendar_household_lookback_with_past_planned(api_client, user, household, main_checking):
+    """Household calendar must not mix historical planned rows into risk metrics."""
+    today = date.today()
+    _planned(main_checking, today - timedelta(days=5), "Past planned", Decimal("-40.00"))
+    cache.clear()
+
+    start = _lookback_start(today)
+    end = today + timedelta(days=30)
+    windows = calendar_chunk_windows(start, end, today)
+    params = {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "forecast_days": "30",
+        "lookback_months": "1",
+        "household_id": str(household.id),
+        "chunk_start": windows[0][0].isoformat(),
+        "chunk_end": windows[0][1].isoformat(),
+    }
+    api_client.force_authenticate(user=user)
+
+    summary_res = api_client.get("/api/timeline/calendar/summary/", params)
+    assert summary_res.status_code == 200, summary_res.content
+
+    chunk_res = api_client.get("/api/timeline/calendar/chunk/", params)
+    assert chunk_res.status_code == 200, chunk_res.content
+    assert chunk_res.json()["days"]
+
+
+@pytest.mark.django_db
+def test_calendar_household_lookback_builds(api_client, user, household, main_checking):
+    today = date.today()
+    _planned(main_checking, today - timedelta(days=5), "Past planned", Decimal("-40.00"))
+    cache.clear()
+
+    calendar = build_timeline_calendar(
+        user,
+        start_date=_lookback_start(today),
+        end_date=today + timedelta(days=30),
+        household_id=household.id,
+        as_of_date=today,
+        projection_only=True,
+        forecast_days=30,
+    )
+    assert calendar["days"]
+    assert calendar["summary"]["risky_accounts"] is not None

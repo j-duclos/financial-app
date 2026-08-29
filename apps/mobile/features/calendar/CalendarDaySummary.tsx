@@ -1,21 +1,23 @@
 import React from "react";
 import { Text, View } from "react-native";
-import type { TimelineCalendarDay } from "@budget-app/shared";
+import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
 import { Card, CurrencyDisplay, SectionHeader } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { formatDateDisplay, todayStr } from "@/lib/dates";
+import { formatDateDisplay } from "@/lib/dates";
+import {
+  calendarAccountRiskPresentation,
+  calendarDateState,
+  calendarPastAccountEndingLabel,
+} from "./calendarPresentation";
 import {
   dayHasActivity,
-  daySeverity,
-  daySeverityLabel,
   emptyCalendarDay,
   filterCalendarTransactions,
   parseCalendarAmount,
 } from "./calendarUtils";
 import { CalendarEventRow } from "./CalendarEventRow";
-import { ForecastWarningCard } from "./ForecastWarningCard";
+import { AccountRiskSection } from "./AccountRiskSection";
 import type { CalendarEventFilter } from "./types";
-import type { TimelineCalendarTransaction } from "@budget-app/shared";
 
 type Props = {
   dateIso: string;
@@ -23,7 +25,9 @@ type Props = {
   outsideForecast: boolean;
   forecastDays: number;
   eventFilter: CalendarEventFilter;
+  accountName?: string | null;
   onEventPress: (txn: TimelineCalendarTransaction) => void;
+  onAccountRiskPress?: () => void;
 };
 
 export function CalendarDaySummary({
@@ -32,18 +36,19 @@ export function CalendarDaySummary({
   outsideForecast,
   forecastDays,
   eventFilter,
+  accountName,
   onEventPress,
+  onAccountRiskPress,
 }: Props) {
   const theme = useTheme();
   const resolved = day ?? emptyCalendarDay(dateIso);
-  const severity = daySeverity(resolved);
+  const dateState = calendarDateState(dateIso);
   const hasActivity = dayHasActivity(resolved);
   const filtered = filterCalendarTransactions(resolved.transactions, eventFilter);
-  const openingBalance = parseCalendarAmount(resolved.ending_balance) - parseCalendarAmount(resolved.net_total);
-  const isForecastDay = resolved.is_forecast !== false && dateIso >= todayStr();
-  const isHouseholdCash = resolved.balance_scope === "household_cash";
-  const endingLabel = isHouseholdCash ? "Total cash ending" : "Ending";
-  const startingLabel = isHouseholdCash ? "Total cash starting" : "Starting";
+  const accountRisk = calendarAccountRiskPresentation(resolved, dateIso);
+  /** Account filter only — canonical backend ending_balance, never derived. */
+  const isAccountScope = resolved.balance_scope === "account";
+  const showCanonicalAccountEnding = isAccountScope;
 
   if (outsideForecast) {
     return (
@@ -59,39 +64,42 @@ export function CalendarDaySummary({
     );
   }
 
+  const sectionTitle =
+    isAccountScope && accountName
+      ? `${formatDateDisplay(dateIso)} · ${accountName}`
+      : formatDateDisplay(dateIso);
+
   return (
     <View style={{ gap: theme.spacing.md }}>
       <Card>
-        <SectionHeader title={formatDateDisplay(dateIso)} />
-        {(severity === "critical" || severity === "watch") && day ? (
-          <ForecastWarningCard day={day} />
-        ) : null}
+        <SectionHeader title={sectionTitle} />
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.md, marginTop: 8 }}>
-          <Metric label={startingLabel} amount={String(openingBalance)} />
           <Metric label="Income" amount={resolved.income_total} tone="positive" />
           <Metric label="Expenses" amount={resolved.expense_total} tone="negative" />
-          <Metric label="Net" amount={resolved.net_total} showSign />
-          <Metric
-            label={endingLabel}
-            amount={resolved.ending_balance}
-            tone={parseCalendarAmount(resolved.ending_balance) < 0 ? "negative" : "neutral"}
-          />
+          {showCanonicalAccountEnding ? (
+            <Metric
+              label="Ending balance"
+              amount={resolved.ending_balance}
+              tone={parseCalendarAmount(resolved.ending_balance) < 0 ? "negative" : "neutral"}
+            />
+          ) : null}
         </View>
         {!hasActivity ? (
           <Text style={{ color: theme.colors.textSecondary, marginTop: 12, ...theme.typography.body }}>
-            {isForecastDay
-              ? "No financial activity projected for this day."
-              : "No financial activity recorded for this day."}
+            {dateState === "past"
+              ? "No financial activity recorded for this day."
+              : dateState === "today"
+                ? "No remaining activity expected for today."
+                : "No financial activity projected for this day."}
           </Text>
-        ) : (
-          <Text
-            accessibilityLabel={`Day status: ${daySeverityLabel(severity)}`}
-            style={{ color: theme.colors.textMuted, marginTop: 8, fontSize: 12 }}
-          >
-            {daySeverityLabel(severity)}
-            {resolved.risk_reason ? ` · ${resolved.risk_reason}` : ""}
+        ) : dateState === "past" && isAccountScope ? (
+          <Text style={{ color: theme.colors.textMuted, marginTop: 8, fontSize: 12 }}>
+            {calendarPastAccountEndingLabel(accountName)} · actual posted activity
           </Text>
-        )}
+        ) : null}
+        {accountRisk ? (
+          <AccountRiskSection risk={accountRisk} onPress={onAccountRiskPress} />
+        ) : null}
       </Card>
       {filtered.length > 0 ? (
         <Card padded={false}>
@@ -102,6 +110,7 @@ export function CalendarDaySummary({
             <CalendarEventRow
               key={`${txn.id ?? txn.description}-${index}`}
               txn={txn}
+              dateState={dateState}
               onPress={() => onEventPress(txn)}
             />
           ))}

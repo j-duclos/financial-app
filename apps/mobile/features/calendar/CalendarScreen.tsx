@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { resolveRuleOccurrence } from "@budget-app/api-client";
-import { calendarMonthFromIsoDate, parseIsoDateParam } from "@budget-app/shared";
+import { calendarMonthFromIsoDate, getEffectiveDisplayName, parseIsoDateParam } from "@budget-app/shared";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
 import {
   EmptyState,
@@ -19,13 +18,22 @@ import { describeApiError } from "@/services/api";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
+import { transactionsForForecastRiskPath } from "@/features/payment-planner/navigation";
 import { CalendarMonthGrid } from "./CalendarMonthGrid";
 import { CalendarDaySummary } from "./CalendarDaySummary";
 import { CalendarFiltersSheet } from "./CalendarFiltersSheet";
+import { CalendarNextRiskBanner } from "./CalendarNextRiskBanner";
 import {
   buildCalendarFilters,
   useCalendarData,
 } from "./useCalendarData";
+import {
+  calendarAccountRiskPresentation,
+} from "./calendarPresentation";
+import {
+  getCalendarEventDestination,
+  navigateToCalendarEventDestination,
+} from "./calendarEventNavigation";
 import {
   dayMap,
   isDateBeforeLookback,
@@ -56,6 +64,12 @@ export function CalendarScreen() {
 
   const householdId = resolveHouseholdId(defaultHouseholdId, accountId || null, accounts);
 
+  const selectedAccountName = useMemo(() => {
+    if (accountId === "") return null;
+    const match = accounts.find((a) => a.id === accountId);
+    return match ? getEffectiveDisplayName(match) : null;
+  }, [accountId, accounts]);
+
   const filters = useMemo(
     () =>
       buildCalendarFilters({
@@ -75,6 +89,7 @@ export function CalendarScreen() {
 
   const dayByDate = useMemo(() => dayMap(days), [days]);
   const selectedDay = selectedDate ? dayByDate.get(selectedDate) : undefined;
+  const dayOnNextRisk = summary?.next_risk_date ? dayByDate.get(summary.next_risk_date) : undefined;
   const outsideForecast = selectedDate
     ? !isDateWithinForecast(selectedDate, forecastDays, today) && selectedDate >= today
     : false;
@@ -114,8 +129,9 @@ export function CalendarScreen() {
 
   const onEventPress = useCallback(
     async (txn: TimelineCalendarTransaction) => {
-      if (txn.transaction_id) {
-        router.push(`/transaction/${txn.transaction_id}`);
+      const destination = getCalendarEventDestination(txn);
+      if (destination) {
+        navigateToCalendarEventDestination(router as { push: (path: string) => void }, destination);
         return;
       }
       if (txn.rule_id && txn.account_id && txn.date) {
@@ -141,6 +157,20 @@ export function CalendarScreen() {
     },
     [router, selectedDate]
   );
+
+  const onAccountRiskPress = useCallback(() => {
+    if (!selectedDate || !selectedDay) return;
+    const risk = calendarAccountRiskPresentation(selectedDay, selectedDate);
+    if (!risk?.accountId) return;
+    router.push(
+      transactionsForForecastRiskPath({
+        accountId: risk.accountId,
+        accountName: risk.accountName,
+        focusDate: selectedDate,
+        focusTransactionId: risk.focusTransactionId,
+      }) as never
+    );
+  }, [router, selectedDate, selectedDay]);
 
   const activeFilterCount =
     (accountId !== "" ? 1 : 0) +
@@ -189,33 +219,12 @@ export function CalendarScreen() {
           />
         </View>
 
-        {summary?.next_risk_date ? (
-          <Pressable
-            onPress={() => {
-              setSelectedDate(summary.next_risk_date);
-              const [y, m] = summary.next_risk_date!.split("-").map(Number);
-              goToMonth(y, m - 1);
-            }}
-            style={{
-              paddingVertical: 8,
-              paddingHorizontal: 10,
-              marginBottom: 8,
-              borderRadius: theme.radius.md,
-              backgroundColor: theme.colors.warningBg,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Next risk date ${summary.next_risk_date}`}
-          >
-            <FontAwesome name="exclamation-triangle" size={14} color={theme.colors.warning} />
-            <Text style={{ color: theme.colors.text, flex: 1, fontSize: 13 }}>
-              Next risk: {summary.next_risk_date}
-              {summary.lowest_balance ? ` · Low ${summary.lowest_balance}` : ""}
-            </Text>
-          </Pressable>
-        ) : null}
+        <CalendarNextRiskBanner
+          summary={summary}
+          dayOnRiskDate={dayOnNextRisk}
+          forecastDays={forecastDays}
+          onNavigate={(path) => router.push(path as never)}
+        />
 
         <View
           style={{
@@ -260,11 +269,13 @@ export function CalendarScreen() {
                 outsideForecast={outsideForecast}
                 forecastDays={forecastDays}
                 eventFilter={eventFilter}
+                accountName={selectedAccountName}
                 onEventPress={onEventPress}
+                onAccountRiskPress={onAccountRiskPress}
               />
             )
           ) : (
-            <EmptyState title="Select a day" message="Tap a date to see projected balances and events." />
+            <EmptyState title="Select a day" message="Tap a date to see activity and forecast details." />
           )}
           {resolvingId ? (
             <Text style={{ color: theme.colors.textMuted, textAlign: "center", marginTop: 8 }}>

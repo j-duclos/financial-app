@@ -59,14 +59,24 @@ describe("ledgerScrollAnchor", () => {
     expect(ledgerAnchorScrollIndex(rows)).toBeNull();
   });
 
-  it(`scrolls so about ${LEDGER_ANCHOR_PAST_ROWS} history rows sit above the boundary`, () => {
+  it("default open keeps four recent rows above Pending", () => {
     const rows: TransactionListRow[] = [
       section("section-recent", "Recent"),
-      ...Array.from({ length: 10 }, (_, i) => history(i + 1)),
+      ...Array.from({ length: 8 }, (_, i) => history(i + 1)),
       section("section-pending", "Pending"),
+      {
+        kind: "pending",
+        id: "pending-1",
+        row: { date: "2026-08-28", description: "Rent", amount: "-100.00" } as TimelineRow,
+        runningBalance: "500.00",
+      },
+      section("section-upcoming", "Upcoming"),
     ];
-    // boundary at 11; 4 history rows above → indices 7,8,9,10 then pending
-    expect(ledgerAnchorScrollIndex(rows)).toBe(7);
+    const anchor = ledgerAnchorScrollIndex(rows)!;
+    expect(anchor).toBe(5);
+    const visibleRecent = rows.slice(anchor, anchor + 4).filter((r) => r.kind === "history");
+    expect(visibleRecent).toHaveLength(4);
+    expect(rows[anchor + 4]).toMatchObject({ kind: "section", title: "Pending" });
   });
 
   it("clamps when fewer than four history rows exist", () => {

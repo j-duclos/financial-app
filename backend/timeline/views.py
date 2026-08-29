@@ -1178,16 +1178,22 @@ class TimelineCalendarChunkView(APIView):
             )
             raw_chunk_start = request.query_params.get("chunk_start")
             raw_chunk_end = request.query_params.get("chunk_end")
-            chunk_start = (
-                dt.strptime(str(raw_chunk_start)[:10], "%Y-%m-%d").date()
-                if raw_chunk_start
-                else start
-            )
-            chunk_end = (
-                dt.strptime(str(raw_chunk_end)[:10], "%Y-%m-%d").date()
-                if raw_chunk_end
-                else end
-            )
+            try:
+                chunk_start = (
+                    dt.strptime(str(raw_chunk_start)[:10], "%Y-%m-%d").date()
+                    if raw_chunk_start
+                    else start
+                )
+                chunk_end = (
+                    dt.strptime(str(raw_chunk_end)[:10], "%Y-%m-%d").date()
+                    if raw_chunk_end
+                    else end
+                )
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid chunk_start or chunk_end."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             chunk_start = max(start, chunk_start)
             chunk_end = min(end, chunk_end)
             if chunk_start > chunk_end:
@@ -1209,11 +1215,6 @@ class TimelineCalendarChunkView(APIView):
                 forecast_days=forecast_days,
             )
             return _calendar_no_store(calendar_chunk_payload(payload, chunk_start, chunk_end))
-        except ValueError:
-            return Response(
-                {"detail": "Invalid chunk_start or chunk_end."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         except Exception as e:
             return Response(
                 {"detail": f"Timeline calendar chunk error: {type(e).__name__}: {e}"},
