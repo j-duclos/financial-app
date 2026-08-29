@@ -82,6 +82,7 @@ export function emptyCalendarDay(dateIso: string): TimelineCalendarDay {
     net_total: "0",
     ending_balance: "0",
     lowest_balance: "0",
+    presentation_status: "healthy",
     risk_level: "none",
     risk_reason: null,
     has_risk: false,
@@ -109,10 +110,16 @@ export function daySeverity(day: TimelineCalendarDay, dateIso?: string): DaySeve
   if (iso < todayIso) {
     return dayHasActivity(day) ? "healthy" : "neutral";
   }
-  if (day.is_negative || day.risk_level === "critical" || day.heat_level === "dangerous") {
+  const status = day.presentation_status;
+  if (status === "critical" || day.is_negative || day.risk_level === "critical") {
     return "critical";
   }
-  if (day.has_risk || day.risk_level === "watch" || day.heat_level === "tight") {
+  if (
+    status === "warning" ||
+    day.has_risk ||
+    day.risk_level === "watch" ||
+    parseCalendarAmount(day.below_buffer_amount) > 0
+  ) {
     return "watch";
   }
   if (dayHasActivity(day)) return "healthy";
@@ -175,4 +182,32 @@ export function filterCalendarTransactions(
 export function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
   const d = new Date(year, month + delta, 1);
   return { year: d.getFullYear(), month: d.getMonth() };
+}
+
+/** True when an ISO date falls in the visible month grid (month is 0-indexed). */
+export function dateBelongsToVisibleMonth(
+  dateIso: string,
+  year: number,
+  month: number
+): boolean {
+  const { year: y, month: m } = calendarMonthFromIso(dateIso);
+  return y === year && m === month;
+}
+
+function calendarMonthFromIso(dateIso: string): { year: number; month: number } {
+  const [y, m] = dateIso.split("-").map(Number);
+  return { year: y, month: m - 1 };
+}
+
+/**
+ * After month navigation, clear selectedDate.
+ * Detail cards must never show a date from another month under the grid header.
+ * (goToday sets today explicitly after navigating to the current month.)
+ */
+export function selectedDateAfterMonthChange(
+  _selectedDate: string | null,
+  _year: number,
+  _month: number
+): string | null {
+  return null;
 }

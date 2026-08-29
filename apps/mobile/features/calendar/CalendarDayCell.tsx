@@ -120,7 +120,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
           {income > 0 ? (
             <FontAwesome name="arrow-down" size={8} color={theme.colors.moneyPositive} accessibilityLabel="Income" />
           ) : null}
-          {expense < 0 ? (
+          {expense > 0 ? (
             <FontAwesome name="arrow-up" size={8} color={theme.colors.moneyNegative} accessibilityLabel="Expense" />
           ) : null}
           {transfer !== 0 ? (

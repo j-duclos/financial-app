@@ -3,6 +3,69 @@ Financial calendar: daily cash-flow summaries and risk heatmap from timeline row
 
 Reuses transfer classification from dashboard_upcoming so net totals exclude internal
 transfers while transfers still appear in day detail lists.
+
+Field sources (each day payload)
+--------------------------------
+income_total
+    Sum of amounts where ``is_income_for_dashboard_totals`` is true
+    (``insights.services.dashboard_upcoming.is_income_for_dashboard_totals``).
+    Built in ``build_timeline_calendar`` day loop.
+
+expense_total
+    Absolute sum of amounts where ``is_expense_for_dashboard_totals`` is true
+    (``insights.services.dashboard_upcoming.is_expense_for_dashboard_totals``).
+    Stored as a positive magnitude. Built in ``build_timeline_calendar`` day loop.
+
+transfer_total
+    Absolute sum of internal-transfer outflows (``is_transfer`` and amount < 0).
+    Built in ``build_timeline_calendar`` day loop. Transfers do not affect income/expense.
+
+ending_balance
+    Last canonical per-account ``balance_after`` (forecast) or ``running_balance``
+    (historical) on that date via ``_row_canonical_balance``, carried forward on quiet
+    days through ``running[aid]``. Household scope sums cash accounts.
+    Created in ``build_timeline_calendar``.
+
+lowest_balance
+    Intra-day minimum of canonical account balances that day, else EOD / ending.
+    Created in ``build_timeline_calendar``.
+
+presentation_status
+    Canonical cell status: healthy | warning | critical.
+    ``_calendar_presentation_status`` — future only; past always healthy.
+    critical = worst scoped cash balance < 0;
+    warning = balance >= 0 but < configured minimum_buffer;
+    healthy = otherwise.
+
+risk_level / has_risk / heat_level / is_negative
+    Derived from ``presentation_status`` (not independent risk engines).
+    ``_presentation_to_legacy_fields``. heat_level labels remain for scanability only.
+
+below_buffer_amount
+    From ``insights.services.day_lowest_balance.calculate_day_lowest_marker``
+    (``_amount_needed_to_buffer``), emitted only when the lowest marker is shown.
+
+Balance rule
+------------
+Calendar does **not** recalculate balances from amounts. Event and day balances are
+read from canonical ``balance_after`` (future/today) / ``running_balance`` (historical)
+via ``_row_canonical_balance`` and carried forward on quiet days. Seeding uses prior-row
+canonical balances or ``Account.starting_balance``.
+
+API endpoints
+-------------
+``GET /api/timeline/calendar/`` — full payload (``TimelineCalendarView``)
+``GET /api/timeline/calendar/summary/`` — summary cards (``TimelineCalendarSummaryView``)
+``GET /api/timeline/calendar/chunk/`` — month slice (``TimelineCalendarChunkView``)
+All built by ``build_timeline_calendar`` (+ cache in ``calendar_cache``).
+
+Source rows
+-----------
+Historical lookback: ``build_timeline`` (posted / past planned display rows with
+``running_balance``).
+Forecast window: ``get_or_build_canonical_forecast_timeline`` (rows with
+``balance_after``).
+Day totals classify each event with dashboard_upcoming income/expense/transfer helpers.
 """
 from __future__ import annotations
 
@@ -24,18 +87,14 @@ from core.utils import get_households_for_user
 from insights.services.dashboard_summary import _classify_timeline_kind
 from insights.services.dashboard_upcoming import (
     _day_risk_reason,
-    _health_alert_names_for_date,
     _serialize_transaction,
     is_expense_for_dashboard_totals,
     is_income_for_dashboard_totals,
-    is_internal_money_movement,
     load_transfer_rule_context,
 )
 from insights.services.day_heat import (
     AccountDayBalance,
     account_balances_from_txn_lows,
-    calculate_day_heat,
-    heat_to_risk_level,
 )
 from insights.services.day_credit_warnings import scan_credit_day_warnings
 from insights.services.day_biggest_drivers import compute_biggest_drivers
@@ -49,7 +108,6 @@ from insights.services.day_recovery import attach_recovery_to_days
 from timeline.services.ledger import (
     build_timeline,
     forecast_account_balance_metrics,
-    is_superseded_planned_row,
     row_participates_in_ledger_walk,
     timeline_row_process_order,
 )
@@ -163,19 +221,32 @@ def _historical_risk_reason_for_level(
     return None
 
 
-def _row_canonical_balance(row: dict) -> Decimal | None:
-    """Authoritative ledger balance_after when present; else chronological running_balance."""
+def _row_canonical_balance(row: dict, *, is_forecast: bool | None = None) -> Decimal | None:
+    """Read canonical ledger balance — never recompute from amounts.
+
+    Forecast/today (``is_forecast=True``): prefer ``balance_after``.
+    Historical (``is_forecast=False``): prefer ``running_balance``.
+    When ``is_forecast`` is None (seed scans): prefer ``balance_after``, else ``running_balance``.
+    """
     ba = row.get("balance_after")
+    rb = row.get("running_balance")
+    if is_forecast is False:
+        if rb is not None:
+            return _decimal(rb)
+        if ba is not None:
+            return _decimal(ba)
+        return None
+    if is_forecast is True:
+        if ba is not None:
+            return _decimal(ba)
+        if rb is not None:
+            return _decimal(rb)
+        return None
     if ba is not None:
         return _decimal(ba)
-    rb = row.get("running_balance")
-    if rb is None:
-        return None
-    return _decimal(rb)
-
-
-def _row_running_balance(row: dict) -> Decimal | None:
-    return _row_canonical_balance(row)
+    if rb is not None:
+        return _decimal(rb)
+    return None
 
 
 def _calendar_event_risk_flag(
@@ -187,6 +258,128 @@ def _calendar_event_risk_flag(
     if not is_forecast_day or canonical_balance is None:
         return False
     return canonical_balance < 0
+
+
+def _calendar_presentation_status(
+    *,
+    is_forecast_day: bool,
+    account_balances: list[AccountDayBalance],
+) -> str:
+    """Canonical day status from future account balances only.
+
+    critical = any scoped cash balance < 0
+    warning = balance >= 0 but < minimum_buffer
+    healthy = otherwise (and always for past days)
+    """
+    if not is_forecast_day:
+        return "healthy"
+    if not account_balances:
+        return "healthy"
+    worst = min(account_balances, key=lambda a: a.balance)
+    if worst.balance < Decimal("0"):
+        return "critical"
+    if worst.minimum_buffer > 0 and worst.balance < worst.minimum_buffer:
+        return "warning"
+    return "healthy"
+
+
+def _presentation_to_legacy_fields(
+    presentation_status: str,
+    *,
+    has_activity: bool,
+    account_balances: list[AccountDayBalance],
+    day: date,
+    buffer: Decimal,
+    is_forecast_day: bool,
+) -> dict[str, Any]:
+    """Collapse risk_level / has_risk / heat_level / is_negative from one status."""
+    is_negative = presentation_status == "critical"
+    if presentation_status == "critical":
+        risk_level = "critical"
+        heat_level = "dangerous"
+        heat_label = "Dangerous"
+        has_risk = True
+    elif presentation_status == "warning":
+        risk_level = "watch"
+        heat_level = "tight"
+        heat_label = "Tight"
+        has_risk = True
+    else:
+        risk_level = "none"
+        heat_level = "healthy" if has_activity else "neutral"
+        heat_label = "Healthy" if has_activity else "Neutral"
+        has_risk = False
+
+    worst = min(account_balances, key=lambda a: a.balance) if account_balances else None
+    affected = worst.account_name if worst else None
+    reason_fn = _risk_reason_for_level if is_forecast_day else _historical_risk_reason_for_level
+    ending = worst.balance if worst is not None else Decimal("0")
+    risk_reason = reason_fn(risk_level, ending, buffer, day)
+    if risk_reason is None and presentation_status == "warning" and worst is not None:
+        needed = (worst.minimum_buffer - worst.balance).quantize(Decimal("0.01"))
+        risk_reason = f"Below buffer: {worst.account_name} ${needed}"
+    if risk_reason is None and presentation_status == "critical" and worst is not None:
+        risk_reason = f"{worst.account_name} projected {worst.balance.quantize(Decimal('0.01'))}"
+
+    return {
+        "presentation_status": presentation_status,
+        "risk_level": risk_level,
+        "has_risk": has_risk,
+        "heat_level": heat_level,
+        "heat_label": heat_label,
+        "heat_reason": risk_reason,
+        "is_negative": is_negative,
+        "affected_account_name": affected,
+        "risk_reason": risk_reason,
+    }
+
+
+def _seed_running_from_canonical(
+    rows: list[dict],
+    *,
+    scope_ids: list[int],
+    start_date: date,
+    rows_by_account_date: dict[tuple[int, date], list[dict]],
+    accounts_by_id: dict[int, Account],
+    forecast_ledger_rows: list[dict],
+) -> dict[int, Decimal]:
+    """Seed per-account EOD carry from canonical balances only — never amount math.
+
+    Prefers last ``balance_after`` / ``running_balance`` on rows strictly before
+    ``start_date``. Falls back to last forecast-row canonical balance before
+    ``start_date``, then ``Account.starting_balance``.
+    """
+    running: dict[int, Decimal] = {}
+    for row in rows:
+        rd = _parse_date(row.get("date"))
+        aid = row.get("account_id")
+        if rd is None or aid is None or int(aid) not in scope_ids or rd >= start_date:
+            continue
+        account_rows = rows_by_account_date.get((int(aid), rd), [])
+        if not row_participates_in_ledger_walk(row, account_rows):
+            continue
+        rb = _row_canonical_balance(row)
+        if rb is not None:
+            running[int(aid)] = rb
+
+    for row in forecast_ledger_rows:
+        rd = _parse_date(row.get("date"))
+        aid = row.get("account_id")
+        if rd is None or aid is None or int(aid) not in scope_ids or rd >= start_date:
+            continue
+        rb = _row_canonical_balance(row)
+        if rb is not None:
+            running[int(aid)] = rb
+
+    for aid in scope_ids:
+        if aid in running:
+            continue
+        acc = accounts_by_id.get(aid)
+        if acc is None:
+            continue
+        running[aid] = _decimal(acc.starting_balance or 0)
+
+    return running
 
 
 def _bind_day_markers_to_canonical_events(days: list[dict[str, Any]]) -> None:
@@ -427,37 +620,14 @@ def build_timeline_calendar(
     best_balance = None
     best_date = None
 
-    running: dict[int, Decimal] = {}
-    for row in rows:
-        rd = _parse_date(row.get("date"))
-        aid = row.get("account_id")
-        if rd is None or aid is None or int(aid) not in scope_ids or rd >= start_date:
-            continue
-        account_rows = rows_by_account_date.get((int(aid), rd), [])
-        if not row_participates_in_ledger_walk(row, account_rows):
-            continue
-        rb = _row_running_balance(row)
-        if rb is not None:
-            running[int(aid)] = rb
-
-    if today >= start_date:
-        from timeline.services.ledger_section_balances import (
-            _after_pending_balance,
-            transactions_ledger_walk_rows,
-        )
-        from transactions.services.reconciliation import ledger_today_balance_before_pending
-
-        for aid in scope_ids:
-            if aid in running:
-                continue
-            acc = accounts_by_id.get(aid)
-            if acc is None:
-                continue
-            anchor = ledger_today_balance_before_pending(acc, today)
-            walk = transactions_ledger_walk_rows(rows, account_id=aid, today=today)
-            running[aid] = _after_pending_balance(
-                walk, today=today, ledger_anchor=anchor
-            )
+    running = _seed_running_from_canonical(
+        rows,
+        scope_ids=scope_ids,
+        start_date=start_date,
+        rows_by_account_date=rows_by_account_date,
+        accounts_by_id=accounts_by_id,
+        forecast_ledger_rows=forecast_ledger_rows,
+    )
 
     d = start_date
     while d <= end_date:
@@ -489,7 +659,7 @@ def build_timeline_calendar(
             canonical_bal: Decimal | None = None
 
             if aid in scope_ids:
-                rb = _row_canonical_balance(row)
+                rb = _row_canonical_balance(row, is_forecast=is_forecast_day)
                 if rb is not None:
                     canonical_bal = rb
                     acct_bal = rb
@@ -598,15 +768,6 @@ def build_timeline_calendar(
                 )
             )
 
-        health_names = _health_alert_names_for_date(date_iso, {}, accounts_by_id)
-        if day_rows:
-            txn_risk = _day_risk_reason(date_iso, events, {}, accounts_by_id)
-            if txn_risk:
-                for part in txn_risk.replace(" projected below buffer", "").split(" and "):
-                    name = part.strip()
-                    if name and name not in health_names:
-                        health_names.append(name)
-
         if marker_txns:
             balance_rows = account_balance_rows_from_transactions(marker_txns)
             heat_balances = account_balances_from_txn_lows(
@@ -615,10 +776,18 @@ def build_timeline_calendar(
         else:
             heat_balances = account_snapshots
 
-        heat = calculate_day_heat(
+        # One presentation status from canonical balances — heat/risk fields derive from it.
+        presentation_status = _calendar_presentation_status(
+            is_forecast_day=is_forecast_day,
+            account_balances=heat_balances,
+        )
+        legacy = _presentation_to_legacy_fields(
+            presentation_status,
             has_activity=bool(day_rows),
             account_balances=heat_balances,
-            health_alert_names=health_names,
+            day=d,
+            buffer=buffer,
+            is_forecast_day=is_forecast_day,
         )
         credit_balance_warnings = scan_credit_day_warnings(
             marker_txns, accounts_by_id
@@ -627,10 +796,10 @@ def build_timeline_calendar(
             marker_txns,
             accounts_by_id,
             date_iso=date_iso,
-            heat_level=heat["heat_level"],
+            heat_level=legacy["heat_level"],
             scope_account_id=account_id,
         )
-        if not lowest_marker["show_lowest_balance_marker"] and heat["heat_level"] in (
+        if not lowest_marker["show_lowest_balance_marker"] and legacy["heat_level"] in (
             "tight",
             "dangerous",
         ):
@@ -638,22 +807,20 @@ def build_timeline_calendar(
                 account_snapshots,
                 accounts_by_id,
                 date_iso=date_iso,
-                heat_level=heat["heat_level"],
+                heat_level=legacy["heat_level"],
                 scope_account_id=account_id,
             )
             if snapshot_marker["show_lowest_balance_marker"]:
                 lowest_marker = snapshot_marker
-        risk_level = heat_to_risk_level(heat["heat_level"])
-        risk_reason = heat.get("heat_reason")
+
+        risk_level = legacy["risk_level"]
+        risk_reason = legacy["risk_reason"]
         if not risk_reason and day_rows:
-            reason_fn = _risk_reason_for_level if is_forecast_day else _historical_risk_reason_for_level
-            risk_reason = reason_fn(
-                risk_level, ending, buffer, d
-            ) or _day_risk_reason(date_iso, events, {}, accounts_by_id)
+            risk_reason = _day_risk_reason(date_iso, events, {}, accounts_by_id)
             if not is_forecast_day and risk_reason and "projected" in risk_reason.lower():
                 risk_reason = risk_reason.replace(" projected", "").replace("Projected ", "")
 
-        has_risk = heat["heat_level"] in ("tight", "dangerous")
+        has_risk = legacy["has_risk"]
 
         # Summary lowest is forward-looking only (exclude historical days in the range).
         if d >= today and (global_lowest is None or lowest < global_lowest):
@@ -684,13 +851,14 @@ def build_timeline_calendar(
                 "ending_balance": str(ending.quantize(Decimal("0.01"))),
                 "_account_balances": account_balance_map,
                 "lowest_balance": str((lowest if lowest is not None else ending).quantize(Decimal("0.01"))),
+                "presentation_status": legacy["presentation_status"],
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
                 "has_risk": has_risk,
-                "heat_level": heat["heat_level"],
-                "heat_label": heat["heat_label"],
-                "heat_reason": heat["heat_reason"],
-                "affected_account_name": heat["affected_account_name"],
+                "heat_level": legacy["heat_level"],
+                "heat_label": legacy["heat_label"],
+                "heat_reason": legacy["heat_reason"] or risk_reason,
+                "affected_account_name": legacy["affected_account_name"],
                 # Account-risk marker fields are atomic — never fill balance from heat
                 # while keeping another account's after_description (caused Chase/Main mixups).
                 "lowest_projected_balance": (
@@ -703,7 +871,7 @@ def build_timeline_calendar(
                     if lowest_marker.get("show_lowest_balance_marker")
                     else None
                 ),
-                "is_negative": heat["is_negative"],
+                "is_negative": legacy["is_negative"],
                 "lowest_projected_balance_account_id": (
                     lowest_marker["lowest_projected_balance_account_id"]
                     if lowest_marker.get("show_lowest_balance_marker")
@@ -798,6 +966,11 @@ def build_timeline_calendar(
         )
         risky_accounts = risky_accounts[:3]
 
+    # Prefer canonical ATS/Home risk date from forecast metrics (same source as Home).
+    # Fall back to first day-loop presentation risk only when no risky_accounts (e.g. account filter).
+    if risky_accounts and risky_accounts[0].get("risk_date"):
+        next_risk_date = risky_accounts[0]["risk_date"]
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -828,6 +1001,7 @@ _CALENDAR_DAY_REQUIRED = {
     "net_total",
     "ending_balance",
     "lowest_balance",
+    "presentation_status",
     "risk_level",
     "has_risk",
     "heat_level",

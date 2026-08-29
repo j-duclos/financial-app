@@ -322,3 +322,159 @@ def test_bind_day_markers_uses_event_balance_after_not_heat_mix():
     # Marker account id 2 does not match event account 1 → clear mismatched card.
     assert days[0]["show_lowest_balance_marker"] is False
     assert days[0]["lowest_projected_balance"] is None
+
+
+@pytest.mark.django_db
+def test_calendar_future_event_balance_after_matches_transactions_ledger(
+    user, household, main_checking
+):
+    """Every future Calendar event balance_after == canonical Transactions balance_after."""
+    today = date.today()
+    main_checking.starting_balance = Decimal("5000.00")
+    main_checking.minimum_buffer = Decimal("0")
+    main_checking.save(update_fields=["starting_balance", "minimum_buffer"])
+
+    _planned(main_checking, today + timedelta(days=2), "Income", Decimal("1500.00"))
+    _planned(main_checking, today + timedelta(days=2), "Rent", Decimal("-3100.00"))
+    _planned(main_checking, today + timedelta(days=5), "Bill", Decimal("-200.00"))
+    cache.clear()
+
+    rows, _ = get_or_build_canonical_forecast_timeline(
+        user,
+        today=today,
+        forecast_days=30,
+        household_id=household.id,
+        caller="test_txn_ledger",
+    )
+    txn_by_id = {
+        int(r["transaction_id"]): str(
+            Decimal(str(r["balance_after"])).quantize(Decimal("0.01"))
+        )
+        for r in rows
+        if r.get("transaction_id") is not None
+        and r.get("account_id") == main_checking.id
+        and r.get("balance_after") is not None
+    }
+    assert len(txn_by_id) >= 3
+
+    calendar = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=30),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=30,
+    )
+    matched = 0
+    for day in calendar["days"]:
+        if not day.get("is_forecast"):
+            continue
+        for ev in day.get("transactions") or []:
+            tid = ev.get("transaction_id")
+            if tid is None:
+                continue
+            tid = int(tid)
+            if tid not in txn_by_id:
+                continue
+            cal_bal = str(Decimal(str(ev.get("balance_after"))).quantize(Decimal("0.01")))
+            assert cal_bal == txn_by_id[tid], (
+                f"event {ev.get('description')} calendar={cal_bal} "
+                f"transactions={txn_by_id[tid]}"
+            )
+            matched += 1
+    assert matched >= 3
+
+
+@pytest.mark.django_db
+def test_calendar_does_not_call_after_pending_seed(user, household, main_checking, monkeypatch):
+    """Day-state seeding must not reconstruct via _after_pending_balance."""
+    today = date.today()
+    _planned(main_checking, today + timedelta(days=3), "Bill", Decimal("-50.00"))
+    cache.clear()
+
+    def boom(*_a, **_k):
+        raise AssertionError("Calendar must not call _after_pending_balance for day state")
+
+    monkeypatch.setattr(
+        "timeline.services.ledger_section_balances._after_pending_balance",
+        boom,
+    )
+    build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=14),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=14,
+    )
+
+@pytest.mark.django_db
+def test_calendar_historical_event_balance_matches_timeline_running_balance(
+    user, household, main_checking
+):
+    """Past Calendar event balance == historical timeline running_balance for same event."""
+    today = date.today()
+    past = today - timedelta(days=5)
+    main_checking.starting_balance = Decimal("5000.00")
+    main_checking.save(update_fields=["starting_balance"])
+
+    posted = Transaction.objects.create(
+        account=main_checking,
+        date=past,
+        payee="Grocery",
+        amount=Decimal("-42.50"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+    )
+    cache.clear()
+
+    from timeline.services.ledger import build_timeline
+
+    historical = build_timeline(
+        user,
+        start_date=past,
+        end_date=past,
+        household_id=household.id,
+        as_of_date=today,
+        caller="test_hist_running",
+    )
+    hist_by_tid = {}
+    for row in historical:
+        tid = row.get("transaction_id")
+        if tid is None or row.get("account_id") != main_checking.id:
+            continue
+        rb = row.get("running_balance")
+        if rb is None:
+            continue
+        hist_by_tid[int(tid)] = str(Decimal(str(rb)).quantize(Decimal("0.01")))
+    assert posted.id in hist_by_tid
+
+    calendar = build_timeline_calendar(
+        user,
+        start_date=past,
+        end_date=today + timedelta(days=7),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=7,
+    )
+    matched = 0
+    for day in calendar["days"]:
+        if day.get("is_forecast"):
+            continue
+        for ev in day.get("transactions") or []:
+            tid = ev.get("transaction_id")
+            if tid is None:
+                continue
+            tid = int(tid)
+            if tid not in hist_by_tid:
+                continue
+            cal_bal = str(Decimal(str(ev.get("balance_after"))).quantize(Decimal("0.01")))
+            assert cal_bal == hist_by_tid[tid], (
+                f"past event {ev.get('description')} calendar={cal_bal} "
+                f"timeline_running_balance={hist_by_tid[tid]}"
+            )
+            matched += 1
+    assert matched >= 1

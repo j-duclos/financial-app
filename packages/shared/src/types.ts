@@ -1831,6 +1831,13 @@ export interface TimelineResponse {
 
 export type TimelineCalendarRiskLevel = "none" | "watch" | "critical";
 
+/**
+ * Canonical day presentation status for Calendar coloring.
+ * Derived only from future canonical account balances vs zero/buffer.
+ * Past days are always "healthy" for presentation (never warning/critical).
+ */
+export type TimelineCalendarPresentationStatus = "healthy" | "warning" | "critical";
+
 export interface TimelineCalendarTransaction {
   id: string | number | null;
   date?: string;
@@ -1887,9 +1894,16 @@ export interface TimelineCalendarDay extends DayLowestBalanceMarker, DayRecovery
   net_total: string;
   ending_balance: string;
   lowest_balance: string;
+  /**
+   * Canonical presentation: healthy | warning | critical.
+   * critical = future account balance < 0; warning = future below buffer; else healthy.
+   * Past days are always healthy. Prefer this over risk_level / heat_level / is_negative.
+   */
+  presentation_status?: TimelineCalendarPresentationStatus;
   risk_level: TimelineCalendarRiskLevel;
   risk_reason: string | null;
   has_risk: boolean;
+  /** Legacy heatmap label; kept in sync with presentation_status (not an independent risk engine). */
   heat_level?: DayHeatLevel;
   heat_label?: string;
   heat_reason?: string | null;

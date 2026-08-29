@@ -1,4 +1,8 @@
-import type { TimelineCalendarDay, TimelineCalendarSummary } from "@budget-app/shared";
+import type {
+  TimelineCalendarDay,
+  TimelineCalendarPresentationStatus,
+  TimelineCalendarSummary,
+} from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
 import { todayStr } from "@/lib/dates";
 import { parseCalendarAmount } from "./calendarUtils";
@@ -25,22 +29,27 @@ export function calendarDateState(dateIso: string, todayIso: string = todayStr()
   return "future";
 }
 
-function isFutureCritical(day: TimelineCalendarDay): boolean {
-  return (
-    day.is_negative === true ||
-    day.risk_level === "critical" ||
-    day.heat_level === "dangerous"
-  );
-}
-
-function isFutureWarning(day: TimelineCalendarDay): boolean {
-  if (isFutureCritical(day)) return false;
-  return (
+/**
+ * Single risk path for today/future cells.
+ * Prefer backend presentation_status; fall back to legacy fields only when absent.
+ * heat_level is not an independent override when presentation_status is present.
+ */
+function canonicalBalanceStatus(day: TimelineCalendarDay): TimelineCalendarPresentationStatus {
+  if (day.presentation_status === "critical" || day.presentation_status === "warning" || day.presentation_status === "healthy") {
+    return day.presentation_status;
+  }
+  // Legacy payloads: collapse duplicate flags into one status.
+  if (day.is_negative === true || day.risk_level === "critical") {
+    return "critical";
+  }
+  if (
     day.has_risk === true ||
     day.risk_level === "watch" ||
-    day.heat_level === "tight" ||
     parseCalendarAmount(day.below_buffer_amount) > 0
-  );
+  ) {
+    return "warning";
+  }
+  return "healthy";
 }
 
 /** Derive presentation status without new financial calculations. */
@@ -50,16 +59,19 @@ export function calendarDayPresentationStatus(
   todayIso: string = todayStr()
 ): CalendarDayPresentationStatus {
   const state = calendarDateState(dateIso, todayIso);
+  // Past dates must never be warning/critical for presentation.
   if (state === "past") return "historical";
 
+  const balanceStatus = canonicalBalanceStatus(day);
+
   if (state === "today") {
-    if (isFutureCritical(day)) return "today_critical";
-    if (isFutureWarning(day)) return "today_warning";
+    if (balanceStatus === "critical") return "today_critical";
+    if (balanceStatus === "warning") return "today_warning";
     return "today_healthy";
   }
 
-  if (isFutureCritical(day)) return "future_critical";
-  if (isFutureWarning(day)) return "future_warning";
+  if (balanceStatus === "critical") return "future_critical";
+  if (balanceStatus === "warning") return "future_warning";
   return "future_healthy";
 }
 
@@ -154,7 +166,8 @@ export function calendarDayShowsAccountRisk(
 ): boolean {
   // Red account-risk cards are for actionable FUTURE shortfalls only — not today/past.
   if (calendarDateState(dateIso, todayIso) !== "future") return false;
-  if (!(isFutureCritical(day) || isFutureWarning(day))) return false;
+  const status = canonicalBalanceStatus(day);
+  if (status !== "critical" && status !== "warning") return false;
 
   // Only the actual first shortfall day — never a quiet day that inherited a carried marker.
   const shortfallDate = day.lowest_projected_balance_date ?? null;
@@ -162,9 +175,9 @@ export function calendarDayShowsAccountRisk(
 
   // Require a real negative (or below-buffer) projected balance for a cash account.
   const balance = parseCalendarAmount(
-    day.lowest_projected_balance ?? (day.is_negative ? day.lowest_balance : null)
+    day.lowest_projected_balance ?? (status === "critical" ? day.lowest_balance : null)
   );
-  if (day.is_negative || day.risk_level === "critical" || day.heat_level === "dangerous") {
+  if (status === "critical") {
     return balance < 0;
   }
   return balance >= 0 && parseCalendarAmount(day.below_buffer_amount) > 0;

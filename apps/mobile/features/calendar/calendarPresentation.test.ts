@@ -19,7 +19,7 @@ import {
   getCalendarEventDestination,
   prefersDirectEditFromCalendar,
 } from "./calendarEventNavigation";
-import { daySeverity } from "./calendarUtils";
+import { daySeverity, selectedDateAfterMonthChange } from "./calendarUtils";
 
 const TODAY = "2026-08-28";
 const YESTERDAY = "2026-08-27";
@@ -34,6 +34,7 @@ function sampleDay(overrides: Partial<TimelineCalendarDay> = {}): TimelineCalend
     net_total: "0",
     ending_balance: "1000",
     lowest_balance: "1000",
+    presentation_status: "healthy",
     risk_level: "none",
     risk_reason: null,
     has_risk: false,
@@ -42,6 +43,36 @@ function sampleDay(overrides: Partial<TimelineCalendarDay> = {}): TimelineCalend
     ...overrides,
   };
 }
+
+describe("month selection regression", () => {
+  it("clears selectedDate when navigating from August to September", () => {
+    // selectedDate = 2026-08-28; user navigates to September
+    expect(selectedDateAfterMonthChange("2026-08-28", 2026, 8)).toBeNull();
+  });
+
+  it("clears selectedDate even when the date belongs to the destination month", () => {
+    // Preferred: month change always clears; goToday sets today explicitly.
+    expect(selectedDateAfterMonthChange("2026-09-15", 2026, 8)).toBeNull();
+  });
+
+  it("CalendarScreen wires month nav through selectedDateAfterMonthChange", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "CalendarScreen.tsx"),
+      "utf8"
+    );
+    expect(source).toMatch(/selectedDateAfterMonthChange/);
+    expect(source).toMatch(/goToMonth/);
+  });
+
+  it("CalendarDayCell uses expense > 0 for positive expense_total", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "CalendarDayCell.tsx"),
+      "utf8"
+    );
+    expect(source).toMatch(/expense > 0/);
+    expect(source).not.toMatch(/expense < 0/);
+  });
+});
 
 describe("resolveCalendarDayCellChrome", () => {
   const TODAY = "2026-08-28";
@@ -155,13 +186,14 @@ describe("calendarDayPresentationStatus", () => {
     const day = sampleDay({
       date: YESTERDAY,
       is_forecast: false,
+      presentation_status: "healthy",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
       heat_level: "dangerous",
       lowest_balance: "-2535.96",
       ending_balance: "-2535.96",
-      expense_total: "-219.14",
+      expense_total: "219.14",
       net_total: "-219.14",
     });
     expect(calendarDayPresentationStatus(day, YESTERDAY, TODAY)).toBe("historical");
@@ -172,6 +204,7 @@ describe("calendarDayPresentationStatus", () => {
     const day = sampleDay({
       date: TOMORROW,
       is_forecast: true,
+      presentation_status: "warning",
       has_risk: true,
       risk_level: "watch",
       heat_level: "tight",
@@ -186,6 +219,7 @@ describe("calendarDayPresentationStatus", () => {
     const day = sampleDay({
       date: "2026-09-02",
       is_forecast: true,
+      presentation_status: "critical",
       is_negative: true,
       risk_level: "critical",
       heat_level: "dangerous",
@@ -194,6 +228,20 @@ describe("calendarDayPresentationStatus", () => {
     });
     expect(calendarDayPresentationStatus(day, "2026-09-02", TODAY)).toBe("future_critical");
     expect(calendarGridTone("future_critical")).toBe("critical");
+  });
+
+  it("presentation_status wins over stale heat_level", () => {
+    const day = sampleDay({
+      date: TOMORROW,
+      is_forecast: true,
+      presentation_status: "healthy",
+      // Stale competing flags must not turn the cell red/yellow.
+      heat_level: "dangerous",
+      is_negative: true,
+      risk_level: "critical",
+      has_risk: true,
+    });
+    expect(calendarDayPresentationStatus(day, TOMORROW, TODAY)).toBe("future_healthy");
   });
 
   it("no activity future day is healthy/neutral grid tone", () => {
@@ -206,9 +254,10 @@ describe("calendarDayPresentationStatus", () => {
     const day = sampleDay({
       date: TOMORROW,
       net_total: "-1100",
-      expense_total: "-1100",
+      expense_total: "1100",
       ending_balance: "3441",
       lowest_balance: "3441",
+      presentation_status: "healthy",
       is_negative: false,
       has_risk: false,
       risk_level: "none",
@@ -278,6 +327,7 @@ describe("household vs account risk", () => {
     const day = sampleDay({
       date: TODAY,
       is_forecast: true,
+      presentation_status: "critical",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
@@ -295,6 +345,7 @@ describe("household vs account risk", () => {
     const day = sampleDay({
       date: "2026-09-04",
       is_forecast: true,
+      presentation_status: "critical",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
@@ -312,6 +363,7 @@ describe("household vs account risk", () => {
       date: TOMORROW,
       balance_scope: "household_cash",
       ending_balance: "3441",
+      presentation_status: "critical",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
@@ -349,6 +401,7 @@ describe("household vs account risk", () => {
     const day = sampleDay({
       date: TOMORROW,
       is_forecast: true,
+      presentation_status: "critical",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
@@ -385,6 +438,7 @@ describe("household vs account risk", () => {
     const day = sampleDay({
       date: TOMORROW,
       is_forecast: true,
+      presentation_status: "critical",
       is_negative: true,
       has_risk: true,
       risk_level: "critical",
@@ -582,6 +636,7 @@ describe("daySeverity legacy compat", () => {
       daySeverity(
         sampleDay({
           date: TOMORROW,
+          presentation_status: "critical",
           is_negative: true,
           lowest_balance: "-50",
         }),

@@ -9,6 +9,7 @@ import {
   isDateWithinForecast,
   monthBounds,
   parseCalendarAmount,
+  selectedDateAfterMonthChange,
 } from "@/features/calendar/calendarUtils";
 import { calendarQueryKeys } from "@/features/calendar/queryKeys";
 
@@ -50,6 +51,32 @@ describe("calendarUtils", () => {
     ).toBe(true);
   });
 
+  it("dayHasActivity treats positive expense_total as activity", () => {
+    expect(
+      dayHasActivity({
+        date: "2026-08-28",
+        income_total: "2000",
+        expense_total: "3100",
+        transfer_total: "0",
+        net_total: "-1100",
+        ending_balance: "1000",
+        lowest_balance: "1000",
+        risk_level: "none",
+        risk_reason: null,
+        has_risk: false,
+        transactions: [],
+      })
+    ).toBe(true);
+  });
+
+  it("selectedDateAfterMonthChange clears Aug 28 when entering September", () => {
+    expect(selectedDateAfterMonthChange("2026-08-28", 2026, 8)).toBeNull();
+  });
+
+  it("selectedDateAfterMonthChange always clears on month change", () => {
+    expect(selectedDateAfterMonthChange("2026-09-15", 2026, 8)).toBeNull();
+  });
+
   it("daySeverity flags future negative balance as critical", () => {
     expect(
       daySeverity(
@@ -61,6 +88,7 @@ describe("calendarUtils", () => {
           net_total: "-50",
           ending_balance: "-50",
           lowest_balance: "-50",
+          presentation_status: "critical",
           risk_level: "none",
           risk_reason: null,
           has_risk: false,
@@ -78,7 +106,7 @@ describe("calendarUtils", () => {
         {
           date: "2026-08-27",
           income_total: "0",
-          expense_total: "-219.14",
+          expense_total: "219.14",
           transfer_total: "0",
           net_total: "-219.14",
           ending_balance: "-2535.96",

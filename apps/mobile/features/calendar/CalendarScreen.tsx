@@ -38,6 +38,7 @@ import {
   dayMap,
   isDateBeforeLookback,
   isDateWithinForecast,
+  selectedDateAfterMonthChange,
   shiftMonth,
 } from "./calendarUtils";
 import { DEFAULT_CALENDAR_EVENT_FILTER, type CalendarEventFilter } from "./types";
@@ -100,6 +101,7 @@ export function CalendarScreen() {
   const goToMonth = useCallback((year: number, month: number) => {
     setVisibleYear(year);
     setVisibleMonth(month);
+    setSelectedDate((prev) => selectedDateAfterMonthChange(prev, year, month));
   }, []);
 
   const goPrevMonth = useCallback(() => {

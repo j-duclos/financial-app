@@ -166,6 +166,8 @@ def test_transfer_excluded_from_net(
     assert xfer_days, "expected at least one transfer day in horizon"
     day = xfer_days[0]
     assert Decimal(day["transfer_total"]) == Decimal("300")
+    assert Decimal(day["income_total"]) == Decimal("0")
+    assert Decimal(day["expense_total"]) == Decimal("0")
     assert Decimal(day["net_total"]) == Decimal("0")
     assert any(t["is_transfer"] for t in day["transactions"])
     assert any(t.get("is_internal_transfer") for t in day["transactions"])
@@ -173,6 +175,133 @@ def test_transfer_excluded_from_net(
     amounts = [Decimal(t["amount"]) for t in day["transactions"] if t.get("amount") is not None]
     assert any(a < 0 for a in amounts)
     assert any(a > 0 for a in amounts)
+
+
+@pytest.mark.django_db
+def test_daily_aggregation_income_expense_magnitudes(
+    user, household, checking, income_category, expense_category
+):
+    """Aug 28 style: Gen's Rent +1500, Rent -3100, Lou +500 → income 2000, expense 3100."""
+    from transactions.models import Transaction
+
+    today = AS_OF
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Gen's Rent",
+        amount=Decimal("1500.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+        category=income_category,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Rent",
+        amount=Decimal("-3100.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+        category=expense_category,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Lou",
+        amount=Decimal("500.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+        category=income_category,
+    )
+    result = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=7),
+        account_id=checking.id,
+        as_of_date=today,
+    )
+    day = next(d for d in result["days"] if d["date"] == today.isoformat())
+    assert day["income_total"] == "2000.00"
+    assert day["expense_total"] == "3100.00"
+    assert day["transfer_total"] == "0.00"
+    assert day["presentation_status"] in ("healthy", "warning", "critical")
+    descs = {t.get("description") for t in day["transactions"]}
+    assert "Gen's Rent" in descs
+    assert "Rent" in descs
+    assert "Lou" in descs
+
+
+@pytest.mark.django_db
+def test_internal_transfer_497_does_not_inflate_income_or_expense(
+    user, household, checking, savings, transfer_category
+):
+    """Main → Savings 497 contributes to transfer_total only."""
+    from transactions.models import Transaction
+    from transactions.services.posting import create_transfer
+
+    today = AS_OF
+    create_transfer(
+        user,
+        from_account_id=checking.id,
+        to_account_id=savings.id,
+        amount=Decimal("497.00"),
+        transfer_date=today,
+        payee="Main to Savings",
+        from_category_id=transfer_category.id,
+    )
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Lou",
+        amount=Decimal("500.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    result = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=7),
+        as_of_date=today,
+    )
+    day = next(d for d in result["days"] if d["date"] == today.isoformat())
+    assert Decimal(day["income_total"]) == Decimal("500.00")
+    assert Decimal(day["expense_total"]) == Decimal("0")
+    assert Decimal(day["transfer_total"]) == Decimal("497.00")
+
+
+@pytest.mark.django_db
+def test_past_days_never_warning_or_critical_presentation(
+    user, household, checking, expense_category
+):
+    """Past dates must never get presentation_status warning/critical."""
+    today = date(2026, 5, 28)
+    start = date(2026, 5, 1)
+    RecurringRule.objects.create(
+        household=household,
+        name="Past overdraft",
+        account=checking,
+        category=expense_category,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("8000"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=10,
+        start_date=start,
+        active=True,
+    )
+    result = build_timeline_calendar(
+        user,
+        start_date=start,
+        end_date=today + timedelta(days=7),
+        account_id=checking.id,
+        as_of_date=today,
+    )
+    for day in result["days"]:
+        if day["date"] < today.isoformat():
+            assert day["presentation_status"] == "healthy"
+            assert day["risk_level"] == "none"
+            assert day["has_risk"] is False
+
 
 
 @pytest.mark.django_db

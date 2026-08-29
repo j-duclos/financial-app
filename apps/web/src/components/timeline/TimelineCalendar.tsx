@@ -261,6 +261,7 @@ const MonthCalendarSection = memo(function MonthCalendarSection({
         net_total: "0",
         ending_balance: "0",
         lowest_balance: "0",
+        presentation_status: "healthy" as const,
         risk_level: "none" as const,
         risk_reason: null,
         has_risk: false,
