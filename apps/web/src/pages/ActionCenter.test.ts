@@ -129,8 +129,31 @@ describe("Web recommendation navigation", () => {
 });
 
 describe("Web Resolve Risk modal", () => {
-  it("routes reduce_utilization to View account", () => {
+  it("routes reduce_utilization to View account without legacy CTA duplicate", () => {
     expect(resolveRiskModalSource).toMatch(/resolveRiskViewAccountUrl/);
     expect(resolveRiskModalSource).toMatch(/View account/);
+    expect(resolveRiskModalSource).toMatch(
+      /!transferPreset && !viewAccountUrl && !plannerUrl && action\.primary_action_url/
+    );
+  });
+
+  it("exposes Payment Planner for debt_payoff without requiring legacy URL CTA", () => {
+    expect(resolveRiskModalSource).toMatch(/resolveRiskPlannerUrl/);
+    expect(resolveRiskModalSource).toMatch(/Payment Planner/);
+  });
+});
+
+describe("production hard-coded utilization cleanup", () => {
+  it("does not keep allegedly-wrong utilization targets in shared production helpers", () => {
+    const displaySource = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../../../../packages/shared/src/recommendationDisplay.ts"
+      ),
+      "utf8"
+    );
+    expect(displaySource).not.toMatch(/hardcodedWrong/);
+    expect(displaySource).not.toMatch(/recommendationUtilizationUsesConfiguredTarget/);
+    expect(displaySource).not.toMatch(/\["30%",\s*"70%",\s*"75%"\]/);
   });
 });

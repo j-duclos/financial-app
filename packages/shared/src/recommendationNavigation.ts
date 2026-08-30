@@ -1,5 +1,8 @@
 import type { DashboardRecommendation } from "./types";
-import { recommendationAccountId, recommendationOpensTransfer } from "./recommendationDisplay";
+import {
+  recommendationAccountId,
+  recommendationPrimaryOpensTransfer,
+} from "./recommendationDisplay";
 
 export type RecommendationDestinationKind =
   | "view_account"
@@ -43,6 +46,7 @@ export function recommendationIsCashForecastRisk(rec: DashboardRecommendation): 
 
 /**
  * Semantic primary destination — explicit `type` / `primary_action_type` win over legacy URLs.
+ * Secondary move_money must not make the whole-card primary a transfer.
  */
 export function recommendationPrimaryDestinationKind(
   rec: DashboardRecommendation
@@ -56,10 +60,12 @@ export function recommendationPrimaryDestinationKind(
 
   if (primaryType === "view_account" && accountId != null) return "view_account";
   if (primaryType === "open_ledger" && accountId != null) return "open_ledger";
-  if (primaryType === "move_money" || recommendationOpensTransfer(rec)) return "transfer";
+  if (primaryType === "move_money" || recommendationPrimaryOpensTransfer(rec)) {
+    return "transfer";
+  }
 
   if (recommendationIsCashForecastRisk(rec) && accountId != null) {
-    return rec.primary_action_type === "move_money" ? "transfer" : "open_ledger";
+    return "open_ledger";
   }
 
   const primaryUrl = (rec.primary_action_url ?? "").trim();
@@ -70,7 +76,7 @@ export function recommendationPrimaryDestinationKind(
   if (primaryUrl.startsWith("/goals")) return "navigate";
   if (primaryUrl.startsWith("/recurring")) return "navigate";
 
-  // Legacy URL fallback — type already decided utilization vs debt above.
+  // Legacy URL fallback — utilization vs debt already decided above.
   if (primaryUrl.includes("/credit-cards")) {
     return recommendationIsDebtPayoff(rec) ? "payment_planner" : "view_account";
   }
@@ -150,7 +156,7 @@ export function recommendationWebPrimaryLabel(rec: DashboardRecommendation): str
   if (kind === "view_account") return "View account";
   if (kind === "payment_planner") return "Payment Planner";
   if (kind === "open_ledger") return "Open ledger";
-  if (recommendationOpensTransfer(rec)) {
+  if (kind === "transfer" || recommendationPrimaryOpensTransfer(rec)) {
     const raw = rec.recommended_amount ?? rec.impact_value;
     if (raw) return `Transfer $${String(raw).replace(/^\$/, "")}`;
     return "Transfer";

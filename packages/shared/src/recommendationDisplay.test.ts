@@ -7,7 +7,6 @@ import {
 import {
   compareRecommendationsByPriority,
   recommendationTransferPreset,
-  recommendationUtilizationUsesConfiguredTarget,
   recommendationsForActionCenter,
 } from "./recommendationDisplay";
 import { recommendationIsCreditPayment, recommendationShowsResolveRisk } from "./resolveRiskDisplay";
@@ -32,31 +31,19 @@ function rec(
 }
 
 describe("recommendation utilization target", () => {
-  it("uses user-configured 10% target in recommendation copy", () => {
+  it("uses user-configured fixture target in recommendation copy", () => {
+    const fixtureTarget = 10;
     const utilization = rec({
       id: "utilization-3-10",
       title: "Care Credit",
       type: "reduce_utilization",
       severity: "critical",
       why: "Utilization is 22%",
-      recommended_action: "Pay $590.96 to reach your 10% target.",
+      recommended_action: `Pay $590.96 to reach your ${fixtureTarget}% target.`,
       account_id: 3,
       impact_type: "credit_utilization",
     });
-    expect(recommendationUtilizationUsesConfiguredTarget(utilization, 10)).toBe(true);
-    expect(utilization.recommended_action).toContain("10%");
-    expect(utilization.recommended_action).not.toContain("30%");
-    expect(utilization.recommended_action).not.toContain("70%");
-    expect(utilization.recommended_action).not.toContain("75%");
-  });
-
-  it("flags hard-coded 30% when user target is 10%", () => {
-    const wrong = rec({
-      id: "utilization-3-10",
-      title: "Care Credit",
-      recommended_action: "Pay $500 to reach 30% utilization target.",
-    });
-    expect(recommendationUtilizationUsesConfiguredTarget(wrong, 10)).toBe(false);
+    expect(utilization.recommended_action).toContain(`${fixtureTarget}%`);
   });
 });
 

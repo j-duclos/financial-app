@@ -3,7 +3,8 @@ import type { DashboardRecommendation } from "@budget-app/shared";
 import {
   OPEN_PAYOFF_PLANNER_LABEL,
   recommendationDisplayAccountName,
-  recommendationOpensTransfer,
+  recommendationHasTransferAction,
+  recommendationPrimaryDestinationKind,
   recommendationPayoffPlannerUrl,
   recommendationPrimaryCtaLabel,
   recommendationSecondaryCtaLabel,
@@ -83,7 +84,10 @@ export function RecommendationCard({
   const { condition, action } = recommendationCardCopy(rec);
   const plannerUrl = recommendationPayoffPlannerUrl(rec);
   const primaryTarget = recommendationWebPrimaryTarget(rec);
-  const opensTransferModal = recommendationOpensTransfer(rec);
+  const primaryKind = recommendationPrimaryDestinationKind(rec);
+  const opensTransferModal = primaryKind === "transfer";
+  const hasSecondaryTransfer =
+    recommendationHasTransferAction(rec) && !opensTransferModal && Boolean(onExecuteTransfer);
   const inactive = displayState !== "active";
   const showResolveRisk =
     recommendationShowsResolveRisk(rec) && onResolveRisk && rec.account_id != null && !opensTransferModal;
@@ -165,6 +169,15 @@ export function RecommendationCard({
                     {secondaryLabel}
                   </Link>
                 )}
+              {hasSecondaryTransfer ? (
+                <button
+                  type="button"
+                  onClick={() => onExecuteTransfer?.(rec)}
+                  className={secondaryButtonClass}
+                >
+                  {secondaryLabel ?? "Move money"}
+                </button>
+              ) : null}
               {plannerUrl && (
                 <Link to={plannerUrl} className={secondaryButtonClass}>
                   {OPEN_PAYOFF_PLANNER_LABEL}

@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import type { DashboardRecommendation } from "@budget-app/shared";
 import {
   recommendationCardCopy,
-  recommendationUtilizationUsesConfiguredTarget,
 } from "@budget-app/shared";
 import {
   accountDetailPath,
@@ -58,7 +57,7 @@ function cashShortfallRec(): DashboardRecommendation {
     impact_value: "1406.40",
     primary_action_label: "Open ledger",
     primary_action_url: "/transactions?account=1",
-    primary_action_type: "navigate",
+    primary_action_type: "open_ledger",
     secondary_action_label: "Move money",
     secondary_action_url: "/accounts?account=1",
     secondary_action_type: "move_money",
@@ -67,6 +66,7 @@ function cashShortfallRec(): DashboardRecommendation {
     related_account_id: 2,
     recommended_amount: "1406.40",
     recommended_date: "2026-08-27",
+    transaction_id: 42,
   };
 }
 
@@ -91,10 +91,10 @@ describe("Action Center route", () => {
 });
 
 describe("Action Center presentation", () => {
-  it("credit utilization uses configured 10% target", () => {
+  it("credit utilization wording uses the configured fixture target", () => {
+    const fixtureTarget = 10;
     const rec = utilizationRec();
-    expect(recommendationUtilizationUsesConfiguredTarget(rec, 10)).toBe(true);
-    expect(rec.recommended_action).toContain("10% target");
+    expect(rec.recommended_action).toContain(`${fixtureTarget}% target`);
   });
 
   it("shows issue and action lines for cash shortfall", () => {
@@ -137,8 +137,33 @@ describe("mobile recommendation card UX", () => {
 });
 
 describe("primary destination mapping", () => {
-  it("cash shortfall primary opens transfer when backend supplies move_money", () => {
-    const dest = getRecommendationDestination(cashShortfallRec());
+  it("cash shortfall primary opens ledger when secondary is move_money", () => {
+    const rec = cashShortfallRec();
+    const dest = getRecommendationDestination(rec);
+    expect(dest?.kind).toBe("open_ledger");
+    expect(dest?.accountId).toBe(1);
+    expect(openLedgerNavigation(1, rec)).toMatchObject({
+      pathname: "/(app)/(tabs)/transactions",
+      params: {
+        account: "1",
+        focus: "forecast-risk",
+        focusDate: "2026-08-27",
+        focusTransactionId: "42",
+      },
+    });
+    const overflow = getRecommendationSecondaryActions(rec, { includeSnoozeDismiss: true });
+    expect(overflow.some((a) => a.kind === "transfer")).toBe(true);
+  });
+
+  it("explicit PRIMARY move_money opens transfer", () => {
+    const dest = getRecommendationDestination({
+      ...cashShortfallRec(),
+      primary_action_type: "move_money",
+      primary_action_label: "Move money",
+      secondary_action_type: "navigate",
+      secondary_action_label: "Open ledger",
+      secondary_action_url: "/transactions?account=1",
+    });
     expect(dest?.kind).toBe("transfer");
     expect(dest?.accountId).toBe(1);
   });
@@ -180,7 +205,7 @@ describe("primary destination mapping", () => {
     expect(dest?.href).toBe("/spending-limits");
   });
 
-  it("forecast secondary stays available in overflow for cash shortfall", () => {
+  it("forecast secondary stays available in overflow when primary is transfer", () => {
     const forecastRec: DashboardRecommendation = {
       ...cashShortfallRec(),
       primary_action_type: "move_money",
@@ -231,15 +256,15 @@ describe("overflow secondary actions", () => {
     expect(dest?.accountId).toBe(5);
   });
 
-  it("keeps Transfer for cash shortfall overflow when primary is transfer", () => {
+  it("overflow keeps Transfer when cash shortfall primary is open_ledger", () => {
+    const primary = getRecommendationDestination(cashShortfallRec());
+    expect(primary?.kind).toBe("open_ledger");
     const secondary = getRecommendationSecondaryActions(cashShortfallRec(), {
       includeSnoozeDismiss: true,
     });
     const transfer = secondary.find((a) => a.kind === "transfer");
-    expect(transfer).toBeFalsy();
-    const primary = getRecommendationDestination(cashShortfallRec());
-    expect(primary?.kind).toBe("transfer");
-    expect(transferPresetPath(primary!.transferPreset!)).toEqual({
+    expect(transfer).toBeTruthy();
+    expect(transferPresetPath(transfer!.transferPreset!)).toEqual({
       pathname: "/transaction/new",
       params: {
         mode: "transfer",
@@ -269,12 +294,7 @@ describe("Action Center navigation helpers", () => {
   });
 
   it("cash risk open ledger preserves focus context", () => {
-    const rec: DashboardRecommendation = {
-      ...cashShortfallRec(),
-      recommended_date: "2026-08-27",
-      transaction_id: 42,
-    };
-    expect(openLedgerNavigation(1, rec)).toEqual({
+    expect(openLedgerNavigation(1, cashShortfallRec())).toEqual({
       pathname: "/(app)/(tabs)/transactions",
       params: {
         account: "1",
@@ -284,6 +304,21 @@ describe("Action Center navigation helpers", () => {
         focusRuleId: "__none__",
         focusEventId: "__none__",
         focusDescription: "__none__",
+      },
+    });
+  });
+
+  it("cash risk with date only still focuses the date", () => {
+    const rec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      transaction_id: undefined,
+    };
+    expect(openLedgerNavigation(1, rec)).toMatchObject({
+      params: {
+        account: "1",
+        focus: "forecast-risk",
+        focusDate: "2026-08-27",
+        focusTransactionId: "__none__",
       },
     });
   });

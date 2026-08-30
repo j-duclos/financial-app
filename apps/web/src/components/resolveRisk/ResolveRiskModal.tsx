@@ -105,7 +105,7 @@ function ActionCard({
             Payment Planner
           </Link>
         )}
-        {!transferPreset && action.primary_action_url && (
+        {!transferPreset && !viewAccountUrl && !plannerUrl && action.primary_action_url && (
           <Link
             to={action.primary_action_url}
             className="inline-flex rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"

@@ -9,6 +9,10 @@ import {
   recommendationWebPrimaryLabel,
   recommendationWebPrimaryTarget,
 } from "./recommendationNavigation";
+import {
+  recommendationHasTransferAction,
+  recommendationPrimaryOpensTransfer,
+} from "./recommendationDisplay";
 
 function utilizationRec(overrides: Partial<DashboardRecommendation> = {}): DashboardRecommendation {
   return {
@@ -45,7 +49,7 @@ function debtPayoffRec(): DashboardRecommendation {
   };
 }
 
-function cashRiskRec(): DashboardRecommendation {
+function cashRiskRec(overrides: Partial<DashboardRecommendation> = {}): DashboardRecommendation {
   return {
     id: "attention-1",
     severity: "critical",
@@ -57,14 +61,17 @@ function cashRiskRec(): DashboardRecommendation {
     primary_action_label: "Open ledger",
     primary_action_url: "/transactions?account=1",
     primary_action_type: "open_ledger",
-    secondary_action_label: null,
-    secondary_action_url: null,
-    secondary_action_type: null,
+    secondary_action_label: "Move money",
+    secondary_action_url: "/accounts?account=1",
+    secondary_action_type: "move_money",
     type: "move_money",
     account_id: 1,
     account_name: "Main Checking",
+    related_account_id: 2,
+    recommended_amount: "1406.40",
     recommended_date: "2026-08-27",
     transaction_id: 99,
+    ...overrides,
   };
 }
 
@@ -92,10 +99,23 @@ describe("recommendationPrimaryDestinationKind", () => {
     expect(recommendationPrimaryDestinationKind(rec)).toBe("open_ledger");
   });
 
-  it("cash forecast risk opens ledger, not generic accounts", () => {
+  it("cash forecast risk with secondary move_money still opens ledger", () => {
     const rec = cashRiskRec();
     expect(recommendationIsCashForecastRisk(rec)).toBe(true);
+    expect(recommendationHasTransferAction(rec)).toBe(true);
+    expect(recommendationPrimaryOpensTransfer(rec)).toBe(false);
     expect(recommendationPrimaryDestinationKind(rec)).toBe("open_ledger");
+  });
+
+  it("explicit PRIMARY move_money opens transfer", () => {
+    const rec = cashRiskRec({
+      primary_action_type: "move_money",
+      primary_action_label: "Move money",
+      secondary_action_type: "open_ledger",
+      secondary_action_label: "Open ledger",
+    });
+    expect(recommendationPrimaryOpensTransfer(rec)).toBe(true);
+    expect(recommendationPrimaryDestinationKind(rec)).toBe("transfer");
   });
 });
 
@@ -127,6 +147,16 @@ describe("recommendationWebPrimaryTarget", () => {
       accountId: 1,
       focusDate: "2026-08-27",
       focusTransactionId: 99,
+    });
+  });
+
+  it("cash risk with date only still includes focusDate", () => {
+    const target = recommendationWebPrimaryTarget(
+      cashRiskRec({ transaction_id: null })
+    );
+    expect(target.state).toEqual({
+      accountId: 1,
+      prefillDate: "2026-08-27",
     });
   });
 });

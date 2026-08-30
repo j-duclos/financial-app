@@ -150,8 +150,25 @@ export function recommendationsEmptyMessage(): string {
   return "Nothing needs attention right now.\n\nYour current forecast and account targets are within the configured limits.";
 }
 
+/** True when the PRIMARY action is explicitly move_money (not secondary). */
+export function recommendationPrimaryOpensTransfer(rec: DashboardRecommendation): boolean {
+  return (rec.primary_action_type ?? "").trim().toLowerCase() === "move_money";
+}
+
+/** True when any action (primary or secondary) is move_money. */
+export function recommendationHasTransferAction(rec: DashboardRecommendation): boolean {
+  return (
+    recommendationPrimaryOpensTransfer(rec) ||
+    (rec.secondary_action_type ?? "").trim().toLowerCase() === "move_money"
+  );
+}
+
+/**
+ * @deprecated Prefer recommendationPrimaryOpensTransfer or recommendationHasTransferAction.
+ * Kept for callers that mean "has a transfer action somewhere."
+ */
 export function recommendationOpensTransfer(rec: DashboardRecommendation): boolean {
-  return rec.secondary_action_type === "move_money" || rec.primary_action_type === "move_money";
+  return recommendationHasTransferAction(rec);
 }
 
 export function recommendationTransferAccounts(rec: DashboardRecommendation): {
@@ -232,7 +249,7 @@ export function isSurvivalModeRecommendation(rec: DashboardRecommendation): bool
 }
 
 export function recommendationPrimaryCtaLabel(rec: DashboardRecommendation): string {
-  if (recommendationOpensTransfer(rec)) {
+  if (recommendationPrimaryOpensTransfer(rec)) {
     const raw = rec.recommended_amount ?? rec.impact_value;
     if (raw) {
       const amount = String(raw).replace(/^\$/, "");
@@ -298,19 +315,6 @@ export function recommendationFixShortfallLabel(rec: DashboardRecommendation): s
     return FIX_SHORTFALL_LABEL;
   }
   return recommendationResolveRiskLabel();
-}
-
-export function recommendationUtilizationUsesConfiguredTarget(
-  rec: DashboardRecommendation,
-  userTargetPercent: number
-): boolean {
-  const blob = `${rec.why} ${rec.recommended_action ?? ""} ${rec.projected_improvement ?? ""}`;
-  const targetStr = `${userTargetPercent}%`;
-  if (!blob.includes(targetStr) && !blob.includes(`${userTargetPercent.toFixed(0)}%`)) {
-    return false;
-  }
-  const hardcodedWrong = ["30%", "70%", "75%"].filter((t) => t !== targetStr);
-  return !hardcodedWrong.some((t) => blob.includes(t));
 }
 
 export function formatRecommendationAmountLine(rec: DashboardRecommendation): string | null {
