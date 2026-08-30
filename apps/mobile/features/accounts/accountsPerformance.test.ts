@@ -12,6 +12,7 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const accountsList = readFileSync(join(dir, "useAccountsList.ts"), "utf8");
 const accountsScreen = readFileSync(join(dir, "AccountsScreen.tsx"), "utf8");
 const detailSource = readFileSync(join(dir, "AccountDetailScreen.tsx"), "utf8");
+const detailQueriesSource = readFileSync(join(dir, "accountDetailQueries.ts"), "utf8");
 
 describe("Accounts request orchestration", () => {
   it("gates enrichment behind main list success unless enrich cache is already fresh", () => {
@@ -35,10 +36,30 @@ describe("Accounts request orchestration", () => {
 
   it("reuses enriched list cache on Account Detail and merges single-account forecast into it", () => {
     expect(detailSource).toMatch(/accountQueryKeys\.enrichedList\(forecastDays\)/);
-    expect(detailSource).toMatch(/mergeAccountIntoEnrichedListCache/);
-    expect(detailSource).toMatch(/forecast_summary: true/);
+    expect(detailSource).toMatch(/fetchEnrichedAccountDetail/);
+    expect(detailQueriesSource).toMatch(/forecast_summary: true/);
     expect(detailSource).not.toMatch(/relationships:\s*true/);
     expect(detailSource).not.toMatch(/\["account", accountId, "detail"/);
+  });
+});
+
+describe("Account Detail pull refresh", () => {
+  it("uses consolidated refresh helper and refreshes enrichment on explicit pull", () => {
+    expect(detailSource).toMatch(/refreshAccountDetailResources/);
+    expect(detailSource).toMatch(/forecastReady: ready/);
+    expect(detailSource).not.toMatch(/needsForecastFetch \? forecastQuery\.refetch/);
+    expect(detailSource).not.toMatch(/balanceQuery\.refetch\(\),\s*\n\s*needsForecastFetch/);
+  });
+
+  it("initializes balance query with React Query initialData rather than post-render seeding", () => {
+    expect(detailSource).toMatch(/resolveBalanceDetailInitialData/);
+    expect(detailSource).toMatch(/initialData: balanceInitial\.data/);
+    expect(detailSource).toMatch(/initialDataUpdatedAt: balanceInitial\.updatedAt/);
+    expect(detailSource).not.toMatch(/seedBalanceDetailFromListCache/);
+  });
+
+  it("avoids concurrent balance-only and enriched fetch when passive enrichment is needed", () => {
+    expect(detailSource).toMatch(/enabled: validId && !needsForecastFetch/);
   });
 });
 

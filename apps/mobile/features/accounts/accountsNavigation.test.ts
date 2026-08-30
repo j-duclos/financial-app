@@ -84,14 +84,14 @@ describe("Accounts request structure", () => {
 
   it("seeds detail from list cache and does not wait on forecast for basic shell", () => {
     expect(accountDetailSource).toMatch(/seedAccountFromListCache/);
-    expect(accountDetailSource).toMatch(/placeholderData: seeded/);
+    expect(accountDetailSource).toMatch(/initialData: balanceInitial\.data/);
     expect(accountDetailSource).toMatch(/getAccount\(accountId, true\)/);
     expect(accountDetailSource).not.toMatch(/relationships:\s*true/);
   });
 
   it("reuses enriched list cache on detail and merges cold forecast into it", () => {
     expect(accountDetailSource).toMatch(/accountQueryKeys\.enrichedList/);
-    expect(accountDetailSource).toMatch(/mergeAccountIntoEnrichedListCache/);
+    expect(accountDetailSource).toMatch(/fetchEnrichedAccountDetail/);
     expect(accountDetailSource).toMatch(/enabled: false/);
   });
 

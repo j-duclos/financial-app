@@ -3,14 +3,11 @@ import { RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAccount, listAccounts, listTransactions } from "@budget-app/api-client";
-import type { PaginatedResponse } from "@budget-app/api-client";
 import {
   DEFAULT_TARGET_UTILIZATION_PERCENT,
   formatCurrency,
   getAccountInstitutionSubtitle,
   getEffectiveDisplayName,
-  type Account,
-  type OperationalForecastDays,
 } from "@budget-app/shared";
 import {
   AppHeader,
@@ -35,11 +32,15 @@ import { reconcilePath } from "@/features/reconcile/navigation";
 import { rememberTransactionAccountSelection } from "@/features/transactions/accountSelection";
 import { resolveAccountBalanceDisplay } from "./accountBalanceDisplay";
 import { accountDetailUpcomingPreviewRows } from "./accountDetailUpcomingPreview";
+import { accountHasForecastEnrichment, seedAccountFromListCache } from "./accountDetailSeed";
 import {
-  accountHasForecastEnrichment,
-  seedAccountFromListCache,
-  seedBalanceDetailFromListCache,
-} from "./accountDetailSeed";
+  BALANCE_DETAIL_STALE_MS,
+  fetchEnrichedAccountDetail,
+  forecastDetailQueryKey,
+  FORECAST_DETAIL_STALE_MS,
+  refreshAccountDetailResources,
+  resolveBalanceDetailInitialData,
+} from "./accountDetailQueries";
 import { ACCOUNT_DETAIL_PREVIEW_LIMIT, accountQueryKeys } from "./queryKeys";
 import { markAccountsTiming } from "./accountsTiming";
 
@@ -49,30 +50,6 @@ function amountsDiffer(a: string | null, b: string | null): boolean {
   const nb = parseFloat(b);
   if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
   return Math.abs(na - nb) >= 0.005;
-}
-
-function mergeAccountIntoEnrichedListCache(
-  queryClient: ReturnType<typeof useQueryClient>,
-  forecastDays: OperationalForecastDays,
-  account: Account
-): void {
-  const key = accountQueryKeys.enrichedList(forecastDays);
-  const existing = queryClient.getQueryData<PaginatedResponse<Account>>(key);
-  if (!existing?.results) {
-    queryClient.setQueryData(key, {
-      count: 1,
-      next: null,
-      previous: null,
-      results: [account],
-    } satisfies PaginatedResponse<Account>);
-    return;
-  }
-  const idx = existing.results.findIndex((a) => a.id === account.id);
-  const results =
-    idx >= 0
-      ? existing.results.map((a, i) => (i === idx ? { ...a, ...account } : a))
-      : [...existing.results, account];
-  queryClient.setQueryData(key, { ...existing, results, count: results.length });
 }
 
 export function AccountDetailScreen() {
@@ -90,10 +67,13 @@ export function AccountDetailScreen() {
     markAccountsTiming("detail-mounted", "detail");
   }, []);
 
-  useEffect(() => {
-    if (!validId) return;
-    seedBalanceDetailFromListCache(queryClient, accountId, forecastDays);
-  }, [validId, accountId, forecastDays, queryClient]);
+  const balanceInitial = useMemo(
+    () =>
+      validId
+        ? resolveBalanceDetailInitialData(queryClient, accountId, forecastDays)
+        : { data: undefined, updatedAt: undefined },
+    [queryClient, accountId, forecastDays, validId]
+  );
 
   const seeded = useMemo(() => {
     if (!validId) return undefined;
@@ -117,31 +97,23 @@ export function AccountDetailScreen() {
   });
   const listEnriched = enrichedListQuery.data?.results?.find((a) => a.id === accountId);
 
-  const balanceQuery = useQuery({
-    queryKey: accountQueryKeys.balanceDetail(accountId),
-    queryFn: () => getAccount(accountId, true),
-    enabled: validId,
-    placeholderData: seeded,
-    staleTime: 30_000,
-  });
-
   const needsForecastFetch =
     validId && ready && !accountHasForecastEnrichment(listEnriched ?? seeded);
 
+  const balanceQuery = useQuery({
+    queryKey: accountQueryKeys.balanceDetail(accountId),
+    queryFn: () => getAccount(accountId, true),
+    enabled: validId && !needsForecastFetch,
+    initialData: balanceInitial.data,
+    initialDataUpdatedAt: balanceInitial.updatedAt,
+    staleTime: BALANCE_DETAIL_STALE_MS,
+  });
+
   const forecastQuery = useQuery({
-    queryKey: ["account", accountId, "forecast", forecastDays],
-    queryFn: async () => {
-      const account = await getAccount(accountId, true, {
-        forecast_summary: true,
-        health: true,
-        days: forecastDays,
-      });
-      mergeAccountIntoEnrichedListCache(queryClient, forecastDays, account);
-      queryClient.setQueryData(accountQueryKeys.balanceDetail(accountId), account);
-      return account;
-    },
+    queryKey: forecastDetailQueryKey(accountId, forecastDays),
+    queryFn: () => fetchEnrichedAccountDetail(queryClient, accountId, forecastDays),
     enabled: needsForecastFetch,
-    staleTime: 60_000,
+    staleTime: FORECAST_DETAIL_STALE_MS,
   });
 
   const recentQuery = useQuery({
@@ -214,16 +186,27 @@ export function AccountDetailScreen() {
   const refreshDetail = useCallback(async () => {
     setPullRefreshing(true);
     try {
-      await Promise.all([
-        balanceQuery.refetch(),
-        needsForecastFetch ? forecastQuery.refetch() : Promise.resolve(),
-        recentQuery.refetch(),
-        upcomingTimelineQuery.refetch(),
-      ]);
+      await refreshAccountDetailResources({
+        queryClient,
+        accountId,
+        forecastDays,
+        forecastReady: ready,
+        refetchRecent: () => recentQuery.refetch(),
+        refetchUpcoming: () => upcomingTimelineQuery.refetch(),
+        refetchBalanceOnly: () => balanceQuery.refetch(),
+      });
     } finally {
       setPullRefreshing(false);
     }
-  }, [balanceQuery, forecastQuery, needsForecastFetch, recentQuery, upcomingTimelineQuery]);
+  }, [
+    queryClient,
+    accountId,
+    forecastDays,
+    ready,
+    recentQuery,
+    upcomingTimelineQuery,
+    balanceQuery,
+  ]);
 
   const openLedger = () => {
     if (!account) return;
@@ -233,7 +216,10 @@ export function AccountDetailScreen() {
     );
   };
 
-  if (!account && balanceQuery.isLoading) {
+  if (
+    !account &&
+    (balanceQuery.isLoading || (needsForecastFetch && forecastQuery.isPending))
+  ) {
     return (
       <Screen scroll>
         <AppHeader title="Account" onBack={() => router.back()} />

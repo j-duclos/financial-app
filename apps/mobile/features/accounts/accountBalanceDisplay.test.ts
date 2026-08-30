@@ -15,8 +15,10 @@ import {
 import {
   accountHasForecastEnrichment,
   seedAccountFromListCache,
-  seedBalanceDetailFromListCache,
 } from "./accountDetailSeed";
+import {
+  resolveBalanceDetailInitialData,
+} from "./accountDetailQueries";
 import { accountQueryKeys } from "./queryKeys";
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -176,8 +178,10 @@ describe("Accounts list UI labels", () => {
 describe("Account Detail cache reuse", () => {
   it("seeds detail from list cache and skips forecast when enrichment already present", () => {
     expect(detailSource).toMatch(/seedAccountFromListCache/);
-    expect(detailSource).toMatch(/seedBalanceDetailFromListCache/);
-    expect(detailSource).toMatch(/placeholderData: seeded/);
+    expect(detailSource).toMatch(/resolveBalanceDetailInitialData/);
+    expect(detailSource).toMatch(/initialData: balanceInitial\.data/);
+    expect(detailSource).toMatch(/initialDataUpdatedAt: balanceInitial\.updatedAt/);
+    expect(detailSource).not.toMatch(/seedBalanceDetailFromListCache/);
     expect(detailSource).toMatch(/accountHasForecastEnrichment/);
     expect(detailSource).toMatch(/enabled: needsForecastFetch/);
     expect(accountHasForecastEnrichment(
@@ -187,23 +191,20 @@ describe("Account Detail cache reuse", () => {
     expect(typeof seedAccountFromListCache).toBe("function");
   });
 
-  it("seeds balanceDetail from fresh main list cache to avoid duplicate retrieve", () => {
+  it("derives balanceDetail initialData from fresh main list without arbitrary updatedAt", () => {
     const queryClient = new QueryClient();
     const account = cashAccount({ id: 7 });
-    const now = Date.now();
+    const mainUpdatedAt = 800_000;
     queryClient.setQueryData(accountQueryKeys.mainList(), {
       count: 1,
       next: null,
       previous: null,
       results: [account],
-    } satisfies PaginatedResponse<Account>, { updatedAt: now });
+    } satisfies PaginatedResponse<Account>, { updatedAt: mainUpdatedAt });
 
-    const seededFresh = seedBalanceDetailFromListCache(queryClient, 7, 30);
-    expect(seededFresh).toBe(true);
-    expect(queryClient.getQueryData(accountQueryKeys.balanceDetail(7))).toEqual(account);
-
-    const state = queryClient.getQueryState(accountQueryKeys.balanceDetail(7));
-    expect(state?.dataUpdatedAt).toBe(now);
+    const initial = resolveBalanceDetailInitialData(queryClient, 7, 30);
+    expect(initial.data).toEqual(account);
+    expect(initial.updatedAt).toBe(mainUpdatedAt);
   });
 
   it("gates list enrichment behind main success with cache escape hatch", () => {
