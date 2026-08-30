@@ -1,5 +1,9 @@
 import type { Transaction } from "@budget-app/shared";
 import {
+  isImportMatchStatusMatched,
+  MATCH_IMPORTED_TRANSACTION_LABEL,
+} from "@budget-app/shared";
+import {
   canDeleteTransaction,
   isBankImportedTransaction,
   isTransferTransaction,
@@ -42,7 +46,7 @@ export function isEligibleForImportMatch(txn: Transaction): boolean {
 }
 
 export function isAlreadyMatchedToImport(txn: Transaction): boolean {
-  return (txn.import_match_status ?? "").toLowerCase() === "matched";
+  return isImportMatchStatusMatched(txn.import_match_status);
 }
 
 /**
@@ -70,7 +74,7 @@ export function getTransactionDetailActions(
 
   if (isPlanned && !alreadyMatched) {
     if (isEligibleForImportMatch(txn)) {
-      actions.push({ kind: "matchImport", label: "Match imported transaction" });
+      actions.push({ kind: "matchImport", label: MATCH_IMPORTED_TRANSACTION_LABEL });
     }
     actions.push({
       kind: "skip",

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
+import { formatCurrency, formatAccountOptionLabel, selectableImportMatchCandidates } from "@budget-app/shared";
+import type { ImportMatchCandidate } from "@budget-app/api-client";
 import type { Transaction, TimelineRow } from "@budget-app/shared";
 import {
   listTransactions,
@@ -17,6 +18,8 @@ import {
   getAccount,
   getTimeline,
   getTransaction,
+  getTransactionImportCandidates,
+  matchTransactionToImport,
   resolveRuleOccurrence,
   getAccountPayoff,
   getReconcileSetup,
@@ -29,6 +32,7 @@ import PastSection from "../components/transactions/PastSection";
 import PendingExpectedSection from "../components/transactions/PendingExpectedSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
+import ImportMatchDialog from "../components/transactions/ImportMatchDialog";
 import {
   projectionSelectionKey,
   type TransactionRowData,
@@ -164,6 +168,14 @@ export default function Transactions() {
   const [forecastExpanded, setForecastExpanded] = useState(false);
   const [forecastSummaryExpanded, setForecastSummaryExpanded] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [matchImportFlow, setMatchImportFlow] = useState<{
+    plannedId: number;
+    plannedLabel: string;
+  } | null>(null);
+  const [pendingMatchCandidate, setPendingMatchCandidate] = useState<ImportMatchCandidate | null>(
+    null
+  );
+  const [matchImportError, setMatchImportError] = useState<string | null>(null);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<Set<number>>(
     () => new Set()
   );
@@ -1212,6 +1224,55 @@ export default function Transactions() {
     },
   });
 
+  const matchImportMu = useMutation({
+    mutationFn: ({
+      plannedId,
+      importedTransactionId,
+    }: {
+      plannedId: number;
+      importedTransactionId: number;
+    }) => matchTransactionToImport(plannedId, importedTransactionId),
+    onMutate: () => {
+      setAwaitingTimelineRecalc(true);
+      setMatchImportError(null);
+    },
+    onSuccess: (_data, variables) => {
+      setMatchImportError(null);
+      setPendingMatchCandidate(null);
+      setMatchImportFlow(null);
+      setDeleteError(null);
+      void queryClient.removeQueries({
+        queryKey: ["transactions", "import-candidates", variables.plannedId],
+      });
+      afterFinancialEdit({ refreshAccounts: true });
+    },
+    onError: (err: Error) => {
+      setAwaitingTimelineRecalc(false);
+      const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
+      setMatchImportError(msg || "Could not match import");
+    },
+  });
+
+  const importCandidatesQuery = useQuery({
+    queryKey: ["transactions", "import-candidates", matchImportFlow?.plannedId],
+    queryFn: () => getTransactionImportCandidates(matchImportFlow!.plannedId),
+    enabled: matchImportFlow != null,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const selectableImportCandidates = useMemo(
+    () => selectableImportMatchCandidates(importCandidatesQuery.data?.candidates ?? []),
+    [importCandidatesQuery.data?.candidates]
+  );
+
+  const importCandidatesLoadError =
+    importCandidatesQuery.isError && matchImportFlow != null
+      ? importCandidatesQuery.error instanceof ApiError
+        ? `${importCandidatesQuery.error.status}: ${importCandidatesQuery.error.message}`
+        : String(importCandidatesQuery.error)
+      : null;
+
   const moveDateMu = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) => moveTransactionDate(id, date),
     onMutate: () => {
@@ -1230,6 +1291,7 @@ export default function Transactions() {
 
   const lifecyclePending =
     skipOccurrenceMu.isPending ||
+    matchImportMu.isPending ||
     moveDateMu.isPending ||
     deleteMu.isPending ||
     batchDeleteMu.isPending;
@@ -1241,6 +1303,7 @@ export default function Transactions() {
     deleteMu.isPending ||
     batchDeleteMu.isPending ||
     skipOccurrenceMu.isPending ||
+    matchImportMu.isPending ||
     moveDateMu.isPending;
 
   useEffect(() => {
@@ -1426,12 +1489,14 @@ export default function Transactions() {
     }
   }
 
-  async function matchesImportedRow(row: TimelineRow) {
+  async function beginMatchImportRow(row: TimelineRow) {
     if (row.reconciled) {
-      setDeleteError("Reconciled transactions cannot be removed.");
+      setDeleteError("Reconciled transactions cannot be matched.");
       return;
     }
     setDeleteError(null);
+    setMatchImportError(null);
+    setPendingMatchCandidate(null);
     try {
       const transactionId =
         row.transaction_id ?? (await ensureRowTransactionId(row));
@@ -1439,10 +1504,13 @@ export default function Transactions() {
         setDeleteError("Could not load this scheduled transaction.");
         return;
       }
-      skipOccurrenceMu.mutate(transactionId);
+      setMatchImportFlow({
+        plannedId: transactionId,
+        plannedLabel: row.description,
+      });
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
-      setDeleteError(msg || "Could not remove scheduled transaction");
+      setDeleteError(msg || "Could not open import match");
     }
   }
 
@@ -2156,10 +2224,9 @@ export default function Transactions() {
               isCredit={isCredit}
               hiddenByPast={pastExpanded || forecastExpanded}
               onEditRow={openEditByLedgerRow}
-              onMatchesImportedRow={matchesImportedRow}
+              onMatchImportRow={beginMatchImportRow}
               onSkipRow={confirmSkipRow}
               onMoveDateRow={moveDateExpectedRow}
-              onDeleteRow={confirmDeleteRow}
               actionsPending={forecastActionsLocked}
               selectedIds={selectedTransactionIds}
               pendingSelectionKeys={pendingSelectionKeys}
@@ -2229,6 +2296,33 @@ export default function Transactions() {
           />
         </div>
       )}
+
+      <ImportMatchDialog
+        open={matchImportFlow != null}
+        plannedLabel={matchImportFlow?.plannedLabel ?? ""}
+        candidates={selectableImportCandidates}
+        loading={importCandidatesQuery.isLoading}
+        loadError={importCandidatesLoadError}
+        matchError={matchImportError}
+        matching={matchImportMu.isPending}
+        pendingCandidate={pendingMatchCandidate}
+        onClose={() => {
+          if (matchImportMu.isPending) return;
+          setMatchImportFlow(null);
+          setPendingMatchCandidate(null);
+          setMatchImportError(null);
+        }}
+        onRetryLoad={() => void importCandidatesQuery.refetch()}
+        onSelectCandidate={setPendingMatchCandidate}
+        onCancelConfirm={() => setPendingMatchCandidate(null)}
+        onConfirmMatch={() => {
+          if (!matchImportFlow || !pendingMatchCandidate) return;
+          matchImportMu.mutate({
+            plannedId: matchImportFlow.plannedId,
+            importedTransactionId: pendingMatchCandidate.imported_transaction_id,
+          });
+        }}
+      />
 
       {editing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">

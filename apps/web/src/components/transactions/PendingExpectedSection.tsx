@@ -1,5 +1,6 @@
 import { useMemo, useRef } from "react";
 import type { TimelineRow } from "@budget-app/shared";
+import { isImportMatchStatusMatched } from "@budget-app/shared";
 import TransactionRow, {
   canSelectTransactionForBatchDelete,
   projectionSelectionKey,
@@ -13,6 +14,7 @@ import {
 } from "./ledgerTableLayout";
 import {
   canEditLedgerTimelineRow,
+  isPlannedScheduledTimelineRow,
   shouldHighlightUnmatchedScheduledRow,
   type LedgerRow,
 } from "./transactionsLedgerUtils";
@@ -28,10 +30,9 @@ type Props = {
   isCredit: boolean;
   hiddenByPast: boolean;
   onEditRow: (row: TimelineRow) => void;
-  onMatchesImportedRow: (row: TimelineRow) => void;
+  onMatchImportRow: (row: TimelineRow) => void;
   onSkipRow: (row: TimelineRow) => void;
   onMoveDateRow: (row: TimelineRow) => void;
-  onDeleteRow: (row: TimelineRow) => void;
   actionsPending: boolean;
   selectedIds: Set<number>;
   pendingSelectionKeys: Set<string>;
@@ -43,7 +44,7 @@ type Props = {
 
 /**
  * Scheduled/rule rows whose date has arrived but no actual bank/manual posting has confirmed them.
- * Resolved via Matched Import, Skip, Edit, Move Date — not manual delete.
+ * Resolved via Match imported transaction, Skip, Edit, Move Date — not manual delete.
  */
 export default function PendingExpectedSection({
   pending,
@@ -52,10 +53,9 @@ export default function PendingExpectedSection({
   isCredit,
   hiddenByPast,
   onEditRow,
-  onMatchesImportedRow,
+  onMatchImportRow,
   onSkipRow,
   onMoveDateRow,
-  onDeleteRow,
   actionsPending,
   selectedIds,
   pendingSelectionKeys,
@@ -164,6 +164,9 @@ export default function PendingExpectedSection({
                 ? `pending-rule-${row.row.rule_id}-${row.row.account_id}-${row.row.date}`
                 : `pending-${row.row.account_id}-${row.row.date}-${index}`;
           const editable = canEditLedgerTimelineRow(row.row);
+          const eligibleForImportMatch =
+            isPlannedScheduledTimelineRow(row.row) &&
+            !isImportMatchStatusMatched(row.row.import_match_status);
           const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(row.row, accountTimeline);
           const pendingKey = projectionSelectionKey(data);
           const isSelected =
@@ -177,17 +180,16 @@ export default function PendingExpectedSection({
               variant="expected"
               currency={currency}
               isCredit={isCredit}
-              rowSurface={unmatchedScheduleRowClasses()}
+              rowSurface={scheduleHighlight ? unmatchedScheduleRowClasses() : undefined}
               scheduleHighlightTitle={
                 scheduleHighlight ? UNMATCHED_SCHEDULE_ROW_TITLE : "Expected transaction waiting for confirmation"
               }
-              onMatchesImported={
-                editable && scheduleHighlight ? () => onMatchesImportedRow(row.row) : undefined
+              onMatchImport={
+                editable && eligibleForImportMatch ? () => onMatchImportRow(row.row) : undefined
               }
               onEdit={editable ? () => onEditRow(row.row) : undefined}
               onSkip={editable ? () => onSkipRow(row.row) : undefined}
               onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
-              onDelete={editable ? () => onDeleteRow(row.row) : undefined}
               actionsDisabled={actionsPending}
               selected={isSelected}
               onSelectedChange={(id, checked, shiftKey) =>

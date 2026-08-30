@@ -1,4 +1,8 @@
-import { formatCurrency } from "@budget-app/shared";
+import {
+  formatCurrency,
+  isImportMatchStatusMatched,
+  MATCH_IMPORTED_TRANSACTION_LABEL,
+} from "@budget-app/shared";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
 import TransactionContextMenu from "./TransactionContextMenu";
 import TransactionStatusIcons from "./TransactionStatusIcons";
@@ -52,7 +56,7 @@ type Props = {
   onDuplicate?: () => void;
   onDelete?: () => void;
   onSkip?: () => void;
-  onMatchesImported?: () => void;
+  onMatchImport?: () => void;
   onMoveDate?: () => void;
   actionsDisabled?: boolean;
   /** Multi-select for batch delete. */
@@ -136,7 +140,7 @@ export default function TransactionRow({
   onDuplicate,
   onDelete,
   onSkip,
-  onMatchesImported,
+  onMatchImport,
   onMoveDate,
   actionsDisabled,
   selected = false,
@@ -247,15 +251,19 @@ export default function TransactionRow({
         {row.balance == null ? "—" : fmtBal(row.balance)}
       </span>
       <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-        {variant === "expected" && onMatchesImported ? (
+        {variant === "expected" && onMatchImport ? (
           <button
             type="button"
-            onClick={() => onMatchesImported()}
+            onClick={() => onMatchImport()}
             disabled={actionsDisabled}
             className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50 whitespace-nowrap"
           >
-            Matched Import
+            {MATCH_IMPORTED_TRANSACTION_LABEL}
           </button>
+        ) : variant === "expected" && isImportMatchStatusMatched(row.importMatchStatus) ? (
+          <span className="rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-800 whitespace-nowrap">
+            Matched to bank import
+          </span>
         ) : null}
         <TransactionContextMenu
           variant={variant}

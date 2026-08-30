@@ -11,7 +11,7 @@ import {
   updateTransaction,
   type ImportMatchCandidate,
 } from "@budget-app/api-client";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import { formatCurrency, getEffectiveDisplayName, selectableImportMatchCandidates } from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
   AppHeader,
@@ -99,31 +99,33 @@ export function TransactionDetailScreen() {
   const categoryMutation = useMutation({
     mutationFn: (nextCategoryId: number | null) =>
       updateTransaction(txnId, { category_id: nextCategoryId }),
-    onSuccess: async (_data, nextCategoryId) => {
-      setCategoryId(nextCategoryId);
+    onSuccess: (updatedTxn) => {
+      setCategoryId(updatedTxn.category?.id ?? updatedTxn.category_id ?? null);
       setCategorySheetOpen(false);
-      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
+      queryClient.setQueryData(transactionQueryKeys.detail(txnId), updatedTxn);
       refreshAfterTransactionEdit(queryClient, { categoryOnly: true });
     },
     onError: (err) => Alert.alert("Could not save category", describeApiError(err)),
   });
 
+  const finishNavigatingMutation = useCallback(() => {
+    queryClient.removeQueries({ queryKey: transactionQueryKeys.detail(txnId) });
+    refreshAfterTransactionEdit(queryClient);
+    router.back();
+  }, [queryClient, txnId, router]);
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteTransaction(txnId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
-      refreshAfterTransactionEdit(queryClient);
-      router.back();
+    onSuccess: () => {
+      finishNavigatingMutation();
     },
     onError: (err) => Alert.alert("Delete failed", describeApiError(err)),
   });
 
   const skipMutation = useMutation({
     mutationFn: () => skipTransactionOccurrence(txnId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
-      refreshAfterTransactionEdit(queryClient);
-      router.back();
+    onSuccess: () => {
+      finishNavigatingMutation();
     },
     onError: (err) => Alert.alert("Could not skip occurrence", describeApiError(err)),
   });
@@ -131,13 +133,11 @@ export function TransactionDetailScreen() {
   const matchMutation = useMutation({
     mutationFn: (importedTransactionId: number) =>
       matchTransactionToImport(txnId, importedTransactionId),
-    onSuccess: async () => {
+    onSuccess: () => {
       setMatchSheetOpen(false);
       setPendingMatchCandidate(null);
-      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
-      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.importCandidates(txnId) });
-      refreshAfterTransactionEdit(queryClient);
-      router.back();
+      queryClient.removeQueries({ queryKey: transactionQueryKeys.importCandidates(txnId) });
+      finishNavigatingMutation();
     },
     onError: (err) => Alert.alert("Could not match import", describeApiError(err)),
   });
@@ -153,7 +153,7 @@ export function TransactionDetailScreen() {
   });
 
   const selectableCandidates = useMemo(
-    () => (importCandidatesQuery.data?.candidates ?? []).filter((c) => !c.reject),
+    () => selectableImportMatchCandidates(importCandidatesQuery.data?.candidates ?? []),
     [importCandidatesQuery.data?.candidates]
   );
 

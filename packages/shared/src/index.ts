@@ -16,6 +16,7 @@ export * from "./recommendationDisplay";
 export * from "./actionCenterView";
 export * from "./resolveRiskDisplay";
 export * from "./scheduledImportMatch";
+export * from "./importMatchSemantics";
 export * from "./dashboardDisplay";
 export * from "./dashboardTerminology";
 export * from "./extendedCashRiskQuery";

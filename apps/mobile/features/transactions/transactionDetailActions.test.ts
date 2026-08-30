@@ -198,8 +198,20 @@ describe("TransactionDetailScreen wiring", () => {
     const { fileURLToPath } = await import("node:url");
     const dir = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
-    expect(src).toMatch(/transactionQueryKeys\.detail\(txnId\)/);
+    expect(src).toMatch(/finishNavigatingMutation/);
+    expect(src).toMatch(/removeQueries\(\{ queryKey: transactionQueryKeys\.detail\(txnId\) \}\)/);
+    expect(src).not.toMatch(/await queryClient\.invalidateQueries\(\{ queryKey: transactionQueryKeys\.detail/);
     expect(src).not.toMatch(/invalidateFinancialQueries/);
+  });
+
+  it("updates category detail cache from mutation response without refetch", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/setQueryData\(transactionQueryKeys\.detail\(txnId\), updatedTxn\)/);
+    expect(src).toMatch(/refreshAfterTransactionEdit\(queryClient,\s*\{\s*categoryOnly:\s*true\s*\}\)/);
   });
 });
 

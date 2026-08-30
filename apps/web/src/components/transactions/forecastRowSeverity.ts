@@ -54,4 +54,4 @@ export function unmatchedScheduleRowClasses(
 }
 
 export const UNMATCHED_SCHEDULE_ROW_TITLE =
-  "Scheduled transaction — matching bank import on the ledger; use Matched Import to remove";
+  "Scheduled transaction — a bank import may match; use Match imported transaction to link them";
