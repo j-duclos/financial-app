@@ -8,9 +8,9 @@ import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { currentMonthKey } from "../lib/billsDisplay";
 import {
   buildRecurringListItems,
-  computeRecurringSummary,
   formatRecurringDate,
   groupRecurringItemsByDay,
+  mapRecurringBackendSummary,
   recurringPaymentStatusBadgeClass,
   recurringPaymentStatusLabel,
   recurringPaymentRowAccentClass,
@@ -18,6 +18,7 @@ import {
   recurringTrendLabel,
   type RecurringPaymentStatus,
   type RecurringListItem,
+  type RecurringSummary,
 } from "../lib/recurringDisplay";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import {
@@ -44,7 +45,7 @@ const STATUS_FILTER_OPTIONS: { value: "" | RecurringPaymentStatus; label: string
   { value: "inactive", label: "Inactive" },
 ];
 
-function SummaryBar({ summary }: { summary: ReturnType<typeof computeRecurringSummary> }) {
+function SummaryBar({ summary }: { summary: RecurringSummary }) {
   const metrics = [
     {
       ...RECURRING_SUMMARY.activeRules,
@@ -83,6 +84,21 @@ function SummaryBarSkeleton() {
       {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className={METRIC_TILE_SKELETON_CLASS} aria-hidden />
       ))}
+    </div>
+  );
+}
+
+function SummaryBarError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50/60 px-3 py-2.5 flex flex-wrap items-center gap-2 justify-between">
+      <p className="text-sm text-red-700">Could not load recurring summary</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="text-sm font-medium text-red-800 underline hover:no-underline"
+      >
+        Retry
+      </button>
     </div>
   );
 }
@@ -197,8 +213,8 @@ export default function Recurring() {
   );
 
   const summary = useMemo(
-    () => computeRecurringSummary(allItems, summaryQuery.data),
-    [allItems, summaryQuery.data]
+    () => (summaryQuery.data ? mapRecurringBackendSummary(summaryQuery.data) : null),
+    [summaryQuery.data]
   );
 
   const filteredItems = useMemo(() => {
@@ -229,11 +245,19 @@ export default function Recurring() {
     if (match) setSelected(match);
   }
 
-  const loading = rulesQuery.isLoading || overviewQuery.isLoading;
+  const listLoading = rulesQuery.isLoading || overviewQuery.isLoading;
+  const summaryLoading = summaryQuery.isLoading || (summaryQuery.isFetching && !summaryQuery.data);
+  const summaryFailed = summaryQuery.isError && !summaryQuery.data;
 
   return (
     <div className={`${PAGE_SHELL_PY} space-y-3`}>
-      {loading ? <SummaryBarSkeleton /> : <SummaryBar summary={summary} />}
+      {summaryFailed ? (
+        <SummaryBarError onRetry={() => void summaryQuery.refetch()} />
+      ) : summaryLoading || !summary ? (
+        <SummaryBarSkeleton />
+      ) : (
+        <SummaryBar summary={summary} />
+      )}
 
       <SubscriptionIntelligencePanel
         data={subscriptionsQuery.data}
@@ -296,9 +320,9 @@ export default function Recurring() {
         </div>
       </div>
 
-      {loading && <p className="text-sm text-gray-500">Loading recurring obligations…</p>}
+      {listLoading && <p className="text-sm text-gray-500">Loading recurring obligations…</p>}
 
-      {!loading && grouped.length === 0 && (
+      {!listLoading && grouped.length === 0 && (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
           <p className="text-sm text-gray-600">No recurring rules match your filters.</p>
           <Link to="/automation" className="text-sm text-blue-600 hover:underline mt-2 inline-block">

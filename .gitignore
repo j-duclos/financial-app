@@ -7,3 +7,15 @@ backend/test_db.sqlite3
 scripts/.render-env-export
 apps/mobile/.env
 apps/mobile/.env.local
+
+# Python bytecode / cache (never commit)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

@@ -203,13 +203,16 @@ export function WhatIfScreen() {
   const refreshAll = async () => {
     setPullRefreshing(true);
     try {
-      await householdsQuery.refetch();
+      // Same household ID as scenario changes / comparison / query keys — only refresh revision.
+      const householdId = defaultHousehold;
+      const householdResult = await householdsQuery.refetch();
+      const freshHousehold = (householdResult.data ?? []).find((h) => h.id === householdId);
       await refreshWhatIfScenario({
         queryClient,
         scenarioId: selectedScenarioId,
         horizon: forecastPeriod,
-        householdId: defaultHousehold,
-        financialRevision: selectedHousehold?.financial_revision,
+        householdId,
+        financialRevision: freshHousehold?.financial_revision,
         scenarioUpdatedAt: selectedScenario?.updated_at,
       });
     } finally {

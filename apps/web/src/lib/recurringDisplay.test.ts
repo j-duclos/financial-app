@@ -6,10 +6,12 @@ import {
   buildRecurringListItems,
   cadenceLabel,
   computeRecurringSummary,
+  aggregateRecurringSummaryFromItemsForTests,
   deriveRecurringPaymentStatus,
   formatDayOfMonthOrdinal,
   getRecurringGroup,
   groupRecurringItemsByDay,
+  mapRecurringBackendSummary,
   pickChecklistOccurrenceForRule,
   resolveRecurringLastPaidDate,
   resolveRecurringNextOccurrence,
@@ -160,9 +162,9 @@ describe("recurringDisplay — backend-owned occurrence state", () => {
     );
   });
 
-  it("prefers backend summary for monthly totals", () => {
+  it("maps backend summary for monthly totals", () => {
     const items = buildRecurringListItems([baseRule()], []);
-    const summary = computeRecurringSummary(items, {
+    const summary = mapRecurringBackendSummary({
       active_rule_count: 3,
       monthly_recurring_obligations: "120.00",
       upcoming_count: 2,
@@ -173,6 +175,25 @@ describe("recurringDisplay — backend-owned occurrence state", () => {
     expect(summary.activeRules).toBe(3);
     expect(summary.monthlyRecurringTotal).toBe(120);
     expect(summary.missedCount).toBe(1);
+    // Production mapper ignores list items — no client financial fallback.
+    expect(computeRecurringSummary(items, {
+      active_rule_count: 3,
+      monthly_recurring_obligations: "120.00",
+      upcoming_count: 2,
+      missed_count: 1,
+      due_soon_count: 0,
+      due_soon_days: 5,
+    }).monthlyRecurringTotal).toBe(120);
+  });
+
+  it("test-only aggregator is isolated from production mapper", () => {
+    const items = buildRecurringListItems(
+      [baseRule({ estimated_monthly_amount: "-50.00", payment_status: "due_soon" })],
+      []
+    );
+    const fromItems = aggregateRecurringSummaryFromItemsForTests(items);
+    expect(fromItems.monthlyRecurringTotal).toBe(50);
+    expect(fromItems.dueSoonCount).toBe(1);
   });
 
   it("groups streaming as subscriptions", () => {
@@ -324,6 +345,18 @@ describe("recurringDisplay — backend-owned occurrence state", () => {
 describe("Recurring / Rules pages — canonical next occurrence", () => {
   it("Recurring page loads backend summary", () => {
     expect(recurringPageSource).toMatch(/getRecurringRulesSummary/);
+  });
+
+  it("Recurring page maps backend summary only — no client financial fallback", () => {
+    expect(recurringPageSource).toMatch(/mapRecurringBackendSummary/);
+    expect(recurringPageSource).not.toMatch(/computeRecurringSummary\(/);
+    expect(recurringPageSource).not.toMatch(/aggregateRecurringSummaryFromItemsForTests/);
+    expect(recurringPageSource).toMatch(/SummaryBarSkeleton/);
+    expect(recurringPageSource).toMatch(/Could not load recurring summary/);
+    expect(recurringPageSource).toMatch(/summaryQuery\.isError/);
+    expect(recurringPageSource).toMatch(/listLoading/);
+    // List loading is independent of summary failure.
+    expect(recurringPageSource).toMatch(/listLoading = rulesQuery\.isLoading \|\| overviewQuery\.isLoading/);
   });
 
   it("Rules page uses next_occurrence_date, not getNextRuleRunDate", () => {

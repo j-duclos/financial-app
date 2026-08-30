@@ -24,6 +24,20 @@ describe("Recurring page", () => {
     expect(recurringSource).toMatch(/getRecurringRulesSummary/);
   });
 
+  it("waits for canonical summary and does not fall back to client totals", () => {
+    expect(recurringSource).toMatch(/mapRecurringBackendSummary/);
+    expect(recurringSource).toMatch(/SummaryBarSkeleton/);
+    expect(recurringSource).toMatch(/Could not load recurring summary/);
+    expect(recurringSource).toMatch(/summaryQuery\.refetch/);
+    expect(recurringSource).not.toMatch(/computeRecurringSummary\(/);
+    expect(recurringSource).not.toMatch(/aggregateRecurringSummaryFromItemsForTests/);
+    // List may render independently of summary.
+    expect(recurringSource).toMatch(/listLoading/);
+    expect(recurringSource).toMatch(
+      /listLoading = rulesQuery\.isLoading \|\| overviewQuery\.isLoading/
+    );
+  });
+
   it("detail panel uses targeted recurring invalidation", () => {
     expect(detailSource).toMatch(/invalidateRecurringRuleDependents/);
   });

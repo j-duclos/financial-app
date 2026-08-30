@@ -369,21 +369,37 @@ function groupLabel(key: RecurringGroupKey): string {
   return RECURRING_GROUP_ORDER.find((g) => g.key === key)?.label ?? key;
 }
 
-/** Prefer backend summary; otherwise aggregate already-canonical rule fields only. */
-export function computeRecurringSummary(
-  items: RecurringListItem[],
-  backendSummary?: RecurringRulesSummary | null
+/** Map backend canonical recurring summary — production metrics source of truth. */
+export function mapRecurringBackendSummary(
+  backendSummary: RecurringRulesSummary
 ): RecurringSummary {
-  if (backendSummary) {
-    return {
-      activeRules: backendSummary.active_rule_count,
-      monthlyRecurringTotal: Number(backendSummary.monthly_recurring_obligations) || 0,
-      upcomingCount: backendSummary.upcoming_count,
-      missedCount: backendSummary.missed_count,
-      dueSoonCount: backendSummary.due_soon_count,
-    };
-  }
+  return {
+    activeRules: backendSummary.active_rule_count,
+    monthlyRecurringTotal: Number(backendSummary.monthly_recurring_obligations) || 0,
+    upcomingCount: backendSummary.upcoming_count,
+    missedCount: backendSummary.missed_count,
+    dueSoonCount: backendSummary.due_soon_count,
+  };
+}
 
+/**
+ * @deprecated Production Recurring must use {@link mapRecurringBackendSummary}.
+ * Requires a backend summary — does not derive financial totals from list items.
+ */
+export function computeRecurringSummary(
+  _items: RecurringListItem[],
+  backendSummary: RecurringRulesSummary
+): RecurringSummary {
+  return mapRecurringBackendSummary(backendSummary);
+}
+
+/**
+ * Test/demo-only client aggregation of list rows. Not canonical financial truth.
+ * Do not use on the production Recurring page.
+ */
+export function aggregateRecurringSummaryFromItemsForTests(
+  items: RecurringListItem[]
+): RecurringSummary {
   const today = todayLocalISO();
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + 30);

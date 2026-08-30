@@ -187,6 +187,34 @@ describe("what-if screen isolation contract", () => {
     expect(source).not.toMatch(/refreshing=\{scenariosQuery\.isFetching/);
   });
 
+  it("pull refresh passes financial_revision from fresh household refetch", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    expect(source).toMatch(/householdResult = await householdsQuery\.refetch\(\)/);
+    expect(source).toMatch(/freshHousehold/);
+    expect(source).toMatch(/financialRevision: freshHousehold\?\.financial_revision/);
+    expect(source).not.toMatch(/financialRevision: selectedHousehold\?\.financial_revision/);
+    // Same household ID as changes / comparison — not a mixed profile/scenario fallback.
+    expect(source).toMatch(/const householdId = defaultHousehold/);
+    expect(source).toMatch(/householdId,/);
+  });
+
+  it("refresh settles comparison under the final revision key before pullRefreshing clears", () => {
+    const screen = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    const data = readFileSync(join(root, "useWhatIfData.ts"), "utf8");
+    // Sequence: refetch households → refreshWhatIfScenario (includes compare fetch) → finally clear.
+    const refreshStart = screen.indexOf("const refreshAll = async");
+    const refreshBlock = screen.slice(refreshStart, screen.indexOf("};", refreshStart) + 2);
+    expect(refreshBlock.indexOf("householdsQuery.refetch()")).toBeLessThan(
+      refreshBlock.indexOf("refreshWhatIfScenario")
+    );
+    expect(refreshBlock.indexOf("refreshWhatIfScenario")).toBeLessThan(
+      refreshBlock.indexOf("setPullRefreshing(false)")
+    );
+    expect(data).toMatch(/whatIfQueryKeys\.compare\(/);
+    expect(data).toMatch(/financialRevision/);
+    expect(data).toMatch(/fetchQuery/);
+  });
+
   it("does not fetch form picker data when only Add Change menu opens", () => {
     const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
     expect(source).not.toMatch(/formsEnabled \|\| addMenuOpen/);
@@ -256,6 +284,17 @@ describe("what-if screen isolation contract", () => {
     expect(data).toMatch(/useAccountOptions/);
     // Mutations invalidate changes only — stamp drives a single compare.
     expect(data).toMatch(/Comparison refreshes via inputStamp/);
+  });
+
+  it("refreshWhatIfScenario fetches compare once under the provided financialRevision key", () => {
+    const data = readFileSync(join(root, "useWhatIfData.ts"), "utf8");
+    // Single compare fetchQuery; revision comes from caller (fresh household refetch).
+    const compareFetches = data.match(/whatIfQueryKeys\.compare\(/g) ?? [];
+    expect(compareFetches.length).toBe(2); // hook key + refreshWhatIfScenario key
+    expect(data).toMatch(/await queryClient\.fetchQuery\(\{\s*queryKey: whatIfQueryKeys\.compare\(/s);
+    // Does not invalidate real financial caches.
+    expect(data).not.toMatch(/invalidateFinancialQueries/);
+    expect(data).toMatch(/Invalidate only scenario-scoped queries/);
   });
 
   it("scenario templates contain no invented production financial amounts", () => {
