@@ -28,9 +28,11 @@ describe("reportDisplay", () => {
   });
 
   it("does not contain production dollar/percentage significance thresholds", () => {
-    expect(reportDisplaySrc).not.toMatch(/absDelta < 0\.005/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta\s*<\s*0\.005/);
     expect(reportDisplaySrc).not.toMatch(/shouldShowCategoryDelta/);
-    expect(reportDisplaySrc).not.toMatch(/absDelta < 25/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta\s*<\s*25/);
+    expect(reportDisplaySrc).not.toMatch(/categoryShare\s*<\s*0\.01/);
+    expect(reportDisplaySrc).not.toMatch(/REPORT_CATEGORY_COMPARISON_MIN_/);
   });
 
   it("formats backend expense share without recomputing", () => {

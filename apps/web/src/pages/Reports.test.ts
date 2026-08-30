@@ -51,6 +51,17 @@ describe("Reports information architecture", () => {
     expect(reportDisplay).not.toMatch(/shouldShowCategoryDelta/);
   });
 
+  it("contains no client-side dollar/percentage materiality thresholds", () => {
+    for (const src of [reportsSource, reportDisplay, categoryBreakdown]) {
+      expect(src).not.toMatch(/shouldShowCategoryDelta/);
+      expect(src).not.toMatch(/absDelta\s*<\s*0\.005/);
+      expect(src).not.toMatch(/absDelta\s*<\s*25/);
+      expect(src).not.toMatch(/categoryShare\s*<\s*0\.01/);
+      expect(src).not.toMatch(/expenseSharePercent\s*\(/);
+      expect(src).not.toMatch(/REPORT_CATEGORY_COMPARISON_MIN_/);
+    }
+  });
+
   it("uses overview totals for category table subtotals — not client partition math", () => {
     expect(reportsSource).toMatch(/incomeTotal=\{data\.overview\.total_income\}/);
     expect(reportsSource).toMatch(/expenseTotal=\{data\.overview\.total_expenses\}/);

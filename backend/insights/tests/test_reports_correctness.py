@@ -116,7 +116,12 @@ def test_category_breakdown_includes_previous_delta(auth_client, household, user
     assert groceries["expense_share_percent"] is not None
     assert Decimal(groceries["expense_share_percent"]) > 0
     assert "show_comparison" in groceries
+    assert groceries["show_comparison"] is True
     assert groceries["percent_change"] is not None
+    # Rent is identical MoM in the seed fixture → no comparison chrome.
+    rent = by_name["Rent / Mortgage"]
+    assert Decimal(rent["delta"]) == Decimal("0.00")
+    assert rent["show_comparison"] is False
 
 
 @pytest.mark.django_db
@@ -137,6 +142,100 @@ def test_category_share_and_comparison_are_backend_owned(auth_client, household,
     incomes = [row for row in breakdown if Decimal(row["total"]) >= 0]
     for row in incomes:
         assert row.get("expense_share_percent") is None
+
+
+@pytest.mark.django_db
+def test_show_comparison_false_for_exact_no_change(auth_client, household, user, account):
+    """Exact same category total MoM → show_comparison false (no materiality dollars)."""
+    from categories.models import Category
+
+    cat = Category.objects.create(
+        household=household,
+        name="Stable Fixture Cat",
+        category_type=Category.CategoryType.EXPENSE,
+        sort_order=50,
+    )
+    # Fixture amounts are test-only — identical both months.
+    Transaction.objects.create(
+        account=account, date=date(2026, 8, 5), payee="A", amount=Decimal("-40.00"), category=cat
+    )
+    Transaction.objects.create(
+        account=account, date=date(2026, 7, 5), payee="B", amount=Decimal("-40.00"), category=cat
+    )
+    res = auth_client.get("/api/insights/category-breakdown/?month=2026-08")
+    assert res.status_code == 200
+    row = next(r for r in res.json()["breakdown"] if r["category_name"] == "Stable Fixture Cat")
+    assert Decimal(row["delta"]) == Decimal("0.00")
+    assert row["show_comparison"] is False
+
+
+@pytest.mark.django_db
+def test_show_comparison_true_for_real_positive_and_negative_deltas(
+    auth_client, household, user, account
+):
+    """Any cent-level MoM change is shown — no dollar/share suppression policy."""
+    from categories.models import Category
+
+    up = Category.objects.create(
+        household=household,
+        name="Delta Up Fixture",
+        category_type=Category.CategoryType.EXPENSE,
+        sort_order=51,
+    )
+    down = Category.objects.create(
+        household=household,
+        name="Delta Down Fixture",
+        category_type=Category.CategoryType.EXPENSE,
+        sort_order=52,
+    )
+    # Fixture values only — small but real cent changes must still show.
+    Transaction.objects.create(
+        account=account, date=date(2026, 8, 6), payee="U1", amount=Decimal("-10.01"), category=up
+    )
+    Transaction.objects.create(
+        account=account, date=date(2026, 7, 6), payee="U0", amount=Decimal("-10.00"), category=up
+    )
+    Transaction.objects.create(
+        account=account, date=date(2026, 8, 6), payee="D1", amount=Decimal("-5.00"), category=down
+    )
+    Transaction.objects.create(
+        account=account, date=date(2026, 7, 6), payee="D0", amount=Decimal("-5.50"), category=down
+    )
+    res = auth_client.get("/api/insights/category-breakdown/?month=2026-08")
+    assert res.status_code == 200
+    by_name = {r["category_name"]: r for r in res.json()["breakdown"]}
+    assert Decimal(by_name["Delta Up Fixture"]["delta"]) == Decimal("-0.01")
+    assert by_name["Delta Up Fixture"]["show_comparison"] is True
+    assert Decimal(by_name["Delta Down Fixture"]["delta"]) == Decimal("0.50")
+    assert by_name["Delta Down Fixture"]["show_comparison"] is True
+
+
+def test_reporting_py_has_no_arbitrary_materiality_literals():
+    """Production reporting must not embed dollar/share significance thresholds."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "services" / "reporting.py"
+    text = src.read_text(encoding="utf-8")
+    assert 'Decimal("0.005")' not in text
+    assert 'Decimal("25")' not in text
+    # Old share-based materiality gate (not money quantization).
+    assert "expense_abs_total < Decimal" not in text
+    assert "/ expense_abs_total <" not in text
+    assert "_MONEY_QUANTUM" in text
+    assert "show_comparison" in text
+
+
+def test_show_category_comparison_uses_money_quantum_not_materiality():
+    from insights.services.reporting import _show_category_comparison
+
+    assert _show_category_comparison(delta=Decimal("0")) is False
+    assert _show_category_comparison(delta=Decimal("0.00")) is False
+    # Sub-cent noise rounds to zero at serializer precision — not a dollar threshold.
+    assert _show_category_comparison(delta=Decimal("0.004")) is False
+    assert _show_category_comparison(delta=Decimal("-0.004")) is False
+    assert _show_category_comparison(delta=Decimal("0.01")) is True
+    assert _show_category_comparison(delta=Decimal("-0.01")) is True
+    assert _show_category_comparison(delta=Decimal("1.00")) is True
 
 
 @pytest.mark.django_db

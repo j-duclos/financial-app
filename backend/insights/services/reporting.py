@@ -13,6 +13,10 @@ from insights.services.report_context import ReportContext
 from insights.services.report_dates import month_key
 from transactions.models import Transaction
 
+# Canonical money precision used by the reporting serializer (cents).
+# Not a materiality / significance threshold — representation only.
+_MONEY_QUANTUM = Decimal("0.01")
+
 
 def _decimal(value) -> Decimal:
     if value is None:
@@ -41,14 +45,14 @@ def _money(value) -> str:
     if d is None:
         # Known empty aggregates use Decimal("0"); refuse NaN/Infinity emission.
         raise ValueError(f"non-finite money value: {value!r}")
-    return str(d.quantize(Decimal("0.01")))
+    return str(d.quantize(_MONEY_QUANTUM))
 
 
 def _money_or_none(value) -> str | None:
     d = _finite_decimal(value)
     if d is None:
         return None
-    return str(d.quantize(Decimal("0.01")))
+    return str(d.quantize(_MONEY_QUANTUM))
 
 
 def _percent_or_none(value: Decimal | None) -> str | None:
@@ -57,27 +61,15 @@ def _percent_or_none(value: Decimal | None) -> str | None:
     return str(value.quantize(Decimal("0.1")))
 
 
-def _show_category_comparison(
-    *,
-    total: Decimal,
-    delta: Decimal,
-    expense_abs_total: Decimal,
-) -> bool:
+def _show_category_comparison(*, delta: Decimal) -> bool:
     """
-    Backend policy: whether a category MoM delta is material enough to display.
-    Kept server-side so clients do not invent dollar/percentage significance rules.
+    Whether a category MoM comparison should be shown.
+
+    True when the delta is non-zero at canonical money precision (same quantum as
+    serialized ``delta``). No dollar-amount or category-share materiality suppression:
+    any real cent-level change is visible to the client via ``show_comparison``.
     """
-    abs_delta = abs(delta)
-    if abs_delta < Decimal("0.005"):
-        return False
-    abs_total = abs(total)
-    if (
-        expense_abs_total > 0
-        and abs_total / expense_abs_total < Decimal("0.01")
-        and abs_delta < Decimal("25")
-    ):
-        return False
-    return True
+    return delta.quantize(_MONEY_QUANTUM) != 0
 
 
 def exclude_internal_transfers(qs: QuerySet) -> QuerySet:
@@ -251,11 +243,7 @@ def build_category_breakdown(
             if prev != 0:
                 pct = delta / abs(prev) * Decimal("100")
             row["percent_change"] = _percent_or_none(pct)
-            row["show_comparison"] = _show_category_comparison(
-                total=total,
-                delta=delta,
-                expense_abs_total=expense_abs_total,
-            )
+            row["show_comparison"] = _show_category_comparison(delta=delta)
         breakdown.append(row)
 
     # Categories that only appeared last month are omitted from current breakdown

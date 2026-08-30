@@ -58,11 +58,12 @@ describe("reportDisplay", () => {
   });
 
   it("does not contain production dollar/percentage significance thresholds", () => {
-    expect(reportDisplaySrc).not.toMatch(/absDelta < 0\.005/);
-    expect(reportDisplaySrc).not.toMatch(/< 0\.01/);
-    expect(reportDisplaySrc).not.toMatch(/absDelta < 25/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta\s*<\s*0\.005/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta\s*<\s*25/);
+    expect(reportDisplaySrc).not.toMatch(/categoryShare\s*<\s*0\.01/);
     expect(reportDisplaySrc).not.toMatch(/shouldShowCategoryDelta/);
     expect(reportDisplaySrc).not.toMatch(/expenseSharePercent\(/);
+    expect(reportDisplaySrc).not.toMatch(/REPORT_CATEGORY_COMPARISON_MIN_/);
   });
 
   it("formats backend expense share without recomputing from amounts", () => {
@@ -251,6 +252,16 @@ describe("Reports information architecture", () => {
     expect(categoryRow).toMatch(/show_comparison/);
     expect(categoryRow).not.toMatch(/expenseSharePercent\(/);
     expect(categoryRow).not.toMatch(/shouldShowCategoryDelta/);
+  });
+
+  it("contains no client-side dollar/percentage materiality thresholds", () => {
+    for (const src of [reportDisplaySrc, categoryRow, reportSections, reportsScreen, reportDetail]) {
+      expect(src).not.toMatch(/shouldShowCategoryDelta/);
+      expect(src).not.toMatch(/absDelta\s*<\s*0\.005/);
+      expect(src).not.toMatch(/absDelta\s*<\s*25/);
+      expect(src).not.toMatch(/categoryShare\s*<\s*0\.01/);
+      expect(src).not.toMatch(/REPORT_CATEGORY_COMPARISON_MIN_/);
+    }
   });
 });
 
