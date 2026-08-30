@@ -2,9 +2,19 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { scenarioInputStamp, whatIfWebQueryKeys } from "../lib/whatIfQueryKeys";
+import { SCENARIO_TEMPLATES } from "../lib/scenarioTemplates";
 
 const scenariosSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "Scenarios.tsx"),
+  "utf8"
+);
+const queryKeysSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../lib/whatIfQueryKeys.ts"),
+  "utf8"
+);
+const displaySource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../lib/scenarioComparisonDisplay.ts"),
   "utf8"
 );
 
@@ -31,15 +41,78 @@ describe("What-If context from Planning", () => {
     expect(scenariosSource).toMatch(/Show detailed impact/);
   });
 
-  it("invalidates scenario comparison when changes are edited or removed", () => {
-    expect(scenariosSource).toMatch(/invalidateQueries\(\{ queryKey: \["scenario-compare", selectedScenarioId\] \}\)/);
-    expect(scenariosSource).toMatch(/scenarioInputStamp/);
+  it("refreshes comparison via input stamp after changes settle (no duplicate compare invalidate)", () => {
+    expect(scenariosSource).toMatch(/scenarioInputStamp|buildScenarioInputStamp/);
     expect(scenariosSource).toMatch(/financial_revision/);
     expect(scenariosSource).toMatch(/forecastPeriod/);
+    expect(scenariosSource).toMatch(/getScenarioChanges/);
+    expect(scenariosSource).toMatch(/whatIfWebQueryKeys\.scenarioChanges/);
+    expect(scenariosSource).toMatch(/Comparison refreshes via inputStamp/);
+    expect(scenariosSource).not.toMatch(
+      /invalidateQueries\(\{ queryKey: \["scenario-compare", selectedScenarioId\] \}\)/
+    );
   });
 
   it("does not apply a plan just because the result is SAFE", () => {
     expect(scenariosSource).not.toMatch(/applyScenario/);
     expect(scenariosSource).not.toMatch(/Apply this plan/);
+  });
+
+  it("does not invalidate real financial caches on scenario edits", () => {
+    expect(scenariosSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["dashboard/);
+    expect(scenariosSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["transactions/);
+    expect(scenariosSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["calendar/);
+    expect(scenariosSource).not.toMatch(/invalidateQueries\(\{ queryKey: \["goals/);
+    expect(queryKeysSource).toMatch(/must never be invalidated by scenario mutations/);
+  });
+
+  it("lazy-loads accounts only when a change form needs them", () => {
+    expect(scenariosSource).toMatch(/modalNeedsAccounts/);
+    expect(scenariosSource).toMatch(/enabled: modalNeedsAccounts/);
+    expect(scenariosSource).toMatch(/modalNeedsAccountBalances/);
+  });
+
+  it("marks mismatched scenario comparison while switching plans", () => {
+    expect(scenariosSource).toMatch(/comparisonBelongsToSelection/);
+    expect(scenariosSource).toMatch(/Updating scenario/);
+    expect(scenariosSource).toMatch(/No hypothetical changes yet/);
+  });
+
+  it("compare query key includes scenario, horizon, and financial revision", () => {
+    const key = whatIfWebQueryKeys.compare(1, "12m", 2, 9, "stamp");
+    expect(key).toEqual(["scenario-compare", 1, "12m", 2, 9, "stamp"]);
+  });
+
+  it("input stamp is deterministic for identical change sets", () => {
+    const a = scenarioInputStamp({
+      overrides: [
+        { id: 2, updated_at: "b" },
+        { id: 1, updated_at: "a" },
+      ],
+    });
+    const b = scenarioInputStamp({
+      overrides: [
+        { id: 1, updated_at: "a" },
+        { id: 2, updated_at: "b" },
+      ],
+    });
+    expect(a).toBe(b);
+  });
+
+  it("scenario templates contain no invented production financial amounts", () => {
+    const templates = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../lib/scenarioTemplates.ts"),
+      "utf8"
+    );
+    expect(templates).not.toMatch(/\$\d/);
+    for (const t of SCENARIO_TEMPLATES) {
+      expect(t.suggestedOverrideHints.join(" ")).not.toMatch(/\d{3,}/);
+    }
+  });
+
+  it("does not compute monthly recurring cost with client 52/12 math", () => {
+    expect(displaySource).not.toMatch(/\* 52\) \/ 12/);
+    expect(displaySource).not.toMatch(/\* 26\) \/ 12/);
+    expect(displaySource).toMatch(/delta_monthly/);
   });
 });

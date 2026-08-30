@@ -222,6 +222,8 @@ export function invalidateRecurringRuleDependents(queryClient: QueryClient): voi
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.buckets);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.bucketDetail);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.ruleAllocations);
+  // What-If baseline uses live rules; keep scenario compare caches fresh after rule edits.
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.whatIfScenarios);
 }
 
 /** Spending-limit definition changes — budget summaries and limit performance only. */

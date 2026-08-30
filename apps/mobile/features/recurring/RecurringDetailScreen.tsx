@@ -4,8 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteRule,
-  getBillsOverview,
-  getRule,
+  getRuleOccurrences,
   pauseRule,
   resumeRule,
 } from "@budget-app/api-client";
@@ -31,7 +30,6 @@ import { recurringQueryKeys } from "./queryKeys";
 import {
   amountDisplayForRule,
   cadenceLabel,
-  currentMonthKey,
   directionLabel,
   formatRecurringDate,
   lifecycleBadgeLabel,
@@ -46,25 +44,18 @@ export function RecurringDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const ruleId = Number(id);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const month = currentMonthKey();
 
-  const ruleQuery = useQuery({
-    queryKey: recurringQueryKeys.detail(ruleId),
-    queryFn: () => getRule(ruleId),
+  const detailQuery = useQuery({
+    queryKey: recurringQueryKeys.occurrences(ruleId, 5),
+    queryFn: () => getRuleOccurrences(ruleId, { limit: 5 }),
     enabled: Number.isInteger(ruleId) && ruleId > 0,
-  });
-
-  const overviewQuery = useQuery({
-    queryKey: recurringQueryKeys.billsOverview(month),
-    queryFn: () => getBillsOverview({ month, months_before: 0, months_after: 2 }),
-    staleTime: 60_000,
   });
 
   const pauseMutation = useMutation({
     mutationFn: () => pauseRule(ruleId),
     onSuccess: () => {
       invalidateRecurringRuleDependents(queryClient);
-      void ruleQuery.refetch();
+      void detailQuery.refetch();
     },
   });
 
@@ -72,7 +63,7 @@ export function RecurringDetailScreen() {
     mutationFn: () => resumeRule(ruleId),
     onSuccess: () => {
       invalidateRecurringRuleDependents(queryClient);
-      void ruleQuery.refetch();
+      void detailQuery.refetch();
     },
   });
 
@@ -84,28 +75,22 @@ export function RecurringDetailScreen() {
     },
   });
 
-  const rule = ruleQuery.data;
+  const rule = detailQuery.data?.rule;
   const today = todayStr();
   const lifecycle = rule ? ruleLifecycleStatus(rule, today) : "inactive";
   const statusBadge = lifecycleBadgeLabel(lifecycle);
   const amountDisplay = rule ? amountDisplayForRule(rule) : null;
   const nextOccurrence = rule
-    ? resolveNextOccurrence(
-        rule,
-        today,
-        overviewQuery.data?.checklist.items.find((i) => i.rule_id === ruleId)?.due_date ?? null
-      )
-    : null;
+    ? resolveNextOccurrence(rule, today)
+    : detailQuery.data?.next_occurrence_date?.slice(0, 10) ?? null;
 
   const upcoming = useMemo(() => {
-    const items = overviewQuery.data?.checklist.items ?? [];
-    return items
-      .filter((item) => item.rule_id === ruleId && item.due_date > today)
-      .sort((a, b) => a.due_date.localeCompare(b.due_date))
-      .slice(0, 5);
-  }, [overviewQuery.data?.checklist.items, ruleId, today]);
+    return (detailQuery.data?.upcoming_occurrences ?? []).filter(
+      (item) => item.due_date > today
+    );
+  }, [detailQuery.data?.upcoming_occurrences, today]);
 
-  if (ruleQuery.isLoading) {
+  if (detailQuery.isLoading) {
     return (
       <Screen scroll={false}>
         <SkeletonBlock lines={4} />
@@ -113,10 +98,10 @@ export function RecurringDetailScreen() {
     );
   }
 
-  if (ruleQuery.isError || !rule || !amountDisplay) {
+  if (detailQuery.isError || !rule || !amountDisplay) {
     return (
       <Screen scroll={false}>
-        <ErrorState message={describeApiError(ruleQuery.error)} onRetry={() => ruleQuery.refetch()} />
+        <ErrorState message={describeApiError(detailQuery.error)} onRetry={() => detailQuery.refetch()} />
       </Screen>
     );
   }
@@ -173,11 +158,11 @@ export function RecurringDetailScreen() {
         {upcoming.length > 0 ? (
           <Card padded={false}>
             <View style={{ padding: theme.spacing.lg, paddingBottom: 0 }}>
-              <SectionHeader title="Upcoming" subtitle="From bills forecast" />
+              <SectionHeader title="Upcoming" subtitle="Canonical occurrence preview" />
             </View>
             {upcoming.map((p) => (
               <View
-                key={p.id}
+                key={p.due_date}
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",

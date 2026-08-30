@@ -1,5 +1,6 @@
 """Shared seed data for default categories (flat for MVP, parent field ready)."""
 from categories.models import Category
+from categories.semantics import SEED_NAME_TO_SYSTEM_CODE
 
 
 # (name, type, sort_order) - flat list per user spec
@@ -95,15 +96,26 @@ DEFAULT_CATEGORIES = [
 
 def seed_household_categories(household, *, is_system=False):
     for name, cat_type, sort_order in DEFAULT_CATEGORIES:
+        system_code = SEED_NAME_TO_SYSTEM_CODE.get(name)
+        defaults = {"is_system": is_system, "sort_order": sort_order}
+        if system_code:
+            defaults["system_code"] = system_code
         obj, created = Category.objects.get_or_create(
             household=household,
             name=name,
             category_type=cat_type,
             parent=None,
-            defaults={"is_system": is_system, "sort_order": sort_order},
+            defaults=defaults,
         )
+        update_fields: list[str] = []
         if not created and obj.is_archived:
             obj.is_archived = False
             obj.is_system = is_system
             obj.sort_order = sort_order
-            obj.save(update_fields=["is_archived", "is_system", "sort_order", "updated_at"])
+            update_fields.extend(["is_archived", "is_system", "sort_order"])
+        if system_code and obj.system_code != system_code:
+            obj.system_code = system_code
+            update_fields.append("system_code")
+        if update_fields:
+            update_fields.append("updated_at")
+            obj.save(update_fields=update_fields)

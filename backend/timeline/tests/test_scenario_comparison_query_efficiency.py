@@ -526,6 +526,18 @@ def test_income_override_does_not_double_paycheck(user, household):
         assert abs(Decimal(change["delta"])) == Decimal("664.48")
 
 
+def test_delta_to_monthly_normalization():
+    from decimal import Decimal
+
+    from timeline.services.scenario_comparison import _delta_to_monthly
+
+    assert _delta_to_monthly(Decimal("100"), "weekly") == (Decimal("100") * 52) / 12
+    assert _delta_to_monthly(Decimal("100"), "biweekly") == (Decimal("100") * 26) / 12
+    assert _delta_to_monthly(Decimal("1200"), "yearly") == Decimal("100")
+    assert _delta_to_monthly(Decimal("50"), "monthly") == Decimal("50")
+    assert _delta_to_monthly(Decimal("75"), "one_time") == Decimal("75")
+
+
 @pytest.mark.django_db
 def test_added_recurring_projects_without_real_rule(user, household):
     from timeline.services.scenario_comparison import build_scenario_comparison

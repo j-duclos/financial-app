@@ -66,15 +66,22 @@ describe("ruleCashFlow", () => {
       amount: "500",
       frequency: "WEEKLY",
       day_of_week: 0,
+      estimated_monthly_amount: String(-((52 / 12) * 500)),
     });
     const bankPayment = baseRule({
       id: 2,
       name: "Grocery - Move to Savor",
       account: { id: 1, name: "Chase", account_type: "CHECKING" } as RecurringRule["account"],
-      category: { id: 3, name: "Credit Card Payment" } as RecurringRule["category"],
+      category: {
+        id: 3,
+        name: "Credit Card Payment",
+        system_code: "CREDIT_CARD_PAYMENT",
+        allows_transfer_destination: true,
+      } as RecurringRule["category"],
       amount: "500",
       frequency: "WEEKLY",
       day_of_week: 0,
+      estimated_monthly_amount: String(-((52 / 12) * 500)),
     });
 
     const rules = [cardCharge, bankPayment];
@@ -89,7 +96,12 @@ describe("ruleCashFlow", () => {
   });
 
   it("excludes credit card charges from bills section grouping", () => {
-    const bankBill = baseRule({ id: 1, name: "ATT Pmt", amount: "200" });
+    const bankBill = baseRule({
+      id: 1,
+      name: "ATT Pmt",
+      amount: "200",
+      estimated_monthly_amount: "-200",
+    });
     const cardCharge = baseRule({
       id: 2,
       name: "Grocery Placeholder",
@@ -97,6 +109,7 @@ describe("ruleCashFlow", () => {
       amount: "500",
       frequency: "WEEKLY",
       day_of_week: 0,
+      estimated_monthly_amount: String(-((52 / 12) * 500)),
     });
 
     expect(getRuleSection(bankBill)).toBe("bills");
@@ -125,9 +138,21 @@ describe("ruleCashFlow", () => {
     expect(ruleCountsTowardMonthlyCashFlow(transfer)).toBe(false);
   });
 
-  it("normalizes weekly and yearly cadences instead of weekly times four", () => {
-    const weekly = baseRule({ name: "Paycheck", direction: "INCOME", amount: "500", frequency: "WEEKLY" });
-    const yearly = baseRule({ name: "Bonus", direction: "INCOME", amount: "1200", frequency: "YEARLY" });
+  it("uses backend estimated_monthly_amount instead of client frequency math", () => {
+    const weekly = baseRule({
+      name: "Paycheck",
+      direction: "INCOME",
+      amount: "500",
+      frequency: "WEEKLY",
+      estimated_monthly_amount: String((52 / 12) * 500),
+    });
+    const yearly = baseRule({
+      name: "Bonus",
+      direction: "INCOME",
+      amount: "1200",
+      frequency: "YEARLY",
+      estimated_monthly_amount: "100",
+    });
     expect(ruleMonthlyAmount(weekly)).toBeCloseTo((52 / 12) * 500, 2);
     expect(ruleMonthlyAmount(yearly)).toBeCloseTo(100, 2);
   });

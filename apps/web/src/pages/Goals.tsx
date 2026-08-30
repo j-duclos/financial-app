@@ -22,6 +22,11 @@ import {
   buildBucketFundingPayload,
   goalFundingFormFromAllocation,
 } from "../lib/goalFundingForm";
+import {
+  classifyGoalSaveImpact,
+  invalidateAfterGoalSave,
+  invalidateGoalLifecycleQueries,
+} from "../lib/goalQueryInvalidation";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import GoalFormModal, { type GoalFormValues } from "../components/goals/GoalFormModal";
 import GoalsSummaryBar from "../components/goals/GoalsSummaryBar";
@@ -101,16 +106,7 @@ export default function Goals() {
   const completed = useMemo(() => goals.filter((g) => g.status === "completed"), [goals]);
   const archived = useMemo(() => goals.filter((g) => g.status === "archived"), [goals]);
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["buckets"] });
-    queryClient.invalidateQueries({ queryKey: ["buckets", "all"] });
-    queryClient.invalidateQueries({ queryKey: ["buckets-summary"] });
-    queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
-    queryClient.invalidateQueries({ queryKey: ["accounts"] });
-    queryClient.invalidateQueries({ queryKey: ["goals-report"] });
-    queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
-    queryClient.invalidateQueries({ queryKey: ["rule-allocations"] });
-  };
+  const invalidateLifecycle = () => invalidateGoalLifecycleQueries(queryClient);
 
   const { data: rulesData, isLoading: rulesLoading } = useQuery({
     queryKey: ["recurring-rules", "goals-funding"],
@@ -136,8 +132,10 @@ export default function Goals() {
 
   const saveMu = useMutation({
     mutationFn: async (values: GoalFormValues) => {
+      const prior = editing;
+      const priorFunding = initialFunding;
       const body = buildPayload(householdId!, values);
-      const saved = editing ? await updateBucket(editing.id, body) : await createBucket(body);
+      const saved = prior ? await updateBucket(prior.id, body) : await createBucket(body);
       const isDebt = values.goal_type === "debt_payoff";
       if (!isDebt) {
         await configureBucketFunding(saved.id, buildBucketFundingPayload(
@@ -145,22 +143,25 @@ export default function Goals() {
           values.monthly_contribution
         ));
       }
-      return saved;
+      return { saved, values, prior, priorFunding };
     },
-    onSuccess: () => {
-      invalidate();
+    onSuccess: ({ values, prior, priorFunding }) => {
+      const impact = classifyGoalSaveImpact(prior, values, priorFunding);
+      invalidateAfterGoalSave(queryClient, impact, {
+        isDebt: values.goal_type === "debt_payoff",
+      });
       setEditing(null);
       setSearchParams({});
     },
   });
 
-  const archiveMu = useMutation({ mutationFn: archiveBucket, onSuccess: invalidate });
-  const completeMu = useMutation({ mutationFn: completeBucket, onSuccess: invalidate });
-  const pauseMu = useMutation({ mutationFn: pauseBucket, onSuccess: invalidate });
-  const duplicateMu = useMutation({ mutationFn: duplicateBucket, onSuccess: invalidate });
+  const archiveMu = useMutation({ mutationFn: archiveBucket, onSuccess: invalidateLifecycle });
+  const completeMu = useMutation({ mutationFn: completeBucket, onSuccess: invalidateLifecycle });
+  const pauseMu = useMutation({ mutationFn: pauseBucket, onSuccess: invalidateLifecycle });
+  const duplicateMu = useMutation({ mutationFn: duplicateBucket, onSuccess: invalidateLifecycle });
   const deleteMu = useMutation({
     mutationFn: deleteBucket,
-    onSuccess: invalidate,
+    onSuccess: invalidateLifecycle,
   });
 
   function closeModal() {

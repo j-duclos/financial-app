@@ -17,7 +17,7 @@ import {
 import { useCategories } from "../hooks/useCategories";
 import RuleActionsMenu from "../components/rules/RuleActionsMenu";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
-import { formatNextRunDate, getNextRuleRunDate } from "../lib/ruleOccurrences";
+import { formatNextRunDate } from "../lib/ruleOccurrences";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import { invalidateRecurringRuleDependents } from "../lib/financialQueryRefresh";
 import {
@@ -523,7 +523,9 @@ export default function Rules() {
                   {sectionRules.map((rule: RecurringRule) => {
                     const lifecycle = getRuleLifecycleStatus(rule);
                     const nextRun =
-                      lifecycle === "running" ? getNextRuleRunDate(rule, todayLocalISO()) : null;
+                      lifecycle === "running"
+                        ? rule.next_occurrence_date?.slice(0, 10) ?? null
+                        : null;
                     return (
                     <tr key={rule.id} className="hover:bg-gray-50">
                       <td className="px-4 py-2 text-sm min-w-0">

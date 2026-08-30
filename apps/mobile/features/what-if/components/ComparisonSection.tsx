@@ -41,7 +41,7 @@ export function ComparisonSection({
           Scenario impact
         </Text>
         <Text style={{ color: theme.colors.critical, marginBottom: 12 }}>
-          Could not calculate this scenario. Your changes are still saved.
+          Could not calculate this scenario. Your changes are still saved — this is not a “no impact” result.
         </Text>
         {onRetry ? <Button label="Retry" variant="secondary" onPress={onRetry} /> : null}
       </Card>
@@ -65,6 +65,17 @@ export function ComparisonSection({
       <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 4 }}>
         Scenario impact
       </Text>
+      {error ? (
+        <Text style={{ color: theme.colors.critical, ...theme.typography.caption, marginBottom: 8 }}>
+          Recalculation failed — figures below may be stale.
+          {onRetry ? " " : ""}
+        </Text>
+      ) : null}
+      {error && onRetry ? (
+        <View style={{ marginBottom: 12 }}>
+          <Button label="Retry" variant="secondary" onPress={onRetry} />
+        </View>
+      ) : null}
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 12 }}>
         {horizonLabel} forecast — baseline vs this plan
       </Text>

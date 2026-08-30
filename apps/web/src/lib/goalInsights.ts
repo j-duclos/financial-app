@@ -212,11 +212,9 @@ export function goalForecastSummary(goal: FinancialGoal): GoalForecastSummaryMet
     rows.push({ label: "Current pace", value: pace });
   }
 
-  const needed = parseMoney(goal.monthly_required ?? goal.suggested_monthly) ?? 0;
-  const current = parseMoney(goal.current_contribution_rate ?? goal.contribution_pace_monthly) ?? 0;
+  // Shortfall/surplus are backend-owned — never derive from needed − pace on the client.
   const backendShortfall = parseMoney(goal.forecast_gap);
   const backendSurplus = parseMoney(goal.forecast_surplus);
-  const delta = needed - current;
 
   if (backendSurplus != null && backendSurplus > 0.005) {
     const surplus = formatPaceMonthly(goal.forecast_surplus);
@@ -224,12 +222,6 @@ export function goalForecastSummary(goal: FinancialGoal): GoalForecastSummaryMet
   } else if (backendShortfall != null && backendShortfall > 0.005) {
     const shortfall = formatPaceMonthly(goal.forecast_gap);
     if (shortfall) rows.push({ label: "Shortfall", value: shortfall, tone: "shortfall" });
-  } else if (needed > 0 && delta > 0.005) {
-    const shortfall = formatPaceMonthly(delta.toFixed(2));
-    if (shortfall) rows.push({ label: "Shortfall", value: shortfall, tone: "shortfall" });
-  } else if (needed > 0 && delta < -0.005) {
-    const surplus = formatPaceMonthly((-delta).toFixed(2));
-    if (surplus) rows.push({ label: "Surplus", value: surplus, tone: "surplus" });
   }
 
   const perPaycheck = goalPerPaycheckNeeded(goal);
@@ -244,12 +236,6 @@ export function goalForecastSummary(goal: FinancialGoal): GoalForecastSummaryMet
 export function goalCardGapValue(goal: FinancialGoal): string | null {
   if (goal.forecast_gap && parseFloat(goal.forecast_gap) > 0) {
     return formatMonthlyAmount(goal.forecast_gap);
-  }
-  const needed = parseMoney(goal.monthly_required ?? goal.suggested_monthly) ?? 0;
-  const current = parseMoney(goal.current_contribution_rate ?? goal.contribution_pace_monthly) ?? 0;
-  const delta = needed - current;
-  if (needed > 0 && delta > 0.005) {
-    return formatMonthlyAmount(delta.toFixed(2));
   }
   return null;
 }

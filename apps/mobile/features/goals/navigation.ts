@@ -1,5 +1,3 @@
-import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
-
 export function goalsListPath(): "/goals" {
   return "/goals";
 }
@@ -18,10 +16,6 @@ export function goalEditPath(id: number): `/goal/edit/${number}` {
 
 export function goalContributionHistoryPath(id: number): `/goal/${number}/contributions` {
   return `/goal/${id}/contributions`;
-}
-
-export function goalRelatedTransactionsPath(accountId: number) {
-  return transactionsForAccountPath(accountId);
 }
 
 export function goalAccountPath(accountId: number): `/account/${number}` {

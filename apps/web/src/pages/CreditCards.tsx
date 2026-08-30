@@ -31,9 +31,14 @@ import {
   buildDrawerPayoffParams,
   drawerStrategyRequiresAmountInput,
   isCreditCardAccount,
-  WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "../lib/paymentPlannerDisplay";
-import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import {
+  paymentPlannerQueryKeys,
+  type PlannerScenarioInputs,
+} from "../lib/paymentPlannerQueryKeys";
+
+/** Neutral baseline — matches backend plan default (extra_monthly → 0). */
+const NEUTRAL_EXTRA_MONTHLY = "0";
 
 export default function CreditCards() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -45,28 +50,36 @@ export default function CreditCards() {
   const [mode, setMode] = useState<DebtPayoffMode>(
     () => parseDebtModeParam(searchParams.get("mode")) ?? "aggressive"
   );
-  const [extraMonthly, setExtraMonthly] = useState("150");
-  const [whatIfLump, setWhatIfLump] = useState("");
-  const [whatIfLumpAccount, setWhatIfLumpAccount] = useState("");
-  const debouncedExtraMonthly = useDebouncedValue(extraMonthly, WHAT_IF_NUMERIC_DEBOUNCE_MS);
-  const debouncedWhatIfLump = useDebouncedValue(whatIfLump, WHAT_IF_NUMERIC_DEBOUNCE_MS);
+
+  // Draft what-if inputs (do not drive the plan query until Apply).
+  const [draftExtraMonthly, setDraftExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
+  const [draftLump, setDraftLump] = useState("");
+  const [draftLumpAccount, setDraftLumpAccount] = useState("");
+  // Applied scenario — only these change the debt-plan query key.
+  const [appliedExtraMonthly, setAppliedExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
+  const [appliedLump, setAppliedLump] = useState("");
+  const [appliedLumpAccount, setAppliedLumpAccount] = useState("");
 
   const [cardStrategy, setCardStrategy] = useState<PayoffStrategy>("minimum_payment");
   const [amountInput, setAmountInput] = useState(amountFromUrl);
+  const [appliedAmountInput, setAppliedAmountInput] = useState(amountFromUrl);
 
   useEffect(() => {
     if (strategyFromUrl === "custom_amount" && amountFromUrl) {
       setCardStrategy("custom_amount");
       setAmountInput(amountFromUrl);
+      setAppliedAmountInput(amountFromUrl);
       return;
     }
     if (strategyFromUrl === "statement_balance" || strategyFromUrl === "minimum_payment") {
       setCardStrategy(strategyFromUrl);
       setAmountInput("");
+      setAppliedAmountInput("");
       return;
     }
     if (amountFromUrl) {
       setAmountInput(amountFromUrl);
+      setAppliedAmountInput(amountFromUrl);
       if (Number(amountFromUrl) > 0) {
         setCardStrategy("custom_amount");
       }
@@ -74,37 +87,43 @@ export default function CreditCards() {
     }
     setCardStrategy("minimum_payment");
     setAmountInput("");
+    setAppliedAmountInput("");
   }, [selectedId, strategyFromUrl, amountFromUrl]);
 
-  const { data: accountsData } = useQuery({
-    queryKey: ["accounts", "debt-planner"],
+  const accountsQuery = useQuery({
+    queryKey: paymentPlannerQueryKeys.accounts,
     queryFn: () =>
       listAccounts({
         active_only: true,
         page_size: 500,
         balance: "true",
+        account_type: "CREDIT",
       }),
   });
-  const accounts = accountsData?.results ?? [];
+  const accounts = accountsQuery.data?.results ?? [];
   const creditCards = useMemo(() => accounts.filter(isCreditCardAccount), [accounts]);
 
-  const planQuery = useQuery({
-    queryKey: [
-      "debt-plan",
+  const scenarioInputs: PlannerScenarioInputs = useMemo(
+    () => ({
       strategy,
       mode,
-      debouncedExtraMonthly,
-      debouncedWhatIfLump,
-      whatIfLumpAccount,
-    ],
+      extraMonthly: appliedExtraMonthly,
+      lumpSum: appliedLump,
+      lumpSumAccountId: appliedLumpAccount ? Number(appliedLumpAccount) : null,
+    }),
+    [strategy, mode, appliedExtraMonthly, appliedLump, appliedLumpAccount]
+  );
+
+  const planQuery = useQuery({
+    queryKey: paymentPlannerQueryKeys.plan(scenarioInputs),
     queryFn: ({ signal }) =>
       getDebtPayoffPlan(
         {
-          strategy,
-          mode,
-          extra_monthly: debouncedExtraMonthly || "0",
-          lump_sum: debouncedWhatIfLump || undefined,
-          lump_sum_account: whatIfLumpAccount ? Number(whatIfLumpAccount) : undefined,
+          strategy: scenarioInputs.strategy,
+          mode: scenarioInputs.mode,
+          extra_monthly: scenarioInputs.extraMonthly || "0",
+          lump_sum: scenarioInputs.lumpSum || undefined,
+          lump_sum_account: scenarioInputs.lumpSumAccountId ?? undefined,
         },
         { signal }
       ),
@@ -123,33 +142,55 @@ export default function CreditCards() {
     [plan, selectedId]
   );
 
+  const projectionAmount =
+    cardStrategy === "custom_amount" ? appliedAmountInput : amountInput;
+
   const projectionEnabled =
     !!selectedAccount &&
     !!selectedPlanCard &&
     (drawerStrategyRequiresAmountInput(cardStrategy)
-      ? amountInput.trim() !== "" && Number(amountInput) > 0
+      ? projectionAmount.trim() !== "" && Number(projectionAmount) > 0
       : true);
 
   const projectionQuery = useQuery({
-    queryKey: ["account-payoff", selectedId, cardStrategy, amountInput],
+    queryKey: paymentPlannerQueryKeys.accountPayoff(selectedId, cardStrategy, projectionAmount),
     queryFn: async ({ signal }) => {
       if (!selectedAccount || !selectedPlanCard) throw new Error("No account selected.");
       if (drawerStrategyRequiresAmountInput(cardStrategy)) {
-        const val = amountInput.trim();
+        const val = projectionAmount.trim();
         if (!val || Number(val) <= 0) throw new Error("Enter a positive payment.");
       }
       return getAccountPayoff(
         selectedAccount.id,
-        buildDrawerPayoffParams(selectedAccount, selectedPlanCard, cardStrategy, amountInput),
+        buildDrawerPayoffParams(
+          selectedAccount,
+          selectedPlanCard,
+          cardStrategy,
+          projectionAmount
+        ),
         { signal }
       );
     },
     enabled: projectionEnabled,
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   const projectionError =
     projectionQuery.error instanceof Error ? projectionQuery.error.message : null;
+
+  const whatIfDirty =
+    draftExtraMonthly !== appliedExtraMonthly ||
+    draftLump !== appliedLump ||
+    draftLumpAccount !== appliedLumpAccount;
+
+  const customAmountDirty = amountInput !== appliedAmountInput;
+
+  function applyWhatIf() {
+    setAppliedExtraMonthly(draftExtraMonthly);
+    setAppliedLump(draftLump);
+    setAppliedLumpAccount(draftLumpAccount);
+  }
 
   function selectAccount(accountId: number) {
     const id = String(accountId);
@@ -164,7 +205,32 @@ export default function CreditCards() {
     setSearchParams({});
   }
 
-  if (creditCards.length === 0) {
+  if (accountsQuery.isLoading) {
+    return (
+      <div className={PAGE_SHELL_PY}>
+        <div className="mb-4 space-y-2">
+          <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
+          <p className="text-sm text-gray-600">How should I eliminate debt?</p>
+          <PlanningSubnav />
+        </div>
+        <p className="text-sm text-gray-500 animate-pulse">Loading credit cards…</p>
+      </div>
+    );
+  }
+
+  if (accountsQuery.isError) {
+    return (
+      <div className={PAGE_SHELL_PY}>
+        <div className="mb-4 space-y-2">
+          <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
+          <PlanningSubnav />
+        </div>
+        <p className="text-sm text-red-600">Could not load credit cards.</p>
+      </div>
+    );
+  }
+
+  if (accountsQuery.isSuccess && creditCards.length === 0) {
     return (
       <div className={PAGE_SHELL_PY}>
         <div className="mb-4 space-y-2">
@@ -190,6 +256,11 @@ export default function CreditCards() {
           amountInput,
           onStrategyChange: setCardStrategy,
           onAmountChange: setAmountInput,
+          onApplyCustomAmount: (amount: string) => {
+            setAmountInput(amount);
+            setAppliedAmountInput(amount);
+          },
+          customAmountDirty,
           projection: projectionQuery.data,
           projectionLoading: projectionQuery.isFetching,
           projectionError,
@@ -216,6 +287,9 @@ export default function CreditCards() {
       </div>
       {plan && (
         <section className="rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-3 space-y-2">
+          {planQuery.isFetching && !planQuery.isLoading ? (
+            <p className="text-xs text-indigo-700 animate-pulse">Recalculating plan…</p>
+          ) : null}
           <div className={METRIC_TILE_GRID_4}>
             <DashboardMetricTile label="Total debt" value={formatCurrency(plan.total_debt)} />
             <DashboardMetricTile label="Weighted APR" value={`${plan.weighted_apr}%`} />
@@ -301,8 +375,8 @@ export default function CreditCards() {
             <input
               type="number"
               min="0"
-              value={extraMonthly}
-              onChange={(e) => setExtraMonthly(e.target.value)}
+              value={draftExtraMonthly}
+              onChange={(e) => setDraftExtraMonthly(e.target.value)}
               className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </label>
@@ -311,17 +385,17 @@ export default function CreditCards() {
             <input
               type="number"
               min="0"
-              value={whatIfLump}
-              onChange={(e) => setWhatIfLump(e.target.value)}
+              value={draftLump}
+              onChange={(e) => setDraftLump(e.target.value)}
               className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </label>
-          {whatIfLump && (
+          {draftLump && (
             <label className="block text-xs">
               <span className="text-gray-600">Apply lump sum to card</span>
               <select
-                value={whatIfLumpAccount}
-                onChange={(e) => setWhatIfLumpAccount(e.target.value)}
+                value={draftLumpAccount}
+                onChange={(e) => setDraftLumpAccount(e.target.value)}
                 className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               >
                 <option value="">Select card</option>
@@ -333,6 +407,14 @@ export default function CreditCards() {
               </select>
             </label>
           )}
+          <button
+            type="button"
+            disabled={!whatIfDirty}
+            onClick={applyWhatIf}
+            className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-indigo-700"
+          >
+            Update plan
+          </button>
         </div>
 
         {plan && (
@@ -411,4 +493,3 @@ export default function CreditCards() {
     </div>
   );
 }
-

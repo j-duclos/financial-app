@@ -70,12 +70,29 @@ class DebtPayoffPlanView(APIView):
         except (InvalidOperation, ValueError):
             return Response({"detail": "Invalid decimal parameter."}, status=400)
 
+        if extra < 0 or lump < 0:
+            return Response({"detail": "extra_monthly and lump_sum must be non-negative."}, status=400)
+
+        cards = _credit_cards_for_user(request.user, request.query_params.get("household"))
+        card_ids = {c.id for c in cards}
+
         lump_by: dict[int, Decimal] = {}
         if lump > 0 and lump_account:
             try:
-                lump_by[int(lump_account)] = lump
+                lump_account_id = int(lump_account)
             except ValueError:
                 return Response({"detail": "lump_sum_account must be an integer."}, status=400)
+            if lump_account_id not in card_ids:
+                return Response(
+                    {"detail": "lump_sum_account must be a credit card in this household plan."},
+                    status=400,
+                )
+            lump_by[lump_account_id] = lump
+        elif lump > 0 and not lump_account:
+            return Response(
+                {"detail": "lump_sum requires lump_sum_account."},
+                status=400,
+            )
 
         custom_order = None
         order_raw = request.query_params.get("custom_order")
@@ -85,7 +102,6 @@ class DebtPayoffPlanView(APIView):
             except ValueError:
                 return Response({"detail": "custom_order must be comma-separated account ids."}, status=400)
 
-        cards = _credit_cards_for_user(request.user, request.query_params.get("household"))
         today = date.today()
         balance_by_account = bulk_signed_ledger_balances(cards, today)
         plan = simulate_household_debt(

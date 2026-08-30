@@ -58,6 +58,7 @@ class RecurringRuleNestedAccountSerializer(serializers.ModelSerializer):
 class RecurringRuleNestedCategorySerializer(serializers.ModelSerializer):
     household = serializers.IntegerField(source="household_id", read_only=True)
     parent = serializers.IntegerField(source="parent_id", read_only=True, allow_null=True)
+    allows_transfer_destination = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
@@ -70,10 +71,17 @@ class RecurringRuleNestedCategorySerializer(serializers.ModelSerializer):
             "is_system",
             "is_archived",
             "sort_order",
+            "system_code",
+            "allows_transfer_destination",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_allows_transfer_destination(self, obj: Category) -> bool:
+        from categories.semantics import category_allows_transfer_destination
+
+        return category_allows_transfer_destination(obj)
 
 
 class RecurringRuleScheduleSerializer(serializers.ModelSerializer):
@@ -115,6 +123,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
     scheduled_change = serializers.SerializerMethodField()
     next_occurrence_date = serializers.SerializerMethodField()
     estimated_monthly_amount = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
     account = RecurringRuleNestedAccountSerializer(read_only=True)
     account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.none(), source="account", write_only=True
@@ -145,6 +154,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "scheduled_change",
             "next_occurrence_date",
             "estimated_monthly_amount",
+            "payment_status",
             "change_effective_date",
             "cancel_scheduled_change",
             "created_at",
@@ -156,6 +166,7 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
             "scheduled_change",
             "next_occurrence_date",
             "estimated_monthly_amount",
+            "payment_status",
             "created_at",
             "updated_at",
         ]
@@ -195,6 +206,17 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
 
         return str(rule_estimated_monthly_amount(obj))
 
+    def get_payment_status(self, obj: RecurringRule) -> str:
+        """Overwritten in to_representation alongside next_occurrence_date."""
+        from bills.recurring_payment_status import (
+            get_next_rule_run_date,
+            payment_status_from_next_occurrence,
+        )
+
+        today = timezone.localdate()
+        due = get_next_rule_run_date(obj, today)
+        return payment_status_from_next_occurrence(obj, due, today=today)
+
     def to_representation(self, instance: RecurringRule) -> dict:
         data = super().to_representation(instance)
         today = timezone.localdate()
@@ -218,6 +240,16 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
                 interval=params.interval,
                 direction=params.direction,
             )
+        )
+        from bills.recurring_payment_status import (
+            get_next_rule_run_date,
+            payment_status_from_next_occurrence,
+        )
+
+        next_due = get_next_rule_run_date(instance, today)
+        data["next_occurrence_date"] = next_due.isoformat() if next_due else None
+        data["payment_status"] = payment_status_from_next_occurrence(
+            instance, next_due, today=today
         )
         segment = self._effective_segment(instance, today)
         if segment is not None:
@@ -278,8 +310,9 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         cat = attrs.get("category")
         if cat is None and instance is not None:
             cat = instance.category
-        name = (cat.name or "").strip() if cat else ""
-        if name not in ("Credit Card Payment", "Bank Transfer"):
+        from categories.semantics import category_allows_transfer_destination
+
+        if not category_allows_transfer_destination(cat):
             attrs["transfer_to_account"] = None
         change_date = attrs.get("change_effective_date")
         if change_date is not None and change_date < timezone.localdate():

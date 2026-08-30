@@ -15,9 +15,9 @@ import {
 } from "@budget-app/shared";
 import { buildGoalBucketPayload, emptyGoalForm } from "./form";
 import {
+  goalAccountPath,
   goalContributionHistoryPath,
   goalDetailPath,
-  goalRelatedTransactionsPath,
   goalsListPath,
 } from "./navigation";
 import { GOAL_DETAIL_HISTORY_PREVIEW_LIMIT, goalsQueryKeys } from "./queryKeys";
@@ -119,6 +119,13 @@ describe("Goals list presentation", () => {
     expect(goalsScreenSource).toMatch(/getBucketsOverview/);
     expect(goalsScreenSource).not.toMatch(/getBucketDetail/);
   });
+
+  it("uses explicit pullRefreshing state, not passive isFetching", () => {
+    expect(goalsScreenSource).toMatch(/pullRefreshing/);
+    expect(goalsScreenSource).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(goalsScreenSource).not.toMatch(/refreshing=\{\s*isFetching/);
+    expect(goalsScreenSource).not.toMatch(/refreshing=\{isFetching && !isLoading\}/);
+  });
 });
 
 describe("Goal detail presentation", () => {
@@ -156,18 +163,7 @@ describe("Goal detail presentation", () => {
     expect(goalDetailPath(7)).toBe("/goal/7");
     expect(goalsListPath()).toBe("/goals");
     expect(goalContributionHistoryPath(7)).toBe("/goal/7/contributions");
-    expect(goalRelatedTransactionsPath(5)).toEqual({
-      pathname: "/(app)/(tabs)/transactions",
-      params: {
-        account: "5",
-        focus: "__none__",
-        focusDate: "__none__",
-        focusTransactionId: "__none__",
-        focusRuleId: "__none__",
-        focusEventId: "__none__",
-        focusDescription: "__none__",
-      },
-    });
+    expect(goalAccountPath(5)).toBe("/account/5");
     // Nested layout so Expo resolves Stack.Screen name="goal/[id]" (without it, nav traps).
     const layoutPath = join(dir, "../../app/(app)/goal/[id]/_layout.tsx");
     expect(readFileSync(layoutPath, "utf8")).toMatch(/Stack\.Screen name="index"/);
@@ -181,8 +177,28 @@ describe("Goal detail presentation", () => {
     expect(goalDetailSource).toMatch(/includeWhatIf/);
     expect(goalDetailSource).not.toMatch(/label="Edit goal"/);
     expect(goalDetailSource).not.toMatch(/label="What-If"/);
-    expect(goalDetailSource).not.toMatch(/View related transactions/);
-    expect(goalDetailSource).toMatch(/Related transactions/);
+  });
+
+  it("does not label the full account ledger as Related transactions", () => {
+    expect(goalDetailSource).not.toMatch(/Related transactions/);
+    expect(goalDetailSource).not.toMatch(/goalRelatedTransactionsPath/);
+    expect(goalDetailSource).not.toMatch(/getBucketsOverview/);
+    expect(goalDetailSource).toMatch(/goalAccountPath/);
+    expect(goalDetailSource).toMatch(/Linked account/);
+  });
+
+  it("seeds detail from overview cache without refetching overview", () => {
+    expect(goalDetailSource).toMatch(/getQueryData/);
+    expect(goalDetailSource).toMatch(/goalsQueryKeys\.overview/);
+    expect(goalDetailSource).toMatch(/placeholderData/);
+    expect(goalDetailSource).not.toMatch(/queryFn:\s*\(\)\s*=>\s*getBucketsOverview/);
+    expect(goalDetailSource).not.toMatch(/Date\.now\(\)/);
+  });
+
+  it("detail response is authoritative over overview seed", () => {
+    expect(goalDetailSource).toMatch(/isPlaceholderData/);
+    expect(goalDetailSource).toMatch(/const goal = data\?\.goal/);
+    expect(goalDetailSource).not.toMatch(/data\?\.goal \?\? overviewGoal/);
   });
 
   it("recent contribution history is bounded and view-all opens full history", () => {
@@ -239,6 +255,27 @@ describe("Goal form simplification", () => {
     expect(goalFormSource).toMatch(/Low/);
     expect(goalFormSource).not.toMatch(/Highest/);
     expect(goalFormSource).not.toMatch(/Lowest/);
+  });
+
+  it("lazily loads funding rules only when Advanced auto-fund is needed", () => {
+    expect(goalFormSource).toMatch(/shouldLoadFundingRules/);
+    expect(goalFormSource).toMatch(/advancedOpen/);
+    expect(goalFormSource).toMatch(/form\.funding\.enabled/);
+    expect(goalFormSource).toMatch(/enabled:\s*shouldLoadFundingRules/);
+    expect(goalFormSource).not.toMatch(
+      /useRules\(\{\s*enabled:\s*householdId != null && !isDebtGoalType\(form\.goal_type\)\s*\}\)/
+    );
+  });
+
+  it("preserves edit allocation hydration independent of rules fetch", () => {
+    expect(goalFormSource).toMatch(/listRuleAllocations/);
+    expect(goalFormSource).toMatch(/goalFundingFormFromAllocation/);
+    expect(goalFormSource).toMatch(/formAllocation/);
+  });
+
+  it("debt goals never enable payday funding rules", () => {
+    expect(goalFormSource).toMatch(/!isDebtGoalType\(form\.goal_type\)/);
+    expect(goalFormSource).toMatch(/shouldLoadFundingRules/);
   });
 
   it("prevents duplicate submit while pending", () => {

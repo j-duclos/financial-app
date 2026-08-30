@@ -17,6 +17,8 @@ class Category(models.Model):
     is_system = models.BooleanField(default=False)
     is_archived = models.BooleanField(default=False)
     sort_order = models.IntegerField(default=0)
+    #: Machine-readable semantic code (e.g. BANK_TRANSFER). Null for user-created categories.
+    system_code = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -26,6 +28,7 @@ class Category(models.Model):
         indexes = [
             models.Index(fields=["household", "category_type", "is_archived"]),
             models.Index(fields=["household", "name"]),
+            models.Index(fields=["household", "system_code"]),
         ]
         constraints = [
             models.UniqueConstraint(

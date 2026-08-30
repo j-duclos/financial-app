@@ -21,6 +21,8 @@ import {
   updateScenarioOneTimeEvent,
   updateScenarioOverride,
 } from "@budget-app/api-client";
+import type { Account, ScenarioChangesResponse } from "@budget-app/shared";
+import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { useHouseholds } from "@/hooks/useHouseholds";
 import { useProfile } from "@/lib/profileQuery";
@@ -36,9 +38,9 @@ export function useWhatIfScenarios() {
   });
 }
 
-export function useScenarioChanges(scenarioId: number | null) {
+export function useScenarioChanges(scenarioId: number | null, householdId?: number | null) {
   const changesQuery = useQuery({
-    queryKey: whatIfQueryKeys.scenarioChanges(scenarioId ?? 0),
+    queryKey: whatIfQueryKeys.scenarioChanges(scenarioId ?? 0, householdId),
     queryFn: () => getScenarioChanges(scenarioId!),
     enabled: scenarioId != null,
     staleTime: 30_000,
@@ -78,10 +80,11 @@ export function useScenarioComparison(
       financialRevision,
       inputStamp
     ),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       getScenarioComparison(scenarioId!, {
         horizon,
         household_id: householdId,
+        signal,
       }),
     enabled: scenarioId != null && changesReady,
     placeholderData: keepPreviousData,
@@ -89,46 +92,143 @@ export function useScenarioComparison(
   });
 }
 
-export function useWhatIfFormData(enabled: boolean, householdId: number | undefined) {
-  const accounts = useQuery({
-    queryKey: whatIfQueryKeys.accounts,
+export type WhatIfFormDataNeeds = {
+  /** Lightweight picker accounts (id/name/type) — shared account-options cache. */
+  accountsLight?: boolean;
+  /** Enriched balances — only for debt payment forms. */
+  accountsWithBalance?: boolean;
+  rules?: boolean;
+  categories?: boolean;
+};
+
+/**
+ * Progressive form datasets: do not load accounts/rules/categories until a concrete
+ * change form needs them. Add Change menu alone should not fetch picker data.
+ */
+export function useWhatIfFormData(needs: WhatIfFormDataNeeds, householdId: number | undefined) {
+  const needLight = Boolean(needs.accountsLight) && !needs.accountsWithBalance;
+  const needBalance = Boolean(needs.accountsWithBalance);
+
+  const lightAccounts = useAccountOptions({
+    householdId: householdId ?? null,
+    enabled: needLight && householdId != null,
+  });
+
+  const balanceAccounts = useQuery({
+    queryKey: whatIfQueryKeys.accounts(householdId),
     queryFn: () =>
       listAccounts({
         active_only: true,
         page_size: 500,
         balance: "true",
+        household: householdId,
       }),
-    enabled,
+    enabled: needBalance && householdId != null,
     staleTime: 60_000,
   });
-  /** Shared rules list — same cache as Automation / Recurring. */
-  const rulesQuery = useRules({ enabled });
-  /** Shared picker SoT — same cache as Transactions / Recurring / Spending Limits. */
+
+  const rulesQuery = useRules({ enabled: Boolean(needs.rules) });
   const categories = useCategoryOptions({
     householdId: householdId ?? null,
-    enabled: enabled && householdId != null,
+    enabled: Boolean(needs.categories) && householdId != null,
   });
-  return { accounts, rules: rulesQuery, categories };
+
+  const accounts: Account[] = needBalance
+    ? (balanceAccounts.data?.results ?? [])
+    : lightAccounts.accounts;
+
+  return {
+    accounts,
+    accountsQuery: needBalance ? balanceAccounts : lightAccounts,
+    rules: rulesQuery,
+    categories,
+  };
 }
 
-/** Invalidate only scenario-scoped queries — never real financial data. */
+/**
+ * Invalidate only scenario-scoped queries — never real financial data.
+ * Comparison refreshes via inputStamp when scenario-changes settle (avoid double compare).
+ */
 export function invalidateScenarioQueries(
   queryClient: ReturnType<typeof useQueryClient>,
-  scenarioId: number | null
+  scenarioId: number | null,
+  householdId?: number | null
 ) {
   void queryClient.invalidateQueries({ queryKey: whatIfQueryKeys.scenarios });
   if (scenarioId != null) {
     void queryClient.invalidateQueries({
-      queryKey: whatIfQueryKeys.scenarioChanges(scenarioId),
+      queryKey: whatIfQueryKeys.scenarioChanges(scenarioId, householdId),
     });
-    void queryClient.invalidateQueries({ queryKey: ["what-if-scenario-compare", scenarioId] });
   }
 }
 
-export function useScenarioMutations(scenarioId: number | null) {
+/**
+ * Explicit pull-to-refresh graph: scenario list → changes → one comparison.
+ * Does not use invalidate-as-refresh (avoids duplicate compare requests).
+ */
+export async function refreshWhatIfScenario(args: {
+  queryClient: ReturnType<typeof useQueryClient>;
+  scenarioId: number | null;
+  horizon: ForecastHorizon;
+  householdId: number | undefined;
+  financialRevision: number | undefined;
+  scenarioUpdatedAt?: string;
+}): Promise<void> {
+  const {
+    queryClient,
+    scenarioId,
+    horizon,
+    householdId,
+    financialRevision,
+    scenarioUpdatedAt,
+  } = args;
+
+  const scenariosPage = await queryClient.fetchQuery({
+    queryKey: whatIfQueryKeys.scenarios,
+    queryFn: () => listScenarios(),
+  });
+
+  if (scenarioId == null) return;
+
+  const freshUpdatedAt =
+    scenariosPage.results?.find((s) => s.id === scenarioId)?.updated_at ?? scenarioUpdatedAt;
+
+  const changes = await queryClient.fetchQuery({
+    queryKey: whatIfQueryKeys.scenarioChanges(scenarioId, householdId),
+    queryFn: () => getScenarioChanges(scenarioId),
+  });
+
+  const stamp = scenarioInputStamp({
+    scenarioUpdatedAt: freshUpdatedAt,
+    overrides: changes.overrides,
+    events: changes.one_time_events,
+    shocks: changes.category_shocks,
+    addedRecurring: changes.added_recurring,
+  });
+
+  await queryClient.fetchQuery({
+    queryKey: whatIfQueryKeys.compare(
+      scenarioId,
+      horizon,
+      householdId,
+      financialRevision,
+      stamp
+    ),
+    queryFn: () =>
+      getScenarioComparison(scenarioId, {
+        horizon,
+        household_id: householdId,
+      }),
+  });
+}
+
+export function useScenarioMutations(
+  scenarioId: number | null,
+  householdId?: number | null
+) {
   const queryClient = useQueryClient();
 
-  const invalidate = () => invalidateScenarioQueries(queryClient, scenarioId);
+  const invalidate = () => invalidateScenarioQueries(queryClient, scenarioId, householdId);
 
   const createScenarioMu = useMutation({
     mutationFn: createScenario,
@@ -143,7 +243,7 @@ export function useScenarioMutations(scenarioId: number | null) {
 
   const deleteScenarioMu = useMutation({
     mutationFn: deleteScenario,
-    onSuccess: () => invalidateScenarioQueries(queryClient, null),
+    onSuccess: () => invalidateScenarioQueries(queryClient, null, householdId),
   });
 
   const duplicateScenarioMu = useMutation({
@@ -173,3 +273,4 @@ export function useScenarioMutations(scenarioId: number | null) {
 }
 
 export { useProfile, useHouseholds, scenarioInputStamp };
+export type { ScenarioChangesResponse };

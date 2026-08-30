@@ -33,12 +33,22 @@ export function RecurringListScreen() {
   const theme = useTheme();
   const router = useRouter();
   const [sortKey, setSortKey] = useState<RecurringSortKey>("next");
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const rulesQuery = useQuery({
     queryKey: recurringQueryKeys.list(),
     queryFn: () => listRules(),
     staleTime: 60_000,
   });
+
+  const refreshList = async () => {
+    setPullRefreshing(true);
+    try {
+      await rulesQuery.refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
 
   const rows = useMemo(() => {
     const built = buildRecurringRows(rulesQuery.data?.results ?? [], todayStr());
@@ -47,7 +57,6 @@ export function RecurringListScreen() {
 
   const isLoading = rulesQuery.isLoading;
   const isError = rulesQuery.isError;
-  const isFetching = rulesQuery.isFetching;
 
   return (
     <Screen scroll={false} contentStyle={{ paddingHorizontal: 0 }}>
@@ -126,10 +135,7 @@ export function RecurringListScreen() {
             <RecurringRow row={item} onPress={() => router.push(`/recurring/${item.rule.id}`)} />
           )}
           refreshControl={
-            <RefreshControl
-              refreshing={isFetching && !isLoading}
-              onRefresh={() => void rulesQuery.refetch()}
-            />
+            <RefreshControl refreshing={pullRefreshing} onRefresh={() => void refreshList()} />
           }
           contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
         />

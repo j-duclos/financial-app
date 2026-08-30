@@ -6,24 +6,23 @@ import { Button, Card, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 
 type Props = {
-  extraMonthly: string;
-  lumpSum: string;
-  lumpSumAccountId: number | null;
   creditCards: Account[];
+  /** Applied scenario values that currently drive the debt-plan query. */
+  appliedExtraMonthly: string;
+  appliedLumpSum: string;
+  appliedLumpSumAccountId: number | null;
   onApply: (next: {
     extraMonthly: string;
     lumpSum: string;
     lumpSumAccountId: number | null;
   }) => void;
-  appliedExtraMonthly: string;
-  appliedLumpSum: string;
-  appliedLumpSumAccountId: number | null;
 };
 
+/**
+ * Draft what-if inputs. Keystrokes never update parent applied scenario —
+ * only Update plan commits atomically so one plan recalculation occurs.
+ */
 export function WhatIfPanel({
-  extraMonthly,
-  lumpSum,
-  lumpSumAccountId,
   creditCards,
   onApply,
   appliedExtraMonthly,
@@ -31,19 +30,21 @@ export function WhatIfPanel({
   appliedLumpSumAccountId,
 }: Props) {
   const theme = useTheme();
-  const [draftExtra, setDraftExtra] = useState(extraMonthly);
-  const [draftLump, setDraftLump] = useState(lumpSum);
-  const [draftLumpAccountId, setDraftLumpAccountId] = useState<number | null>(lumpSumAccountId);
+  const [draftExtra, setDraftExtra] = useState(appliedExtraMonthly);
+  const [draftLump, setDraftLump] = useState(appliedLumpSum);
+  const [draftLumpAccountId, setDraftLumpAccountId] = useState<number | null>(
+    appliedLumpSumAccountId
+  );
 
   useEffect(() => {
-    setDraftExtra(extraMonthly);
-  }, [extraMonthly]);
+    setDraftExtra(appliedExtraMonthly);
+  }, [appliedExtraMonthly]);
   useEffect(() => {
-    setDraftLump(lumpSum);
-  }, [lumpSum]);
+    setDraftLump(appliedLumpSum);
+  }, [appliedLumpSum]);
   useEffect(() => {
-    setDraftLumpAccountId(lumpSumAccountId);
-  }, [lumpSumAccountId]);
+    setDraftLumpAccountId(appliedLumpSumAccountId);
+  }, [appliedLumpSumAccountId]);
 
   const dirty =
     draftExtra !== appliedExtraMonthly ||

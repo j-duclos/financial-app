@@ -14,12 +14,17 @@ const accountsSource = readFileSync(
 );
 
 describe("financialQueryRefresh utilization preference", () => {
-  it("invalidates recommendations, dashboard, and debt plan when the target changes", () => {
+  it("invalidates recommendations, dashboard, debt plan, and account payoff when the target changes", () => {
     const keys = UTILIZATION_PREFERENCE_QUERY_PREFIXES.map((k) => k[0]);
     expect(keys).toContain("recommendations");
     expect(keys).toContain("dashboard-summary");
     expect(keys).toContain("debt-plan");
+    expect(keys).toContain("account-payoff");
     expect(source).toMatch(/invalidateUtilizationPreferenceQueries/);
     expect(accountsSource).toMatch(/invalidateUtilizationPreferenceQueries\(queryClient\)/);
+  });
+
+  it("includes account-payoff in financial mutation prefixes", () => {
+    expect(source).toMatch(/\["account-payoff"\]/);
   });
 });

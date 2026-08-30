@@ -1,6 +1,12 @@
-import type { BillChecklistItem, RecurringRule } from "@budget-app/shared";
+import type {
+  BillChecklistItem,
+  RecurringPaymentStatus,
+  RecurringRule,
+  RecurringRulesSummary,
+} from "@budget-app/shared";
 import { formatDueDateShort } from "./billsDisplay";
-import { getNextRuleRunDate } from "./ruleOccurrences";
+
+export type { RecurringPaymentStatus };
 
 export type RecurringGroupKey =
   | "subscriptions"
@@ -20,15 +26,6 @@ export const RECURRING_GROUP_ORDER: { key: RecurringGroupKey; label: string }[] 
   { key: "transfers", label: "Transfers" },
   { key: "income", label: "Income" },
 ];
-
-export type RecurringPaymentStatus =
-  | "scheduled"
-  | "due_soon"
-  | "paid"
-  | "missed"
-  | "skipped"
-  | "paused"
-  | "inactive";
 
 /** @deprecated Use RecurringPaymentStatus — kept for filter migration only */
 export type RecurringHealthStatus = RecurringPaymentStatus;
@@ -57,8 +54,6 @@ const INSURANCE_CATEGORY_NAMES = new Set([
   "Home Insurance",
   "Life Insurance",
 ]);
-const CARD_PAYMENT_CATEGORY_NAMES = new Set(["Credit Card Payment"]);
-const TRANSFER_CATEGORY_NAMES = new Set(["Bank Transfer", "Transfer"]);
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const NTH = ["1st", "2nd", "3rd", "4th", "5th"];
@@ -99,8 +94,6 @@ export type RecurringSummary = {
   dueSoonCount: number;
 };
 
-const DUE_SOON_DAYS = 5;
-
 function todayLocalISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -112,19 +105,31 @@ function ruleIsRunning(rule: RecurringRule, today = todayLocalISO()): boolean {
   return rule.active;
 }
 
+function categoryAllowsTransferDestination(rule: RecurringRule): boolean {
+  const cat = rule.category;
+  if (!cat) return false;
+  if (typeof cat.allows_transfer_destination === "boolean") {
+    return cat.allows_transfer_destination;
+  }
+  const code = cat.system_code ?? null;
+  return code === "BANK_TRANSFER" || code === "CREDIT_CARD_PAYMENT";
+}
+
+function categoryIsCreditCardPayment(rule: RecurringRule): boolean {
+  return rule.category?.system_code === "CREDIT_CARD_PAYMENT";
+}
+
 export function getRecurringGroup(rule: RecurringRule): RecurringGroupKey {
   if (rule.direction === "INCOME") return "income";
   const catName = rule.category?.name ?? "";
   const hasTransferDest = !!(rule.transfer_to_account?.id ?? rule.transfer_to_account_id);
-  const nameLower = (rule.name ?? "").toLowerCase();
-  if (CARD_PAYMENT_CATEGORY_NAMES.has(catName)) return "credit_cards";
+  if (categoryIsCreditCardPayment(rule)) return "credit_cards";
   if (LOAN_CATEGORY_NAMES.has(catName)) return "loans";
   if (INSURANCE_CATEGORY_NAMES.has(catName)) return "insurance";
   if (
     rule.direction === "TRANSFER" ||
     hasTransferDest ||
-    TRANSFER_CATEGORY_NAMES.has(catName) ||
-    nameLower.includes("move to")
+    categoryAllowsTransferDestination(rule)
   ) {
     return "transfers";
   }
@@ -156,28 +161,14 @@ export function cadenceLabel(rule: RecurringRule): string {
   return f.replace(/_/g, " ").toLowerCase();
 }
 
-function ruleMonthlyExpenseAmount(rule: RecurringRule): number {
-  const amount = Math.abs(Number(rule.amount) || 0);
-  const interval = Math.max(1, Number(rule.interval) || 1);
-  let perMonth: number;
-  switch (rule.frequency) {
-    case "WEEKLY":
-      perMonth = (52 / 12 / interval) * amount;
-      break;
-    case "BIWEEKLY":
-      perMonth = (26 / 12 / interval) * amount;
-      break;
-    case "MONTHLY_DAY":
-    case "MONTHLY_NTH_WEEKDAY":
-      perMonth = amount / interval;
-      break;
-    case "YEARLY":
-      perMonth = amount / (12 * interval);
-      break;
-    default:
-      perMonth = amount / interval;
+/** Expense monthly obligation from backend-normalized estimated_monthly_amount only. */
+export function ruleMonthlyExpenseAmount(rule: RecurringRule): number {
+  if (rule.direction !== "EXPENSE") return 0;
+  const fromApi = Number(rule.estimated_monthly_amount);
+  if (Number.isFinite(fromApi) && fromApi !== 0) {
+    return Math.abs(fromApi);
   }
-  return rule.direction === "EXPENSE" ? perMonth : 0;
+  return 0;
 }
 
 function amountTrend(
@@ -196,45 +187,36 @@ function amountTrend(
   return pct > 0 ? "up" : "down";
 }
 
-function occurrenceHasVerifiedPayment(occurrence: BillChecklistItem): boolean {
-  const linked =
-    occurrence.matched_transaction_id != null || occurrence.transaction_id != null;
-  const settled = occurrence.status === "paid" || occurrence.status === "reconciled";
-  return settled || linked;
+/**
+ * Map checklist occurrence status → display status.
+ * Does not apply client due-soon thresholds — backend owns those labels.
+ */
+function mapOccurrencePaymentStatus(
+  occurrence: BillChecklistItem | null
+): RecurringPaymentStatus | null {
+  if (!occurrence) return null;
+  if (occurrence.skipped || occurrence.status === "skipped") return "skipped";
+  if (occurrence.status === "paid" || occurrence.status === "reconciled") return "paid";
+  if (
+    occurrence.status === "late" ||
+    occurrence.status === "missed" ||
+    occurrence.status === "likely_forgotten"
+  ) {
+    return "missed";
+  }
+  if (occurrence.status === "due_soon") return "due_soon";
+  if (occurrence.status === "projected") return "scheduled";
+  return null;
 }
 
-function daysUntilDue(dueDate: string, today: string): number {
-  const due = new Date(`${dueDate.slice(0, 10)}T12:00:00`);
-  const now = new Date(`${today.slice(0, 10)}T12:00:00`);
-  return Math.round((due.getTime() - now.getTime()) / 86_400_000);
-}
-
-function paymentStatusForDueDate(dueDate: string, today: string): RecurringPaymentStatus {
-  const days = daysUntilDue(dueDate, today);
-  if (days < 0) return "missed";
-  if (days <= DUE_SOON_DAYS) return "due_soon";
-  return "scheduled";
-}
-
-function occurrenceIsSettled(occurrence: BillChecklistItem): boolean {
-  return (
-    occurrence.skipped ||
-    occurrence.status === "paid" ||
-    occurrence.status === "reconciled"
-  );
-}
-
-/** Next scheduled charge — advances past a settled occurrence instead of repeating its due date. */
+/** Canonical next occurrence — backend next_occurrence_date only (no client recurrence). */
 export function resolveRecurringNextOccurrence(
   rule: RecurringRule,
-  occurrence: BillChecklistItem | null,
+  _occurrence: BillChecklistItem | null = null,
   today = todayLocalISO()
 ): string | null {
   if (!ruleIsRunning(rule, today)) return null;
-  if (occurrence && !occurrenceIsSettled(occurrence)) {
-    return occurrence.due_date;
-  }
-  return getNextRuleRunDate(rule, today);
+  return rule.next_occurrence_date?.slice(0, 10) ?? null;
 }
 
 /** Most recent paid date for this rule from checklist rows (current occurrence or history). */
@@ -265,11 +247,19 @@ export function recurringDayOfMonth(rule: RecurringRule, nextOccurrence: string 
   return 32;
 }
 
+/**
+ * Prefer backend rule.payment_status; fall back to checklist status labels only.
+ * Never applies a client due-soon day threshold.
+ */
 export function deriveRecurringPaymentStatus(
   rule: RecurringRule,
   occurrence: BillChecklistItem | null,
   today = todayLocalISO()
 ): RecurringPaymentStatus {
+  if (rule.payment_status) {
+    return rule.payment_status;
+  }
+
   if (!ruleIsRunning(rule, today)) {
     const end = rule.end_date?.slice(0, 10);
     if (!rule.active || rule.paused_at) return "paused";
@@ -277,34 +267,10 @@ export function deriveRecurringPaymentStatus(
     return "paused";
   }
 
-  if (occurrence?.skipped || occurrence?.status === "skipped") {
-    return "skipped";
-  }
+  const fromOccurrence = mapOccurrencePaymentStatus(occurrence);
+  if (fromOccurrence) return fromOccurrence;
 
-  if (occurrence && occurrenceHasVerifiedPayment(occurrence)) {
-    // Past cycle is settled — status follows the upcoming charge, not the old payment.
-    if (occurrence.due_date < today) {
-      const nextDue = getNextRuleRunDate(rule, today);
-      if (!nextDue) return "paid";
-      return paymentStatusForDueDate(nextDue, today);
-    }
-    return "paid";
-  }
-
-  const dueDate =
-    occurrence?.due_date ?? (ruleIsRunning(rule, today) ? getNextRuleRunDate(rule, today) : null);
-  if (!dueDate) return "scheduled";
-
-  if (
-    occurrence &&
-    (occurrence.status === "late" ||
-      occurrence.status === "missed" ||
-      occurrence.status === "likely_forgotten")
-  ) {
-    return "missed";
-  }
-
-  return paymentStatusForDueDate(dueDate, today);
+  return "scheduled";
 }
 
 /** @deprecated Use deriveRecurringPaymentStatus */
@@ -370,10 +336,6 @@ export function buildRecurringListItems(
     }
   }
 
-  const horizonEnd = new Date(today);
-  horizonEnd.setDate(horizonEnd.getDate() + 30);
-  const horizonISO = horizonEnd.toISOString().slice(0, 10);
-
   return rules.map((rule) => {
     const occurrence = byRuleId.get(rule.id) ?? null;
     const group = getRecurringGroup(rule);
@@ -394,8 +356,7 @@ export function buildRecurringListItems(
       cadenceLabel: cadenceLabel(rule),
       categorySubtitle: rule.category?.name ?? groupLabel(group),
       averageAmount: occurrence?.average_amount ?? rule.amount ?? null,
-      nextOccurrence:
-        nextOccurrence && nextOccurrence <= horizonISO ? nextOccurrence : nextOccurrence,
+      nextOccurrence,
       lastPaidDate,
       confidence,
       autopayLabel: occurrence?.autopay_label ?? null,
@@ -408,7 +369,21 @@ function groupLabel(key: RecurringGroupKey): string {
   return RECURRING_GROUP_ORDER.find((g) => g.key === key)?.label ?? key;
 }
 
-export function computeRecurringSummary(items: RecurringListItem[]): RecurringSummary {
+/** Prefer backend summary; otherwise aggregate already-canonical rule fields only. */
+export function computeRecurringSummary(
+  items: RecurringListItem[],
+  backendSummary?: RecurringRulesSummary | null
+): RecurringSummary {
+  if (backendSummary) {
+    return {
+      activeRules: backendSummary.active_rule_count,
+      monthlyRecurringTotal: Number(backendSummary.monthly_recurring_obligations) || 0,
+      upcomingCount: backendSummary.upcoming_count,
+      missedCount: backendSummary.missed_count,
+      dueSoonCount: backendSummary.due_soon_count,
+    };
+  }
+
   const today = todayLocalISO();
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + 30);

@@ -1,9 +1,12 @@
 from rest_framework import serializers
 
 from .models import Category
+from .semantics import category_allows_transfer_destination
 
 
 class CategorySerializer(serializers.ModelSerializer):
+    allows_transfer_destination = serializers.SerializerMethodField()
+
     class Meta:
         model = Category
         fields = [
@@ -15,14 +18,26 @@ class CategorySerializer(serializers.ModelSerializer):
             "is_system",
             "is_archived",
             "sort_order",
+            "system_code",
+            "allows_transfer_destination",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "is_system", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "is_system",
+            "system_code",
+            "allows_transfer_destination",
+            "created_at",
+            "updated_at",
+        ]
         extra_kwargs = {
             "parent": {"required": False, "allow_null": True},
         }
         validators = []
+
+    def get_allows_transfer_destination(self, obj: Category) -> bool:
+        return category_allows_transfer_destination(obj)
 
     def validate_name(self, value):
         name = (value or "").strip()

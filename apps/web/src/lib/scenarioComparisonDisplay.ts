@@ -288,7 +288,8 @@ const CURRENCY_METRICS = new Set([
 ]);
 
 /** Minimum cushion before we call a plan "tight" instead of fully safe. */
-export const CUSHION_THRESHOLD = 100;
+export const CUSHION_THRESHOLD = 100; // presentation band for "tight" label only — not forecast math
+
 
 export function horizonToMonths(horizon: "3m" | "6m" | "12m" | "24m"): number {
   return { "3m": 3, "6m": 6, "12m": 12, "24m": 24 }[horizon];
@@ -731,61 +732,39 @@ export function deriveImpactLabel(
   return "No meaningful change";
 }
 
-function annualMultiplierForFrequency(frequency: string): number {
-  switch (frequency) {
-    case "weekly":
-      return 52;
-    case "biweekly":
-      return 26;
-    case "yearly":
-      return 1;
-    default:
-      return 12;
-  }
-}
-
-/** Recurring cost from a traceable per-occurrence delta — not from aggregate expense totals. */
+/** Recurring cost from backend-normalized monthly delta when present. */
 export function recurringCostFromGroup(group: ScenarioForecastChangeGroup): RecurringCostSummary | null {
   const perOcc = parseFloat(group.delta_per_occurrence);
   if (Number.isNaN(perOcc) || Math.abs(perOcc) < 0.005) return null;
 
   const absPerOcc = Math.abs(perOcc);
-  let monthly = absPerOcc;
-  if (group.frequency === "weekly") monthly = (absPerOcc * 52) / 12;
-  else if (group.frequency === "biweekly") monthly = (absPerOcc * 26) / 12;
-  else if (group.frequency === "yearly") monthly = absPerOcc / 12;
-
-  const annual = absPerOcc * annualMultiplierForFrequency(group.frequency);
+  const monthlyRaw =
+    group.delta_monthly != null && group.delta_monthly !== ""
+      ? parseFloat(group.delta_monthly)
+      : NaN;
+  const absMonthly = !Number.isNaN(monthlyRaw) ? Math.abs(monthlyRaw) : absPerOcc;
+  const annual = absMonthly * 12;
   const direction = perOcc < 0 ? "increase" : perOcc > 0 ? "decrease" : "change";
 
   return {
-    monthly: perOcc < 0 ? monthly : -monthly,
+    monthly: perOcc < 0 ? absMonthly : -absMonthly,
     annual: perOcc < 0 ? annual : -annual,
     label: direction,
   };
 }
 
+/** Fallback when forecast groups are absent — show per-occurrence, not client monthly math. */
 export function recurringCostFromPlanItem(
   item: PlanIncludeItem,
-  frequency: RecurringRuleFrequency = "MONTHLY_DAY"
+  _frequency: RecurringRuleFrequency = "MONTHLY_DAY"
 ): RecurringCostSummary | null {
   if (item.impactKind !== "recurring" || item.impactAmount == null) return null;
   const amt = item.impactAmount;
   if (Math.abs(amt) < 0.005) return null;
 
-  let monthly = Math.abs(amt);
-  if (frequency === "WEEKLY") monthly = (Math.abs(amt) * 52) / 12;
-  else if (frequency === "BIWEEKLY") monthly = (Math.abs(amt) * 26) / 12;
-  else if (frequency === "YEARLY") monthly = Math.abs(amt) / 12;
-
-  let annualMult = 12;
-  if (frequency === "WEEKLY") annualMult = 52;
-  else if (frequency === "BIWEEKLY") annualMult = 26;
-  else if (frequency === "YEARLY") annualMult = 1;
-
   return {
-    monthly: amt < 0 ? monthly : -monthly,
-    annual: amt < 0 ? Math.abs(amt) * annualMult : -Math.abs(amt) * annualMult,
+    monthly: amt,
+    annual: amt,
     label: amt < 0 ? "increase" : "decrease",
   };
 }

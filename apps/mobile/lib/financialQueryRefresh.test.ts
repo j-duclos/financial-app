@@ -189,7 +189,13 @@ describe("recurring rule mutation invalidation", () => {
     invalidateRecurringRuleDependents(queryClient);
     const roots = invalidatedRoots(spy);
     expect(roots).toEqual(
-      expect.arrayContaining(["rules", "timeline", "calendar-chunk", "buckets"])
+      expect.arrayContaining([
+        "rules",
+        "timeline",
+        "calendar-chunk",
+        "buckets",
+        "what-if-scenarios",
+      ])
     );
     expect(roots).not.toContain("spending-targets");
     expect(roots).not.toContain("reconcile");

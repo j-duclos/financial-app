@@ -288,6 +288,136 @@ class RecurringRuleViewSet(ModelViewSet):
         serializer = RecurringRuleSerializer(rule, context={"request": request})
         return Response(serializer.data)
 
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        """
+        Canonical Recurring page summary for the caller's households.
+
+        Monthly obligations use backend estimated_monthly_amount (expense magnitude only).
+        Status counts use backend payment_status_from_next_occurrence (no client due-soon math).
+        """
+        from bills.recurring_payment_status import (
+            DUE_SOON_DAYS,
+            get_next_rule_run_date,
+            payment_status_from_next_occurrence,
+            rule_is_running,
+        )
+        from timeline.services.rule_amounts import rule_estimated_monthly_amount_from_fields
+        from timeline.services.rule_schedule import resolve_rule_params
+
+        today = timezone.localdate()
+        horizon = today + timedelta(days=30)
+        qs = self.get_queryset()
+        active_rule_count = 0
+        monthly_obligations = Decimal("0")
+        upcoming_count = 0
+        missed_count = 0
+        due_soon_count = 0
+
+        for rule in qs:
+            if not rule_is_running(rule, today):
+                status = payment_status_from_next_occurrence(rule, None, today=today)
+                if status == "missed":
+                    missed_count += 1
+                elif status == "due_soon":
+                    due_soon_count += 1
+                continue
+
+            active_rule_count += 1
+            params = resolve_rule_params(rule, today)
+            monthly = rule_estimated_monthly_amount_from_fields(
+                amount=params.amount,
+                frequency=params.frequency,
+                interval=params.interval,
+                direction=params.direction,
+            )
+            if params.direction == RecurringRule.Direction.EXPENSE:
+                monthly_obligations += abs(monthly)
+
+            next_due = get_next_rule_run_date(rule, today)
+            status = payment_status_from_next_occurrence(rule, next_due, today=today)
+            if status == "missed":
+                missed_count += 1
+            elif status == "due_soon":
+                due_soon_count += 1
+            if next_due is not None and today <= next_due <= horizon:
+                upcoming_count += 1
+
+        return Response(
+            {
+                "active_rule_count": active_rule_count,
+                "monthly_recurring_obligations": str(
+                    monthly_obligations.quantize(Decimal("0.01"))
+                ),
+                "upcoming_count": upcoming_count,
+                "missed_count": missed_count,
+                "due_soon_count": due_soon_count,
+                "due_soon_days": DUE_SOON_DAYS,
+            }
+        )
+
+    @action(detail=True, methods=["get"])
+    def occurrences(self, request, pk=None):
+        """
+        Bounded upcoming occurrence preview for one rule (Detail screens).
+
+        Query params:
+          limit — max occurrences (default 5, max 20)
+        """
+        from bills.recurring_payment_status import (
+            DUE_SOON_DAYS,
+            get_next_rule_run_date,
+            payment_status_from_next_occurrence,
+            rule_is_running,
+        )
+        from timeline.services.rule_schedule import generate_rule_occurrence_dates
+
+        rule = self.get_object()
+        try:
+            limit = int(request.query_params.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 20))
+
+        today = timezone.localdate()
+        serializer = RecurringRuleSerializer(rule, context={"request": request})
+        rule_data = serializer.data
+
+        upcoming: list[dict] = []
+        if rule_is_running(rule, today):
+            end = today + timedelta(days=365 * 2)
+            for due in generate_rule_occurrence_dates(rule, today, end):
+                if due < today:
+                    continue
+                days = (due - today).days
+                if days < 0:
+                    status = "missed"
+                elif days <= DUE_SOON_DAYS:
+                    status = "due_soon"
+                else:
+                    status = "scheduled"
+                upcoming.append(
+                    {
+                        "due_date": due.isoformat(),
+                        "status": status,
+                        "amount": rule_data.get("amount"),
+                    }
+                )
+                if len(upcoming) >= limit:
+                    break
+
+        next_due = get_next_rule_run_date(rule, today) if rule_is_running(rule, today) else None
+        return Response(
+            {
+                "rule": rule_data,
+                "next_occurrence_date": next_due.isoformat() if next_due else None,
+                "payment_status": payment_status_from_next_occurrence(
+                    rule, next_due, today=today
+                ),
+                "upcoming_occurrences": upcoming,
+            }
+        )
+
     def perform_destroy(self, instance: RecurringRule):
         """
         Materialized planned rows still reference this rule; FK is SET_NULL on rule delete which

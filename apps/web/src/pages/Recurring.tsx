@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { getBillsOverview, getSubscriptionIntelligence, listRules } from "@budget-app/api-client";
+import { getBillsOverview, getRecurringRulesSummary, getSubscriptionIntelligence, listRules } from "@budget-app/api-client";
 import { formatCurrency } from "@budget-app/shared";
 import RecurringDetailPanel from "../components/recurring/RecurringDetailPanel";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
@@ -168,6 +168,11 @@ export default function Recurring() {
     queryFn: () => listRules(),
   });
 
+  const summaryQuery = useQuery({
+    queryKey: ["recurring-rules-summary"],
+    queryFn: () => getRecurringRulesSummary(),
+  });
+
   const overviewQuery = useQuery({
     queryKey: ["bills-overview", month, "recurring"],
     queryFn: () =>
@@ -191,7 +196,10 @@ export default function Recurring() {
     [rules, checklistItems]
   );
 
-  const summary = useMemo(() => computeRecurringSummary(allItems), [allItems]);
+  const summary = useMemo(
+    () => computeRecurringSummary(allItems, summaryQuery.data),
+    [allItems, summaryQuery.data]
+  );
 
   const filteredItems = useMemo(() => {
     return allItems.filter((item) => {

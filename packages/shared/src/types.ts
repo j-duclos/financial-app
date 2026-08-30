@@ -1119,6 +1119,10 @@ export interface Category {
   is_system: boolean;
   is_archived: boolean;
   sort_order: number;
+  /** Machine-readable semantic code (e.g. BANK_TRANSFER). Null for user categories. */
+  system_code?: string | null;
+  /** Backend-owned: category may bind a transfer destination account. */
+  allows_transfer_destination?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1337,6 +1341,15 @@ export interface RecurringRuleScheduledChange {
   end_date: string | null;
 }
 
+export type RecurringPaymentStatus =
+  | "scheduled"
+  | "due_soon"
+  | "paid"
+  | "missed"
+  | "skipped"
+  | "paused"
+  | "inactive";
+
 export interface RecurringRule {
   id: number;
   household: number;
@@ -1367,8 +1380,32 @@ export interface RecurringRule {
   next_occurrence_date?: string | null;
   /** Signed monthly equivalent from backend frequency normalization (Automation summaries). */
   estimated_monthly_amount?: string | null;
+  /** Canonical payment status from backend (due-soon threshold owned server-side). */
+  payment_status?: RecurringPaymentStatus | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RecurringRulesSummary {
+  active_rule_count: number;
+  monthly_recurring_obligations: string;
+  upcoming_count: number;
+  missed_count: number;
+  due_soon_count: number;
+  due_soon_days: number;
+}
+
+export interface RecurringOccurrencePreview {
+  due_date: string;
+  status: RecurringPaymentStatus | string;
+  amount?: string | null;
+}
+
+export interface RecurringRuleDetailResponse {
+  rule: RecurringRule;
+  next_occurrence_date: string | null;
+  payment_status: RecurringPaymentStatus | string;
+  upcoming_occurrences: RecurringOccurrencePreview[];
 }
 
 export type BillChecklistStatus =
@@ -1627,6 +1664,8 @@ export interface ScenarioForecastChangeGroup {
   frequency: string;
   occurrence_count: number;
   delta_per_occurrence: string;
+  /** Backend-normalized monthly equivalent of delta_per_occurrence. */
+  delta_monthly?: string;
   total_delta: string;
   first_date: string | null;
   effect_kind: string;

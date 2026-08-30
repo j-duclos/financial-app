@@ -26,6 +26,33 @@ describe("Payment Planner mobile UI structure", () => {
     expect(whatIf).toContain("Update plan");
     expect(whatIf).toContain("onApply");
     expect(screen).toMatch(/onApply=\{/);
+    expect(screen).toMatch(/appliedExtraMonthly/);
+    expect(whatIf).toMatch(/appliedExtraMonthly/);
+    expect(whatIf).toMatch(/draftExtra/);
+  });
+
+  it("does not invent a $150 extra-monthly default", () => {
+    expect(screen).not.toMatch(/useState\(["']150["']\)/);
+    expect(screen).toMatch(/NEUTRAL_EXTRA_MONTHLY\s*=\s*["']0["']/);
+  });
+
+  it("uses explicit pullRefreshing, not passive isRefetching", () => {
+    expect(screen).toMatch(/pullRefreshing/);
+    expect(screen).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(screen).not.toMatch(/refreshing=\{planQuery\.isRefetching/);
+  });
+
+  it("shows empty state only after successful account confirmation", () => {
+    expect(screen).toMatch(/accountsQuery\.isSuccess && creditCards\.length === 0/);
+    expect(screen).toMatch(/accountsQuery\.isError/);
+  });
+
+  it("filters accounts by CREDIT account_type at the API", () => {
+    expect(hooks).toMatch(/account_type:\s*["']CREDIT["']/);
+  });
+
+  it("ranks recommended next debt from backend payoff_order", () => {
+    expect(screen).toMatch(/payoff_order === 1/);
   });
 
   it("keeps payoff rows compact without utilization bars by default", () => {

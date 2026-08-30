@@ -2,9 +2,13 @@ from django.db import migrations, models
 
 
 def dedupe_categories_forward(apps, schema_editor):
-    from categories.services.dedupe import merge_duplicate_categories
-
-    merge_duplicate_categories(dry_run=False)
+    """
+    Originally called live ``merge_duplicate_categories()``, which imports the
+    current Category model and breaks when later columns (e.g. system_code) are
+    added during a from-scratch migrate. Production already applied the live
+    merge when 0004 shipped; fresh installs rely on the UniqueConstraints below.
+    """
+    pass
 
 
 class Migration(migrations.Migration):

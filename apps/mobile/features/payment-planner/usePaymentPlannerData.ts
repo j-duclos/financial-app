@@ -17,6 +17,7 @@ export function usePaymentPlannerAccounts() {
         active_only: true,
         page_size: 500,
         balance: "true",
+        account_type: "CREDIT",
       }),
     staleTime: 30_000,
   });

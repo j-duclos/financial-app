@@ -2,21 +2,35 @@ import { describe, expect, it } from "vitest";
 import { FINANCIAL_QUERY_PREFIXES } from "@/lib/financialQueryRefresh";
 import { whatIfQueryKeys, scenarioInputStamp } from "./queryKeys";
 import { buildPlanIncludes } from "./scenarioPlainLanguage";
-import { derivePlanSummaryResult, scenarioHasCashShortfall } from "./display";
-import type { ScenarioComparisonResponse } from "@budget-app/shared";
+import { derivePlanSummaryResult, scenarioHasCashShortfall, recurringCostFromGroup } from "./display";
+import { SCENARIO_TEMPLATES } from "./scenarioTemplates";
+import type { ScenarioComparisonResponse, ScenarioForecastChangeGroup } from "@budget-app/shared";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("what-if query isolation", () => {
   it("uses what-if prefix keys separate from real financial queries", () => {
     expect(whatIfQueryKeys.scenarios[0]).toBe("what-if-scenarios");
     expect(whatIfQueryKeys.compare(1, "12m", 2, 3, "stamp")[0]).toBe("what-if-scenario-compare");
-    expect(whatIfQueryKeys.scenarioChanges(5)[0]).toBe("what-if-scenario-changes");
+    expect(whatIfQueryKeys.scenarioChanges(5, 2)[0]).toBe("what-if-scenario-changes");
 
     for (const prefix of FINANCIAL_QUERY_PREFIXES) {
       expect(prefix[0]).not.toMatch(/^what-if-/);
     }
 
     expect(whatIfQueryKeys.scenarios).not.toEqual(["dashboard-summary-fast"]);
-    expect(whatIfQueryKeys.scenarioChanges(5)).not.toEqual(["rules"]);
+    expect(whatIfQueryKeys.scenarioChanges(5, 2)).not.toEqual(["rules"]);
+  });
+
+  it("includes scenario, horizon, household, and financial_revision in compare key", () => {
+    const key = whatIfQueryKeys.compare(9, "6m", 4, 17, "stamp-a");
+    expect(key).toEqual(["what-if-scenario-compare", 9, "6m", 4, 17, "stamp-a"]);
+  });
+
+  it("scopes scenario-changes by household to avoid collisions", () => {
+    expect(whatIfQueryKeys.scenarioChanges(1, 10)).not.toEqual(
+      whatIfQueryKeys.scenarioChanges(1, 20)
+    );
   });
 
   it("builds input stamp that changes when scenario changes update", () => {
@@ -35,6 +49,22 @@ describe("what-if query isolation", () => {
       addedRecurring: [],
     });
     expect(a).not.toBe(b);
+  });
+
+  it("input stamp is order-stable for the same change set", () => {
+    const a = scenarioInputStamp({
+      overrides: [
+        { id: 2, updated_at: "b" },
+        { id: 1, updated_at: "a" },
+      ],
+    });
+    const b = scenarioInputStamp({
+      overrides: [
+        { id: 1, updated_at: "a" },
+        { id: 2, updated_at: "b" },
+      ],
+    });
+    expect(a).toBe(b);
   });
 });
 
@@ -113,32 +143,81 @@ describe("scenario comparison display", () => {
   it("derives worse plan result when scenario risk increases", () => {
     expect(derivePlanSummaryResult(baseComparison)).toBe("WORSE");
   });
+
+  it("uses backend delta_monthly instead of client 52/12 frequency math", () => {
+    const group: ScenarioForecastChangeGroup = {
+      event: "Rent",
+      account_id: 1,
+      account_name: "Checking",
+      rule_id: 1,
+      frequency: "weekly",
+      occurrence_count: 52,
+      delta_per_occurrence: "-100",
+      delta_monthly: "-433.33",
+      total_delta: "-5200",
+      first_date: "2026-01-01",
+      effect_kind: "expense",
+      base_amount: "100",
+      scenario_amount: "0",
+    };
+    const cost = recurringCostFromGroup(group);
+    expect(cost?.monthly).toBeCloseTo(433.33, 2);
+    const displaySrc = readFileSync(join(process.cwd(), "features/what-if/display.ts"), "utf8");
+    expect(displaySrc).not.toMatch(/\* 52\) \/ 12/);
+    expect(displaySrc).not.toMatch(/\* 26\) \/ 12/);
+  });
 });
 
 describe("what-if screen isolation contract", () => {
-  it("does not reference apply scenario or real-data invalidation", async () => {
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const source = fs.readFileSync(
-      path.join(process.cwd(), "features/what-if/WhatIfScreen.tsx"),
-      "utf8"
-    );
+  const root = join(process.cwd(), "features/what-if");
+
+  it("does not reference apply scenario or real-data invalidation", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
     expect(source).not.toMatch(/applyScenario/);
     expect(source).not.toMatch(/invalidateFinancialQueries/);
     expect(source).toMatch(/invalidateScenarioQueries/);
     expect(source).toMatch(/Hypothetical only/);
   });
 
-  it("uses plan overflow and tap-to-edit changes without Edit/Remove link clutter", async () => {
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const root = path.join(process.cwd(), "features/what-if");
-    const screen = fs.readFileSync(path.join(root, "WhatIfScreen.tsx"), "utf8");
-    const changeRow = fs.readFileSync(path.join(root, "components/ScenarioChangeRow.tsx"), "utf8");
-    const newRecurring = fs.readFileSync(path.join(root, "forms/NewRecurringSheet.tsx"), "utf8");
-    const oneTime = fs.readFileSync(path.join(root, "forms/OneTimeEventSheet.tsx"), "utf8");
-    const create = fs.readFileSync(path.join(root, "forms/CreateScenarioSheet.tsx"), "utf8");
-    const addMenu = fs.readFileSync(path.join(root, "forms/ChangeKindSheet.tsx"), "utf8");
+  it("uses explicit pullRefreshing, not passive isFetching", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    expect(source).toMatch(/pullRefreshing/);
+    expect(source).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(source).toMatch(/refreshWhatIfScenario/);
+    expect(source).not.toMatch(/refreshing=\{scenariosQuery\.isFetching/);
+  });
+
+  it("does not fetch form picker data when only Add Change menu opens", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    expect(source).not.toMatch(/formsEnabled \|\| addMenuOpen/);
+    expect(source).toMatch(/accountsWithBalance: debtFormOpen/);
+    expect(source).toMatch(/accountsLight:/);
+  });
+
+  it("marks mismatched scenario comparison as recalculating", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    const summary = readFileSync(join(root, "components/PlanSummaryCard.tsx"), "utf8");
+    expect(source).toMatch(/comparisonBelongsToSelection/);
+    expect(source).toMatch(/scenario_id === selectedScenarioId/);
+    expect(summary).toMatch(/Updating scenario/);
+  });
+
+  it("distinguishes empty scenario from comparison failure", () => {
+    const source = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    const summary = readFileSync(join(root, "components/PlanSummaryCard.tsx"), "utf8");
+    expect(source).toMatch(/emptyScenario=\{isEmptyScenario\}/);
+    expect(source).toMatch(/comparisonFailed=/);
+    expect(summary).toMatch(/No hypothetical changes yet/);
+    expect(summary).toMatch(/not a zero-impact result/);
+  });
+
+  it("uses plan overflow and tap-to-edit changes without Edit/Remove link clutter", () => {
+    const screen = readFileSync(join(root, "WhatIfScreen.tsx"), "utf8");
+    const changeRow = readFileSync(join(root, "components/ScenarioChangeRow.tsx"), "utf8");
+    const newRecurring = readFileSync(join(root, "forms/NewRecurringSheet.tsx"), "utf8");
+    const oneTime = readFileSync(join(root, "forms/OneTimeEventSheet.tsx"), "utf8");
+    const create = readFileSync(join(root, "forms/CreateScenarioSheet.tsx"), "utf8");
+    const addMenu = readFileSync(join(root, "forms/ChangeKindSheet.tsx"), "utf8");
 
     expect(screen).toMatch(/PlanActionsSheet/);
     expect(screen).toMatch(/PlanPickerSheet/);
@@ -161,19 +240,45 @@ describe("what-if screen isolation contract", () => {
     expect(oneTime).toMatch(/Save change/);
     expect(newRecurring).toMatch(/Save change/);
 
-    const summary = fs.readFileSync(path.join(root, "components/PlanSummaryCard.tsx"), "utf8");
+    const summary = readFileSync(join(root, "components/PlanSummaryCard.tsx"), "utf8");
     expect(summary).toMatch(/Updating scenario/);
   });
 
-  it("recalculates only after saved change via input stamp / compare query", async () => {
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const data = fs.readFileSync(path.join(process.cwd(), "features/what-if/useWhatIfData.ts"), "utf8");
+  it("recalculates only after saved change via input stamp / compare query", () => {
+    const data = readFileSync(join(root, "useWhatIfData.ts"), "utf8");
+    const keys = readFileSync(join(root, "queryKeys.ts"), "utf8");
     expect(data).toMatch(/keepPreviousData/);
     expect(data).toMatch(/invalidateScenarioQueries/);
     expect(data).not.toMatch(/invalidateFinancialQueries/);
-    expect(data).toMatch(/what-if-scenario-compare/);
+    expect(keys).toMatch(/what-if-scenario-compare/);
     expect(data).toMatch(/getScenarioChanges/);
     expect(data).toMatch(/scenarioChanges/);
+    expect(data).toMatch(/useAccountOptions/);
+    // Mutations invalidate changes only — stamp drives a single compare.
+    expect(data).toMatch(/Comparison refreshes via inputStamp/);
+  });
+
+  it("scenario templates contain no invented production financial amounts", () => {
+    const templates = readFileSync(join(root, "scenarioTemplates.ts"), "utf8");
+    expect(templates).not.toMatch(/\$\d/);
+    expect(templates).not.toMatch(/amount:\s*["']\d/);
+    for (const t of SCENARIO_TEMPLATES) {
+      expect(t.suggestedOverrideHints.join(" ")).not.toMatch(/\d{3,}/);
+    }
+  });
+
+  it("debt helpers do not implement amortization schedules", () => {
+    const debt = readFileSync(join(root, "scenarioDebtPayment.ts"), "utf8");
+    expect(debt).not.toMatch(/interest_rate/);
+    expect(debt).not.toMatch(/payoff_months/);
+    expect(debt).not.toMatch(/minimum_payment\s*\*/);
+    expect(debt).toMatch(/form preview only/);
+  });
+
+  it("one-time transfer form validates pairing without client balance projection", () => {
+    const oneTime = readFileSync(join(root, "forms/OneTimeEventSheet.tsx"), "utf8");
+    expect(oneTime).toMatch(/transfer/);
+    expect(oneTime).not.toMatch(/ending_balance\s*[+\-]/);
+    expect(oneTime).not.toMatch(/projectedBalance/);
   });
 });

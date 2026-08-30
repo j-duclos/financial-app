@@ -55,7 +55,23 @@ const NTH = [
   { value: 5, label: "Fifth" },
 ];
 
-const TRANSFER_CATEGORY_NAMES = new Set(["Credit Card Payment", "Bank Transfer"]);
+/** Prefer backend allows_transfer_destination / system_code — never English display names. */
+function categoryAllowsTransferDestination(
+  cat: { allows_transfer_destination?: boolean; system_code?: string | null } | null | undefined
+): boolean {
+  if (!cat) return false;
+  if (typeof cat.allows_transfer_destination === "boolean") {
+    return cat.allows_transfer_destination;
+  }
+  const code = cat.system_code ?? null;
+  return code === "BANK_TRANSFER" || code === "CREDIT_CARD_PAYMENT";
+}
+
+function isBankTransferCategory(
+  cat: { system_code?: string | null } | null | undefined
+): boolean {
+  return cat?.system_code === "BANK_TRANSFER";
+}
 
 type FormState = {
   name: string;
@@ -223,16 +239,20 @@ export function RecurringFormScreen() {
     0;
 
   const { accounts } = useAccountOptions({ householdId: householdId || null });
-  const categoryType = form.direction === "INCOME" ? "INCOME" : form.direction === "EXPENSE" ? "EXPENSE" : undefined;
-  const { categories } = useCategoryOptions({
-    householdId: householdId || null,
-    type: categoryType,
-    enabled: form.direction !== "TRANSFER" && householdId > 0,
-  });
+  // Single category fetch — filter client-side for picker type; transfer semantics use system_code.
   const { categories: allCategories } = useCategoryOptions({
     householdId: householdId || null,
     enabled: householdId > 0,
   });
+  const categories = useMemo(() => {
+    if (form.direction === "INCOME") {
+      return allCategories.filter((c) => c.category_type === "INCOME");
+    }
+    if (form.direction === "EXPENSE") {
+      return allCategories.filter((c) => c.category_type === "EXPENSE");
+    }
+    return [];
+  }, [allCategories, form.direction]);
 
   useEffect(() => {
     if (!householdId || form.household) return;
@@ -243,10 +263,10 @@ export function RecurringFormScreen() {
     if (ruleQuery.data) setForm(ruleToForm(ruleQuery.data));
   }, [ruleQuery.data]);
 
-  // Auto-bind Bank Transfer category for TRANSFER direction.
+  // Auto-bind Bank Transfer system category for TRANSFER direction.
   useEffect(() => {
     if (form.direction !== "TRANSFER") return;
-    const bankTransfer = allCategories.find((c) => c.name === "Bank Transfer");
+    const bankTransfer = allCategories.find((c) => isBankTransferCategory(c));
     if (bankTransfer && form.category_id !== bankTransfer.id) {
       setForm((f) => ({ ...f, category_id: bankTransfer.id }));
     }
@@ -254,7 +274,9 @@ export function RecurringFormScreen() {
 
   const selectedAccount = accounts.find((a) => a.id === form.account_id);
   const selectedTo = accounts.find((a) => a.id === form.transfer_to_account_id);
-  const selectedCategory = categories.find((c) => c.id === form.category_id);
+  const selectedCategory =
+    categories.find((c) => c.id === form.category_id) ??
+    allCategories.find((c) => c.id === form.category_id);
   const frequencyLabel = FREQUENCIES.find((f) => f.value === form.frequency)?.label ?? form.frequency;
 
   const accountOptions: PickerOption[] = useMemo(
@@ -287,8 +309,7 @@ export function RecurringFormScreen() {
   );
 
   const showTransferDestination =
-    form.direction === "TRANSFER" ||
-    (selectedCategory != null && TRANSFER_CATEGORY_NAMES.has(selectedCategory.name));
+    form.direction === "TRANSFER" || categoryAllowsTransferDestination(selectedCategory);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -299,7 +320,7 @@ export function RecurringFormScreen() {
       let transferTo = form.transfer_to_account_id;
 
       if (form.direction === "TRANSFER") {
-        const bankTransfer = allCategories.find((c) => c.name === "Bank Transfer");
+        const bankTransfer = allCategories.find((c) => isBankTransferCategory(c));
         categoryId = bankTransfer?.id ?? categoryId;
         if (!transferTo || transferTo === form.account_id) {
           throw new Error("Choose a different destination account for the transfer.");
@@ -308,7 +329,7 @@ export function RecurringFormScreen() {
         transferTo = null;
       } else {
         const cat = allCategories.find((c) => c.id === categoryId) ?? selectedCategory;
-        const allowed = cat && TRANSFER_CATEGORY_NAMES.has(cat.name);
+        const allowed = categoryAllowsTransferDestination(cat);
         if (!allowed) transferTo = null;
         if (allowed && (!transferTo || transferTo === form.account_id)) {
           throw new Error("Choose a destination account for this payment/transfer.");

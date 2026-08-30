@@ -23,6 +23,11 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["extended-cash-risk"],
   ["recommendations"],
   ["debt-plan"],
+  ["account-payoff"],
+  ["bills-overview"],
+  ["bill-detail"],
+  ["recurring-rules-summary"],
+  ["subscription-intelligence"],
 ] as const;
 
 /** Preference-only invalidation when credit utilization target changes (not a ledger mutation). */
@@ -32,6 +37,7 @@ export const UTILIZATION_PREFERENCE_QUERY_PREFIXES = [
   ["dashboard-summary-fast"],
   ["dashboard-summary-details"],
   ["debt-plan"],
+  ["account-payoff"],
 ] as const;
 
 export function invalidateFinancialQueries(queryClient: QueryClient): void {
@@ -118,5 +124,7 @@ export function flushFinancialRefresh(queryClient: QueryClient): void {
 export function invalidateRecurringRuleDependents(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["rules"] });
   void queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+  void queryClient.invalidateQueries({ queryKey: ["recurring-rules-summary"] });
+  void queryClient.invalidateQueries({ queryKey: ["scenarios"] });
   invalidateFinancialQueries(queryClient);
 }

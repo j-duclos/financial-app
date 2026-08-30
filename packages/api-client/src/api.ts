@@ -26,6 +26,8 @@ import type {
   MonthlyReports,
   AccountBalance,
   RecurringRule,
+  RecurringRulesSummary,
+  RecurringRuleDetailResponse,
   Scenario,
   ScenarioRuleOverride,
   ScenarioChangesResponse,
@@ -207,6 +209,8 @@ export async function listAccounts(params?: {
   days?: number;
   page_size?: number;
   status?: string;
+  /** Backend Account.account_type filter (e.g. CREDIT for Payment Planner). */
+  account_type?: string;
   active_only?: boolean;
   include_archived?: boolean;
   include_closed?: boolean;
@@ -220,6 +224,7 @@ export async function listAccounts(params?: {
   if (params?.days != null) q.days = String(params.days);
   if (params?.page_size != null) q.page_size = String(params.page_size);
   if (params?.status) q.status = params.status;
+  if (params?.account_type) q.account_type = params.account_type;
   if (params?.active_only) q.active_only = "true";
   if (params?.include_archived) q.include_archived = "true";
   if (params?.include_closed) q.include_closed = "true";
@@ -1442,6 +1447,10 @@ export async function listRules(): Promise<PaginatedResponse<RecurringRule>> {
   return requestRequired("/api/rules/", { params: { page_size: "200" } });
 }
 
+export async function getRecurringRulesSummary(): Promise<RecurringRulesSummary> {
+  return requestRequired("/api/rules/summary/");
+}
+
 export async function createRule(data: {
   household: number;
   name: string;
@@ -1466,6 +1475,17 @@ export async function createRule(data: {
 
 export async function getRule(id: number): Promise<RecurringRule> {
   return requestRequired(`/api/rules/${id}/`);
+}
+
+/** Bounded rule detail + upcoming occurrence preview (Detail screens). */
+export async function getRuleOccurrences(
+  id: number,
+  params?: { limit?: number }
+): Promise<RecurringRuleDetailResponse> {
+  const limit = params?.limit ?? 5;
+  return requestRequired(`/api/rules/${id}/occurrences/`, {
+    params: { limit: String(limit) },
+  });
 }
 
 export async function updateRule(
@@ -1555,12 +1575,15 @@ export async function duplicateScenario(
 
 export async function getScenarioComparison(
   scenarioId: number,
-  params?: { horizon?: string; household_id?: number }
+  params?: { horizon?: string; household_id?: number; signal?: AbortSignal }
 ): Promise<import("@budget-app/shared").ScenarioComparisonResponse> {
   const q: Record<string, string> = {};
   if (params?.horizon) q.horizon = params.horizon;
   if (params?.household_id != null) q.household_id = String(params.household_id);
-  return requestRequired(`/api/scenarios/${scenarioId}/compare/`, { params: q });
+  return requestRequired(`/api/scenarios/${scenarioId}/compare/`, {
+    params: q,
+    signal: params?.signal,
+  });
 }
 
 export async function listScenarioAddedRecurring(

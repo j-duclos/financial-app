@@ -185,8 +185,16 @@ export function GoalFormScreen() {
     enabled: householdId != null,
   });
 
+  // Lazy: only fetch payday income rules when Advanced is open and auto-fund is needed.
+  // Edit hydration uses listRuleAllocations + goalFundingFormFromAllocation without rules.
+  const shouldLoadFundingRules =
+    householdId != null &&
+    !isDebtGoalType(form.goal_type) &&
+    advancedOpen &&
+    form.funding.enabled;
+
   const rulesQuery = useRules({
-    enabled: householdId != null && !isDebtGoalType(form.goal_type),
+    enabled: shouldLoadFundingRules,
   });
 
   const allocationQuery = useQuery({

@@ -80,3 +80,56 @@ def test_plan_endpoint_numeric_contract_no_nan_infinity(user, household):
             "unresolved",
             "paid_off",
         )
+
+
+@pytest.mark.django_db
+def test_plan_endpoint_defaults_extra_monthly_to_zero(user, household):
+    """Omitting extra_monthly must not invent a client-style $150 default."""
+    client = APIClient()
+    client.force_authenticate(user=user)
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Default Extra",
+        credit_limit=Decimal("2000"),
+        apr=Decimal("19.99"),
+        minimum_payment_amount=Decimal("35"),
+    )
+    _debt(card, user, Decimal("500"))
+
+    response = client.get("/api/credit-cards/plan/", {"strategy": "avalanche", "mode": "aggressive"})
+    assert response.status_code == 200
+    plan = response.json()
+    assert Decimal(str(plan["extra_monthly"])) == Decimal("0")
+
+
+@pytest.mark.django_db
+def test_plan_endpoint_rejects_invalid_extra_and_lump_account(user, household):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Validate",
+        credit_limit=Decimal("2000"),
+        apr=Decimal("19.99"),
+        minimum_payment_amount=Decimal("35"),
+    )
+    _debt(card, user, Decimal("400"))
+
+    bad_extra = client.get(
+        "/api/credit-cards/plan/",
+        {"strategy": "avalanche", "mode": "aggressive", "extra_monthly": "not-a-number"},
+    )
+    assert bad_extra.status_code == 400
+
+    bad_lump = client.get(
+        "/api/credit-cards/plan/",
+        {
+            "strategy": "avalanche",
+            "mode": "aggressive",
+            "lump_sum": "100",
+            "lump_sum_account": "99999999",
+        },
+    )
+    assert bad_lump.status_code == 400

@@ -18,9 +18,14 @@ describe("Recurring page", () => {
     expect(typeof mod.default).toBe("function");
   });
 
-  it("loads rules and checklist enrichment", () => {
+  it("loads rules, checklist enrichment, and backend summary", () => {
     expect(recurringSource).toMatch(/listRules/);
     expect(recurringSource).toMatch(/getBillsOverview/);
+    expect(recurringSource).toMatch(/getRecurringRulesSummary/);
+  });
+
+  it("detail panel uses targeted recurring invalidation", () => {
+    expect(detailSource).toMatch(/invalidateRecurringRuleDependents/);
   });
 
   it("does not render forecast or risk banners", () => {

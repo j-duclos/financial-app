@@ -13,13 +13,21 @@ export type RuleSectionKey = (typeof RULE_SECTIONS)[number]["key"];
 
 const SUBSCRIPTION_CATEGORY_NAMES = new Set(["Streaming", "Software / Apps", "Memberships"]);
 
-const CARD_LOAN_PAYMENT_CATEGORY_NAMES = new Set([
-  "Credit Card Payment",
-  "Student Loan",
-  "Personal Loan",
-]);
+const LOAN_PAYMENT_CATEGORY_NAMES = new Set(["Student Loan", "Personal Loan"]);
 
-const TRANSFER_CATEGORY_NAMES = new Set(["Bank Transfer", "Transfer"]);
+function categoryAllowsTransferDestination(rule: RecurringRule): boolean {
+  const cat = rule.category;
+  if (!cat) return false;
+  if (typeof cat.allows_transfer_destination === "boolean") {
+    return cat.allows_transfer_destination;
+  }
+  const code = cat.system_code ?? null;
+  return code === "BANK_TRANSFER" || code === "CREDIT_CARD_PAYMENT";
+}
+
+function categoryIsCreditCardPayment(rule: RecurringRule): boolean {
+  return rule.category?.system_code === "CREDIT_CARD_PAYMENT";
+}
 
 export function isCreditCardAccount(account: Pick<Account, "account_type"> | null | undefined): boolean {
   return String(account?.account_type ?? "").toUpperCase() === "CREDIT";
@@ -34,13 +42,13 @@ export function getRuleSection(rule: RecurringRule): RuleSectionKey {
   if (rule.direction === "INCOME") return "income";
   const catName = rule.category?.name ?? "";
   const hasTransferDest = !!(rule.transfer_to_account?.id ?? rule.transfer_to_account_id);
-  const nameLower = (rule.name ?? "").toLowerCase();
-  if (CARD_LOAN_PAYMENT_CATEGORY_NAMES.has(catName)) return "card_loan_payments";
+  if (categoryIsCreditCardPayment(rule) || LOAN_PAYMENT_CATEGORY_NAMES.has(catName)) {
+    return "card_loan_payments";
+  }
   if (
     rule.direction === "TRANSFER" ||
     hasTransferDest ||
-    TRANSFER_CATEGORY_NAMES.has(catName) ||
-    nameLower.includes("move to")
+    categoryAllowsTransferDestination(rule)
   ) {
     return "transfers";
   }
@@ -49,29 +57,21 @@ export function getRuleSection(rule: RecurringRule): RuleSectionKey {
   return "bills";
 }
 
-/** Signed monthly equivalent (expenses negative) for running budget subtotals. */
+/**
+ * Signed monthly equivalent (expenses negative) from backend estimated_monthly_amount.
+ * Falls back to raw amount sign only when the API field is absent (legacy payloads).
+ */
 export function ruleMonthlyAmount(rule: RecurringRule): number {
-  const amount = Math.abs(Number(rule.amount) || 0);
-  const interval = Math.max(1, Number(rule.interval) || 1);
-  let perMonth: number;
-  switch (rule.frequency) {
-    case "WEEKLY":
-      perMonth = (52 / 12 / interval) * amount;
-      break;
-    case "BIWEEKLY":
-      perMonth = (26 / 12 / interval) * amount;
-      break;
-    case "MONTHLY_DAY":
-    case "MONTHLY_NTH_WEEKDAY":
-      perMonth = amount / interval;
-      break;
-    case "YEARLY":
-      perMonth = amount / (12 * interval);
-      break;
-    default:
-      perMonth = amount / interval;
+  const fromApi = Number(rule.estimated_monthly_amount);
+  if (
+    Number.isFinite(fromApi) &&
+    rule.estimated_monthly_amount != null &&
+    rule.estimated_monthly_amount !== ""
+  ) {
+    return fromApi;
   }
-  return rule.direction === "EXPENSE" ? -perMonth : perMonth;
+  const amount = Math.abs(Number(rule.amount) || 0);
+  return rule.direction === "EXPENSE" ? -amount : amount;
 }
 
 export function ruleCountsTowardMonthlyCashFlow(rule: RecurringRule): boolean {

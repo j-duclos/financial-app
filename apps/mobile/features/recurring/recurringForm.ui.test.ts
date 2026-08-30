@@ -29,7 +29,17 @@ describe("RecurringFormScreen structure", () => {
     expect(formSrc).toContain('form.direction !== "TRANSFER"');
     expect(formSrc).toContain("showTransferDestination");
     expect(formSrc).toContain("Transfer destination is required");
-    expect(formSrc).toContain('name === "Bank Transfer"');
+    expect(formSrc).toContain("categoryAllowsTransferDestination");
+    expect(formSrc).toContain("isBankTransferCategory");
+    expect(formSrc).toContain("system_code");
+    expect(formSrc).not.toMatch(/TRANSFER_CATEGORY_NAMES/);
+    expect(formSrc).not.toMatch(/name === "Bank Transfer"/);
+    expect(formSrc).not.toMatch(/name === "Credit Card Payment"/);
+  });
+
+  it("loads categories once and filters client-side", () => {
+    const categoryOptionCalls = formSrc.match(/useCategoryOptions\(/g) ?? [];
+    expect(categoryOptionCalls.length).toBe(1);
   });
 
   it("shows frequency-dependent scheduling fields only", () => {
@@ -57,5 +67,12 @@ describe("Recurring list UI structure", () => {
     expect(rowSrc).toContain("lifecycleBadgeLabel");
     expect(listSrc).not.toContain("getBillsOverview");
     expect(listSrc).toContain('useState<RecurringSortKey>("next")');
+  });
+
+  it("uses explicit pullRefreshing, not passive isFetching", () => {
+    expect(listSrc).toMatch(/pullRefreshing/);
+    expect(listSrc).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(listSrc).not.toMatch(/refreshing=\{\s*isFetching/);
+    expect(listSrc).not.toMatch(/refreshing=\{isFetching && !isLoading\}/);
   });
 });

@@ -109,6 +109,18 @@ def derive_recurring_payment_status(
         return "skipped"
 
     if occurrence and _occurrence_has_verified_payment(occurrence):
+        # Past cycle settled — status follows the upcoming charge (backend owns advancement).
+        due_raw = occurrence.get("due_date")
+        if due_raw and str(due_raw)[:10] < today.isoformat():
+            next_due = get_next_rule_run_date(rule, today)
+            if next_due is None:
+                return "paid"
+            days = _days_until_due(next_due, today)
+            if days < 0:
+                return "missed"
+            if days <= DUE_SOON_DAYS:
+                return "due_soon"
+            return "scheduled"
         return "paid"
 
     due_date: date | None = None
@@ -126,6 +138,29 @@ def derive_recurring_payment_status(
             return "missed"
 
     days = _days_until_due(due_date, today)
+    if days < 0:
+        return "missed"
+    if days <= DUE_SOON_DAYS:
+        return "due_soon"
+    return "scheduled"
+
+
+def payment_status_from_next_occurrence(
+    rule: RecurringRule,
+    next_due: date | None,
+    *,
+    today: date,
+) -> str:
+    """Canonical status from rule lifecycle + next occurrence (no checklist row required)."""
+    if not rule_is_running(rule, today):
+        if not rule.active or rule.paused_at:
+            return "paused"
+        if rule.end_date and rule.end_date < today:
+            return "inactive"
+        return "paused"
+    if next_due is None:
+        return "scheduled"
+    days = _days_until_due(next_due, today)
     if days < 0:
         return "missed"
     if days <= DUE_SOON_DAYS:

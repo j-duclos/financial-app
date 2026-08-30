@@ -55,6 +55,7 @@ import type {
 } from "./types";
 import {
   invalidateScenarioQueries,
+  refreshWhatIfScenario,
   scenarioInputStamp,
   useHouseholds,
   useProfile,
@@ -95,7 +96,7 @@ export function WhatIfScreen() {
   const [recurringDebtOpen, setRecurringDebtOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [removeItem, setRemoveItem] = useState<PlanIncludeItem | null>(null);
-  const [formsEnabled, setFormsEnabled] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const profileQuery = useProfile();
   const householdsQuery = useHouseholds();
@@ -127,7 +128,7 @@ export function WhatIfScreen() {
     changesReady,
     changesError,
     refetchChanges,
-  } = useScenarioChanges(selectedScenarioId);
+  } = useScenarioChanges(selectedScenarioId, defaultHousehold);
 
   const inputStamp = scenarioInputStamp({
     scenarioUpdatedAt: selectedScenario?.updated_at,
@@ -146,12 +147,26 @@ export function WhatIfScreen() {
     changesReady
   );
 
-  const formData = useWhatIfFormData(formsEnabled || addMenuOpen, defaultHousehold);
-  const accounts = formData.accounts.data?.results ?? [];
+  const debtFormOpen = debtSheetOpen || recurringDebtOpen;
+  const overrideFormOpen = overrideSheetOpen;
+  const eventFormOpen = eventPreset != null;
+  const newRecurringFormOpen = newRecurringDirection != null;
+
+  const formData = useWhatIfFormData(
+    {
+      accountsLight:
+        overrideFormOpen || eventFormOpen || newRecurringFormOpen || debtFormOpen,
+      accountsWithBalance: debtFormOpen,
+      rules: overrideFormOpen || debtFormOpen,
+      categories: overrideFormOpen || eventFormOpen || newRecurringFormOpen || debtFormOpen,
+    },
+    defaultHousehold
+  );
+  const accounts = formData.accounts;
   const rules = formData.rules.rules;
   const categoriesList = formData.categories.categories;
 
-  const mutations = useScenarioMutations(selectedScenarioId);
+  const mutations = useScenarioMutations(selectedScenarioId, defaultHousehold);
 
   const planItems = useMemo(
     () =>
@@ -164,14 +179,41 @@ export function WhatIfScreen() {
     [overrides, events, shocks, addedRecurring]
   );
 
+  const comparisonBelongsToSelection =
+    comparisonQuery.data == null ||
+    selectedScenarioId == null ||
+    comparisonQuery.data.scenario_id === selectedScenarioId;
   const comparisonBusy =
-    comparisonQuery.isLoading || comparisonQuery.isFetching || changesLoading;
+    comparisonQuery.isLoading ||
+    comparisonQuery.isFetching ||
+    changesLoading ||
+    !comparisonBelongsToSelection;
+  const comparisonStaleOnError =
+    comparisonQuery.isError && comparisonQuery.data != null && comparisonBelongsToSelection;
   const horizonMonths = horizonToMonths(forecastPeriod);
   const horizonLabel = `${horizonMonths}-month`;
+  const isEmptyScenario = planItems.length === 0 && changesReady && !changesError;
 
   const invalidate = () => {
     if (selectedScenarioId != null) {
-      invalidateScenarioQueries(queryClient, selectedScenarioId);
+      invalidateScenarioQueries(queryClient, selectedScenarioId, defaultHousehold);
+    }
+  };
+
+  const refreshAll = async () => {
+    setPullRefreshing(true);
+    try {
+      await householdsQuery.refetch();
+      await refreshWhatIfScenario({
+        queryClient,
+        scenarioId: selectedScenarioId,
+        horizon: forecastPeriod,
+        householdId: defaultHousehold,
+        financialRevision: selectedHousehold?.financial_revision,
+        scenarioUpdatedAt: selectedScenario?.updated_at,
+      });
+    } finally {
+      setPullRefreshing(false);
     }
   };
 
@@ -191,7 +233,6 @@ export function WhatIfScreen() {
   };
 
   const handleEditItem = (item: PlanIncludeItem) => {
-    setFormsEnabled(true);
     if (item.kind === "override") {
       const ov = (overrides ?? []).find((o) => o.id === item.sourceId);
       if (!ov) return;
@@ -227,7 +268,6 @@ export function WhatIfScreen() {
   };
 
   const handleIncomeKind = (kind: IncomeChangeKind) => {
-    setFormsEnabled(true);
     if (kind === "one_time") setEventPreset("income");
     else if (kind === "paycheck") {
       setOverrideContext("paycheck");
@@ -238,7 +278,6 @@ export function WhatIfScreen() {
   };
 
   const handleExpenseKind = (kind: ExpenseChangeKind) => {
-    setFormsEnabled(true);
     if (kind === "one_time") setEventPreset("expense");
     else if (kind === "current") {
       setOverrideContext("expense_change");
@@ -272,11 +311,9 @@ export function WhatIfScreen() {
         contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 48 }}
         refreshControl={
           <RefreshControl
-            refreshing={scenariosQuery.isFetching && !scenariosQuery.isLoading}
-            onRefresh={() => {
-              void scenariosQuery.refetch();
-              if (selectedScenarioId != null) invalidate();
-            }}
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshAll()}
+            tintColor={theme.colors.tint}
           />
         }
       >
@@ -347,7 +384,12 @@ export function WhatIfScreen() {
                   accounts={accounts}
                   loading={comparisonBusy && !comparisonQuery.data}
                   horizonMonths={comparisonHorizonMonths(comparisonQuery.data, horizonMonths)}
-                  recalculating={comparisonQuery.isFetching && !!comparisonQuery.data}
+                  recalculating={
+                    (comparisonQuery.isFetching && !!comparisonQuery.data) ||
+                    !comparisonBelongsToSelection
+                  }
+                  emptyScenario={isEmptyScenario}
+                  comparisonFailed={comparisonStaleOnError || (comparisonQuery.isError && !comparisonQuery.data)}
                 />
 
                 {changesError ? (
@@ -363,14 +405,15 @@ export function WhatIfScreen() {
                   </Card>
                 ) : null}
 
-                <ComparisonSection
-                  comparison={comparisonQuery.data}
-                  horizonLabel={horizonLabel}
-                  loading={comparisonBusy}
-                  error={comparisonQuery.error}
-                  onRetry={() => void comparisonQuery.refetch()}
-                />
-
+                {!isEmptyScenario ? (
+                  <ComparisonSection
+                    comparison={comparisonQuery.data}
+                    horizonLabel={horizonLabel}
+                    loading={comparisonBusy}
+                    error={comparisonQuery.error}
+                    onRetry={() => void comparisonQuery.refetch()}
+                  />
+                ) : null}
                 <View
                   style={{
                     flexDirection: "row",
@@ -392,7 +435,6 @@ export function WhatIfScreen() {
                     name="plus"
                     accessibilityLabel="Add change"
                     onPress={() => {
-                      setFormsEnabled(true);
                       setAddMenuOpen(true);
                     }}
                   />
@@ -404,7 +446,6 @@ export function WhatIfScreen() {
                       label="Model payoff"
                       variant="secondary"
                       onPress={() => {
-                        setFormsEnabled(true);
                         setEditingEvent(null);
                         setEditingOverride(null);
                         setDebtSheetOpen(true);

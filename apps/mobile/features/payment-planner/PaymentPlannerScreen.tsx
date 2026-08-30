@@ -31,6 +31,9 @@ import {
   usePaymentPlannerAccounts,
 } from "./usePaymentPlannerData";
 
+/** Neutral baseline — no invented extra payment (backend default is 0). */
+const NEUTRAL_EXTRA_MONTHLY = "0";
+
 export function PaymentPlannerScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -45,25 +48,27 @@ export function PaymentPlannerScreen() {
   const [mode, setMode] = useState<DebtPayoffMode>(
     () => parseDebtModeParam(params.mode) ?? "aggressive"
   );
-  const [extraMonthly, setExtraMonthly] = useState("150");
-  const [lumpSum, setLumpSum] = useState("");
-  const [lumpSumAccountId, setLumpSumAccountId] = useState<number | null>(null);
+  // Applied scenario only — drives debt-plan query. Draft lives in WhatIfPanel.
+  const [appliedExtraMonthly, setAppliedExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
+  const [appliedLumpSum, setAppliedLumpSum] = useState("");
+  const [appliedLumpSumAccountId, setAppliedLumpSumAccountId] = useState<number | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(
     params.account ? Number(params.account) : null
   );
   const [cardStrategy, setCardStrategy] = useState<PayoffStrategy>("minimum_payment");
   const [amountInput, setAmountInput] = useState(params.amount ?? "");
   const [appliedAmountInput, setAppliedAmountInput] = useState(params.amount ?? "");
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const scenarioInputs: PlannerScenarioInputs = useMemo(
     () => ({
       strategy,
       mode,
-      extraMonthly,
-      lumpSum,
-      lumpSumAccountId,
+      extraMonthly: appliedExtraMonthly,
+      lumpSum: appliedLumpSum,
+      lumpSumAccountId: appliedLumpSumAccountId,
     }),
-    [strategy, mode, extraMonthly, lumpSum, lumpSumAccountId]
+    [strategy, mode, appliedExtraMonthly, appliedLumpSum, appliedLumpSumAccountId]
   );
 
   const accountsQuery = usePaymentPlannerAccounts();
@@ -106,9 +111,18 @@ export function PaymentPlannerScreen() {
     enabled: !!selectedAccount && !!selectedPlanCard,
   });
 
-  const refetchAll = () => {
-    void accountsQuery.refetch();
-    void planQuery.refetch();
+  /**
+   * Backend plan endpoint loads canonical debt data server-side (not from the
+   * client account list), so accounts + plan may refetch in parallel safely.
+   * We still await both so pullRefreshing covers the full refresh lifecycle.
+   */
+  const refreshAll = async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([accountsQuery.refetch(), planQuery.refetch()]);
+    } finally {
+      setPullRefreshing(false);
+    }
   };
 
   const recommended = plan ? topRecommendation(plan) : null;
@@ -123,7 +137,19 @@ export function PaymentPlannerScreen() {
     );
   }
 
-  if (creditCards.length === 0) {
+  if (accountsQuery.isError) {
+    return (
+      <Screen>
+        <AppHeader title="Payment Planner" onBack={() => router.back()} />
+        <ErrorState
+          message={describeApiError(accountsQuery.error)}
+          onRetry={() => accountsQuery.refetch()}
+        />
+      </Screen>
+    );
+  }
+
+  if (accountsQuery.isSuccess && creditCards.length === 0) {
     return (
       <Screen>
         <AppHeader title="Payment Planner" onBack={() => router.back()} />
@@ -143,8 +169,8 @@ export function PaymentPlannerScreen() {
       scrollProps={{
         refreshControl: (
           <RefreshControl
-            refreshing={planQuery.isRefetching && !planQuery.isLoading}
-            onRefresh={refetchAll}
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshAll()}
             tintColor={theme.colors.tint}
           />
         ),
@@ -194,17 +220,14 @@ export function PaymentPlannerScreen() {
       />
 
       <WhatIfPanel
-        extraMonthly={extraMonthly}
-        lumpSum={lumpSum}
-        lumpSumAccountId={lumpSumAccountId}
         creditCards={creditCards}
-        appliedExtraMonthly={extraMonthly}
-        appliedLumpSum={lumpSum}
-        appliedLumpSumAccountId={lumpSumAccountId}
+        appliedExtraMonthly={appliedExtraMonthly}
+        appliedLumpSum={appliedLumpSum}
+        appliedLumpSumAccountId={appliedLumpSumAccountId}
         onApply={({ extraMonthly: nextExtra, lumpSum: nextLump, lumpSumAccountId: nextAccount }) => {
-          setExtraMonthly(nextExtra);
-          setLumpSum(nextLump);
-          setLumpSumAccountId(nextAccount);
+          setAppliedExtraMonthly(nextExtra);
+          setAppliedLumpSum(nextLump);
+          setAppliedLumpSumAccountId(nextAccount);
         }}
       />
 
@@ -230,9 +253,11 @@ export function PaymentPlannerScreen() {
               params: {
                 strategy,
                 mode,
-                extraMonthly,
-                lumpSum,
-                lumpSumAccountId: lumpSumAccountId ? String(lumpSumAccountId) : "",
+                extraMonthly: appliedExtraMonthly,
+                lumpSum: appliedLumpSum,
+                lumpSumAccountId: appliedLumpSumAccountId
+                  ? String(appliedLumpSumAccountId)
+                  : "",
               },
             })
           }

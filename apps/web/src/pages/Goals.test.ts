@@ -20,4 +20,26 @@ describe("Goals page", () => {
     expect(source).toMatch(/searchParams\.get\("edit"\)/);
     expect(source).toMatch(/setEditing\(match\)/);
   });
+
+  it("uses intent-specific invalidation instead of a universal blast", () => {
+    expect(source).toMatch(/invalidateGoalLifecycleQueries/);
+    expect(source).toMatch(/classifyGoalSaveImpact/);
+    expect(source).toMatch(/invalidateAfterGoalSave/);
+    expect(source).not.toMatch(/const invalidate = \(\) => \{/);
+  });
+
+  it("lifecycle mutations share targeted lifecycle invalidation", () => {
+    expect(source).toMatch(
+      /archiveMu = useMutation\(\{ mutationFn: archiveBucket, onSuccess: invalidateLifecycle \}/
+    );
+    expect(source).toMatch(
+      /completeMu = useMutation\(\{ mutationFn: completeBucket, onSuccess: invalidateLifecycle \}/
+    );
+    expect(source).toMatch(
+      /pauseMu = useMutation\(\{ mutationFn: pauseBucket, onSuccess: invalidateLifecycle \}/
+    );
+    expect(source).toMatch(
+      /duplicateMu = useMutation\(\{ mutationFn: duplicateBucket, onSuccess: invalidateLifecycle \}/
+    );
+  });
 });

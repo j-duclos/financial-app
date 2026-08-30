@@ -3,7 +3,8 @@ import type { ForecastHorizon } from "./types";
 /** Scenario queries are isolated from real financial data (dashboard, timeline, etc.). */
 export const whatIfQueryKeys = {
   scenarios: ["what-if-scenarios"] as const,
-  scenarioChanges: (scenarioId: number) => ["what-if-scenario-changes", scenarioId] as const,
+  scenarioChanges: (scenarioId: number, householdId?: number | null) =>
+    ["what-if-scenario-changes", householdId ?? null, scenarioId] as const,
   compare: (
     scenarioId: number,
     horizon: ForecastHorizon,
@@ -19,10 +20,15 @@ export const whatIfQueryKeys = {
       financialRevision,
       inputStamp,
     ] as const,
-  /** What-If needs balances for debt/affordability forms — not the lightweight account-options list. */
-  accounts: ["what-if-accounts"] as const,
+  /** Balance-enriched accounts for debt forms only — not the shared account-options list. */
+  accounts: (householdId?: number | null) =>
+    ["what-if-accounts", householdId ?? null] as const,
 };
 
+/**
+ * Deterministic stamp of scenario financial inputs (ids + updated_at only).
+ * Does not include object identity, UI labels, or unrelated timestamps.
+ */
 export function scenarioInputStamp(parts: {
   scenarioUpdatedAt?: string;
   overrides?: Array<{ id: number; updated_at: string }>;
@@ -30,11 +36,17 @@ export function scenarioInputStamp(parts: {
   shocks?: Array<{ id: number; updated_at: string }>;
   addedRecurring?: Array<{ id: number; updated_at: string }>;
 }): string {
+  const sortStamp = (rows: Array<{ id: number; updated_at: string }> | undefined) =>
+    [...(rows ?? [])]
+      .sort((a, b) => a.id - b.id)
+      .map((r) => `${r.id}:${r.updated_at}`)
+      .join(",");
+
   return [
-    parts.scenarioUpdatedAt,
-    (parts.overrides ?? []).map((o) => `${o.id}:${o.updated_at}`).join(","),
-    (parts.events ?? []).map((e) => `${e.id}:${e.updated_at}`).join(","),
-    (parts.shocks ?? []).map((s) => `${s.id}:${s.updated_at}`).join(","),
-    (parts.addedRecurring ?? []).map((r) => `${r.id}:${r.updated_at}`).join(","),
+    parts.scenarioUpdatedAt ?? "",
+    sortStamp(parts.overrides),
+    sortStamp(parts.events),
+    sortStamp(parts.shocks),
+    sortStamp(parts.addedRecurring),
   ].join("|");
 }

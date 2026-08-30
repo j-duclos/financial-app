@@ -24,6 +24,7 @@ import {
   splitRecurringBillPayments,
   type RecurringListItem,
 } from "../../lib/recurringDisplay";
+import { invalidateRecurringRuleDependents } from "../../lib/financialQueryRefresh";
 import { todayIsoDate } from "../../lib/timelineCalendarUtils";
 
 function monthDateBounds(monthKey: string): { after: string; before: string } {
@@ -164,6 +165,7 @@ export default function RecurringDetailPanel({
       );
       await queryClient.invalidateQueries({ queryKey: ["bills-overview"] });
       await queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
+      invalidateRecurringRuleDependents(queryClient);
     },
     onError: (err: Error) => {
       setLinkError(err.message || "Could not link that transaction.");
@@ -190,9 +192,7 @@ export default function RecurringDetailPanel({
     },
     onSuccess: (_data, action) => {
       setLifecycleNotice(action === "pause" ? "Rule paused." : "Rule resumed.");
-      queryClient.invalidateQueries({ queryKey: ["recurring-rules"] });
-      queryClient.invalidateQueries({ queryKey: ["rules"] });
-      queryClient.invalidateQueries({ queryKey: ["bills-overview"] });
+      invalidateRecurringRuleDependents(queryClient);
     },
   });
 

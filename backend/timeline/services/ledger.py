@@ -692,13 +692,23 @@ def _account_is_debt_payment_destination(acc: Account, category_name: Optional[s
     return False
 
 
-def _category_name_allows_rule_transfer_destination(category_name: Optional[str]) -> bool:
+def _category_allows_rule_transfer_destination(category) -> bool:
     """
-    RecurringRule.transfer_to_account is only meaningful for these categories (same as Rules UI).
+    RecurringRule.transfer_to_account is only meaningful for transfer/payment categories.
     Stale FK rows must not force transfer/skip logic for plain expenses (e.g. Shopping).
     """
+    from categories.semantics import category_allows_transfer_destination
+
+    return category_allows_transfer_destination(category)
+
+
+def _category_name_allows_rule_transfer_destination(category_name: Optional[str]) -> bool:
+    """Legacy name check — prefer _category_allows_rule_transfer_destination with a Category."""
+    from categories.semantics import SEED_NAME_TO_SYSTEM_CODE, TRANSFER_DESTINATION_SYSTEM_CODES
+
     n = (category_name or "").strip()
-    return n in ("Credit Card Payment", "Bank Transfer")
+    code = SEED_NAME_TO_SYSTEM_CODE.get(n)
+    return code in TRANSFER_DESTINATION_SYSTEM_CODES
 
 
 def _has_paired_rule_transfer_leg(txn: Transaction) -> bool:
@@ -716,10 +726,13 @@ def _has_paired_rule_transfer_leg(txn: Transaction) -> bool:
     )
 
 
-def _is_scheduled_rule_transfer(rule: RecurringRule, category_name: Optional[str]) -> bool:
-    return bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
-        category_name
-    )
+def _is_scheduled_rule_transfer(rule: RecurringRule, category_name: Optional[str] = None) -> bool:
+    if not rule.transfer_to_account_id:
+        return False
+    cat = getattr(rule, "category", None)
+    if cat is not None:
+        return _category_allows_rule_transfer_destination(cat)
+    return _category_name_allows_rule_transfer_destination(category_name)
 
 
 def _link_rule_transfer_pair_transactions(
@@ -3225,11 +3238,12 @@ def _build_timeline_impl(
             if acc_id in forecastable_account_ids:
                 return True
             to_id = rule_obj.transfer_to_account_id
-            cat_nm = rule_obj.category.name if getattr(rule_obj, "category", None) else None
+            cat = getattr(rule_obj, "category", None)
+            cat_nm = cat.name if cat else None
             if to_id and to_id in forecastable_account_ids:
-                if _category_name_allows_rule_transfer_destination(cat_nm):
+                if _category_allows_rule_transfer_destination(cat):
                     return True
-            if to_id and _category_name_allows_rule_transfer_destination(cat_nm):
+            if to_id and _category_allows_rule_transfer_destination(cat):
                 to_acc = getattr(rule_obj, "transfer_to_account", None) or _lookup_account(to_id, accs)
                 if to_acc and _account_is_debt_payment_destination(to_acc, cat_nm):
                     return True
@@ -3266,16 +3280,20 @@ def _build_timeline_impl(
 
             cat_id = eff.get("category_id")
             cat_name = None
+            resolved_cat = None
             resolved_cat_id = cat_id or rule.category_id
             if resolved_cat_id and rule.category_id == resolved_cat_id and getattr(rule, "category", None):
+                resolved_cat = rule.category
                 cat_name = rule.category.name
             elif resolved_cat_id:
                 from categories.models import Category
-                c = Category.objects.filter(pk=resolved_cat_id).first()
-                cat_name = c.name if c else None
+                resolved_cat = Category.objects.filter(pk=resolved_cat_id).first()
+                cat_name = resolved_cat.name if resolved_cat else None
 
-            use_transfer_branch = bool(rule.transfer_to_account_id) and _category_name_allows_rule_transfer_destination(
-                cat_name
+            use_transfer_branch = bool(rule.transfer_to_account_id) and (
+                _category_allows_rule_transfer_destination(resolved_cat)
+                if resolved_cat is not None
+                else _category_name_allows_rule_transfer_destination(cat_name)
             )
             if use_transfer_branch:
                 from_acc_id = eff.get("account_id") or rule.account_id

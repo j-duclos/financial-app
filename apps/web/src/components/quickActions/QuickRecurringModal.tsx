@@ -3,6 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatAccountOptionLabel, getEffectiveDisplayName } from "@budget-app/shared";
 import type { Account, Category, RecurringRuleFrequency } from "@budget-app/shared";
 import { createRule, listCategories } from "@budget-app/api-client";
+import { invalidateRecurringRuleDependents } from "../../lib/financialQueryRefresh";
+
+function categoryAllowsTransferDestination(cat: Category | undefined): boolean {
+  if (!cat) return false;
+  if (typeof cat.allows_transfer_destination === "boolean") {
+    return cat.allows_transfer_destination;
+  }
+  return cat.system_code === "BANK_TRANSFER" || cat.system_code === "CREDIT_CARD_PAYMENT";
+}
 
 export type QuickRecurringPreset = {
   accountId: number;
@@ -51,10 +60,12 @@ export default function QuickRecurringModal({
   const [error, setError] = useState<string | null>(null);
 
   const transferCategory = useMemo(() => {
-    const name =
-      preset?.direction === "TRANSFER" ? "Bank Transfer" : null;
-    if (!name) return null;
-    return categories.find((c: Category) => c.name === name || c.name === "Credit Card Payment");
+    if (preset?.direction !== "TRANSFER") return null;
+    return (
+      categories.find((c: Category) => c.system_code === "BANK_TRANSFER") ??
+      categories.find((c: Category) => categoryAllowsTransferDestination(c)) ??
+      null
+    );
   }, [categories, preset?.direction]);
 
   useEffect(() => {
@@ -71,8 +82,7 @@ export default function QuickRecurringModal({
   const createMu = useMutation({
     mutationFn: createRule,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["rules"] });
-      await queryClient.invalidateQueries({ queryKey: ["timeline"] });
+      invalidateRecurringRuleDependents(queryClient);
       onSuccess("Recurring schedule created.");
       onClose();
     },
@@ -94,9 +104,7 @@ export default function QuickRecurringModal({
       return;
     }
     const selectedCat = categories.find((c: Category) => c.id === categoryId);
-    const catName = selectedCat?.name ?? "";
-    const transferAllowed =
-      catName === "Credit Card Payment" || catName === "Bank Transfer";
+    const transferAllowed = categoryAllowsTransferDestination(selectedCat);
 
     createMu.mutate({
       household: preset.householdId,

@@ -159,7 +159,7 @@ export function utilizationPercent(account: Account | undefined): number | null 
   return Math.round((owed / limit) * 1000) / 10;
 }
 
-/** Utilization after a single payment (modal preview only — not end-of-horizon forecast). */
+/** Utilization after a single payment (form preview only — not forecast payoff math). */
 export function projectedUtilizationAfterPayment(
   account: Account | undefined,
   paymentAmount: number

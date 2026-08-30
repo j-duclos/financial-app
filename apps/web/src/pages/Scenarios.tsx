@@ -17,8 +17,6 @@ import type {
 import {
   listScenarios,
   listRules,
-  listScenarioOverrides,
-  listScenarioOneTimeEvents,
   createScenario,
   deleteScenario,
   duplicateScenario,
@@ -29,7 +27,7 @@ import {
   updateScenarioOneTimeEvent,
   deleteScenarioOneTimeEvent,
   getScenarioComparison,
-  listScenarioCategoryShocks,
+  getScenarioChanges,
   createScenarioCategoryShock,
   updateScenarioCategoryShock,
   deleteScenarioCategoryShock,
@@ -38,10 +36,13 @@ import {
   listCategories,
   createScenarioAddedRecurring,
   deleteScenarioAddedRecurring,
-  listScenarioAddedRecurring,
+  listAccounts,
 } from "@budget-app/api-client";
-import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
+import { OPERATIONAL_ACCOUNTS_QUERY_KEY } from "../hooks/useOperationalAccounts";
 import {
+  scenarioInputStamp as buildScenarioInputStamp,
+  whatIfWebQueryKeys,
+} from "../lib/whatIfQueryKeys";import {
   SCENARIO_TEMPLATES,
   EMPTY_STATE_TEMPLATES,
   templateByKey,
@@ -105,10 +106,11 @@ export default function Scenarios() {
   const queryClient = useQueryClient();
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const { data: households } = useQuery({ queryKey: ["households"], queryFn: listHouseholds });
-  const { data: scenariosData } = useQuery({ queryKey: ["scenarios"], queryFn: () => listScenarios() });
-  const { data: accountsData } = useOperationalAccounts();
+  const { data: scenariosData } = useQuery({
+    queryKey: whatIfWebQueryKeys.scenarios,
+    queryFn: () => listScenarios(),
+  });
   const scenarios = scenariosData?.results ?? [];
-  const accounts = accountsData?.results ?? [];
   const defaultHousehold = profile?.default_household ?? households?.[0]?.id;
   const resolvedHousehold = formHouseholdId || defaultHousehold;
 
@@ -123,6 +125,29 @@ export default function Scenarios() {
     !!editingEvent ||
     debtModalOpen ||
     !!newRecurringOpen;
+  const modalNeedsAccounts =
+    !!overrideModal ||
+    !!eventModal ||
+    !!editingEvent ||
+    debtModalOpen ||
+    recurringDebtModalOpen ||
+    !!newRecurringOpen;
+  const modalNeedsAccountBalances = debtModalOpen || recurringDebtModalOpen;
+
+  const { data: accountsData } = useQuery({
+    queryKey: modalNeedsAccountBalances
+      ? (["what-if-accounts", defaultHousehold ?? null] as const)
+      : OPERATIONAL_ACCOUNTS_QUERY_KEY,
+    queryFn: () =>
+      listAccounts({
+        active_only: true,
+        page_size: 500,
+        household: defaultHousehold || undefined,
+        ...(modalNeedsAccountBalances ? { balance: "true" as const } : {}),
+      }),
+    enabled: modalNeedsAccounts && !!defaultHousehold,
+  });
+  const accounts = accountsData?.results ?? [];
 
   const { data: rulesData } = useQuery({
     queryKey: ["rules"],
@@ -131,71 +156,59 @@ export default function Scenarios() {
   });
   const rules = rulesData?.results ?? [];
 
-  const { data: overrides } = useQuery({
-    queryKey: ["scenario-overrides", selectedScenarioId],
-    queryFn: () => listScenarioOverrides(selectedScenarioId as number),
+  const { data: changesData } = useQuery({
+    queryKey: whatIfWebQueryKeys.scenarioChanges(selectedScenarioId, defaultHousehold),
+    queryFn: () => getScenarioChanges(selectedScenarioId as number),
     enabled: !!selectedScenarioId,
   });
-
-  const { data: oneTimeEvents } = useQuery({
-    queryKey: ["scenario-events", selectedScenarioId],
-    queryFn: () => listScenarioOneTimeEvents(selectedScenarioId as number),
-    enabled: !!selectedScenarioId,
-  });
-
-  const { data: categoryShocks } = useQuery({
-    queryKey: ["scenario-shocks", selectedScenarioId],
-    queryFn: () => listScenarioCategoryShocks(selectedScenarioId as number),
-    enabled: !!selectedScenarioId,
-  });
-
-  const { data: addedRecurring } = useQuery({
-    queryKey: ["scenario-added-recurring", selectedScenarioId],
-    queryFn: () => listScenarioAddedRecurring(selectedScenarioId as number),
-    enabled: !!selectedScenarioId,
-  });
+  const overrides = changesData?.overrides;
+  const oneTimeEvents = changesData?.one_time_events;
+  const categoryShocks = changesData?.category_shocks;
+  const addedRecurring = changesData?.added_recurring;
 
   const selectedHousehold = (households ?? []).find((h) => h.id === defaultHousehold);
-  const scenarioInputStamp = [
-    selectedScenario?.updated_at,
-    (overrides ?? []).map((o) => `${o.id}:${o.updated_at}`).join(","),
-    (oneTimeEvents ?? []).map((e) => `${e.id}:${e.updated_at}`).join(","),
-    (categoryShocks ?? []).map((s) => `${s.id}:${s.updated_at}`).join(","),
-    (addedRecurring ?? []).map((r) => `${r.id}:${r.updated_at}`).join(","),
-  ].join("|");
+  const scenarioInputStamp = buildScenarioInputStamp({
+    scenarioUpdatedAt: selectedScenario?.updated_at,
+    overrides,
+    events: oneTimeEvents,
+    shocks: categoryShocks,
+    addedRecurring,
+  });
+
+  const changesReady =
+    !selectedScenarioId ||
+    (overrides !== undefined &&
+      oneTimeEvents !== undefined &&
+      categoryShocks !== undefined &&
+      addedRecurring !== undefined);
 
   const {
     data: comparison,
     isLoading: comparisonLoading,
     isFetching: comparisonFetching,
+    isError: comparisonError,
   } = useQuery({
-    queryKey: [
-      "scenario-compare",
+    queryKey: whatIfWebQueryKeys.compare(
       selectedScenarioId,
       forecastPeriod,
       defaultHousehold,
       selectedHousehold?.financial_revision,
-      scenarioInputStamp,
-    ],
-    queryFn: () =>
+      scenarioInputStamp
+    ),
+    queryFn: ({ signal }) =>
       getScenarioComparison(selectedScenarioId as number, {
         horizon: forecastPeriod,
         household_id: defaultHousehold || undefined,
+        signal,
       }),
-    enabled:
-      !!selectedScenarioId &&
-      overrides !== undefined &&
-      oneTimeEvents !== undefined &&
-      categoryShocks !== undefined &&
-      addedRecurring !== undefined,
+    enabled: !!selectedScenarioId && changesReady,
+    placeholderData: (previousData) => previousData,
   });
-  const changesLoading =
-    !!selectedScenarioId &&
-    (overrides === undefined ||
-      oneTimeEvents === undefined ||
-      categoryShocks === undefined ||
-      addedRecurring === undefined);
-  const comparisonBusy = comparisonLoading || comparisonFetching || changesLoading;
+  const changesLoading = !!selectedScenarioId && !changesReady;
+  const comparisonBelongsToSelection =
+    !comparison || !selectedScenarioId || comparison.scenario_id === selectedScenarioId;
+  const comparisonBusy =
+    comparisonLoading || comparisonFetching || changesLoading || !comparisonBelongsToSelection;
 
   useEffect(() => {
     if (selectedScenario?.horizon_months) {
@@ -222,12 +235,14 @@ export default function Scenarios() {
   const categories = categoriesData?.results ?? categoriesData ?? [];
 
   const invalidateScenario = () => {
-    queryClient.invalidateQueries({ queryKey: ["scenarios"] });
-    queryClient.invalidateQueries({ queryKey: ["scenario-overrides", selectedScenarioId] });
-    queryClient.invalidateQueries({ queryKey: ["scenario-events", selectedScenarioId] });
-    queryClient.invalidateQueries({ queryKey: ["scenario-compare", selectedScenarioId] });
-    queryClient.invalidateQueries({ queryKey: ["scenario-shocks", selectedScenarioId] });
-    queryClient.invalidateQueries({ queryKey: ["scenario-added-recurring", selectedScenarioId] });
+    // Scenario-scoped only — never dashboard/transactions/calendar/goals/rules/accounts.
+    // Comparison refreshes via inputStamp when changes settle (avoid duplicate compare).
+    void queryClient.invalidateQueries({ queryKey: whatIfWebQueryKeys.scenarios });
+    if (selectedScenarioId) {
+      void queryClient.invalidateQueries({
+        queryKey: whatIfWebQueryKeys.scenarioChanges(selectedScenarioId, defaultHousehold),
+      });
+    }
   };
 
   const createScenarioMu = useMutation({
@@ -428,10 +443,14 @@ export default function Scenarios() {
                 comparison={comparison}
                 planItems={planIncludes}
                 accounts={accounts as Account[]}
-                loading={comparisonBusy}
+                loading={comparisonBusy && !comparison}
+                recalculating={
+                  (comparisonFetching && !!comparison) || !comparisonBelongsToSelection
+                }
+                emptyScenario={planIncludes.length === 0 && changesReady}
+                comparisonFailed={comparisonError}
                 horizonMonths={comparisonPeriodMonths(comparison, horizonToMonths(forecastPeriod))}
               />
-
               <ChangesInPlanSection
                 items={planIncludes}
                 onEdit={handleEditPlanItem}
@@ -685,6 +704,9 @@ function PlanSummaryCard({
   accounts,
   loading,
   horizonMonths,
+  recalculating,
+  emptyScenario,
+  comparisonFailed,
 }: {
   scenario: Scenario;
   comparison: import("@budget-app/shared").ScenarioComparisonResponse | undefined;
@@ -692,9 +714,38 @@ function PlanSummaryCard({
   accounts: Account[];
   loading: boolean;
   horizonMonths: number;
+  recalculating?: boolean;
+  emptyScenario?: boolean;
+  comparisonFailed?: boolean;
 }) {
   if (loading) {
     return <div className="h-28 bg-gray-100 animate-pulse rounded-xl mb-6" />;
+  }
+
+  if (comparisonFailed && !comparison) {
+    return (
+      <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-900">
+        <p className="text-xs font-semibold tracking-widest uppercase opacity-80">{scenario.name}</p>
+        <h2 className="text-lg font-semibold mt-2">Could not recalculate this plan</h2>
+        <p className="text-sm mt-1">
+          Your changes are still saved. Retry to see impact — this is not a zero-impact result.
+        </p>
+      </div>
+    );
+  }
+
+  if (emptyScenario) {
+    return (
+      <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-800">
+        <p className="text-xs font-semibold tracking-widest uppercase opacity-80">{scenario.name}</p>
+        <h2 className="text-lg font-semibold mt-2">No hypothetical changes yet</h2>
+        <p className="text-sm mt-1">
+          Add income, expenses, or bill changes to see how they affect your forecast. Matching the
+          baseline is expected until you add a change.
+        </p>
+        {recalculating ? <p className="text-xs mt-2 opacity-70">Updating scenario…</p> : null}
+      </div>
+    );
   }
 
   const summary = buildPlanSummary(comparison, planItems, accounts, horizonMonths);
@@ -707,9 +758,13 @@ function PlanSummaryCard({
       <p className="text-xs font-semibold tracking-widest uppercase opacity-80">
         {scenario.name}
       </p>
-      <p className="text-xs font-semibold tracking-widest uppercase mt-2">
-        {summary.result}
-      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-semibold tracking-widest uppercase">{summary.result}</p>
+        {recalculating ? <span className="text-xs opacity-80">Updating scenario…</span> : null}
+        {comparisonFailed ? (
+          <span className="text-xs text-red-700">Recalculation failed — showing last result</span>
+        ) : null}
+      </div>
       <h2 className="text-lg font-semibold mt-0.5">{summary.resultLabel}</h2>
       <p className="text-sm mt-1">{summary.headline}</p>
       {summary.periodNote && (

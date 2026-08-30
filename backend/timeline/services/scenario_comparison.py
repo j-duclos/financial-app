@@ -325,6 +325,17 @@ def _amount_str(val) -> str:
     return str(_decimal(val).quantize(Decimal("0.01")))
 
 
+def _delta_to_monthly(amount: Decimal, freq_label: str) -> Decimal:
+    """Normalize a per-occurrence delta to a monthly equivalent (backend-owned)."""
+    if freq_label == "weekly":
+        return (amount * Decimal("52")) / Decimal("12")
+    if freq_label == "biweekly":
+        return (amount * Decimal("26")) / Decimal("12")
+    if freq_label == "yearly":
+        return amount / Decimal("12")
+    return amount
+
+
 def _ending_cash_from_map(
     ending_by_account: dict[int, Decimal],
     accounts: list[Account],
@@ -681,6 +692,9 @@ def _compute_forecast_changes(
                 "frequency": freq_label,
                 "occurrence_count": len(items),
                 "delta_per_occurrence": _amount_str(per_occurrence),
+                "delta_monthly": _amount_str(
+                    _delta_to_monthly(per_occurrence, freq_label)
+                ),
                 "total_delta": _amount_str(total_delta),
                 "first_date": first.get("date"),
                 "effect_kind": first.get("effect_kind"),
@@ -690,6 +704,7 @@ def _compute_forecast_changes(
         )
 
     for ch in standalone:
+        one_time_delta = _decimal(ch.get("delta"))
         groups.append(
             {
                 "event": ch.get("event"),
@@ -699,6 +714,7 @@ def _compute_forecast_changes(
                 "frequency": "one_time",
                 "occurrence_count": 1,
                 "delta_per_occurrence": ch.get("delta"),
+                "delta_monthly": _amount_str(one_time_delta),
                 "total_delta": ch.get("delta"),
                 "first_date": ch.get("date"),
                 "effect_kind": ch.get("effect_kind"),

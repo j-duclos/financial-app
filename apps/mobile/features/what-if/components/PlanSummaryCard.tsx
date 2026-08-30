@@ -32,6 +32,10 @@ type Props = {
   loading: boolean;
   horizonMonths: number;
   recalculating?: boolean;
+  /** Scenario has no hypothetical changes yet — not the same as zero-impact analysis. */
+  emptyScenario?: boolean;
+  /** Comparison request failed; do not present as Safe / No impact. */
+  comparisonFailed?: boolean;
 };
 
 export function PlanSummaryCard({
@@ -42,6 +46,8 @@ export function PlanSummaryCard({
   loading,
   horizonMonths,
   recalculating,
+  emptyScenario,
+  comparisonFailed,
 }: Props) {
   const theme = useTheme();
 
@@ -49,6 +55,50 @@ export function PlanSummaryCard({
     return (
       <Card style={{ marginBottom: theme.spacing.md }}>
         <SkeletonBlock lines={4} />
+      </Card>
+    );
+  }
+
+  if (comparisonFailed && !comparison) {
+    return (
+      <Card style={{ marginBottom: theme.spacing.md }}>
+        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+          WHAT-IF PLAN · {scenarioName.toUpperCase()}
+        </Text>
+        <Text
+          style={{ color: theme.colors.critical, ...theme.typography.headline, marginTop: 8 }}
+          accessibilityRole="header"
+        >
+          Could not recalculate this plan
+        </Text>
+        <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginTop: 6 }}>
+          Your changes are still saved. Retry to see impact — this is not a zero-impact result.
+        </Text>
+      </Card>
+    );
+  }
+
+  if (emptyScenario) {
+    return (
+      <Card style={{ marginBottom: theme.spacing.md }}>
+        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+          WHAT-IF PLAN · {scenarioName.toUpperCase()}
+        </Text>
+        <Text
+          style={{ color: theme.colors.text, ...theme.typography.headline, marginTop: 8 }}
+          accessibilityRole="header"
+        >
+          No hypothetical changes yet
+        </Text>
+        <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginTop: 6 }}>
+          Add income, expenses, or bill changes to see how they affect your forecast. Matching the
+          baseline is expected until you add a change.
+        </Text>
+        {recalculating ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginTop: 8 }}>
+            Updating scenario…
+          </Text>
+        ) : null}
       </Card>
     );
   }
@@ -74,6 +124,9 @@ export function PlanSummaryCard({
         <StatusChip label={summary.resultLabel} tone={resultTone(summary.result)} />
         {recalculating ? (
           <Text style={{ color: colors.fg, fontSize: 12, opacity: 0.8 }}>Updating scenario…</Text>
+        ) : null}
+        {comparisonFailed ? (
+          <Text style={{ color: theme.colors.critical, fontSize: 12 }}>Recalculation failed — showing last result</Text>
         ) : null}
       </View>
       <Text style={{ color: colors.fg, ...theme.typography.headline, marginTop: 8 }} accessibilityRole="header">

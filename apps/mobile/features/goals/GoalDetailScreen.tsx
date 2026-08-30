@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,9 @@ import {
   goalListStatusDisplay,
   goalPrimaryRecommendation,
   parseProgressPercent,
+  type FinancialGoal,
+  type GoalDetailResponse,
+  type GoalsAggregateSummary,
 } from "@budget-app/shared";
 import {
   archiveBucket,
@@ -21,7 +24,6 @@ import {
   deleteBucket,
   duplicateBucket,
   getBucketDetail,
-  getBucketsOverview,
   pauseBucket,
 } from "@budget-app/api-client";
 import {
@@ -45,7 +47,6 @@ import {
   goalContributionHistoryPath,
   goalDetailPath,
   goalEditPath,
-  goalRelatedTransactionsPath,
   goalWhatIfPath,
   goalsListPath,
 } from "./navigation";
@@ -54,6 +55,34 @@ import {
   goalsQueryKeys,
   invalidateGoalLifecycleQueries,
 } from "./queryKeys";
+
+type BucketsOverviewCache = {
+  summary: GoalsAggregateSummary;
+  goals: FinancialGoal[];
+};
+
+/** Shell seed from Goals list cache only — never triggers a network request. */
+function overviewGoalFromCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  householdId: number | null | undefined,
+  goalId: number
+): FinancialGoal | null {
+  if (householdId == null) return null;
+  const overview = queryClient.getQueryData<BucketsOverviewCache>(
+    goalsQueryKeys.overview(householdId)
+  );
+  return overview?.goals.find((g) => g.id === goalId) ?? null;
+}
+
+function detailPlaceholderFromOverview(goal: FinancialGoal): GoalDetailResponse {
+  return {
+    goal,
+    contribution_history: [],
+    linked_rules: [],
+    forecast_growth: [],
+    forecast_scenarios: [],
+  };
+}
 
 function ForecastRow({
   label,
@@ -139,35 +168,21 @@ export function GoalDetailScreen() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [forecastExpanded, setForecastExpanded] = useState(false);
 
-  const overviewQuery = useQuery({
-    queryKey: goalsQueryKeys.overview(householdId),
-    queryFn: () => getBucketsOverview({ household: householdId! }),
-    enabled: householdId != null,
-  });
-
-  const overviewGoal = useMemo(
-    () => overviewQuery.data?.goals.find((g) => g.id === goalId) ?? null,
-    [overviewQuery.data, goalId]
-  );
-
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching, isPlaceholderData } = useQuery({
     queryKey: goalsQueryKeys.detail(goalId),
     queryFn: () =>
       getBucketDetail(goalId, { history_limit: GOAL_DETAIL_HISTORY_PREVIEW_LIMIT }),
     enabled: Number.isInteger(goalId) && goalId > 0,
-    placeholderData: overviewGoal
-      ? {
-          goal: overviewGoal,
-          contribution_history: [],
-          linked_rules: [],
-          forecast_growth: [],
-          forecast_scenarios: [],
-        }
-      : undefined,
+    // Overview cache is shell/seed only; do not refetch overview for placeholder data.
+    placeholderData: () => {
+      const cached = overviewGoalFromCache(queryClient, householdId, goalId);
+      return cached ? detailPlaceholderFromOverview(cached) : undefined;
+    },
   });
 
-  const goal = data?.goal ?? overviewGoal;
-  const history = data?.contribution_history ?? [];
+  // Detail response is authoritative once fetched; placeholder/seed never overrides it.
+  const goal = data?.goal ?? null;
+  const history = isPlaceholderData ? [] : (data?.contribution_history ?? []);
   const recentHistory = history.slice(0, GOAL_DETAIL_HISTORY_PREVIEW_LIMIT);
   const pct = goal ? parseProgressPercent(goal.progress_percent) : 0;
   const status = goal ? goalListStatusDisplay(goal) : null;
@@ -376,14 +391,6 @@ export function GoalDetailScreen() {
                 <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}>
                   No automatic funding configured
                 </Text>
-              ) : null}
-              {linkedAccountId ? (
-                <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 8 }}>
-                  <NavRow
-                    title="Related transactions"
-                    onPress={() => router.push(goalRelatedTransactionsPath(linkedAccountId))}
-                  />
-                </View>
               ) : null}
             </Card>
           ) : null}

@@ -1,6 +1,13 @@
 import type { RecurringRule, RecurringRuleFrequency } from "@budget-app/shared";
 import { formatDateDisplay } from "./dateDisplay";
 
+/**
+ * Client-side recurrence expansion — TEST / MIRROR ONLY.
+ *
+ * Production Recurring / Automation / Rules UI must use backend
+ * `next_occurrence_date` and must not call getNextRuleRunDate().
+ */
+
 function parseISO(iso: string): Date {
   return new Date(iso.slice(0, 10) + "T12:00:00");
 }

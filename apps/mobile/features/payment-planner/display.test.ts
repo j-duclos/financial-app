@@ -167,7 +167,7 @@ describe("payment planner query keys", () => {
     const inputs = {
       strategy: "avalanche" as const,
       mode: "aggressive" as const,
-      extraMonthly: "150",
+      extraMonthly: "0",
       lumpSum: "",
       lumpSumAccountId: null,
     };

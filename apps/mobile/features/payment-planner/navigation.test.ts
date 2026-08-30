@@ -7,9 +7,9 @@ describe("payment planner navigation", () => {
   });
 
   it("links to filtered transactions for the selected debt", () => {
-    expect(transactionsForAccountPath(7)).toEqual({
-      pathname: "/(app)/(tabs)/transactions",
-      params: { account: "7" },
-    });
+    const path = transactionsForAccountPath(7);
+    expect(path.pathname).toBe("/(app)/(tabs)/transactions");
+    expect(path.params.account).toBe("7");
+    expect(path.params.focus).toBe("__none__");
   });
 });

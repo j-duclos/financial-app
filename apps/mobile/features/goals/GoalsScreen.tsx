@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +49,7 @@ export function GoalsScreen() {
   const { householdId, isReady } = useDefaultHouseholdId();
   const [actionsGoal, setActionsGoal] = useState<FinancialGoal | null>(null);
   const [deleteGoal, setDeleteGoal] = useState<FinancialGoal | null>(null);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const {
     data: overview,
@@ -56,12 +57,20 @@ export function GoalsScreen() {
     isError,
     error,
     refetch,
-    isFetching,
   } = useQuery({
     queryKey: goalsQueryKeys.overview(householdId),
     queryFn: () => getBucketsOverview({ household: householdId! }),
     enabled: isReady && householdId != null,
   });
+
+  const refreshGoals = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refetch]);
 
   const goals = overview?.goals ?? [];
   const summary = overview?.summary;
@@ -148,7 +157,11 @@ export function GoalsScreen() {
       scroll
       scrollProps={{
         refreshControl: (
-          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={() => refetch()} />
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshGoals()}
+            tintColor={theme.colors.tint}
+          />
         ),
       }}
     >

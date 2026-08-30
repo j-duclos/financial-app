@@ -24,6 +24,9 @@ type Props = {
   amountInput: string;
   onStrategyChange: (strategy: PayoffStrategy) => void;
   onAmountChange: (value: string) => void;
+  /** Commit custom amount so account-payoff query runs (Apply-gated). */
+  onApplyCustomAmount?: (amount: string) => void;
+  customAmountDirty?: boolean;
   projection: PayoffProjection | null | undefined;
   projectionLoading: boolean;
   projectionError: string | null;
@@ -66,6 +69,8 @@ export default function DebtStrategyDrawer({
   amountInput,
   onStrategyChange,
   onAmountChange,
+  onApplyCustomAmount,
+  customAmountDirty = false,
   projection,
   projectionLoading,
   projectionError,
@@ -79,8 +84,11 @@ export default function DebtStrategyDrawer({
     if (cardStrategy !== "custom_amount") return;
     if (amountInput.trim()) return;
     const preset = planCard.suggested_payment || planCard.minimum_payment;
-    if (preset) onAmountChange(preset);
-  }, [cardStrategy, amountInput, planCard, onAmountChange]);
+    if (preset) {
+      onAmountChange(preset);
+      onApplyCustomAmount?.(preset);
+    }
+  }, [cardStrategy, amountInput, planCard, onAmountChange, onApplyCustomAmount]);
 
   const body = (
     <div className="space-y-3">
@@ -168,6 +176,16 @@ export default function DebtStrategyDrawer({
             className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums read-only:bg-gray-50 read-only:text-gray-800"
           />
         </label>
+        {drawerStrategyRequiresAmountInput(cardStrategy) && onApplyCustomAmount ? (
+          <button
+            type="button"
+            disabled={!customAmountDirty || !(Number(amountInput) > 0)}
+            onClick={() => onApplyCustomAmount(amountInput)}
+            className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-indigo-700"
+          >
+            Update scenario
+          </button>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">

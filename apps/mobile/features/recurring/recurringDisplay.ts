@@ -113,7 +113,8 @@ export function accountLineForRule(rule: RecurringRule): string {
 }
 
 /**
- * Prefer backend next_occurrence_date (canonical). Checklist is optional enrichment only.
+ * Prefer backend next_occurrence_date (canonical).
+ * Optional checklistDue is enrichment only when API date is absent — never client recurrence math.
  */
 export function resolveNextOccurrence(
   rule: RecurringRule,

@@ -122,8 +122,31 @@ describe("goalInsights", () => {
     expect(byLabel.Gap).toBeUndefined();
   });
 
-  it("formats gap for the card footer row", () => {
+  it("formats gap for the card footer row from backend forecast_gap only", () => {
     expect(goalCardGapValue(goal({ forecast_gap: "6316.71" }))).toBe("$6,316.71/mo");
+    expect(
+      goalCardGapValue(
+        goal({
+          forecast_gap: null,
+          monthly_required: "500",
+          current_contribution_rate: "100",
+        })
+      )
+    ).toBeNull();
+  });
+
+  it("does not derive shortfall/surplus from needed − pace on the client", () => {
+    const rows = goalForecastSummary(
+      goal({
+        monthly_required: "500.00",
+        current_contribution_rate: "100.00",
+        forecast_gap: null,
+        forecast_surplus: null,
+      })
+    );
+    const labels = rows.map((r) => r.label);
+    expect(labels).not.toContain("Shortfall");
+    expect(labels).not.toContain("Surplus");
   });
 
   it("builds a compact Goal Details forecast summary from backend fields", () => {
