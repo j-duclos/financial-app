@@ -36,6 +36,9 @@ export default function ActionCenter() {
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
+  const resolveRiskOpen = resolveRiskAccountId != null;
+  const transferModalOpen = txnPreset != null;
+  const needsAccountOptions = resolveRiskOpen || transferModalOpen;
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["recommendations", "action-center", forecastDays],
@@ -50,6 +53,8 @@ export default function ActionCenter() {
   const { data: accountsData } = useQuery({
     queryKey: ["accounts", "action-center"],
     queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
+    enabled: needsAccountOptions,
+    staleTime: 60_000,
   });
   const accounts = accountsData?.results ?? [];
 
@@ -189,7 +194,6 @@ export default function ActionCenter() {
             setResolveRiskAccountId(null);
           }}
           onSnoozed={() => {
-            void invalidateFinancialQueries();
             bumpRefresh();
           }}
         />

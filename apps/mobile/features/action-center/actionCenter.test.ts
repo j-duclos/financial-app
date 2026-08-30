@@ -137,9 +137,9 @@ describe("mobile recommendation card UX", () => {
 });
 
 describe("primary destination mapping", () => {
-  it("cash shortfall opens account ledger", () => {
+  it("cash shortfall primary opens transfer when backend supplies move_money", () => {
     const dest = getRecommendationDestination(cashShortfallRec());
-    expect(dest?.kind).toBe("open_ledger");
+    expect(dest?.kind).toBe("transfer");
     expect(dest?.accountId).toBe(1);
   });
 
@@ -169,10 +169,12 @@ describe("primary destination mapping", () => {
   it("spending recommendation opens spending limits", () => {
     const dest = getRecommendationDestination({
       ...utilizationRec(),
+      id: "spending-limit-1",
       primary_action_label: "View budget",
       primary_action_url: "/spending-goals",
       account_id: null,
       type: "spending_limit",
+      impact_type: null,
     });
     expect(dest?.kind).toBe("navigate");
     expect(dest?.href).toBe("/spending-limits");
@@ -186,8 +188,10 @@ describe("primary destination mapping", () => {
       secondary_action_url: "/timeline?date=2026-08-27",
       secondary_action_type: "navigate",
     };
+    const primary = getRecommendationDestination(forecastRec);
+    expect(primary?.kind).toBe("transfer");
     const actions = getRecommendationSecondaryActions(forecastRec, { includeSnoozeDismiss: true });
-    expect(actions.some((a) => a.kind === "transfer")).toBe(true);
+    expect(actions.some((a) => a.kind === "transfer")).toBe(false);
     expect(
       actions.some(
         (a) =>
@@ -198,29 +202,44 @@ describe("primary destination mapping", () => {
     ).toBe(true);
     expect(actions.some((a) => a.kind === "snooze")).toBe(true);
     expect(actions.some((a) => a.kind === "dismiss")).toBe(true);
-    expect(actions.some((a) => a.kind === "open_ledger")).toBe(false);
+    expect(actions.some((a) => a.kind === "open_ledger")).toBe(true);
   });
 });
 
 describe("overflow secondary actions", () => {
-  it("keeps Payment Planner for credit recommendations", () => {
+  it("does not route utilization health to Payment Planner", () => {
     const secondary = getRecommendationSecondaryActions(utilizationRec(), {
       includeSnoozeDismiss: true,
     });
-    expect(secondary.some((a) => a.kind === "payment_planner")).toBe(true);
+    expect(secondary.some((a) => a.kind === "payment_planner")).toBe(false);
     expect(secondary.some((a) => a.kind === "open_ledger")).toBe(true);
     expect(secondary.some((a) => a.kind === "view_account")).toBe(false);
     expect(secondary.some((a) => a.kind === "snooze")).toBe(true);
     expect(secondary.some((a) => a.kind === "dismiss")).toBe(true);
   });
 
-  it("keeps Transfer for cash shortfall", () => {
+  it("routes debt_payoff primary to Payment Planner", () => {
+    const rec: DashboardRecommendation = {
+      ...utilizationRec(),
+      id: "debt-payoff-5",
+      type: "debt_payoff",
+      primary_action_url: "/credit-cards?account=5",
+      primary_action_type: "navigate",
+    };
+    const dest = getRecommendationDestination(rec);
+    expect(dest?.kind).toBe("payment_planner");
+    expect(dest?.accountId).toBe(5);
+  });
+
+  it("keeps Transfer for cash shortfall overflow when primary is transfer", () => {
     const secondary = getRecommendationSecondaryActions(cashShortfallRec(), {
       includeSnoozeDismiss: true,
     });
     const transfer = secondary.find((a) => a.kind === "transfer");
-    expect(transfer).toBeTruthy();
-    expect(transferPresetPath(transfer!.transferPreset!)).toEqual({
+    expect(transfer).toBeFalsy();
+    const primary = getRecommendationDestination(cashShortfallRec());
+    expect(primary?.kind).toBe("transfer");
+    expect(transferPresetPath(primary!.transferPreset!)).toEqual({
       pathname: "/transaction/new",
       params: {
         mode: "transfer",
@@ -237,7 +256,35 @@ describe("Action Center navigation helpers", () => {
   it("open ledger filters transactions by account", () => {
     expect(openLedgerNavigation(1)).toEqual({
       pathname: "/(app)/(tabs)/transactions",
-      params: { account: "1" },
+      params: {
+        account: "1",
+        focus: "__none__",
+        focusDate: "__none__",
+        focusTransactionId: "__none__",
+        focusRuleId: "__none__",
+        focusEventId: "__none__",
+        focusDescription: "__none__",
+      },
+    });
+  });
+
+  it("cash risk open ledger preserves focus context", () => {
+    const rec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      recommended_date: "2026-08-27",
+      transaction_id: 42,
+    };
+    expect(openLedgerNavigation(1, rec)).toEqual({
+      pathname: "/(app)/(tabs)/transactions",
+      params: {
+        account: "1",
+        focus: "forecast-risk",
+        focusDate: "2026-08-27",
+        focusTransactionId: "42",
+        focusRuleId: "__none__",
+        focusEventId: "__none__",
+        focusDescription: "__none__",
+      },
     });
   });
 
@@ -248,9 +295,9 @@ describe("Action Center navigation helpers", () => {
     });
   });
 
-  it("credit recommendation includes payment planner action", () => {
+  it("credit utilization does not include payment planner action", () => {
     const actions = recommendationActions(utilizationRec());
-    expect(actions.some((a) => a.kind === "payment_planner")).toBe(true);
+    expect(actions.some((a) => a.kind === "payment_planner")).toBe(false);
     expect(actions.some((a) => a.label === "Open ledger")).toBe(true);
   });
 
@@ -299,7 +346,13 @@ describe("Action Center navigation helpers", () => {
   });
 
   it("maps spending-goals primary URL to spending limits", () => {
-    expect(resolveRecommendationWebUrl("/spending-goals", utilizationRec())).toBe("/spending-limits");
+    const rec = {
+      ...utilizationRec(),
+      id: "spending-limit-1",
+      account_id: null,
+      type: "spending_limit",
+    };
+    expect(resolveRecommendationWebUrl("/spending-goals", rec)).toBe("/spending-limits");
   });
 
   it("maps goal primary URL using goal_id", () => {
@@ -339,6 +392,41 @@ describe("Action Center list performance", () => {
   it("does not fetch per-card detail endpoints", () => {
     expect(actionCenterSource).not.toMatch(/getBucketDetail/);
     expect(actionCenterSource).not.toMatch(/getAccount\(/);
-    expect(actionCenterSource).toMatch(/listAccounts/);
+  });
+
+  it("lazy-loads account options only when Resolve Risk opens", () => {
+    expect(actionCenterSource).toMatch(/useAccountOptions/);
+    expect(actionCenterSource).toMatch(/enabled:\s*resolveRiskOpen/);
+    expect(actionCenterSource).not.toMatch(/useAccountOptions\(\{\s*householdId\s*\}\)/);
+  });
+});
+
+describe("Action Center pull refresh and invalidation", () => {
+  it("uses explicit pullRefreshing state, not passive isFetching", () => {
+    expect(actionCenterSource).toMatch(/pullRefreshing/);
+    expect(actionCenterSource).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(actionCenterSource).not.toMatch(/refreshing=\{isFetching/);
+  });
+
+  it("snooze/dismiss invalidate recommendations only", () => {
+    expect(actionCenterSource).toMatch(/invalidateActionCenterRecommendationQueries/);
+    expect(actionCenterSource).toMatch(/onRecommendationPresentationChanged/);
+    expect(actionCenterSource).not.toMatch(/invalidateActionCenterFinancialQueries/);
+  });
+});
+
+describe("Resolve Risk sheet navigation", () => {
+  const resolveRiskSource = readFileSync(join(dir, "ResolveRiskSheet.tsx"), "utf8");
+
+  it("routes reduce_utilization to View account, not Payment Planner", () => {
+    expect(resolveRiskSource).toMatch(/resolveRiskViewAccountId/);
+    expect(resolveRiskSource).toMatch(/View account/);
+    expect(resolveRiskSource).toMatch(/accountDetailPath/);
+    expect(resolveRiskSource).not.toMatch(/action\.kind === "reduce_utilization"\s*\?\s*action\.account_id/);
+  });
+
+  it("Resolve Risk snooze/dismiss use presentation invalidation only", () => {
+    expect(resolveRiskSource).toMatch(/onPresentationChanged/);
+    expect(resolveRiskSource).not.toMatch(/invalidateActionCenterFinancialQueries/);
   });
 });

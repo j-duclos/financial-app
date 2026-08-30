@@ -123,9 +123,12 @@ export function resolveRiskTransferPreset(
 }
 
 export function resolveRiskPlannerAccountId(action: ResolveRiskAction): number | null {
-  if (action.kind === "reduce_utilization" || action.primary_action_url?.includes("credit-cards")) {
-    return action.account_id ?? null;
-  }
+  if (action.kind === "debt_payoff") return action.account_id ?? null;
+  return null;
+}
+
+export function resolveRiskViewAccountId(action: ResolveRiskAction): number | null {
+  if (action.kind === "reduce_utilization") return action.account_id ?? null;
   return null;
 }
 

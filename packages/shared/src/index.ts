@@ -23,3 +23,4 @@ export * from "./extendedCashRiskQuery";
 export * from "./calendarQueryKeys";
 export * from "./calendarSafeUntilDisplay";
 export * from "./accountsProgressiveLoading";
+export * from "./recommendationNavigation";

@@ -94,6 +94,8 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
     remaining = extra.get("remaining_shortfall")
     forecast_days = extra.get("forecast_days") or ctx.days
     buffer = extra.get("minimum_buffer")
+    txn_raw = extra.get("first_negative_transaction_id")
+    transaction_id = int(txn_raw) if txn_raw not in (None, "") else None
     has_buffer = False
     if buffer is not None:
         try:
@@ -132,7 +134,9 @@ def _gen_move_money(det: Detection, ctx: RecommendationContext, score: int) -> d
         recommended_amount=amount_label,
         recommended_date=transfer_date.isoformat(),
         account_id=det.account_id,
+        account_name=dest,
         related_account_id=det.related_account_id,
+        transaction_id=transaction_id,
         impact_type="overdraft_avoidance",
         projected_improvement=det.projected_improvement,
         priority_score=score,
@@ -170,6 +174,7 @@ def _gen_utilization(det: Detection, ctx: RecommendationContext, score: int) -> 
         recommended_action=action,
         recommended_amount=format_money(amount),
         account_id=det.account_id,
+        account_name=name,
         impact_type="credit_utilization",
         projected_improvement=det.projected_improvement,
         priority_score=score,
@@ -177,11 +182,9 @@ def _gen_utilization(det: Detection, ctx: RecommendationContext, score: int) -> 
         impact_value=f"{det.utilization_current:.0f}% → {target:.0f}%"
         if det.utilization_current
         else None,
-        primary_action_label="Payment Planner",
-        primary_action_url=(
-            f"/credit-cards?account={det.account_id}&amount={format_money(amount)}"
-        ),
-        primary_action_type="navigate",
+        primary_action_label="View account",
+        primary_action_url=f"/accounts?account={det.account_id}",
+        primary_action_type="view_account",
         secondary_action_label="Open ledger",
         secondary_action_url=f"/transactions?account={det.account_id}",
         secondary_action_type="navigate",
@@ -361,14 +364,15 @@ def _gen_restore_buffer(det: Detection, ctx: RecommendationContext, score: int) 
         recommended_amount=format_money(amount),
         recommended_date=det.target_date.isoformat() if det.target_date else None,
         account_id=det.account_id,
+        account_name=name,
         impact_type="buffer",
         projected_improvement=det.projected_improvement,
         priority_score=score,
         impact_label="Buffer gap",
         impact_value=format_money(amount),
-        primary_action_label="Open accounts",
-        primary_action_url=f"/accounts?account={det.account_id}",
-        primary_action_type="navigate",
+        primary_action_label="Open ledger",
+        primary_action_url=f"/transactions?account={det.account_id}",
+        primary_action_type="open_ledger",
     )
 
 

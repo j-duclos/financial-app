@@ -9,6 +9,7 @@ import {
   formatResolveRiskLowest,
   resolveRiskPlannerUrl,
   resolveRiskTransferPreset,
+  resolveRiskViewAccountUrl,
   simulationPreviewLines,
   simulationStatusClass,
   snoozeResolveRisk,
@@ -39,6 +40,7 @@ function ActionCard({
   const { lowestLine, improvementLine, statusLabel } = simulationPreviewLines(preview);
   const transferPreset = resolveRiskTransferPreset(action, accounts);
   const plannerUrl = resolveRiskPlannerUrl(action);
+  const viewAccountUrl = resolveRiskViewAccountUrl(action);
   const status = preview?.result_status as "resolved" | "partial" | "failed" | undefined;
 
   return (
@@ -86,6 +88,14 @@ function ActionCard({
           >
             Apply transfer
           </button>
+        )}
+        {viewAccountUrl && (
+          <Link
+            to={viewAccountUrl}
+            className="inline-flex rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50"
+          >
+            View account
+          </Link>
         )}
         {plannerUrl && (
           <Link

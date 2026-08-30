@@ -4,7 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import type { Account } from "@budget-app/shared";
 import {
   formatResolveRiskLowest,
+  resolveRiskPlannerAccountId,
   resolveRiskTransferPreset,
+  resolveRiskViewAccountId,
   simulationPreviewLines,
 } from "@budget-app/shared";
 import { getResolveRiskPlan } from "@budget-app/api-client";
@@ -12,7 +14,11 @@ import { BottomSheet, Button, ErrorState, SkeletonBlock } from "@/components/ui"
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { actionCenterQueryKeys } from "./queryKeys";
-import { openPaymentPlannerNavigation, transferPresetPath } from "./navigation";
+import {
+  accountDetailPath,
+  openPaymentPlannerNavigation,
+  transferPresetPath,
+} from "./navigation";
 import { dismissRecommendation, snoozeResolveRisk } from "./recommendationStorage";
 import type { Router } from "expo-router";
 
@@ -24,7 +30,7 @@ type Props = {
   accounts: Account[];
   router: Router;
   onClose: () => void;
-  onChanged: () => void;
+  onPresentationChanged: () => void;
 };
 
 export function ResolveRiskSheet({
@@ -35,7 +41,7 @@ export function ResolveRiskSheet({
   accounts,
   router,
   onClose,
-  onChanged,
+  onPresentationChanged,
 }: Props) {
   const theme = useTheme();
 
@@ -67,8 +73,8 @@ export function ResolveRiskSheet({
           {actions.map((action, index) => {
             const preview = simulationPreviewLines(action.simulation);
             const transferPreset = resolveRiskTransferPreset(action, accounts);
-            const plannerAccountId =
-              action.kind === "reduce_utilization" ? action.account_id : null;
+            const viewAccountId = resolveRiskViewAccountId(action);
+            const plannerAccountId = resolveRiskPlannerAccountId(action);
 
             return (
               <View
@@ -109,6 +115,16 @@ export function ResolveRiskSheet({
                       }}
                     />
                   ) : null}
+                  {viewAccountId != null ? (
+                    <Button
+                      label="View account"
+                      variant="secondary"
+                      onPress={() => {
+                        onClose();
+                        router.push(accountDetailPath(viewAccountId));
+                      }}
+                    />
+                  ) : null}
                   {plannerAccountId != null ? (
                     <Button
                       label="Payment Planner"
@@ -128,7 +144,7 @@ export function ResolveRiskSheet({
             <Pressable
               onPress={async () => {
                 await snoozeResolveRisk(plan?.snooze_id);
-                onChanged();
+                onPresentationChanged();
                 onClose();
               }}
             >
@@ -137,7 +153,7 @@ export function ResolveRiskSheet({
             <Pressable
               onPress={async () => {
                 await dismissRecommendation(`attention-${accountId}`);
-                onChanged();
+                onPresentationChanged();
                 onClose();
               }}
             >

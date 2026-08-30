@@ -35,7 +35,7 @@ import {
   snoozeRecommendation,
   unsnoozeRecommendation,
 } from "./recommendationStorage";
-import { actionCenterQueryKeys, invalidateActionCenterQueries } from "./queryKeys";
+import { actionCenterQueryKeys, invalidateActionCenterRecommendationQueries } from "./queryKeys";
 
 export function ActionCenterScreen() {
   const theme = useTheme();
@@ -43,12 +43,14 @@ export function ActionCenterScreen() {
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId } = useDefaultHouseholdId();
-  const { accounts } = useAccountOptions({ householdId });
+  const [storageRefresh, setStorageRefresh] = useState(0);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
+  const resolveRiskOpen = resolveRiskAccountId != null;
+  const { accounts } = useAccountOptions({ householdId, enabled: resolveRiskOpen });
   const [storageReady, setStorageReady] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [snoozed, setSnoozed] = useState<Set<string>>(new Set());
-  const [storageRefresh, setStorageRefresh] = useState(0);
-  const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +75,6 @@ export function ActionCenterScreen() {
     isError,
     error,
     refetch,
-    isFetching,
   } = useQuery({
     queryKey: actionCenterQueryKeys.recommendations(forecastDays),
     queryFn: () => getRecommendations({ days: forecastDays }),
@@ -95,10 +96,30 @@ export function ActionCenterScreen() {
     setStorageRefresh((n) => n + 1);
   }, []);
 
-  const onRecommendationChanged = useCallback(async () => {
-    invalidateActionCenterQueries(queryClient);
+  const onRecommendationPresentationChanged = useCallback(() => {
+    invalidateActionCenterRecommendationQueries(queryClient);
     bumpStorage();
   }, [bumpStorage, queryClient]);
+
+  const refreshActionCenter = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([
+        refetch(),
+        (async () => {
+          const [d, s] = await Promise.all([
+            loadDismissedRecommendationIds(),
+            loadSnoozedRecommendationIds(),
+          ]);
+          setDismissed(d);
+          setSnoozed(s);
+          bumpStorage();
+        })(),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [bumpStorage, refetch]);
 
   const resolveAccountName =
     resolveRiskAccountId != null
@@ -118,11 +139,8 @@ export function ActionCenterScreen() {
       scrollProps={{
         refreshControl: (
           <RefreshControl
-            refreshing={isFetching && !isLoading}
-            onRefresh={() => {
-              void refetch();
-              bumpStorage();
-            }}
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshActionCenter()}
           />
         ),
       }}
@@ -190,10 +208,10 @@ export function ActionCenterScreen() {
                     router={router}
                     onResolveRisk={setResolveRiskAccountId}
                     onSnooze={() => {
-                      void snoozeRecommendation(entry.rec.id).then(onRecommendationChanged);
+                      void snoozeRecommendation(entry.rec.id).then(onRecommendationPresentationChanged);
                     }}
                     onDismiss={() => {
-                      void dismissRecommendation(entry.rec.id).then(onRecommendationChanged);
+                      void dismissRecommendation(entry.rec.id).then(onRecommendationPresentationChanged);
                     }}
                   />
                 ))}
@@ -226,10 +244,10 @@ export function ActionCenterScreen() {
                     }
                     router={router}
                     onUnsnooze={() => {
-                      void unsnoozeRecommendation(entry.rec.id).then(onRecommendationChanged);
+                      void unsnoozeRecommendation(entry.rec.id).then(onRecommendationPresentationChanged);
                     }}
                     onRestore={() => {
-                      void restoreRecommendation(entry.rec.id).then(onRecommendationChanged);
+                      void restoreRecommendation(entry.rec.id).then(onRecommendationPresentationChanged);
                     }}
                   />
                 ))}
@@ -255,7 +273,7 @@ export function ActionCenterScreen() {
           accounts={accounts}
           router={router}
           onClose={() => setResolveRiskAccountId(null)}
-          onChanged={onRecommendationChanged}
+          onPresentationChanged={onRecommendationPresentationChanged}
         />
       ) : null}
     </Screen>

@@ -108,7 +108,7 @@ def test_action_center_accounts_dashboard_agree_on_target_payment(user, venture,
     assert f"your {target:.0f}% target" in rec["recommended_action"]
     assert "70%" not in rec["recommended_action"]
     assert Decimal(health["details"]["target_utilization_percent"]) == target
-    assert f"target {target:.0f}%" in (health["reason"] or "").lower()
+    assert f"{target:.0f}% target" in (health["reason"] or "").lower()
     assert health["status"] != "critical"
     assert Decimal(attention["amount"]) == expected
     assert f"{target:.0f}% target" in (attention["recommended_action"] or "")

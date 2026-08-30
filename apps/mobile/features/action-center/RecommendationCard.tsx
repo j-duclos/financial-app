@@ -6,6 +6,7 @@ import {
   ACCOUNT_TYPE_LABELS,
   normalizeSeverity,
   recommendationCardCopy,
+  recommendationDisplayAccountName,
   recommendationSeverityLabel,
   type RecommendationDisplayState,
 } from "@budget-app/shared";
@@ -40,11 +41,12 @@ function severityTone(severity: string): "positive" | "warning" | "critical" | "
 function runAction(
   action: RecommendationAction,
   router: Router,
+  rec: DashboardRecommendation,
   onResolveRisk?: (id: number) => void
 ): void {
   switch (action.kind) {
     case "open_ledger":
-      if (action.accountId != null) router.push(openLedgerNavigation(action.accountId));
+      if (action.accountId != null) router.push(openLedgerNavigation(action.accountId, rec));
       break;
     case "payment_planner":
       if (action.accountId != null) router.push(openPaymentPlannerNavigation(action.accountId));
@@ -103,21 +105,21 @@ export const RecommendationCard = memo(function RecommendationCard({
     [rec, onSnooze, onDismiss]
   );
 
-  const accountType = account?.account_type
-    ? ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type
-    : null;
   const contextLine =
+    recommendationDisplayAccountName(rec) ||
     account?.effective_display_name ||
     account?.name ||
-    (accountType ?? null);
+    (account?.account_type
+      ? ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type
+      : null);
 
   const stateLabel =
     displayState === "snoozed" ? "Snoozed" : displayState === "dismissed" ? "Dismissed" : null;
 
   const onPrimaryPress = useCallback(() => {
     if (!destination) return;
-    runAction(destination, router, onResolveRisk);
-  }, [destination, router, onResolveRisk]);
+    runAction(destination, router, rec, onResolveRisk);
+  }, [destination, rec, router, onResolveRisk]);
 
   const onOverflowSelect = useCallback(
     (item: RecommendationAction) => {
@@ -130,9 +132,9 @@ export const RecommendationCard = memo(function RecommendationCard({
         onDismiss?.();
         return;
       }
-      runAction(item, router, onResolveRisk);
+      runAction(item, router, rec, onResolveRisk);
     },
-    [onDismiss, onResolveRisk, onSnooze, router]
+    [onDismiss, onResolveRisk, onSnooze, rec, router]
   );
 
   const showOverflow = !inactive && overflowActions.length > 0;

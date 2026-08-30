@@ -2,30 +2,24 @@ import { Link } from "react-router-dom";
 import type { DashboardRecommendation } from "@budget-app/shared";
 import {
   OPEN_PAYOFF_PLANNER_LABEL,
+  recommendationDisplayAccountName,
   recommendationOpensTransfer,
   recommendationPayoffPlannerUrl,
   recommendationPrimaryCtaLabel,
   recommendationSecondaryCtaLabel,
   recommendationSeverityClass,
+  recommendationWebPrimaryLabel,
+  recommendationWebPrimaryTarget,
   type RecommendationDisplayState,
   type RecommendationListEntry,
-} from "../../lib/recommendationDisplay";
+} from "@budget-app/shared";
 import {
   recommendationCardCopy,
   type ActionCenterGroup,
 } from "../../lib/actionCenterView";
-import { attentionLedgerState } from "../../lib/attentionCardDisplay";
 import { recommendationShowsResolveRisk } from "../../lib/resolveRiskDisplay";
 import { severityTokens } from "../../lib/severity";
 import SeverityBadge from "../shared/SeverityBadge";
-
-function accountIdFromRecommendation(rec: DashboardRecommendation): number | null {
-  const m = rec.id.match(/^attention-(\d+)$/);
-  if (m) return Number(m[1]);
-  const url = rec.primary_action_url || rec.secondary_action_url || "";
-  const um = url.match(/account=(\d+)/);
-  return um ? Number(um[1]) : null;
-}
 
 function stateBadgeLabel(state: RecommendationDisplayState): string | null {
   if (state === "snoozed") return "Snoozed";
@@ -88,15 +82,14 @@ export function RecommendationCard({
 }) {
   const { condition, action } = recommendationCardCopy(rec);
   const plannerUrl = recommendationPayoffPlannerUrl(rec);
-  const primaryUrl = rec.primary_action_url ?? "/transactions";
-  const accountId = accountIdFromRecommendation(rec);
-  const navState = accountId ? attentionLedgerState(accountId) : undefined;
+  const primaryTarget = recommendationWebPrimaryTarget(rec);
   const opensTransferModal = recommendationOpensTransfer(rec);
   const inactive = displayState !== "active";
   const showResolveRisk =
     recommendationShowsResolveRisk(rec) && onResolveRisk && rec.account_id != null && !opensTransferModal;
   const stateLabel = stateBadgeLabel(displayState);
-  const primaryLabel = recommendationPrimaryCtaLabel(rec);
+  const primaryLabel = recommendationWebPrimaryLabel(rec);
+  const contextLine = recommendationDisplayAccountName(rec);
   const secondaryLabel = rec.secondary_action_label
     ? recommendationSecondaryCtaLabel(rec)
     : null;
@@ -122,6 +115,9 @@ export function RecommendationCard({
       </header>
 
       <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+        {contextLine ? (
+          <p className="text-xs font-medium text-gray-500">{contextLine}</p>
+        ) : null}
         {condition && <p className="text-sm leading-snug text-gray-700">{condition}</p>}
         {action && <p className="text-sm leading-snug font-medium text-gray-900">{action}</p>}
       </div>
@@ -146,12 +142,8 @@ export function RecommendationCard({
                   </button>
                 ) : (
                   <Link
-                    to={
-                      rec.primary_action_url!.includes("/transactions")
-                        ? "/transactions"
-                        : rec.primary_action_url!
-                    }
-                    state={navState}
+                    to={primaryTarget.to}
+                    state={primaryTarget.state}
                     className={primaryButtonClass}
                   >
                     {primaryLabel}
@@ -159,11 +151,11 @@ export function RecommendationCard({
                 )
               ) : (
                 <Link
-                  to={primaryUrl.includes("/transactions") ? "/transactions" : primaryUrl}
-                  state={navState}
+                  to={primaryTarget.to}
+                  state={primaryTarget.state}
                   className={secondaryButtonClass}
                 >
-                  Open ledger
+                  {primaryLabel}
                 </Link>
               )}
               {secondaryLabel &&

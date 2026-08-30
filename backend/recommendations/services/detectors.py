@@ -167,6 +167,7 @@ def detect_move_money_opportunities(
                     "partial": partial,
                     "forecast_days": ctx.days,
                     "minimum_buffer": str(buffer),
+                    "first_negative_transaction_id": forecast.get("first_negative_transaction_id"),
                 },
             )
         )

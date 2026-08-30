@@ -1,4 +1,5 @@
 import type { DashboardInsight, DashboardRecommendation } from "./types";
+import { recommendationIsDebtPayoff } from "./recommendationNavigation";
 import { normalizePaymentActionLabel, PAYMENT_PLANNER_LABEL } from "./paymentPlannerDisplay";
 import { normalizeSeverity, severityLabel, severityRank, severityShowsAlert } from "./severity";
 
@@ -259,19 +260,12 @@ export function recommendationSecondaryCtaLabel(
   return recommendationActionLabel(resolvedLabel, resolvedUrl);
 }
 
-/** Extra planner button only when primary/secondary do not already link to the planner. */
+/** Extra planner button only for true debt-payoff strategy (not utilization health). */
 export function recommendationPayoffPlannerUrl(rec: DashboardRecommendation): string | null {
-  const primary = rec.primary_action_url ?? "";
-  const secondary = rec.secondary_action_url ?? "";
-  if (primary.includes("/credit-cards") || secondary.includes("/credit-cards")) {
-    return null;
-  }
-  const url = secondary || primary;
-  const m = url.match(/account=(\d+)/);
-  if (m && (rec.title.toLowerCase().includes("credit") || rec.why.toLowerCase().includes("utilization"))) {
-    return `/credit-cards?account=${m[1]}`;
-  }
-  return null;
+  if (!recommendationIsDebtPayoff(rec)) return null;
+  const accountId = recommendationAccountId(rec);
+  if (accountId != null) return `/credit-cards?account=${accountId}`;
+  return "/credit-cards";
 }
 
 export function recommendationAccountId(rec: DashboardRecommendation): number | null {

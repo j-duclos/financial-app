@@ -938,6 +938,10 @@ export interface DashboardRecommendation {
   goal_id?: number | null;
   impact_type?: string | null;
   projected_improvement?: string | null;
+  /** Presentation context from backend — avoids client account-list fetch for labels. */
+  account_name?: string | null;
+  /** Ledger focus highlight when opening Transactions from a cash-risk recommendation. */
+  transaction_id?: number | null;
 }
 
 export interface RecommendationTimelineHint {

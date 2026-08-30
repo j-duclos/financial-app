@@ -10,6 +10,7 @@ import {
   recommendationOpensTransfer,
   recommendationShowsResolveRisk,
   resolveRiskPlannerAccountId,
+  resolveRiskViewAccountId,
   resolveRiskTransferPreset as buildResolveRiskTransferPreset,
   simulationPreviewLines,
   actionSeverityShows,
@@ -52,6 +53,12 @@ export function resolveRiskTransferPreset(
     defaultAmount: preset.defaultAmount,
     defaultDate: preset.defaultDate,
   };
+}
+
+export function resolveRiskViewAccountUrl(action: ResolveRiskAction): string | null {
+  const accountId = resolveRiskViewAccountId(action);
+  if (accountId == null) return null;
+  return `/accounts?account=${accountId}`;
 }
 
 export function resolveRiskPlannerUrl(action: ResolveRiskAction): string | null {

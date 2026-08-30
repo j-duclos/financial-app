@@ -3,17 +3,23 @@ import {
   OPEN_LEDGER_LABEL,
   PAYMENT_PLANNER_LABEL,
   recommendationAccountId,
-  recommendationIsCreditPayment,
+  recommendationIsDebtPayoff,
+  recommendationIsUtilizationHealth,
+  recommendationLedgerFocus,
   recommendationOpensTransfer,
   recommendationPayoffPlannerUrl,
   recommendationPrimaryCtaLabel,
+  recommendationPrimaryDestinationKind,
   recommendationSecondaryCtaLabel,
   recommendationShowsResolveRisk,
   recommendationTransferPreset,
 } from "@budget-app/shared";
 import { calendarDatePath, paymentPlannerAccountPath } from "@/features/dashboard/navigation";
 import { goalDetailPath } from "@/features/goals/navigation";
-import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
+import {
+  transactionsForAccountPath,
+  transactionsForForecastRiskPath,
+} from "@/features/payment-planner/navigation";
 
 export type RecommendationActionKind =
   | "open_ledger"
@@ -55,28 +61,13 @@ export function resolveRecommendationWebUrl(
   const trimmed = url.trim();
   if (!trimmed) return null;
 
-  if (trimmed.includes("/credit-cards")) {
-    const accountId = recommendationAccountId(rec);
-    return accountId != null ? paymentPlannerAccountPath(accountId) : "/payment-planner";
-  }
-
-  if (trimmed.includes("/transactions")) {
-    const accountId = recommendationAccountId(rec);
-    return accountId != null ? transactionsForAccountPath(accountId) : "/(app)/(tabs)/transactions";
-  }
-
-  if (trimmed.startsWith("/recurring")) {
-    return "/recurring";
-  }
-
+  if (trimmed.startsWith("/recurring")) return "/recurring";
   if (trimmed.startsWith("/spending-goals") || trimmed.startsWith("/budget")) {
     return "/spending-limits";
   }
 
   const goalMatch = trimmed.match(/^\/goals\/(\d+)/);
-  if (goalMatch) {
-    return goalDetailPath(Number(goalMatch[1]));
-  }
+  if (goalMatch) return goalDetailPath(Number(goalMatch[1]));
   if (rec.goal_id != null && rec.goal_id > 0 && trimmed.startsWith("/goals")) {
     return goalDetailPath(rec.goal_id);
   }
@@ -89,17 +80,43 @@ export function resolveRecommendationWebUrl(
     return "/(app)/(tabs)/calendar";
   }
 
+  const kind = recommendationPrimaryDestinationKind(rec);
+  const accountId = recommendationAccountId(rec);
+  const focus = recommendationLedgerFocus(rec);
+
+  if (kind === "view_account" && accountId != null) {
+    return accountDetailPath(accountId);
+  }
+  if (kind === "payment_planner") {
+    return accountId != null ? paymentPlannerAccountPath(accountId) : "/payment-planner";
+  }
+  if (kind === "open_ledger" && accountId != null) {
+    return transactionsForForecastRiskPath({
+      accountId,
+      accountName: rec.account_name ?? undefined,
+      focusDate: focus?.focusDate,
+      focusTransactionId: focus?.focusTransactionId,
+    });
+  }
+
   if (trimmed.startsWith("/accounts")) {
-    const accountId = recommendationAccountId(rec);
     return accountId != null ? accountDetailPath(accountId) : "/(app)/(tabs)/accounts";
   }
+  if (trimmed.startsWith("/goals")) return "/goals";
+  if (trimmed.startsWith("/action-center")) return "/action-center";
 
-  if (trimmed.startsWith("/goals")) {
-    return "/goals";
+  if (trimmed.includes("/transactions")) {
+    return accountId != null ? transactionsForAccountPath(accountId) : "/(app)/(tabs)/transactions";
   }
 
-  if (trimmed.startsWith("/action-center")) {
-    return "/action-center";
+  if (trimmed.includes("/credit-cards")) {
+    return recommendationIsDebtPayoff(rec)
+      ? accountId != null
+        ? paymentPlannerAccountPath(accountId)
+        : "/payment-planner"
+      : accountId != null
+        ? accountDetailPath(accountId)
+        : "/(app)/(tabs)/accounts";
   }
 
   return null;
@@ -148,19 +165,15 @@ export function survivalModePlannerPath(): {
   };
 }
 
-/** All valid navigation actions for a recommendation (legacy multi-CTA list). */
 export function recommendationActions(rec: DashboardRecommendation): RecommendationAction[] {
   const accountId = recommendationAccountId(rec);
   const actions: RecommendationAction[] = [];
-  const opensTransfer = recommendationOpensTransfer(rec);
-  const isCredit = recommendationIsCreditPayment(rec);
-  const showResolveRisk = recommendationShowsResolveRisk(rec);
 
-  if (showResolveRisk && accountId != null) {
+  if (recommendationShowsResolveRisk(rec) && accountId != null) {
     actions.push({ kind: "resolve_risk", label: "Resolve risk", accountId });
   }
 
-  if (opensTransfer) {
+  if (recommendationOpensTransfer(rec)) {
     const preset = recommendationTransferPreset(rec);
     if (preset && preset.transferToAccountId > 0) {
       actions.push({
@@ -172,32 +185,43 @@ export function recommendationActions(rec: DashboardRecommendation): Recommendat
     }
   } else if (rec.primary_action_label && rec.primary_action_url) {
     const label = recommendationPrimaryCtaLabel(rec);
-    if (rec.primary_action_url.includes("/credit-cards") && accountId != null) {
+    const kind = recommendationPrimaryDestinationKind(rec);
+    if (kind === "payment_planner" && accountId != null) {
       actions.push({ kind: "payment_planner", label, accountId });
-    } else if (rec.primary_action_url.includes("/transactions") && accountId != null) {
+    } else if (kind === "open_ledger" && accountId != null) {
       actions.push({ kind: "open_ledger", label, accountId });
+    } else if (kind === "view_account" && accountId != null) {
+      actions.push({ kind: "view_account", label: "View account", accountId });
     } else {
       const href = resolveRecommendationWebUrl(rec.primary_action_url, rec);
-      if (href) {
-        actions.push({ kind: "navigate", label, href });
-      } else if (isCredit && accountId != null) {
-        actions.push({ kind: "payment_planner", label, accountId });
-      }
+      if (href) actions.push({ kind: "navigate", label, href });
     }
   }
 
   const secondaryLabel = rec.secondary_action_label
     ? recommendationSecondaryCtaLabel(rec)
     : null;
-  if (
-    secondaryLabel &&
-    rec.secondary_action_url &&
-    rec.secondary_action_type !== "move_money"
-  ) {
-    if (rec.secondary_action_url.includes("/credit-cards") && accountId != null) {
-      actions.push({ kind: "payment_planner", label: secondaryLabel, accountId });
-    } else if (rec.secondary_action_url.includes("/transactions") && accountId != null) {
+  if (secondaryLabel && rec.secondary_action_url && rec.secondary_action_type !== "move_money") {
+    const secondaryKind = (rec.secondary_action_type ?? "").toLowerCase();
+    if (secondaryKind === "view_account" && accountId != null) {
+      actions.push({ kind: "view_account", label: secondaryLabel, accountId });
+    } else if (
+      (secondaryKind === "open_ledger" || rec.secondary_action_url.includes("/transactions")) &&
+      accountId != null
+    ) {
       actions.push({ kind: "open_ledger", label: secondaryLabel, accountId });
+    } else if (
+      recommendationIsDebtPayoff(rec) &&
+      rec.secondary_action_url.includes("/credit-cards") &&
+      accountId != null
+    ) {
+      actions.push({ kind: "payment_planner", label: secondaryLabel, accountId });
+    } else if (
+      !recommendationIsUtilizationHealth(rec) &&
+      rec.secondary_action_url.includes("/credit-cards") &&
+      accountId != null
+    ) {
+      actions.push({ kind: "payment_planner", label: secondaryLabel, accountId });
     } else {
       pushNavigateAction(actions, secondaryLabel, rec.secondary_action_url, rec);
     }
@@ -215,9 +239,7 @@ export function recommendationActions(rec: DashboardRecommendation): Recommendat
   return dedupeActions(actions);
 }
 
-function hrefKey(
-  href: RecommendationAction["href"]
-): string {
+function hrefKey(href: RecommendationAction["href"]): string {
   if (href == null) return "";
   if (typeof href === "string") return href;
   const params = href.params
@@ -244,89 +266,97 @@ function destinationsOverlap(a: RecommendationAction, b: RecommendationAction): 
     if (a.accountId != null && b.accountId != null) return a.accountId === b.accountId;
     return true;
   }
-  // Ledger and account detail are different destinations — keep both when one is primary.
   return false;
 }
 
-/**
- * Whole-card primary destination for Action Center rows.
- * Secondary CTAs (transfer, planner, snooze, …) live in overflow.
- */
+function destinationFromKind(
+  rec: DashboardRecommendation,
+  kind: ReturnType<typeof recommendationPrimaryDestinationKind>
+): RecommendationAction | null {
+  const accountId = recommendationAccountId(rec);
+  if (kind == null) return null;
+
+  switch (kind) {
+    case "view_account":
+      return accountId != null
+        ? { kind: "view_account", label: "View account", accountId }
+        : null;
+    case "payment_planner":
+      return accountId != null
+        ? { kind: "payment_planner", label: PAYMENT_PLANNER_LABEL, accountId }
+        : { kind: "navigate", label: PAYMENT_PLANNER_LABEL, href: "/payment-planner" };
+    case "open_ledger":
+      return accountId != null
+        ? { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId }
+        : null;
+    case "transfer": {
+      const preset = recommendationTransferPreset(rec);
+      if (preset) {
+        return {
+          kind: "transfer",
+          label: recommendationPrimaryCtaLabel(rec),
+          accountId: accountId ?? undefined,
+          transferPreset: preset,
+        };
+      }
+      return accountId != null
+        ? { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId }
+        : null;
+    }
+    case "resolve_risk":
+      return accountId != null
+        ? { kind: "resolve_risk", label: "Resolve risk", accountId }
+        : null;
+    case "navigate": {
+      const primaryUrl = (rec.primary_action_url ?? "").trim();
+      if (rec.goal_id != null && rec.goal_id > 0) {
+        return { kind: "navigate", label: "Open goal", href: goalDetailPath(rec.goal_id) };
+      }
+      const goalMatch = primaryUrl.match(/^\/goals\/(\d+)/);
+      if (goalMatch) {
+        return {
+          kind: "navigate",
+          label: "Open goal",
+          href: goalDetailPath(Number(goalMatch[1])),
+        };
+      }
+      if (primaryUrl.startsWith("/spending-goals") || primaryUrl.startsWith("/budget")) {
+        return {
+          kind: "navigate",
+          label: recommendationPrimaryCtaLabel(rec),
+          href: "/spending-limits",
+        };
+      }
+      const href = resolveRecommendationWebUrl(primaryUrl, rec);
+      if (href) {
+        return { kind: "navigate", label: recommendationPrimaryCtaLabel(rec), href };
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
 export function getRecommendationDestination(
   rec: DashboardRecommendation
 ): RecommendationAction | null {
-  const accountId = recommendationAccountId(rec);
-  const primaryUrl = (rec.primary_action_url ?? "").trim();
-
-  if (rec.goal_id != null && rec.goal_id > 0) {
-    return { kind: "navigate", label: "Open goal", href: goalDetailPath(rec.goal_id) };
-  }
-  const goalMatch = primaryUrl.match(/^\/goals\/(\d+)/);
-  if (goalMatch) {
-    return {
-      kind: "navigate",
-      label: "Open goal",
-      href: goalDetailPath(Number(goalMatch[1])),
-    };
-  }
-
-  if (primaryUrl.startsWith("/spending-goals") || primaryUrl.startsWith("/budget")) {
-    return {
-      kind: "navigate",
-      label: recommendationPrimaryCtaLabel(rec),
-      href: "/spending-limits",
-    };
-  }
-
-  if (primaryUrl.startsWith("/timeline")) {
-    const href = resolveRecommendationWebUrl(primaryUrl, rec);
+  if (rec.primary_action_url?.startsWith("/timeline")) {
+    const href = resolveRecommendationWebUrl(rec.primary_action_url, rec);
     if (href) {
       return {
         kind: "navigate",
-        label: recommendationSecondaryCtaLabel(rec, "View forecast", primaryUrl) ?? "View forecast",
+        label:
+          recommendationSecondaryCtaLabel(rec, "View forecast", rec.primary_action_url) ??
+          "View forecast",
         href,
       };
     }
   }
 
-  if (recommendationIsCreditPayment(rec) && accountId != null) {
-    return { kind: "view_account", label: "View account", accountId };
-  }
-
-  if (recommendationOpensTransfer(rec) && accountId != null) {
-    return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
-  }
-
-  if (primaryUrl.includes("/transactions") && accountId != null) {
-    return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
-  }
-
-  if (primaryUrl.includes("/credit-cards") && accountId != null) {
-    return { kind: "view_account", label: "View account", accountId };
-  }
-
-  if (primaryUrl) {
-    const href = resolveRecommendationWebUrl(primaryUrl, rec);
-    if (href) {
-      return {
-        kind: "navigate",
-        label: recommendationPrimaryCtaLabel(rec),
-        href,
-      };
-    }
-  }
-
-  if (accountId != null) {
-    if ((rec.id ?? "").startsWith("attention-") || rec.type === "move_money") {
-      return { kind: "open_ledger", label: OPEN_LEDGER_LABEL, accountId };
-    }
-    return { kind: "view_account", label: "View account", accountId };
-  }
-
-  return null;
+  return destinationFromKind(rec, recommendationPrimaryDestinationKind(rec));
 }
 
-/** Overflow menu actions — excludes the primary destination; optional Snooze/Dismiss. */
 export function getRecommendationSecondaryActions(
   rec: DashboardRecommendation,
   opts?: { includeSnoozeDismiss?: boolean }
@@ -360,7 +390,18 @@ function dedupeActions(actions: RecommendationAction[]): RecommendationAction[] 
   return out;
 }
 
-export function openLedgerNavigation(accountId: number) {
+export function openLedgerNavigation(accountId: number, rec?: DashboardRecommendation) {
+  if (rec) {
+    const focus = recommendationLedgerFocus(rec);
+    if (focus?.focusDate || focus?.focusTransactionId != null) {
+      return transactionsForForecastRiskPath({
+        accountId,
+        accountName: rec.account_name ?? undefined,
+        focusDate: focus.focusDate,
+        focusTransactionId: focus.focusTransactionId,
+      });
+    }
+  }
   return transactionsForAccountPath(accountId);
 }
 
