@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,13 +27,19 @@ import { useTheme } from "@/theme";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { describeApiError } from "@/services/api";
 import { todayStr } from "@/lib/dates";
-import { ledgerProjectionRange } from "@/lib/transactionsLedger";
 import { TransactionRowCard } from "@/features/transactions/TransactionRowCard";
+import { defaultLedgerTimelineQueryOptions } from "@/features/transactions/defaultLedgerPrefetch";
+import { isPendingExpectedTimelineRow } from "@/features/transactions/pendingSemantics";
 import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
 import { reconcilePath } from "@/features/reconcile/navigation";
 import { rememberTransactionAccountSelection } from "@/features/transactions/accountSelection";
 import { resolveAccountBalanceDisplay } from "./accountBalanceDisplay";
-import { accountHasForecastEnrichment, seedAccountFromListCache } from "./accountDetailSeed";
+import { accountDetailUpcomingPreviewRows } from "./accountDetailUpcomingPreview";
+import {
+  accountHasForecastEnrichment,
+  seedAccountFromListCache,
+  seedBalanceDetailFromListCache,
+} from "./accountDetailSeed";
 import { ACCOUNT_DETAIL_PREVIEW_LIMIT, accountQueryKeys } from "./queryKeys";
 import { markAccountsTiming } from "./accountsTiming";
 
@@ -77,11 +83,17 @@ export function AccountDetailScreen() {
   const accountId = Number(id);
   const validId = Number.isInteger(accountId) && accountId > 0;
   const { forecastDays, ready } = usePageForecastWindow();
-  const projection = ledgerProjectionRange(ready ? forecastDays : 30);
+  const today = todayStr();
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   useEffect(() => {
     markAccountsTiming("detail-mounted", "detail");
   }, []);
+
+  useEffect(() => {
+    if (!validId) return;
+    seedBalanceDetailFromListCache(queryClient, accountId, forecastDays);
+  }, [validId, accountId, forecastDays, queryClient]);
 
   const seeded = useMemo(() => {
     if (!validId) return undefined;
@@ -137,7 +149,7 @@ export function AccountDetailScreen() {
     queryFn: () =>
       listTransactions({
         account: accountId,
-        date_before: todayStr(),
+        date_before: today,
         reconciled: false,
         page_size: ACCOUNT_DETAIL_PREVIEW_LIMIT,
         ordering: "-date,-id",
@@ -145,17 +157,18 @@ export function AccountDetailScreen() {
     enabled: validId,
   });
 
-  const upcomingQuery = useQuery({
-    queryKey: accountQueryKeys.upcomingPreview(accountId, projection.end),
-    queryFn: () =>
-      listTransactions({
-        account: accountId,
-        date_after: todayStr(),
-        date_before: projection.end,
-        page_size: ACCOUNT_DETAIL_PREVIEW_LIMIT,
-        ordering: "date,id",
+  const timelineQueryOptions = useMemo(
+    () =>
+      defaultLedgerTimelineQueryOptions({
+        accountId,
+        forecastDays: ready ? forecastDays : 30,
       }),
-    enabled: validId,
+    [accountId, forecastDays, ready]
+  );
+
+  const upcomingTimelineQuery = useQuery({
+    ...timelineQueryOptions,
+    enabled: validId && ready,
   });
 
   const account =
@@ -171,9 +184,14 @@ export function AccountDetailScreen() {
 
   const previewRows = useMemo(() => {
     const recent = (recentQuery.data?.results ?? []).slice(0, ACCOUNT_DETAIL_PREVIEW_LIMIT);
-    const upcoming = (upcomingQuery.data?.results ?? []).slice(0, ACCOUNT_DETAIL_PREVIEW_LIMIT);
+    const upcoming = accountDetailUpcomingPreviewRows(
+      upcomingTimelineQuery.data?.timeline,
+      accountId,
+      today,
+      ACCOUNT_DETAIL_PREVIEW_LIMIT
+    );
     return { recent, upcoming };
-  }, [recentQuery.data, upcomingQuery.data]);
+  }, [recentQuery.data, upcomingTimelineQuery.data?.timeline, accountId, today]);
 
   useEffect(() => {
     if (account) markAccountsTiming("basic-detail-visible", "detail");
@@ -190,8 +208,22 @@ export function AccountDetailScreen() {
   }, [recentQuery.isSuccess]);
 
   useEffect(() => {
-    if (upcomingQuery.isSuccess) markAccountsTiming("upcoming-preview-visible", "detail");
-  }, [upcomingQuery.isSuccess]);
+    if (upcomingTimelineQuery.isSuccess) markAccountsTiming("upcoming-preview-visible", "detail");
+  }, [upcomingTimelineQuery.isSuccess]);
+
+  const refreshDetail = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([
+        balanceQuery.refetch(),
+        needsForecastFetch ? forecastQuery.refetch() : Promise.resolve(),
+        recentQuery.refetch(),
+        upcomingTimelineQuery.refetch(),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [balanceQuery, forecastQuery, needsForecastFetch, recentQuery, upcomingTimelineQuery]);
 
   const openLedger = () => {
     if (!account) return;
@@ -243,17 +275,8 @@ export function AccountDetailScreen() {
       scrollProps={{
         refreshControl: (
           <RefreshControl
-            refreshing={
-              (balanceQuery.isFetching || forecastQuery.isFetching) &&
-              !balanceQuery.isPending &&
-              Boolean(account)
-            }
-            onRefresh={() => {
-              void balanceQuery.refetch();
-              void forecastQuery.refetch();
-              void recentQuery.refetch();
-              void upcomingQuery.refetch();
-            }}
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshDetail()}
             tintColor={theme.colors.tint}
           />
         ),
@@ -344,7 +367,7 @@ export function AccountDetailScreen() {
       </View>
 
       <SectionHeader title="Upcoming" />
-      {upcomingQuery.isPending ? (
+      {upcomingTimelineQuery.isPending ? (
         <SkeletonBlock lines={2} />
       ) : previewRows.upcoming.length === 0 ? (
         <EmptyState
@@ -353,8 +376,12 @@ export function AccountDetailScreen() {
         />
       ) : (
         <>
-          {previewRows.upcoming.map((txn) => (
-            <TransactionRowCard key={txn.id} txn={txn} />
+          {previewRows.upcoming.map((row) => (
+            <TransactionRowCard
+              key={`upcoming-${row.transaction_id ?? row.date}-${row.description}-${row.amount}`}
+              timelineRow={row}
+              statusOverride={isPendingExpectedTimelineRow(row, today) ? "Pending" : "Forecast"}
+            />
           ))}
           <View style={{ marginTop: 8 }}>
             <Button label="View full ledger" variant="secondary" onPress={openLedger} />

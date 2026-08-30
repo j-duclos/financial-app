@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -30,6 +30,17 @@ export function AccountsScreen() {
     { forecastReady: ready }
   );
 
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  const refreshAccounts = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refetch]);
+
   useEffect(() => {
     markAccountsTiming("accounts-mounted", "list");
   }, []);
@@ -59,7 +70,11 @@ export function AccountsScreen() {
       scroll
       scrollProps={{
         refreshControl: (
-          <RefreshControl refreshing={isEnriching} onRefresh={() => refetch()} tintColor={theme.colors.tint} />
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void refreshAccounts()}
+            tintColor={theme.colors.tint}
+          />
         ),
       }}
     >

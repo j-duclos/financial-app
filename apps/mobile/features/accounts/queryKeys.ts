@@ -16,18 +16,10 @@ export const accountQueryKeys = {
     ["accounts", "enriched", { forecastDays, scope: "mobile" }] as const,
   /** Single-account balance-only retrieve (progressive detail shell). */
   balanceDetail: (accountId: number) => ["account", accountId, "balance"] as const,
-  /** Bounded recent preview for Account Detail. */
+  /** Bounded recent preview for Account Detail (unreconciled, descending). */
   recentPreview: (accountId: number) =>
     ["transactions", "account-preview", accountId, { limit: ACCOUNT_DETAIL_PREVIEW_LIMIT }] as const,
-  /** Bounded upcoming preview for Account Detail. */
-  upcomingPreview: (accountId: number, projectionEnd: string) =>
-    [
-      "transactions",
-      "account-upcoming",
-      accountId,
-      projectionEnd,
-      { limit: ACCOUNT_DETAIL_PREVIEW_LIMIT },
-    ] as const,
+  /** Account Detail Upcoming uses `transactionQueryKeys.timeline` (canonical ledger). */
 };
 
 /** Max rows for Account Detail Recent / Upcoming previews. */

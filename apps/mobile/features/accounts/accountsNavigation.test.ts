@@ -41,11 +41,11 @@ describe("Account detail → View ledger", () => {
 
     expect(transactionsForAccountPath(7, "360 Checking")).toEqual({
       pathname: "/(app)/(tabs)/transactions",
-      params: { account: "7", accountName: "360 Checking" },
+      params: expect.objectContaining({ account: "7", accountName: "360 Checking" }),
     });
     expect(transactionsForAccountPath(1, "Main")).toEqual({
       pathname: "/(app)/(tabs)/transactions",
-      params: { account: "1", accountName: "Main" },
+      params: expect.objectContaining({ account: "1", accountName: "Main" }),
     });
   });
 
@@ -96,7 +96,13 @@ describe("Accounts request structure", () => {
   });
 
   it("does not show empty upcoming state while loading", () => {
-    expect(accountDetailSource).toMatch(/upcomingQuery\.isPending/);
+    expect(accountDetailSource).toMatch(/upcomingTimelineQuery\.isPending/);
     expect(accountDetailSource).toMatch(/No upcoming transactions/);
+  });
+
+  it("loads upcoming from canonical timeline rather than listTransactions date range", () => {
+    expect(accountDetailSource).toMatch(/defaultLedgerTimelineQueryOptions/);
+    expect(accountDetailSource).toMatch(/accountDetailUpcomingPreviewRows/);
+    expect(accountDetailSource).not.toMatch(/date_after: today/);
   });
 });

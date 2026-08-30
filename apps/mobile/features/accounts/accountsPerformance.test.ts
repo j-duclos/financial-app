@@ -8,25 +8,29 @@ import {
   resetAccountsTimingForTests,
 } from "./accountsTiming";
 
-const accountsList = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "useAccountsList.ts"),
-  "utf8"
-);
-const detailSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "AccountDetailScreen.tsx"),
-  "utf8"
-);
+const dir = dirname(fileURLToPath(import.meta.url));
+const accountsList = readFileSync(join(dir, "useAccountsList.ts"), "utf8");
+const accountsScreen = readFileSync(join(dir, "AccountsScreen.tsx"), "utf8");
+const detailSource = readFileSync(join(dir, "AccountDetailScreen.tsx"), "utf8");
 
 describe("Accounts request orchestration", () => {
-  it("runs enriched accounts concurrently with basic list", () => {
-    expect(accountsList).toMatch(/enabled: forecastReady/);
-    expect(accountsList).not.toMatch(/enabled: mainQuery\.isSuccess/);
+  it("gates enrichment behind main list success unless enrich cache is already fresh", () => {
+    expect(accountsList).toMatch(/accountsListEnrichmentEnabled/);
+    expect(accountsList).toMatch(/mainListSuccess: mainQuery\.isSuccess/);
+    expect(accountsList).toMatch(/enrichedListUpdatedAt/);
+    expect(accountsList).not.toMatch(/enabled: forecastReady,/);
   });
 
   it("uses two-stage merge without blocking initial render on enrichment", () => {
     expect(accountsList).toMatch(/mergeEnrichedAccounts/);
     expect(accountsList).toMatch(/isEnriching/);
     expect(accountsList).toMatch(/placeholderData: keepPreviousData/);
+    expect(accountsList).toMatch(/enrichQuery\.isSuccess \? enrichQuery\.data/);
+  });
+
+  it("awaits main then enrich on explicit refetch", () => {
+    expect(accountsList).toMatch(/const mainResult = await mainQuery\.refetch\(\)/);
+    expect(accountsList).toMatch(/mainResult\.isSuccess/);
   });
 
   it("reuses enriched list cache on Account Detail and merges single-account forecast into it", () => {
@@ -35,6 +39,20 @@ describe("Accounts request orchestration", () => {
     expect(detailSource).toMatch(/forecast_summary: true/);
     expect(detailSource).not.toMatch(/relationships:\s*true/);
     expect(detailSource).not.toMatch(/\["account", accountId, "detail"/);
+  });
+});
+
+describe("Accounts pull-to-refresh", () => {
+  it("uses explicit pullRefreshing state on the list (not passive isEnriching)", () => {
+    expect(accountsScreen).toMatch(/pullRefreshing/);
+    expect(accountsScreen).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(accountsScreen).not.toMatch(/refreshing=\{isEnriching\}/);
+  });
+
+  it("uses explicit pullRefreshing state on Account Detail", () => {
+    expect(detailSource).toMatch(/pullRefreshing/);
+    expect(detailSource).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(detailSource).not.toMatch(/balanceQuery\.isFetching \|\| forecastQuery\.isFetching/);
   });
 });
 

@@ -42,3 +42,43 @@ export function accountHasForecastEnrichment(account: Account | undefined): bool
     account.forecast_summary != null
   );
 }
+
+function accountHasBalanceFields(account: Account): boolean {
+  return account.balance != null || account.available_balance != null || account.balance_owed != null;
+}
+
+/**
+ * Seed balanceDetail from Accounts list caches so navigation does not duplicate
+ * a balance retrieve when list data is still within staleTime.
+ */
+export function seedBalanceDetailFromListCache(
+  queryClient: QueryClient,
+  accountId: number,
+  forecastDays: OperationalForecastDays,
+  staleTimeMs = 30_000
+): boolean {
+  const detailKey = accountQueryKeys.balanceDetail(accountId);
+  const existing = queryClient.getQueryState(detailKey);
+  if (
+    existing?.data != null &&
+    existing.dataUpdatedAt != null &&
+    Date.now() - existing.dataUpdatedAt < staleTimeMs
+  ) {
+    return true;
+  }
+
+  const seeded = seedAccountFromListCache(queryClient, accountId, forecastDays);
+  if (!seeded || !accountHasBalanceFields(seeded)) return false;
+
+  const mainUpdatedAt = queryClient.getQueryState(accountQueryKeys.mainList())?.dataUpdatedAt ?? 0;
+  const enrichedUpdatedAt =
+    queryClient.getQueryState(accountQueryKeys.enrichedList(forecastDays))?.dataUpdatedAt ?? 0;
+  const sourceUpdatedAt = accountHasForecastEnrichment(seeded)
+    ? Math.max(mainUpdatedAt, enrichedUpdatedAt)
+    : mainUpdatedAt;
+
+  queryClient.setQueryData(detailKey, seeded, {
+    updatedAt: sourceUpdatedAt > 0 ? sourceUpdatedAt : Date.now(),
+  });
+  return sourceUpdatedAt > 0 && Date.now() - sourceUpdatedAt < staleTimeMs;
+}

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
-import type { Account } from "@budget-app/shared";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
+import type { Account } from "@budget-app/shared";
+import type { PaginatedResponse } from "@budget-app/api-client";
 import {
   resolveAccountBalanceDisplay,
   resolveAfterPendingBalance,
@@ -10,7 +12,12 @@ import {
   resolvePostedCurrentBalance,
   shouldShowAccountHealthBadge,
 } from "./accountBalanceDisplay";
-import { accountHasForecastEnrichment, seedAccountFromListCache } from "./accountDetailSeed";
+import {
+  accountHasForecastEnrichment,
+  seedAccountFromListCache,
+  seedBalanceDetailFromListCache,
+} from "./accountDetailSeed";
+import { accountQueryKeys } from "./queryKeys";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const rowSource = readFileSync(join(dir, "AccountRow.tsx"), "utf8");
@@ -104,7 +111,6 @@ describe("account balance semantics", () => {
   });
 
   it("matched pending (same posted and EOD) is not shown twice as After pending", () => {
-    // Backend hides planned twin after match — available_balance already includes import once.
     const account = cashAccount({
       available_balance: "500.00",
       balance: "500.00",
@@ -170,6 +176,7 @@ describe("Accounts list UI labels", () => {
 describe("Account Detail cache reuse", () => {
   it("seeds detail from list cache and skips forecast when enrichment already present", () => {
     expect(detailSource).toMatch(/seedAccountFromListCache/);
+    expect(detailSource).toMatch(/seedBalanceDetailFromListCache/);
     expect(detailSource).toMatch(/placeholderData: seeded/);
     expect(detailSource).toMatch(/accountHasForecastEnrichment/);
     expect(detailSource).toMatch(/enabled: needsForecastFetch/);
@@ -180,11 +187,42 @@ describe("Account Detail cache reuse", () => {
     expect(typeof seedAccountFromListCache).toBe("function");
   });
 
-  it("keeps two-stage list for first paint; enrichment is concurrent", () => {
-    expect(listHookSource).toMatch(/balance: "true"/);
-    expect(listHookSource).toMatch(/forecast_summary: "true"/);
-    expect(listHookSource).toMatch(/health: "true"/);
-    expect(listHookSource).toMatch(/enabled: forecastReady/);
-    expect(listHookSource).not.toMatch(/enabled: mainQuery\.isSuccess/);
+  it("seeds balanceDetail from fresh main list cache to avoid duplicate retrieve", () => {
+    const queryClient = new QueryClient();
+    const account = cashAccount({ id: 7 });
+    const now = Date.now();
+    queryClient.setQueryData(accountQueryKeys.mainList(), {
+      count: 1,
+      next: null,
+      previous: null,
+      results: [account],
+    } satisfies PaginatedResponse<Account>, { updatedAt: now });
+
+    const seededFresh = seedBalanceDetailFromListCache(queryClient, 7, 30);
+    expect(seededFresh).toBe(true);
+    expect(queryClient.getQueryData(accountQueryKeys.balanceDetail(7))).toEqual(account);
+
+    const state = queryClient.getQueryState(accountQueryKeys.balanceDetail(7));
+    expect(state?.dataUpdatedAt).toBe(now);
+  });
+
+  it("gates list enrichment behind main success with cache escape hatch", () => {
+    expect(listHookSource).toMatch(/accountsListEnrichmentEnabled/);
+    expect(listHookSource).toMatch(/mainListSuccess: mainQuery\.isSuccess/);
+    expect(listHookSource).not.toMatch(/enabled: forecastReady,/);
+  });
+});
+
+describe("Account Detail upcoming preview", () => {
+  it("uses canonical timeline query shared with Transactions", () => {
+    expect(detailSource).toMatch(/defaultLedgerTimelineQueryOptions/);
+    expect(detailSource).toMatch(/accountDetailUpcomingPreviewRows/);
+    expect(detailSource).not.toMatch(/date_after: today/);
+    expect(detailSource).toMatch(/timelineRow=\{row\}/);
+  });
+
+  it("does not recompute projected balances in the preview UI", () => {
+    expect(detailSource).not.toMatch(/runningBalance=/);
+    expect(detailSource).not.toMatch(/timelineRowLedgerBalance/);
   });
 });

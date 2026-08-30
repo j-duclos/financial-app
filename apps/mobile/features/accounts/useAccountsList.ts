@@ -1,9 +1,13 @@
 import { useMemo, useRef } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listAccounts } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
 import type { OperationalForecastDays } from "@budget-app/shared";
+import { accountsListEnrichmentEnabled } from "@budget-app/shared";
 import { accountQueryKeys } from "./queryKeys";
+
+const MAIN_LIST_STALE_MS = 30_000;
+const ENRICHED_LIST_STALE_MS = 60_000;
 
 function mergeEnrichedAccounts(base: Account[], enriched: Account[] | undefined): Account[] {
   if (!enriched?.length) return base;
@@ -22,17 +26,28 @@ export function useAccountsList(
   options?: { forecastReady?: boolean }
 ) {
   const forecastReady = options?.forecastReady ?? true;
+  const queryClient = useQueryClient();
   const lastNonEmpty = useRef<Account[]>([]);
 
   const mainQuery = useQuery({
     queryKey: accountQueryKeys.mainList(),
     queryFn: () => listAccounts({ balance: "true", page_size: 500, active_only: true }),
     placeholderData: keepPreviousData,
-    staleTime: 30_000,
+    staleTime: MAIN_LIST_STALE_MS,
+  });
+
+  const enrichedListKey = accountQueryKeys.enrichedList(forecastDays);
+  const enrichedCacheUpdatedAt = queryClient.getQueryState(enrichedListKey)?.dataUpdatedAt;
+
+  const enrichEnabled = accountsListEnrichmentEnabled({
+    forecastReady,
+    mainListSuccess: mainQuery.isSuccess,
+    enrichedListUpdatedAt: enrichedCacheUpdatedAt,
+    enrichedStaleTimeMs: ENRICHED_LIST_STALE_MS,
   });
 
   const enrichQuery = useQuery({
-    queryKey: accountQueryKeys.enrichedList(forecastDays),
+    queryKey: enrichedListKey,
     queryFn: () =>
       listAccounts({
         balance: "true",
@@ -42,9 +57,9 @@ export function useAccountsList(
         page_size: 500,
         active_only: true,
       }),
-    enabled: forecastReady,
+    enabled: enrichEnabled,
     placeholderData: keepPreviousData,
-    staleTime: 60_000,
+    staleTime: ENRICHED_LIST_STALE_MS,
   });
 
   const accounts = useMemo(() => {
@@ -55,15 +70,19 @@ export function useAccountsList(
     return next;
   }, [mainQuery.data, enrichQuery.data, enrichQuery.isSuccess]);
 
+  const refetch = async () => {
+    const mainResult = await mainQuery.refetch();
+    if (forecastReady && mainResult.isSuccess) {
+      await enrichQuery.refetch();
+    }
+  };
+
   return {
     accounts,
     isLoading: mainQuery.isPending && accounts.length === 0,
     isEnriching: enrichQuery.isFetching && accounts.length > 0,
     isError: accounts.length === 0 && mainQuery.isError,
     error: mainQuery.error,
-    refetch: () => {
-      void mainQuery.refetch();
-      if (forecastReady) void enrichQuery.refetch();
-    },
+    refetch,
   };
 }
