@@ -1,12 +1,7 @@
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import type { TimelineRow } from "@budget-app/shared";
 import { isImportMatchStatusMatched } from "@budget-app/shared";
-import TransactionRow, {
-  canSelectTransactionForBatchDelete,
-  projectionSelectionKey,
-  timelineRowToData,
-  type TransactionRowData,
-} from "./TransactionRow";
+import TransactionRow, { timelineRowToData } from "./TransactionRow";
 import {
   COLLAPSED_LEDGER_ROWS,
   LedgerColumnHeader,
@@ -19,7 +14,6 @@ import {
   type LedgerRow,
 } from "./transactionsLedgerUtils";
 import { unmatchedScheduleRowClasses, UNMATCHED_SCHEDULE_ROW_TITLE } from "./forecastRowSeverity";
-import { ledgerRowSelectionKey, sliceIdsByAnchor } from "../../lib/shiftClickSelection";
 const ROW_REM = 2.5;
 const compactScrollHeight = `${Math.min(COLLAPSED_LEDGER_ROWS, 4) * ROW_REM}rem`;
 
@@ -34,17 +28,11 @@ type Props = {
   onSkipRow: (row: TimelineRow) => void;
   onMoveDateRow: (row: TimelineRow) => void;
   actionsPending: boolean;
-  selectedIds: Set<number>;
-  pendingSelectionKeys: Set<string>;
-  onToggleSelected: (transactionId: number, selected: boolean) => void;
-  onSelectUnresolved: (row: TransactionRowData, selected: boolean) => void;
-  onSetSelectedIds: (ids: number[], selected: boolean) => void;
-  onSelectAllRows: (rows: TransactionRowData[], selected: boolean) => void;
 };
 
 /**
  * Scheduled/rule rows whose date has arrived but no actual bank/manual posting has confirmed them.
- * Resolved via Match imported transaction, Skip, Edit, Move Date — not manual delete.
+ * Resolved via Match imported transaction, Skip, Edit, Move Date — not manual delete or batch delete.
  */
 export default function PendingExpectedSection({
   pending,
@@ -57,70 +45,11 @@ export default function PendingExpectedSection({
   onSkipRow,
   onMoveDateRow,
   actionsPending,
-  selectedIds,
-  pendingSelectionKeys,
-  onToggleSelected,
-  onSelectUnresolved,
-  onSetSelectedIds,
-  onSelectAllRows,
 }: Props) {
   const displayable = useMemo(
     () => pending.filter((row) => row.type === "transaction_from_timeline"),
     [pending]
   );
-  const selectableRows = useMemo(() => {
-    const rows: TransactionRowData[] = [];
-    for (const row of displayable) {
-      const data = timelineRowToData(row.row, row.balance, "expected");
-      if (canSelectTransactionForBatchDelete(data)) rows.push(data);
-    }
-    return rows;
-  }, [displayable]);
-  const selectableIds = useMemo(
-    () =>
-      selectableRows
-        .map((r) => r.transactionId)
-        .filter((id): id is number => id != null),
-    [selectableRows]
-  );
-  const unresolvedKeys = useMemo(
-    () =>
-      selectableRows
-        .filter((r) => r.transactionId == null)
-        .map((r) => projectionSelectionKey(r))
-        .filter((k): k is string => k != null),
-    [selectableRows]
-  );
-  const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
-  const pendingInSection = unresolvedKeys.filter((k) => pendingSelectionKeys.has(k)).length;
-  const selectableCount = selectableIds.length + unresolvedKeys.length;
-  const selectedCount = selectedInSection + pendingInSection;
-  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
-  const someSelected = selectedCount > 0 && !allSelected;
-
-  const selectionAnchorRef = useRef<string | null>(null);
-
-  function handleRowSelect(row: TransactionRowData, selected: boolean, shiftKey = false) {
-    const key = ledgerRowSelectionKey(row);
-    if (!key) return;
-    const orderedKeys = selectableRows
-      .map((r) => ledgerRowSelectionKey(r))
-      .filter((k): k is string => k != null);
-
-    if (shiftKey && selectionAnchorRef.current != null) {
-      const keys = sliceIdsByAnchor(orderedKeys, selectionAnchorRef.current, key);
-      const rowsInRange = selectableRows.filter((r) => {
-        const k = ledgerRowSelectionKey(r);
-        return k != null && keys.includes(k);
-      });
-      onSelectAllRows(rowsInRange, true);
-      return;
-    }
-
-    selectionAnchorRef.current = key;
-    if (row.transactionId != null) onToggleSelected(row.transactionId, selected);
-    else onSelectUnresolved(row, selected);
-  }
 
   if (displayable.length === 0 || hiddenByPast) return null;
 
@@ -137,17 +66,10 @@ export default function PendingExpectedSection({
         />
         <LedgerColumnHeader
           className="bg-blue-50/80 border-blue-100"
-          selectAllChecked={allSelected}
-          selectAllIndeterminate={someSelected}
-          selectAllDisabled={actionsPending || selectableCount === 0}
-          onSelectAllChange={(checked) => {
-            if (!checked) {
-              onSetSelectedIds(selectableIds, false);
-              onSelectAllRows(selectableRows, false);
-              return;
-            }
-            onSelectAllRows(selectableRows, true);
-          }}
+          selectAllChecked={false}
+          selectAllIndeterminate={false}
+          selectAllDisabled
+          onSelectAllChange={() => {}}
         />
       </div>
 
@@ -168,11 +90,6 @@ export default function PendingExpectedSection({
             isPlannedScheduledTimelineRow(row.row) &&
             !isImportMatchStatusMatched(row.row.import_match_status);
           const scheduleHighlight = shouldHighlightUnmatchedScheduledRow(row.row, accountTimeline);
-          const pendingKey = projectionSelectionKey(data);
-          const isSelected =
-            data.transactionId != null
-              ? selectedIds.has(data.transactionId)
-              : pendingKey != null && pendingSelectionKeys.has(pendingKey);
           return (
             <TransactionRow
               key={rowKey}
@@ -191,13 +108,6 @@ export default function PendingExpectedSection({
               onSkip={editable ? () => onSkipRow(row.row) : undefined}
               onMoveDate={editable ? () => onMoveDateRow(row.row) : undefined}
               actionsDisabled={actionsPending}
-              selected={isSelected}
-              onSelectedChange={(id, checked, shiftKey) =>
-                handleRowSelect(data, checked, Boolean(shiftKey))
-              }
-              onSelectUnresolved={(r, checked, shiftKey) =>
-                handleRowSelect(r, checked, Boolean(shiftKey))
-              }
             />
           );
         })}

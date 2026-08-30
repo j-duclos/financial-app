@@ -6,7 +6,7 @@ import {
 import type { TimelineRow, Transaction } from "@budget-app/shared";
 import TransactionContextMenu from "./TransactionContextMenu";
 import TransactionStatusIcons from "./TransactionStatusIcons";
-import { categoryLabel, creditBalanceColorClass, formatDateDisplay } from "./transactionsLedgerUtils";
+import { categoryLabel, creditBalanceColorClass, formatDateDisplay, isPlannedScheduledTimelineRow, isPlannedScheduledTransaction } from "./transactionsLedgerUtils";
 import { LEDGER_TABLE_GRID } from "./ledgerTableLayout";
 import { resolveTransactionKind } from "./transactionKindUtils";
 import type { ForecastRowSeverityClasses } from "./forecastRowSeverity";
@@ -29,22 +29,19 @@ export type TransactionRowData = {
   accountId?: number | null;
   linkedTransactionId?: number | null;
   hasTransferDestination?: boolean;
+  hasTransferDestination?: boolean;
   readOnly?: boolean;
+  /** Rule/one-time forecast occurrence — lifecycle action is Skip, not Delete. */
+  plannedScheduled?: boolean;
 };
 
-/** Stable key for a projection-only rule row (no transaction id yet). */
-export function projectionSelectionKey(row: TransactionRowData): string | null {
-  if (row.source.rule_id == null || row.accountId == null || !row.date) return null;
-  return `rule:${row.source.rule_id}:${row.accountId}:${row.date}`;
-}
-
-/** Rows that can be batch-deleted: real txns, or scheduled rule rows that can be materialized. */
+/** Rows that can be batch-deleted: posted manual txns only (not planned forecast occurrences). */
 export function canSelectTransactionForBatchDelete(row: TransactionRowData): boolean {
   if (row.reconciled || row.readOnly) return false;
+  if (row.plannedScheduled) return false;
   if ((row.plaidTransactionId ?? "").trim()) return false;
   if ((row.txnSource ?? "").toUpperCase() === "PLAID") return false;
-  if (row.transactionId != null) return true;
-  return row.source.rule_id != null && row.accountId != null;
+  return row.transactionId != null;
 }
 
 type Props = {
@@ -62,8 +59,6 @@ type Props = {
   /** Multi-select for batch delete. */
   selected?: boolean;
   onSelectedChange?: (transactionId: number, selected: boolean, shiftKey?: boolean) => void;
-  /** Select a projection-only rule row (no transaction id yet). */
-  onSelectUnresolved?: (row: TransactionRowData, selected: boolean, shiftKey?: boolean) => void;
   /** Row background / border styling (forecast buffer/risk or schedule highlight). */
   rowSurface?: ForecastRowSeverityClasses;
   /** Tooltip when a scheduled row is highlighted as unmatched vs later imports. */
@@ -100,6 +95,7 @@ export function timelineRowToData(
     readOnly: row.source === "interest",
     linkedTransactionId: null,
     hasTransferDestination: false,
+    plannedScheduled: isPlannedScheduledTimelineRow(row),
   };
 }
 
@@ -128,6 +124,7 @@ export function transactionToData(txn: Transaction, balance: number | null): Tra
     accountId: txn.account_id ?? (txn.account as { id?: number } | undefined)?.id ?? null,
     linkedTransactionId: txn.linked_transaction_id ?? null,
     hasTransferDestination: Boolean(txn.transfer_to_account),
+    plannedScheduled: isPlannedScheduledTransaction(txn),
   };
 }
 
@@ -145,7 +142,6 @@ export default function TransactionRow({
   actionsDisabled,
   selected = false,
   onSelectedChange,
-  onSelectUnresolved,
   rowSurface,
   scheduleHighlightTitle,
 }: Props) {
@@ -156,8 +152,7 @@ export default function TransactionRow({
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);
   const clickable = Boolean(onEdit) && !row.readOnly;
   const selectable =
-    canSelectTransactionForBatchDelete(row) &&
-    (onSelectedChange != null || onSelectUnresolved != null);
+    canSelectTransactionForBatchDelete(row) && row.transactionId != null && onSelectedChange != null;
   const kind = resolveTransactionKind({
     type: row.source.type,
     direction: row.source.direction,
@@ -194,22 +189,13 @@ export default function TransactionRow({
             type="checkbox"
             checked={selected}
             onClick={(e) => {
-              if (!e.shiftKey) return;
-              // Own the toggle: select the range including this row.
+              if (!e.shiftKey || row.transactionId == null || !onSelectedChange) return;
               e.preventDefault();
-              if (row.transactionId != null && onSelectedChange) {
-                onSelectedChange(row.transactionId, true, true);
-              } else if (onSelectUnresolved) {
-                onSelectUnresolved(row, true, true);
-              }
+              onSelectedChange(row.transactionId, true, true);
             }}
             onChange={(e) => {
-              const checked = e.target.checked;
-              if (row.transactionId != null && onSelectedChange) {
-                onSelectedChange(row.transactionId, checked, false);
-              } else if (onSelectUnresolved) {
-                onSelectUnresolved(row, checked, false);
-              }
+              if (row.transactionId == null || !onSelectedChange) return;
+              onSelectedChange(row.transactionId, e.target.checked, false);
             }}
             disabled={actionsDisabled}
             aria-label={`Select ${row.payee}`}

@@ -82,8 +82,33 @@ describe("Pending expected row actions", () => {
 
 describe("planned delete vs skip", () => {
   it("pending expected rows use Skip only — Delete removed because skip records rule occurrence suppression", () => {
-    expect(pendingSource).toMatch(/not manual delete/);
+    expect(pendingSource).toMatch(/not manual delete or batch delete/);
     expect(pendingSource).not.toMatch(/onDeleteRow/);
     expect(menuSource).not.toMatch(/Delete \(advanced\)/);
+  });
+});
+
+describe("batch delete selection", () => {
+  it("pending expected rows are not batch-selectable", () => {
+    expect(pendingSource).not.toMatch(/onToggleSelected/);
+    expect(pendingSource).not.toMatch(/onSelectedChange/);
+    expect(pendingSource).not.toMatch(/canSelectTransactionForBatchDelete/);
+    expect(pendingSource).toMatch(/selectAllDisabled/);
+  });
+
+  it("removes projection-only batch selection helpers from Transactions page", () => {
+    expect(transactionsSource).not.toMatch(/pendingSelectionKeys/);
+    expect(transactionsSource).not.toMatch(/toggleUnresolvedSelection/);
+    expect(transactionsSource).not.toMatch(/projectionSelectionKey/);
+  });
+
+  it("planned scheduled rows are excluded in canSelectTransactionForBatchDelete", () => {
+    expect(rowSource).toMatch(/plannedScheduled/);
+    expect(rowSource).not.toMatch(/projectionSelectionKey/);
+  });
+
+  it("pending expected rows keep Skip available", () => {
+    expect(pendingSource).toMatch(/onSkipRow/);
+    expect(pendingSource).toMatch(/onSkip=\{editable \? \(\) => onSkipRow/);
   });
 });

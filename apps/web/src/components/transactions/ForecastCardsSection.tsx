@@ -2,7 +2,6 @@ import { useMemo, useRef } from "react";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
 import TransactionRow, {
   canSelectTransactionForBatchDelete,
-  projectionSelectionKey,
   timelineRowToData,
   transactionToData,
   type TransactionRowData,
@@ -49,9 +48,7 @@ type Props = {
   deletePending: boolean;
   minimumBuffer: number | null;
   selectedIds: Set<number>;
-  pendingSelectionKeys: Set<string>;
   onToggleSelected: (transactionId: number, selected: boolean) => void;
-  onSelectUnresolved: (row: TransactionRowData, selected: boolean) => void;
   onSetSelectedIds: (ids: number[], selected: boolean) => void;
   onSelectAllRows: (rows: TransactionRowData[], selected: boolean) => void;
 };
@@ -74,9 +71,7 @@ export default function ForecastCardsSection({
   deletePending,
   minimumBuffer,
   selectedIds,
-  pendingSelectionKeys,
   onToggleSelected,
-  onSelectUnresolved,
   onSetSelectedIds,
   onSelectAllRows,
 }: Props) {
@@ -110,20 +105,9 @@ export default function ForecastCardsSection({
         .filter((id): id is number => id != null),
     [selectableRows]
   );
-  const unresolvedKeys = useMemo(
-    () =>
-      selectableRows
-        .filter((r) => r.transactionId == null)
-        .map((r) => projectionSelectionKey(r))
-        .filter((k): k is string => k != null),
-    [selectableRows]
-  );
   const selectedInSection = selectableIds.filter((id) => selectedIds.has(id)).length;
-  const pendingInSection = unresolvedKeys.filter((k) => pendingSelectionKeys.has(k)).length;
-  const selectableCount = selectableIds.length + unresolvedKeys.length;
-  const selectedCount = selectedInSection + pendingInSection;
-  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
-  const someSelected = selectedCount > 0 && !allSelected;
+  const allSelected = selectableIds.length > 0 && selectedInSection === selectableIds.length;
+  const someSelected = selectedInSection > 0 && !allSelected;
 
   const selectionAnchorRef = useRef<string | null>(null);
 
@@ -146,7 +130,6 @@ export default function ForecastCardsSection({
 
     selectionAnchorRef.current = key;
     if (row.transactionId != null) onToggleSelected(row.transactionId, selected);
-    else onSelectUnresolved(row, selected);
   }
 
   const showBody = !hiddenByPast;
@@ -175,7 +158,7 @@ export default function ForecastCardsSection({
             className="bg-amber-50/80 border-amber-100"
             selectAllChecked={allSelected}
             selectAllIndeterminate={someSelected}
-            selectAllDisabled={deletePending || selectableCount === 0}
+            selectAllDisabled={deletePending || selectableIds.length === 0}
             onSelectAllChange={(checked) => {
               if (!checked) {
                 onSetSelectedIds(selectableIds, false);
@@ -258,11 +241,8 @@ export default function ForecastCardsSection({
                       isCredit,
                     });
 
-                const pendingKey = projectionSelectionKey(data);
                 const isSelected =
-                  data.transactionId != null
-                    ? selectedIds.has(data.transactionId)
-                    : pendingKey != null && pendingSelectionKeys.has(pendingKey);
+                  data.transactionId != null ? selectedIds.has(data.transactionId) : false;
 
                 return (
                   <TransactionRow
@@ -280,9 +260,6 @@ export default function ForecastCardsSection({
                     selected={isSelected}
                     onSelectedChange={(id, checked, shiftKey) =>
                       handleRowSelect(data, checked, Boolean(shiftKey))
-                    }
-                    onSelectUnresolved={(r, checked, shiftKey) =>
-                      handleRowSelect(r, checked, Boolean(shiftKey))
                     }
                   />
                 );
