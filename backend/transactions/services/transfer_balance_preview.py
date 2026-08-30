@@ -1,6 +1,8 @@
 """Canonical transfer balance preview — no persistence."""
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Collection, Optional
@@ -21,6 +23,8 @@ from timeline.services.ledger import (
     build_timeline,
 )
 from timeline.services.transfer_simulation import transfer_ephemeral_events
+
+logger = logging.getLogger(__name__)
 
 
 def _decimal(val: Any) -> Decimal:
@@ -154,9 +158,12 @@ def preview_transfer_balances(
 
     accounts = [from_acc] + ([to_acc] if to_acc is not None else [])
 
+    t0 = time.perf_counter()
+
     with timeline_balance_cache_scope() as cache:
         _preload_accounts(cache, accounts, end, start)
 
+        t_before = time.perf_counter()
         rows_before = build_timeline(
             user,
             start,
@@ -166,6 +173,7 @@ def preview_transfer_balances(
             projection_only=True,
             caller="transfer_balance_preview_before",
         )
+        t_after_before = time.perf_counter()
 
         source_before = _signed_balance_through_date(
             from_acc, transfer_date, rows_before, exclude_transaction_ids=exclude
@@ -176,6 +184,7 @@ def preview_transfer_balances(
             dest_before = _signed_balance_through_date(
                 to_acc, transfer_date, rows_before, exclude_transaction_ids=exclude
             )
+        t_after_extract_before = time.perf_counter()
 
         ephemeral = (
             transfer_ephemeral_events(
@@ -188,6 +197,7 @@ def preview_transfer_balances(
             else []
         )
 
+        t_before_after = time.perf_counter()
         rows_after = build_timeline(
             user,
             start,
@@ -198,6 +208,7 @@ def preview_transfer_balances(
             projection_only=True,
             caller="transfer_balance_preview_after",
         )
+        t_after_after = time.perf_counter()
 
         source_after = _signed_balance_through_date(
             from_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
@@ -208,6 +219,18 @@ def preview_transfer_balances(
             dest_after = _signed_balance_through_date(
                 to_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
             )
+        t_after_extract = time.perf_counter()
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "transfer_balance_preview timing ms: total=%.1f before_timeline=%.1f "
+            "balance_extract_before=%.1f after_timeline=%.1f balance_extract_after=%.1f",
+            (t_after_extract - t0) * 1000,
+            (t_after_before - t_before) * 1000,
+            (t_after_extract_before - t_after_before) * 1000,
+            (t_after_after - t_before_after) * 1000,
+            (t_after_extract - t_after_after) * 1000,
+        )
 
     result: dict[str, Any] = {
         "from_account_id": from_account_id,

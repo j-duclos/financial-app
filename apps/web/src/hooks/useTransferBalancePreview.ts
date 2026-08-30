@@ -1,6 +1,17 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { previewTransferBalances, type TransferBalancePreviewResponse } from "@budget-app/api-client";
+
+const DEFAULT_DEBOUNCE_MS = 400;
+
+function useDebouncedPreviewValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 export function useTransferBalancePreview(input: {
   fromAccountId: number | null;
@@ -9,14 +20,20 @@ export function useTransferBalancePreview(input: {
   date: string;
   excludeTransactionIds?: number[];
   enabled?: boolean;
+  /** Debounce preview API inputs only — not the saved form value. */
+  debounceMs?: number;
 }): {
   data: TransferBalancePreviewResponse | undefined;
   isFetching: boolean;
 } {
+  const debounceMs = input.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  const debouncedAmount = useDebouncedPreviewValue(input.amount, debounceMs);
+  const debouncedDate = useDebouncedPreviewValue(input.date, debounceMs);
+
   const amountReady = useMemo(() => {
-    const raw = parseFloat(String(input.amount).trim());
+    const raw = parseFloat(String(debouncedAmount).trim());
     return Number.isFinite(raw) && raw !== 0;
-  }, [input.amount]);
+  }, [debouncedAmount]);
 
   const excludeKey = (input.excludeTransactionIds ?? []).slice().sort((a, b) => a - b).join(",");
 
@@ -24,7 +41,7 @@ export function useTransferBalancePreview(input: {
     (input.enabled ?? true) &&
     input.fromAccountId != null &&
     input.toAccountId != null &&
-    Boolean(input.date) &&
+    Boolean(debouncedDate) &&
     amountReady;
 
   const query = useQuery({
@@ -33,16 +50,16 @@ export function useTransferBalancePreview(input: {
       "transfer-preview",
       input.fromAccountId,
       input.toAccountId,
-      input.date,
-      input.amount.trim(),
+      debouncedDate,
+      debouncedAmount.trim(),
       excludeKey,
     ],
     queryFn: () =>
       previewTransferBalances({
         from_account_id: input.fromAccountId!,
         to_account_id: input.toAccountId!,
-        amount: input.amount.trim(),
-        date: input.date,
+        amount: debouncedAmount.trim(),
+        date: debouncedDate,
         exclude_transaction_ids: input.excludeTransactionIds,
       }),
     enabled,

@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Account
 from core.models import Household, HouseholdMembership
+from transactions.models import Transaction, Transfer
 from transactions.services.posting import create_transfer
 from transactions.services.transfer_balance_preview import preview_transfer_balances
 
@@ -88,3 +89,16 @@ class TransferBalancePreviewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("source_balance_before", response.data)
         self.assertIn("source_balance_after", response.data)
+
+    def test_preview_does_not_persist_transactions_or_transfers(self):
+        txn_before = Transaction.objects.count()
+        transfer_before = Transfer.objects.count()
+        preview_transfer_balances(
+            self.user,
+            from_account_id=self.checking.pk,
+            to_account_id=self.savings.pk,
+            amount=Decimal("15.00"),
+            transfer_date=date.today(),
+        )
+        self.assertEqual(Transaction.objects.count(), txn_before)
+        self.assertEqual(Transfer.objects.count(), transfer_before)

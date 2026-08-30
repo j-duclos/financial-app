@@ -41,6 +41,29 @@ describe("Transactions request orchestration", () => {
     expect(transactionsData).toMatch(/forecastBalanceFromUpcoming/);
   });
 
+  it("does not auto-drain filtered display history pages", () => {
+    expect(transactionsData).not.toMatch(/displayHistoryQuery\.fetchNextPage/);
+    expect(transactionsData).not.toMatch(
+      /while \(.*hasNextPage.*fetchNextPage/s
+    );
+  });
+
+  it("settled filtered empty state after first page without draining pagination", () => {
+    expect(transactionsData).toMatch(/displayQuerySettled/);
+    expect(transactionsData).toMatch(/displayHistoryQuery\.isFetched/);
+    expect(transactionsData).not.toMatch(
+      /displayQuerySettled[\s\S]*!displayHistoryQuery\.hasNextPage/
+    );
+  });
+
+  it("header balances use canonical unfiltered history, not display query", () => {
+    expect(transactionsData).toMatch(/canonicalHistoryTransactions/);
+    expect(transactionsData).toMatch(/headerCurrentFromLedger/);
+    expect(transactionsData).toMatch(/headerForecastBalance/);
+    expect(transactionsData).toMatch(/forecastBalanceFromUpcoming\(upcoming\)/);
+    expect(transactionsData).toMatch(/fetchNextPage: activeHistoryQuery\.fetchNextPage/);
+  });
+
   it("transfer preview uses backend previewTransferBalances", () => {
     expect(previewSource).toMatch(/previewTransferBalances/);
     expect(previewSource).not.toMatch(/balanceBefore - Math\.abs/);
@@ -59,5 +82,11 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/initialScrollIndex/);
     expect(transactionsScreen).toMatch(/getItemLayout/);
     expect(transactionsScreen).toMatch(/onContentSizeChange/);
+  });
+
+  it("paginates filtered history on end reached", () => {
+    expect(transactionsScreen).toMatch(/onEndReached/);
+    expect(transactionsScreen).toMatch(/fetchNextPage/);
+    expect(transactionsScreen).toMatch(/displayQuerySettled/);
   });
 });

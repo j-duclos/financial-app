@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getTimeline, listTransactions } from "@budget-app/api-client";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import {
   DEFAULT_TIME_FILTER,
@@ -138,22 +138,6 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     [displayHistoryQuery.data?.pages]
   );
 
-  /** Drain display query pages so search/category empty states reflect full-range results. */
-  useEffect(() => {
-    if (
-      needsServerFilteredHistory &&
-      displayHistoryQuery.hasNextPage &&
-      !displayHistoryQuery.isFetchingNextPage
-    ) {
-      void displayHistoryQuery.fetchNextPage();
-    }
-  }, [
-    needsServerFilteredHistory,
-    displayHistoryQuery.hasNextPage,
-    displayHistoryQuery.isFetchingNextPage,
-    displayHistoryQuery.fetchNextPage,
-  ]);
-
   const historyForList = needsServerFilteredHistory
     ? displayHistoryTransactions
     : canonicalHistoryTransactions;
@@ -232,9 +216,8 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
 
   const displayQuerySettled =
     !needsServerFilteredHistory ||
-    (!displayHistoryQuery.isPending &&
-      !displayHistoryQuery.hasNextPage &&
-      !displayHistoryQuery.isFetchingNextPage);
+    displayHistoryQuery.isFetched ||
+    displayHistoryQuery.isError;
 
   const timelineLoading = wantsTimeline && timelineQuery.isPending && !timelineQuery.data;
   const recentLoading =

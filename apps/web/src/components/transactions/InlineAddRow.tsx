@@ -30,10 +30,9 @@ type Props = {
   isPending: boolean;
   currency: string;
   inlinePayToCardAccountId: number | null;
-  inlineCardTimelineLoading: boolean;
+  inlineTransferPreviewLoading: boolean;
   inlineOwedAsOfPaymentDate: number | null;
   inlineBankTransferDestId: number | null;
-  inlineBankDestTimelineLoading: boolean;
   inlineDestPickAccount: Account | null | undefined;
   inlineBankDestBalanceBefore: number | null;
   inlineBankDestBalanceAfter: number | null;
@@ -52,10 +51,9 @@ export default function InlineAddRow({
   isPending,
   currency,
   inlinePayToCardAccountId,
-  inlineCardTimelineLoading,
+  inlineTransferPreviewLoading,
   inlineOwedAsOfPaymentDate,
   inlineBankTransferDestId,
-  inlineBankDestTimelineLoading,
   inlineDestPickAccount,
   inlineBankDestBalanceBefore,
   inlineBankDestBalanceAfter,
@@ -179,7 +177,7 @@ export default function InlineAddRow({
           {inlinePayToCardAccountId != null && (
             <span>
               Owed on card (as of {formatDateDisplay(form.date)}):{" "}
-              {inlineCardTimelineLoading ? (
+              {inlineTransferPreviewLoading ? (
                 "Loading…"
               ) : inlineOwedAsOfPaymentDate != null ? (
                 <strong className="text-red-700 tabular-nums">
@@ -193,7 +191,7 @@ export default function InlineAddRow({
           {inlineBankTransferDestId != null && (
             <span>
               {inlineDestPickAccount?.name ?? "Account"}:{" "}
-              {inlineBankDestTimelineLoading ? (
+              {inlineTransferPreviewLoading ? (
                 "Loading…"
               ) : (
                 <>
