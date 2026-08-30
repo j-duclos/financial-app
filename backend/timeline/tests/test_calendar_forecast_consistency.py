@@ -213,6 +213,120 @@ def _lookback_start(today: date) -> date:
 
 
 @pytest.mark.django_db
+def test_calendar_summary_first_and_chunk_first_match_financials(
+    api_client, user, household, main_checking
+):
+    """Summary-first and chunk-first must return identical canonical financial results."""
+    from timeline.services.calendar import calendar_chunk_payload, calendar_summary_payload
+    from timeline.services.calendar_chunks import calendar_chunk_windows
+
+    today = date.today()
+    _planned(main_checking, today + timedelta(days=5), "Rent", Decimal("-400.00"))
+    _planned(main_checking, today + timedelta(days=18), "Paycheck", Decimal("1200.00"))
+    cache.clear()
+
+    start = _lookback_start(today)
+    end = today + timedelta(days=30)
+    windows = calendar_chunk_windows(start, end, today)
+    params = {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "forecast_days": "30",
+        "lookback_months": "1",
+        "household_id": str(household.id),
+        "account_id": str(main_checking.id),
+    }
+    api_client.force_authenticate(user=user)
+
+    summary_first = api_client.get("/api/timeline/calendar/summary/", params)
+    assert summary_first.status_code == 200, summary_first.content
+    chunk_after_summary = api_client.get(
+        "/api/timeline/calendar/chunk/",
+        {
+            **params,
+            "chunk_start": windows[0][0].isoformat(),
+            "chunk_end": windows[0][1].isoformat(),
+        },
+    )
+    assert chunk_after_summary.status_code == 200, chunk_after_summary.content
+
+    cache.clear()
+    chunk_first = api_client.get(
+        "/api/timeline/calendar/chunk/",
+        {
+            **params,
+            "chunk_start": windows[0][0].isoformat(),
+            "chunk_end": windows[0][1].isoformat(),
+        },
+    )
+    assert chunk_first.status_code == 200, chunk_first.content
+    summary_after_chunk = api_client.get("/api/timeline/calendar/summary/", params)
+    assert summary_after_chunk.status_code == 200, summary_after_chunk.content
+
+    s1 = summary_first.json()["summary"]
+    s2 = summary_after_chunk.json()["summary"]
+    assert s1["lowest_balance"] == s2["lowest_balance"]
+    assert s1["next_risk_date"] == s2["next_risk_date"]
+    assert s1["total_income"] == s2["total_income"]
+    assert s1["total_expenses"] == s2["total_expenses"]
+    assert s1.get("safe_until") == s2.get("safe_until")
+
+    days_a = chunk_after_summary.json()["days"]
+    days_b = chunk_first.json()["days"]
+    assert len(days_a) == len(days_b)
+    for da, db in zip(days_a, days_b):
+        assert da["date"] == db["date"]
+        assert da["ending_balance"] == db["ending_balance"]
+        assert da["lowest_balance"] == db["lowest_balance"]
+
+
+@pytest.mark.django_db
+def test_calendar_summary_is_side_effect_free_for_chunk(
+    user, household, main_checking
+):
+    """Chunk built before summary must match chunk built after summary (same cache epoch)."""
+    from timeline.services.calendar import calendar_chunk_payload
+    from timeline.services.calendar_cache import get_or_build_calendar_for_chunk, get_or_build_canonical_calendar
+    from timeline.services.calendar_chunks import calendar_chunk_windows
+
+    today = date.today()
+    _planned(main_checking, today + timedelta(days=7), "Bill", Decimal("-75.00"))
+    cache.clear()
+
+    start = _lookback_start(today)
+    end = today + timedelta(days=30)
+    windows = calendar_chunk_windows(start, end, today)
+
+    chunk_only = get_or_build_calendar_for_chunk(
+        user,
+        range_start=start,
+        range_end=end,
+        chunk_start=windows[0][0],
+        chunk_end=windows[0][1],
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        projection_only=True,
+        forecast_days=30,
+    )
+    payload_chunk_first = calendar_chunk_payload(chunk_only, windows[0][0], windows[0][1])
+
+    full = get_or_build_canonical_calendar(
+        user,
+        start_date=start,
+        end_date=end,
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        projection_only=True,
+        forecast_days=30,
+    )
+    payload_summary_first = calendar_chunk_payload(full, windows[0][0], windows[0][1])
+
+    assert payload_chunk_first["days"] == payload_summary_first["days"]
+
+
+@pytest.mark.django_db
 def test_calendar_household_lookback_with_past_planned(api_client, user, household, main_checking):
     """Household calendar must not mix historical planned rows into risk metrics."""
     today = date.today()

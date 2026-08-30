@@ -38,6 +38,7 @@ import {
   dayMap,
   isDateBeforeLookback,
   isDateWithinForecast,
+  monthInCalendarRange,
   selectedDateAfterMonthChange,
   shiftMonth,
 } from "./calendarUtils";
@@ -60,7 +61,10 @@ export function CalendarScreen() {
   const [eventFilter, setEventFilter] = useState<CalendarEventFilter>(DEFAULT_CALENDAR_EVENT_FILTER);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
-  const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
+  const accountOptionsQuery = useAccountOptions({
+    householdId: defaultHouseholdId,
+    enabled: filtersOpen || accountId !== "",
+  });
   const accounts = accountOptionsQuery.accounts;
 
   const householdId = resolveHouseholdId(defaultHouseholdId, accountId || null, accounts);
@@ -82,11 +86,34 @@ export function CalendarScreen() {
     [forecastDays, accountId, householdId]
   );
 
-  const { days, summary, isLoading, isError, error, isFetching, refetchCalendar } = useCalendarData({
+  const {
+    days,
+    summary,
+    range,
+    visibleMonthInRange,
+    visibleMonthRangeState,
+    isLoading,
+    isError,
+    error,
+    summaryError,
+    refetchCalendar,
+    refetchSummary,
+  } = useCalendarData({
     visibleYear,
     visibleMonth,
     filters,
   });
+
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  const refreshCalendar = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refetchCalendar();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refetchCalendar]);
 
   const dayByDate = useMemo(() => dayMap(days), [days]);
   const selectedDay = selectedDate ? dayByDate.get(selectedDate) : undefined;
@@ -113,6 +140,16 @@ export function CalendarScreen() {
     const next = shiftMonth(visibleYear, visibleMonth, 1);
     goToMonth(next.year, next.month);
   }, [visibleYear, visibleMonth, goToMonth]);
+
+  const prevMonthInRange = useMemo(() => {
+    const prev = shiftMonth(visibleYear, visibleMonth, -1);
+    return monthInCalendarRange(prev.year, prev.month, range);
+  }, [visibleYear, visibleMonth, range]);
+
+  const nextMonthInRange = useMemo(() => {
+    const next = shiftMonth(visibleYear, visibleMonth, 1);
+    return monthInCalendarRange(next.year, next.month, range);
+  }, [visibleYear, visibleMonth, range]);
 
   const goToday = useCallback(() => {
     const now = new Date();
@@ -205,7 +242,7 @@ export function CalendarScreen() {
       <ScrollView
         contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
         refreshControl={
-          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={() => refetchCalendar()} />
+          <RefreshControl refreshing={pullRefreshing} onRefresh={() => void refreshCalendar()} />
         }
       >
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -223,6 +260,8 @@ export function CalendarScreen() {
 
         <CalendarNextRiskBanner
           summary={summary}
+          summaryError={summaryError}
+          onRetrySummary={() => void refetchSummary()}
           dayOnRiskDate={dayOnNextRisk}
           forecastDays={forecastDays}
           onNavigate={(path) => router.push(path as never)}
@@ -236,15 +275,38 @@ export function CalendarScreen() {
             marginBottom: 4,
           }}
         >
-          <IconButton name="chevron-left" accessibilityLabel="Previous month" onPress={goPrevMonth} />
+          <IconButton
+            name="chevron-left"
+            accessibilityLabel="Previous month"
+            onPress={goPrevMonth}
+            disabled={!prevMonthInRange}
+          />
           <Pressable onPress={goToday} accessibilityRole="button" accessibilityLabel="Go to today">
             <Text style={{ color: theme.colors.tint, fontWeight: "700" }}>Today</Text>
           </Pressable>
-          <IconButton name="chevron-right" accessibilityLabel="Next month" onPress={goNextMonth} />
+          <IconButton
+            name="chevron-right"
+            accessibilityLabel="Next month"
+            onPress={goNextMonth}
+            disabled={!nextMonthInRange}
+          />
         </View>
 
-        {isError ? (
-          <ErrorState message={describeApiError(error)} onRetry={() => refetchCalendar()} />
+        {!visibleMonthInRange ? (
+          <EmptyState
+            title={
+              visibleMonthRangeState === "before_history"
+                ? "Before history window"
+                : "Outside forecast window"
+            }
+            message={
+              visibleMonthRangeState === "before_history"
+                ? "This month is before the loaded history window. Choose a more recent month or widen history in filters."
+                : "This month is outside the current forecast/history range. Adjust your forecast window to include it."
+            }
+          />
+        ) : isError ? (
+          <ErrorState message={describeApiError(error)} onRetry={() => void refreshCalendar()} />
         ) : isLoading && days.length === 0 ? (
           <SkeletonBlock lines={10} />
         ) : (

@@ -22,7 +22,6 @@ import {
   parseTimelineViewParam,
   pickHorizonForFocusDate,
   timelineDayForDate,
-  computeSafeUntilNextIncome,
   type TimelineHorizon,
   type TimelineLookbackMonths,
   type TimelineViewMode,
@@ -87,21 +86,29 @@ function CalendarSkeleton() {
   );
 }
 
+/** Backend-owned safe_until only — no client-side financial fallback from calendar rows. */
 function safeUntilFromSummary(
-  summary: { safe_until?: { next_income_date: string | null; safe_amount: string; unsafe_date: string | null; obligations_before_income: string; current_balance: string } | null } | undefined,
-  days: TimelineCalendarDay[]
+  summary:
+    | {
+        safe_until?: {
+          next_income_date: string | null;
+          safe_amount: string;
+          unsafe_date: string | null;
+          obligations_before_income: string;
+          current_balance: string;
+        } | null;
+      }
+    | undefined
 ): SafeUntilSummary | null {
   const raw = summary?.safe_until;
-  if (raw) {
-    return {
-      nextIncomeDate: raw.next_income_date,
-      safeAmount: Number(raw.safe_amount),
-      unsafeDate: raw.unsafe_date,
-      obligationsBeforeIncome: Number(raw.obligations_before_income),
-      currentBalance: Number(raw.current_balance),
-    };
-  }
-  return days.length ? computeSafeUntilNextIncome(days) : null;
+  if (!raw) return null;
+  return {
+    nextIncomeDate: raw.next_income_date,
+    safeAmount: Number(raw.safe_amount),
+    unsafeDate: raw.unsafe_date,
+    obligationsBeforeIncome: Number(raw.obligations_before_income),
+    currentBalance: Number(raw.current_balance),
+  };
 }
 
 export default function Timeline() {
@@ -182,8 +189,8 @@ export default function Timeline() {
     [calendar.upcomingDays, viewMode]
   );
   const safeUntil = useMemo(
-    () => (viewMode === "calendar" ? safeUntilFromSummary(calendar.summary, calendar.days) : null),
-    [calendar.summary, calendar.days, viewMode]
+    () => (viewMode === "calendar" ? safeUntilFromSummary(calendar.summary) : null),
+    [calendar.summary, viewMode]
   );
 
   const onSelectDay = useCallback((day: TimelineCalendarDay) => {
@@ -330,21 +337,27 @@ export default function Timeline() {
             label={CALENDAR_SUMMARY.safeUntilNextIncome.label}
             help={CALENDAR_SUMMARY.safeUntilNextIncome.help}
             value={
-              safeUntil?.nextIncomeDate
-                ? safeUntil.safeAmount >= 0
-                  ? `Safe until ${formatDateDisplay(safeUntil.nextIncomeDate)}: ${formatCurrency(safeUntil.safeAmount, "USD")}`
-                  : `Unsafe before next paycheck: ${formatCurrency(safeUntil.safeAmount, "USD")}`
-                : "No projected income in horizon"
+              summary.safe_until == null
+                ? "Unavailable"
+                : safeUntil?.nextIncomeDate
+                  ? safeUntil.safeAmount >= 0
+                    ? `Safe until ${formatDateDisplay(safeUntil.nextIncomeDate)}: ${formatCurrency(safeUntil.safeAmount, "USD")}`
+                    : `Unsafe before next paycheck: ${formatCurrency(safeUntil.safeAmount, "USD")}`
+                  : "No projected income in horizon"
             }
             valueClassName={
-              safeUntil?.nextIncomeDate
-                ? safeUntil.safeAmount >= 0
-                  ? "text-emerald-700"
-                  : "text-red-700"
-                : "text-gray-700"
+              summary.safe_until == null
+                ? "text-gray-500"
+                : safeUntil?.nextIncomeDate
+                  ? safeUntil.safeAmount >= 0
+                    ? "text-emerald-700"
+                    : "text-red-700"
+                  : "text-gray-700"
             }
             subtitle={
-              safeUntil?.nextIncomeDate ? (
+              summary.safe_until == null ? (
+                <span className="text-gray-500">Safe-until summary not loaded</span>
+              ) : safeUntil?.nextIncomeDate ? (
                 safeUntil.safeAmount >= 0 ? (
                   <span className="text-gray-500">
                     Current balance less obligations before next income

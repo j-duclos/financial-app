@@ -732,6 +732,15 @@ describe("shortfall banner navigation wiring", () => {
     expect(source).not.toMatch(/setSelectedDate/);
   });
 
+  it("CalendarNextRiskBanner surfaces summary load failure", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "CalendarNextRiskBanner.tsx"),
+      "utf8"
+    );
+    expect(source).toMatch(/summaryError/);
+    expect(source).toMatch(/Could not load risk summary/);
+  });
+
   it("CalendarScreen wires account risk tap to transactions", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "CalendarScreen.tsx"),

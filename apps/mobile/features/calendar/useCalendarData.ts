@@ -5,8 +5,9 @@ import type { TimelineCalendarDay } from "@budget-app/shared";
 import { todayStr } from "@/lib/dates";
 import { calendarQueryKeys } from "./queryKeys";
 import {
+  calendarMonthRangeState,
   calendarRangeForSelection,
-  monthBounds,
+  monthInCalendarRange,
 } from "./calendarUtils";
 import {
   calendarChunkWindows,
@@ -51,32 +52,44 @@ export function useCalendarData({
     [filters.forecastDays, filters.lookbackMonths, todayIso]
   );
 
-  const visibleBounds = useMemo(
-    () => monthBounds(visibleYear, visibleMonth),
-    [visibleYear, visibleMonth]
+  const visibleMonthInRange = useMemo(
+    () => monthInCalendarRange(visibleYear, visibleMonth, range),
+    [visibleYear, visibleMonth, range]
+  );
+
+  const visibleMonthRangeState = useMemo(
+    () =>
+      calendarMonthRangeState(
+        visibleYear,
+        visibleMonth,
+        range,
+        filters.lookbackMonths,
+        todayIso
+      ),
+    [visibleYear, visibleMonth, range, filters.lookbackMonths, todayIso]
   );
 
   const chunkWindow = useMemo(() => {
+    if (!visibleMonthInRange) return null;
     const windows = calendarChunkWindows(range.start, range.end, todayIso);
-    return (
-      chunkWindowForMonth(windows, visibleYear, visibleMonth) ??
-      windows[0] ?? {
-        start: visibleBounds.start,
-        end: visibleBounds.end,
-      }
-    );
-  }, [range.start, range.end, todayIso, visibleYear, visibleMonth, visibleBounds.start, visibleBounds.end]);
+    return chunkWindowForMonth(windows, visibleYear, visibleMonth) ?? null;
+  }, [range.start, range.end, todayIso, visibleYear, visibleMonth, visibleMonthInRange]);
 
   const enabled = Boolean(filters.householdId);
+  const chunkEnabled = enabled && visibleMonthInRange && chunkWindow != null;
 
   const visibleChunkQuery = useQuery({
-    queryKey: calendarQueryKeys.chunk(filters, chunkWindow.start, chunkWindow.end),
+    queryKey: calendarQueryKeys.chunk(
+      filters,
+      chunkWindow?.start ?? "none",
+      chunkWindow?.end ?? "none"
+    ),
     queryFn: ({ signal }) =>
       getTimelineCalendarChunk(
-        chunkParams(filters, range, chunkWindow.start, chunkWindow.end),
+        chunkParams(filters, range, chunkWindow!.start, chunkWindow!.end),
         { signal }
       ),
-    enabled,
+    enabled: chunkEnabled,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -102,27 +115,39 @@ export function useCalendarData({
   });
 
   const days = useMemo((): TimelineCalendarDay[] => {
+    if (!visibleMonthInRange || !chunkWindow) return [];
     const loaded = visibleChunkQuery.data?.days;
     if (!loaded) return [];
     return [...loaded].sort((a, b) => a.date.localeCompare(b.date));
-  }, [visibleChunkQuery.data?.days]);
+  }, [visibleChunkQuery.data?.days, visibleMonthInRange, chunkWindow]);
 
-  const refetchCalendar = useCallback(() => {
-    void visibleChunkQuery.refetch();
-    void summaryQuery.refetch();
-  }, [visibleChunkQuery, summaryQuery]);
+  const refetchCalendar = useCallback(async () => {
+    const tasks: Promise<unknown>[] = [summaryQuery.refetch()];
+    if (chunkEnabled) {
+      tasks.push(visibleChunkQuery.refetch());
+    }
+    await Promise.all(tasks);
+  }, [chunkEnabled, summaryQuery, visibleChunkQuery]);
 
   return {
     range,
+    visibleMonthInRange,
+    visibleMonthRangeState,
     days,
     summary: summaryQuery.data?.summary,
-    isLoading: enabled && days.length === 0 && (visibleChunkQuery.isLoading || visibleChunkQuery.isPending),
+    isLoading:
+      visibleMonthInRange &&
+      chunkEnabled &&
+      days.length === 0 &&
+      (visibleChunkQuery.isLoading || visibleChunkQuery.isPending),
     isSummaryLoading: enabled && summaryQuery.isLoading && !summaryQuery.data,
-    isError: visibleChunkQuery.isError,
+    isError: visibleMonthInRange && chunkEnabled && visibleChunkQuery.isError,
     summaryError: summaryQuery.isError,
+    summaryErrorMessage: summaryQuery.error,
     error: visibleChunkQuery.error ?? summaryQuery.error,
     isFetching: visibleChunkQuery.isFetching,
     refetchCalendar,
+    refetchSummary: () => summaryQuery.refetch(),
   };
 }
 

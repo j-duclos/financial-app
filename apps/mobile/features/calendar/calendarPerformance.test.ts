@@ -20,6 +20,14 @@ describe("Calendar request orchestration", () => {
     expect(calendarScreen).toMatch(/useAccountOptions/);
   });
 
+  it("lazy-loads account options when filters closed and all accounts selected", () => {
+    expect(calendarScreen).toMatch(/enabled: filtersOpen \|\| accountId !== ""/);
+  });
+
+  it("does not fetch account options unconditionally on mount", () => {
+    expect(calendarScreen).not.toMatch(/useAccountOptions\(\{ householdId: defaultHouseholdId \}\)/);
+  });
+
   it("does not block calendar render on account picker loading", () => {
     expect(calendarScreen).not.toMatch(/accountsQuery\.isLoading && !accountsQuery\.data/);
     expect(calendarScreen).toMatch(/accountsLoading/);

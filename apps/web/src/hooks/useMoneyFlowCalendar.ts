@@ -153,8 +153,7 @@ export function useMoneyFlowCalendar({
 
   const summaryEnabled =
     viewMode === "calendar" &&
-    Boolean(householdId) &&
-    (eagerAll || firstChunkReady);
+    Boolean(householdId);
 
   const summaryQuery = useQuery({
     queryKey: ["calendar-summary", horizon, lookbackMonths, accountId, scenarioId, householdId],
@@ -175,13 +174,6 @@ export function useMoneyFlowCalendar({
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
-
-  useEffect(() => {
-    if (!summaryQuery.isSuccess || !chunkQueries[0]) return;
-    void chunkQueries[0].refetch();
-    // First-chunk refetch after full-range summary so recovery markers match canonical days.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summaryQuery.isSuccess]);
 
   useEffect(() => {
     if (viewMode !== "calendar" || eagerAll || !firstChunkReady) return;

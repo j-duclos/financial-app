@@ -9,13 +9,52 @@ import type { TimelineCalendarDay } from "@budget-app/shared";
 
 type Props = {
   summary: TimelineCalendarSummary | undefined;
+  summaryError?: boolean;
+  onRetrySummary?: () => void;
   dayOnRiskDate?: TimelineCalendarDay;
   forecastDays: number;
   onNavigate: (path: ReturnType<typeof transactionsForForecastRiskPath>) => void;
 };
 
-export function CalendarNextRiskBanner({ summary, dayOnRiskDate, forecastDays, onNavigate }: Props) {
+export function CalendarNextRiskBanner({
+  summary,
+  summaryError,
+  onRetrySummary,
+  dayOnRiskDate,
+  forecastDays,
+  onNavigate,
+}: Props) {
   const theme = useTheme();
+
+  if (summaryError) {
+    return (
+      <View
+        style={{
+          paddingVertical: 10,
+          paddingHorizontal: 12,
+          marginBottom: 8,
+          borderRadius: theme.radius.md,
+          backgroundColor: theme.colors.surfaceMuted,
+          gap: 8,
+        }}
+        accessibilityRole="alert"
+      >
+        <Text style={{ color: theme.colors.critical, fontWeight: "700", fontSize: 13 }}>
+          Could not load risk summary
+        </Text>
+        {onRetrySummary ? (
+          <Pressable
+            onPress={onRetrySummary}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading risk summary"
+          >
+            <Text style={{ color: theme.colors.tint, fontWeight: "600", fontSize: 13 }}>Retry</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
+
   const banner = summary ? nextCashShortfallBanner(summary, dayOnRiskDate) : null;
 
   if (banner) {

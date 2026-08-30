@@ -23,6 +23,72 @@ CALENDAR_CACHE_SECONDS = 300
 _LOCK_TIMEOUT_SECONDS = 60
 _LOCK_WAIT_SECONDS = 60.0
 _LOCK_POLL_SECONDS = 0.05
+# When summary and first-chunk start together, let chunk wait briefly for full-range cache.
+_FULL_RANGE_WAIT_SECONDS = 2.0
+
+
+def _calendar_filter_fingerprint(
+    *,
+    user_id: int,
+    household_id: int | None,
+    account_id: int | None,
+    scenario_id: int | None,
+    start_date: date,
+    as_of_date: date,
+    projection_only: bool,
+    forecast_days: int | None = None,
+) -> str:
+    fd = forecast_days if forecast_days is not None else 0
+    return (
+        f"timeline_calendar_build:{CALENDAR_CACHE_VERSION}:user:{user_id}"
+        f":hh:{household_id or 0}:acct:{account_id or 0}:sc:{scenario_id or 0}"
+        f":start:{start_date.isoformat()}:fd:{fd}:asof:{as_of_date.isoformat()}"
+        f":proj:{int(projection_only)}"
+    )
+
+
+def wait_for_canonical_calendar(
+    user,
+    *,
+    start_date: date,
+    end_date: date,
+    scenario_id: Optional[int] = None,
+    account_id: Optional[int] = None,
+    household_id: Optional[int] = None,
+    as_of_date: Optional[date] = None,
+    projection_only: bool = True,
+    forecast_days: Optional[int] = None,
+    timeout_seconds: float = _FULL_RANGE_WAIT_SECONDS,
+    require_build_lock: bool = False,
+) -> dict[str, Any] | None:
+    """Wait for a full-range calendar cache (summary/chunk parallel start)."""
+    today = as_of_date or date.today()
+    key = calendar_canonical_cache_key(
+        user_id=user.pk,
+        household_id=household_id,
+        account_id=account_id,
+        scenario_id=scenario_id,
+        start_date=start_date,
+        end_date=end_date,
+        as_of_date=today,
+        projection_only=projection_only,
+        forecast_days=forecast_days,
+    )
+    lock_key = f"{_calendar_filter_fingerprint(user_id=user.pk, household_id=household_id, account_id=account_id, scenario_id=scenario_id, start_date=start_date, as_of_date=today, projection_only=projection_only, forecast_days=forecast_days)}:lock"
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        cached = cache.get(key)
+        if isinstance(cached, dict) and cached.get("days") is not None:
+            if perf_enabled():
+                perf_print(
+                    "[PERF] calendar_chunk source=waited_full_range_cache "
+                    f"end={end_date.isoformat()}"
+                )
+            return cached
+        if require_build_lock and cache.get(lock_key) is None:
+            break
+        time.sleep(_LOCK_POLL_SECONDS)
+    return None
 
 
 def calendar_canonical_cache_key(
@@ -81,7 +147,7 @@ def get_or_build_canonical_calendar(
             )
         return cached
 
-    lock_key = f"{key}:lock"
+    lock_key = f"{_calendar_filter_fingerprint(user_id=user.pk, household_id=household_id, account_id=account_id, scenario_id=scenario_id, start_date=start_date, as_of_date=today, projection_only=projection_only, forecast_days=forecast_days)}:lock"
     got_lock = cache.add(lock_key, "1", timeout=_LOCK_TIMEOUT_SECONDS)
     if not got_lock:
         deadline = time.monotonic() + _LOCK_WAIT_SECONDS
@@ -190,6 +256,35 @@ def get_or_build_calendar_for_chunk(
     windows = calendar_chunk_windows(range_start, range_end, today)
     is_first = bool(windows) and chunk_start == windows[0][0] and chunk_end == windows[0][1]
     if is_first and span_days > SHORT_RANGE_DAYS:
+        waited = wait_for_canonical_calendar(
+            user,
+            start_date=range_start,
+            end_date=range_end,
+            scenario_id=scenario_id,
+            account_id=account_id,
+            household_id=household_id,
+            as_of_date=today,
+            projection_only=projection_only,
+            forecast_days=forecast_days,
+            timeout_seconds=0.15,
+        )
+        if waited is not None:
+            return waited
+        waited = wait_for_canonical_calendar(
+            user,
+            start_date=range_start,
+            end_date=range_end,
+            scenario_id=scenario_id,
+            account_id=account_id,
+            household_id=household_id,
+            as_of_date=today,
+            projection_only=projection_only,
+            forecast_days=forecast_days,
+            timeout_seconds=_FULL_RANGE_WAIT_SECONDS,
+            require_build_lock=True,
+        )
+        if waited is not None:
+            return waited
         if perf_enabled():
             perf_print(
                 "[PERF] calendar_chunk source=near_term_build "

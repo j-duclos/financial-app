@@ -32,6 +32,39 @@ export function monthBounds(year: number, month: number): { start: string; end: 
   };
 }
 
+/** True when any day in the month grid overlaps the calendar forecast/history range. */
+export function monthInCalendarRange(
+  year: number,
+  month: number,
+  range: { start: string; end: string }
+): boolean {
+  const bounds = monthBounds(year, month);
+  return bounds.start <= range.end && bounds.end >= range.start;
+}
+
+export type CalendarMonthRangeState =
+  | "in_range"
+  | "before_history"
+  | "after_forecast";
+
+/** Classify a visible month relative to the selected forecast window and lookback. */
+export function calendarMonthRangeState(
+  year: number,
+  month: number,
+  range: { start: string; end: string },
+  lookbackMonths: number,
+  todayIso: string = todayStr()
+): CalendarMonthRangeState {
+  if (!monthInCalendarRange(year, month, range)) {
+    const bounds = monthBounds(year, month);
+    if (isDateBeforeLookback(bounds.end, lookbackMonths, todayIso)) {
+      return "before_history";
+    }
+    return "after_forecast";
+  }
+  return "in_range";
+}
+
 export function buildMonthGrid(year: number, month: number): (string | null)[] {
   const first = new Date(year, month, 1);
   const startPad = first.getDay();

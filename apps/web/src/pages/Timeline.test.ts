@@ -33,4 +33,10 @@ describe("Calendar page structure", () => {
     expect(timelineSource).toMatch(/Calculating\.\.\./);
     expect(timelineSource).toMatch(/ensureMonthLoaded/);
   });
+
+  it("does not compute safe-until from calendar rows on the client", () => {
+    expect(timelineSource).not.toMatch(/computeSafeUntilNextIncome/);
+    expect(timelineSource).toMatch(/safeUntilFromSummary/);
+    expect(timelineSource).toMatch(/summary\.safe_until/);
+  });
 });

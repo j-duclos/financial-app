@@ -26,10 +26,15 @@ describe("useMoneyFlowCalendar", () => {
     expect(source).toMatch(/cancelQueries\(\{ queryKey: \["calendar-summary"\] \}\)/);
   });
 
-  it("defers full-range summary until the first chunk is ready on large ranges", () => {
+  it("loads calendar summary in parallel with first chunk", () => {
     expect(source).toMatch(/shouldEagerFetchAllChunks/);
-    expect(source).toMatch(/eagerAll \|\| firstChunkReady/);
+    expect(source).not.toMatch(/eagerAll \|\| firstChunkReady/);
     expect(source).not.toMatch(/lastEnabledSuccess && loadCount < windows.length/);
+  });
+
+  it("does not force a second first-chunk refetch after summary succeeds", () => {
+    expect(source).not.toMatch(/chunkQueries\[0\]\.refetch\(\)/);
+    expect(source).not.toMatch(/First-chunk refetch after full-range summary/);
   });
 
   it("loads later chunks from idle time or approaching a month, and passes abort signals", () => {
