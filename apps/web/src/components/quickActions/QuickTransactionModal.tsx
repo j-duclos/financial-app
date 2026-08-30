@@ -458,9 +458,10 @@ export default function QuickTransactionModal({
                   ))}
                 </select>
               </div>
-              {showFixShortfallPreview && fromAccount && date ? (
+              {showFixShortfallPreview && fromAccount && date && transferToId ? (
                 <TransferSourceBalancePreview
                   sourceAccount={fromAccount}
+                  destinationAccountId={typeof transferToId === "number" ? transferToId : null}
                   transferDate={date}
                   transferAmount={amount}
                 />

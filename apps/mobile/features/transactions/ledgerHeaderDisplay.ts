@@ -8,8 +8,21 @@ import {
 /**
  * Canonical posted/current balance for an account ledger header.
  *
- * Uses the same field priority as web `accountLedgerDisplayBalance`.
- * NEVER uses projected / forecast / timeline running_balance fields.
+ * ## Current balance priority (Web + Mobile Transactions header)
+ *
+ * 1. **Pending-adjusted ledger** — when Pending Transactions has rows, Current is the
+ *    backend `balance_after` on the last pending row (same as the Pending section ending Bal).
+ * 2. **Posted ledger ending** — when no pending rows and canonical history is fully loaded,
+ *    Current is the backend `running_balance` on the last posted Recent row.
+ * 3. **Account API fallback** — when pending is empty and history pagination is incomplete,
+ *    or ledger rows lack balances, use `resolveAccountCurrentBalance` from the account summary
+ *    (`available_balance` for assets, signed `balance` for credit).
+ *
+ * Forecast is always separate: last upcoming `balance_after` or account projected fields.
+ * Client code must never recompute balances from amounts.
+ *
+ * Uses the same field priority as web `accountLedgerDisplayBalance` for API fallback.
+ * NEVER uses projected / forecast / timeline running_balance fields as Current.
  */
 export function resolveAccountCurrentBalance(
   account: {

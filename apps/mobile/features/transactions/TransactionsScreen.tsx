@@ -225,6 +225,7 @@ export function TransactionsScreen() {
     isRecentLoading,
     isTimelineLoading,
     wantsTimeline,
+    displayQuerySettled,
   } = useTransactionsData(filters, {
     forecastDays,
     forecastReady,
@@ -393,6 +394,7 @@ export function TransactionsScreen() {
   const showEmpty =
     filters.accountId != null &&
     !stillLoadingLedger &&
+    displayQuerySettled &&
     !hasActivity &&
     !placeholdersOnly &&
     !isError;

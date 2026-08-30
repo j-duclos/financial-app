@@ -333,6 +333,7 @@ describe("header balances independent of presentation filters", () => {
         history,
         today,
         showReconciled: filters.showReconciled,
+        historyComplete: true,
       }),
       forecast: forecastBalanceFromUpcoming(upcoming),
       activityRows: activityRowCount(filters),
@@ -381,5 +382,37 @@ describe("header balances independent of presentation filters", () => {
   it("Forecast uses last unfiltered upcoming balance_after", () => {
     expect(headerBalances({ ...base, amountMax: 1 }).forecast).toBe(forecastEnding);
     expect(headerBalances({ ...base, flow: "expense" }).forecast).toBe(forecastEnding);
+  });
+});
+
+describe("currentBalanceFromLedgerData pagination guard", () => {
+  it("returns null from history when pages remain — caller uses account API", () => {
+    const history = [
+      txn({
+        id: 1,
+        payee: "Partial page",
+        amount: "-10.00",
+        date: "2026-08-25",
+        running_balance: "50.00",
+      }),
+    ];
+    expect(
+      currentBalanceFromLedgerData({
+        pending: [],
+        history,
+        today: "2026-08-26",
+        showReconciled: false,
+        historyComplete: false,
+      })
+    ).toBeNull();
+    expect(
+      currentBalanceFromLedgerData({
+        pending: [],
+        history,
+        today: "2026-08-26",
+        showReconciled: false,
+        historyComplete: true,
+      })
+    ).toBe("50.00");
   });
 });

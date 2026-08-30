@@ -1,5 +1,6 @@
 from typing import Optional
 
+from datetime import date
 from decimal import Decimal
 
 from django.db.models import Prefetch, Q
@@ -906,3 +907,52 @@ class TransferCreateView(APIView):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         out = TransferSerializer(transfer)
         return Response(out.data, status=status.HTTP_201_CREATED)
+
+
+class TransferBalancePreviewView(APIView):
+    """Preview signed balances before/after a hypothetical transfer (no persistence)."""
+
+    permission_classes = [IsHouseholdMember]
+
+    def post(self, request: Request):
+        from decimal import Decimal
+
+        from transactions.services.transfer_balance_preview import preview_transfer_balances
+
+        raw_amount = request.data.get("amount")
+        raw_date = request.data.get("date")
+        from_id = request.data.get("from_account_id")
+        to_id = request.data.get("to_account_id")
+        exclude = request.data.get("exclude_transaction_ids") or []
+
+        if from_id is None or raw_date is None or raw_amount is None:
+            return Response(
+                {"detail": "from_account_id, date, and amount are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            amount = Decimal(str(raw_amount))
+        except Exception:
+            return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            transfer_date = date.fromisoformat(str(raw_date)[:10])
+        except ValueError:
+            return Response({"detail": "Invalid date."}, status=status.HTTP_400_BAD_REQUEST)
+
+        exclude_ids = [int(x) for x in exclude if x is not None]
+
+        try:
+            payload = preview_transfer_balances(
+                request.user,
+                from_account_id=int(from_id),
+                to_account_id=int(to_id) if to_id is not None else None,
+                amount=amount,
+                transfer_date=transfer_date,
+                exclude_transaction_ids=exclude_ids,
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(payload)

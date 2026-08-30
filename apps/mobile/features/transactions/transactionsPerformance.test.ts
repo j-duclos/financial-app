@@ -3,15 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const transactionsScreen = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "TransactionsScreen.tsx"),
-  "utf8"
-);
+const dir = dirname(fileURLToPath(import.meta.url));
 
-const transactionsData = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "useTransactionsData.ts"),
-  "utf8"
-);
+const transactionsData = readFileSync(join(dir, "useTransactionsData.ts"), "utf8");
+const previewSource = readFileSync(join(dir, "TransferSourceBalancePreview.tsx"), "utf8");
+const transactionsScreen = readFileSync(join(dir, "TransactionsScreen.tsx"), "utf8");
 
 describe("Transactions request orchestration", () => {
   it("uses default household instead of deriving from account list", () => {
@@ -26,7 +22,7 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/useAccountOptions/);
   });
 
-  it("loads recent history and timeline concurrently without serializing on history settle", () => {
+  it("loads recent and timeline concurrently without serializing on history settle", () => {
     expect(transactionsData).toMatch(/useInfiniteQuery/);
     expect(transactionsData).toMatch(/getTimeline/);
     expect(transactionsData).not.toMatch(/getReconcileSetup/);
@@ -36,11 +32,18 @@ describe("Transactions request orchestration", () => {
     expect(transactionsData).toMatch(
       /forecastReady && wantsTimeline && filters\.accountId != null/
     );
-    expect(transactionsData).toMatch(/enabled: filters\.accountId != null/);
-    expect(transactionsData).toMatch(/TRANSACTIONS_LEDGER_ORDERING/);
-    expect(transactionsData).toMatch(/include_running_balance/);
+    expect(transactionsData).toMatch(/canonicalHistoryQuery/);
+    expect(transactionsData).toMatch(/displayHistoryQuery/);
+    expect(transactionsData).toMatch(/listDisplay/);
+    expect(transactionsData).toMatch(/needsServerFilteredHistory/);
+    expect(transactionsData).toMatch(/historyComplete/);
     expect(transactionsData).toMatch(/currentBalanceFromLedgerData/);
     expect(transactionsData).toMatch(/forecastBalanceFromUpcoming/);
+  });
+
+  it("transfer preview uses backend previewTransferBalances", () => {
+    expect(previewSource).toMatch(/previewTransferBalances/);
+    expect(previewSource).not.toMatch(/balanceBefore - Math\.abs/);
   });
 
   it("uses memoized list item and flat list tuning props", () => {

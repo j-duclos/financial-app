@@ -3,91 +3,79 @@ import { Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import type { Account } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { getTimeline } from "@budget-app/api-client";
+import { previewTransferBalances } from "@budget-app/api-client";
 import { useTheme } from "@/theme";
-import { addDaysToIsoDate, formatDateDisplay, maxIsoDate, todayStr } from "@/lib/dates";
+import { formatDateDisplay } from "@/lib/dates";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { transactionQueryKeys } from "./queryKeys";
-
-const HINT_HISTORY_DAYS = 90;
-
-function projectionTimelineRangeForAsOf(asOfDate: string): { start: string; end: string; as_of: string } {
-  const as_of = maxIsoDate(asOfDate, todayStr());
-  return {
-    start: addDaysToIsoDate(as_of, -HINT_HISTORY_DAYS),
-    end: addDaysToIsoDate(as_of, 1),
-    as_of,
-  };
-}
-
-/** Last canonical running balance on or before asOf for one account (timeline walk). */
-function assetBalanceAsOfDateFromTimeline(
-  timeline: { date: string; account_id: number; amount: string; running_balance: string; transaction_id?: number | null }[],
-  accountId: number,
-  asOfDate: string
-): number | null {
-  const rows = timeline
-    .filter((r) => r.account_id === accountId && r.date <= asOfDate)
-    .sort((a, b) => a.date.localeCompare(b.date) || (a.transaction_id ?? 0) - (b.transaction_id ?? 0));
-  if (rows.length === 0) return null;
-  const last = rows[rows.length - 1]!;
-  const rb = parseFloat(last.running_balance);
-  return Number.isFinite(rb) ? rb : null;
-}
 
 type Props = {
   sourceAccount: Account | null;
+  destinationAccountId?: number | null;
   transferDateIso: string | null;
   transferAmount: string;
+  /** When editing, exclude linked legs so preview replaces rather than double-counts. */
+  excludeTransactionIds?: number[];
   label?: string;
 };
 
-/** Timeline-backed source balance hint for transfer/card payment entry (matches web semantics). */
+/** Backend-owned transfer balance preview — no client balance +/- amount arithmetic. */
 export function TransferSourceBalancePreview({
   sourceAccount,
+  destinationAccountId = null,
   transferDateIso,
   transferAmount,
+  excludeTransactionIds = [],
   label,
 }: Props) {
   const theme = useTheme();
-  const projectionRange = useMemo(
-    () => (transferDateIso ? projectionTimelineRangeForAsOf(transferDateIso) : null),
-    [transferDateIso]
+  const debouncedAmount = useDebouncedValue(transferAmount, 400);
+
+  const amountReady = useMemo(() => {
+    const raw = parseFloat(String(debouncedAmount).trim());
+    return Number.isFinite(raw) && raw !== 0;
+  }, [debouncedAmount]);
+
+  const previewKey = useMemo(
+    () => ({
+      from_account_id: sourceAccount?.id,
+      to_account_id: destinationAccountId ?? undefined,
+      amount: debouncedAmount.trim(),
+      date: transferDateIso,
+      exclude: excludeTransactionIds.slice().sort((a, b) => a - b).join(","),
+    }),
+    [
+      sourceAccount?.id,
+      destinationAccountId,
+      debouncedAmount,
+      transferDateIso,
+      excludeTransactionIds,
+    ]
   );
 
   const { data, isFetching } = useQuery({
-    queryKey: transactionQueryKeys.timeline({
-      start: projectionRange?.start,
-      end: projectionRange?.end,
-      account_id: sourceAccount?.id,
-      hint: "transfer-source",
-    }),
+    queryKey: transactionQueryKeys.transferPreview(previewKey),
     queryFn: () =>
-      getTimeline({
-        start: projectionRange!.start,
-        end: projectionRange!.end,
-        as_of: projectionRange!.as_of,
-        account_id: sourceAccount!.id,
+      previewTransferBalances({
+        from_account_id: sourceAccount!.id,
+        to_account_id: destinationAccountId ?? undefined,
+        amount: debouncedAmount.trim(),
+        date: transferDateIso!,
+        exclude_transaction_ids: excludeTransactionIds,
       }),
-    enabled: projectionRange != null && sourceAccount != null && Boolean(transferDateIso),
-    staleTime: 300_000,
+    enabled:
+      sourceAccount != null &&
+      Boolean(transferDateIso) &&
+      amountReady,
+    staleTime: 60_000,
   });
-
-  const balanceBefore = useMemo(() => {
-    if (!data?.timeline || !transferDateIso || !sourceAccount) return null;
-    return assetBalanceAsOfDateFromTimeline(data.timeline, sourceAccount.id, transferDateIso);
-  }, [data?.timeline, sourceAccount, transferDateIso]);
-
-  const balanceAfter = useMemo(() => {
-    if (balanceBefore == null) return null;
-    const raw = parseFloat(String(transferAmount).trim());
-    if (!Number.isFinite(raw) || raw === 0) return null;
-    return balanceBefore - Math.abs(raw);
-  }, [balanceBefore, transferAmount]);
 
   if (!sourceAccount || !transferDateIso) return null;
 
   const currency = sourceAccount.currency ?? "USD";
   const title = label ?? sourceAccount.effective_display_name ?? sourceAccount.name;
+  const sourceBefore = data?.source_balance_before;
+  const sourceAfter = data?.source_balance_after;
 
   return (
     <View
@@ -102,9 +90,9 @@ export function TransferSourceBalancePreview({
     >
       <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>{title}</Text>
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
-        Balance on {formatDateDisplay(transferDateIso)} (from timeline)
+        Balance on {formatDateDisplay(transferDateIso)} (canonical preview)
       </Text>
-      {isFetching ? (
+      {isFetching && !data ? (
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}>
           Loading…
         </Text>
@@ -114,9 +102,9 @@ export function TransferSourceBalancePreview({
             Current (this transfer excluded)
           </Text>
           <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong, marginTop: 2 }}>
-            {balanceBefore != null ? formatCurrency(String(balanceBefore), currency) : "—"}
+            {sourceBefore != null ? formatCurrency(sourceBefore, currency) : "—"}
           </Text>
-          {balanceAfter != null ? (
+          {sourceAfter != null ? (
             <>
               <Text
                 style={{
@@ -130,14 +118,14 @@ export function TransferSourceBalancePreview({
               <Text
                 style={{
                   color:
-                    balanceAfter < (balanceBefore ?? 0)
+                    sourceBefore != null && parseFloat(sourceAfter) < parseFloat(sourceBefore)
                       ? theme.colors.warning
                       : theme.colors.moneyPositive,
                   ...theme.typography.bodyStrong,
                   marginTop: 2,
                 }}
               >
-                {formatCurrency(String(balanceAfter), currency)}
+                {formatCurrency(sourceAfter, currency)}
               </Text>
             </>
           ) : null}

@@ -29,6 +29,20 @@ describe("Transactions ledger history query", () => {
     expect(source).toMatch(/!hideReconciledPast \|\| !reconcileSetupFetching/);
   });
 
+  it("does not auto-fetch every history page on mount", () => {
+    expect(source).not.toMatch(/useEffect\(\(\) => \{\s*\n\s*if \(hasNextPage/);
+    expect(source).toMatch(/onLoadMoreHistory/);
+    expect(source).toMatch(/hasMoreHistory/);
+  });
+
+  it("uses lazy load more in PastSection instead of draining pagination", () => {
+    const pastSection = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../components/transactions/PastSection.tsx"),
+      "utf8"
+    );
+    expect(pastSection).toMatch(/Load older transactions/);
+  });
+
   it("keeps reconcile setup for ledger opening balance and checkpoint display", () => {
     expect(source).toMatch(/reconcileSetupData\?\.last_reconciled_balance/);
     expect(source).toMatch(/reconcileSetupData\?\.last_reconcile_period_end/);

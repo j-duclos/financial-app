@@ -63,7 +63,8 @@ export function indexTimelineBalances(
 function matchesClientFilters(
   txn: Transaction,
   filters: TransactionFilters,
-  timelineRow?: TimelineRow
+  timelineRow?: TimelineRow,
+  options?: { skipSearch?: boolean; skipCategory?: boolean }
 ): boolean {
   const amount = Math.abs(parseFloat(txn.amount));
   if (filters.amountMin != null && amount < filters.amountMin) return false;
@@ -79,12 +80,12 @@ function matchesClientFilters(
   if (filters.forecast === "forecast" && !isForecast) return false;
   if (filters.forecast === "posted" && isForecast) return false;
 
-  if (filters.categoryId != null) {
+  if (!options?.skipCategory && filters.categoryId != null) {
     const catId = txn.category?.id ?? txn.category_id;
     if (catId !== filters.categoryId) return false;
   }
 
-  if (filters.search.trim()) {
+  if (!options?.skipSearch && filters.search.trim()) {
     const q = filters.search.trim().toLowerCase();
     const hay = `${txn.payee} ${txn.memo ?? ""}`.toLowerCase();
     if (!hay.includes(q)) return false;
@@ -181,9 +182,15 @@ export function currentBalanceFromLedgerData(input: {
   history: Transaction[];
   today: string;
   showReconciled: boolean;
+  /** When false, history may omit older rows — do not use last loaded row as Current. */
+  historyComplete: boolean;
 }): string | null {
   if (input.pending.length > 0) {
     return timelineRowLedgerBalance(input.pending[input.pending.length - 1]);
+  }
+
+  if (!input.historyComplete) {
+    return null;
   }
 
   const canonicalHistory = input.history
@@ -214,6 +221,8 @@ export function buildTransactionListRows(input: {
   timelineLoading?: boolean;
   /** Search mode: do not force ledger ascending presentation labels. */
   isSearchMode?: boolean;
+  /** When true, search/category were applied server-side on history — skip client re-filter. */
+  serverFilteredHistory?: boolean;
   recentRangeLabel?: string;
   upcomingRangeLabel?: string;
 }): TransactionListRow[] {
@@ -236,7 +245,12 @@ export function buildTransactionListRows(input: {
       let filteredHistory = input.history
         .filter((txn) => !isPendingExpectedTransaction(txn, input.today))
         .filter((txn) => input.filters.showReconciled || !txn.reconciled)
-        .filter((txn) => matchesClientFilters(txn, input.filters));
+        .filter((txn) =>
+          matchesClientFilters(txn, input.filters, undefined, {
+            skipSearch: input.serverFilteredHistory && input.isSearchMode,
+            skipCategory: input.serverFilteredHistory && input.filters.categoryId != null,
+          })
+        );
 
       if (input.isSearchMode) {
         filteredHistory = filteredHistory.slice().sort((a, b) => {

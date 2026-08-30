@@ -3,11 +3,17 @@ import type { TimeFilter } from "@/lib/transactionsLedger";
 
 export const transactionQueryKeys = {
   all: ["transactions"] as const,
+  /** Canonical unfiltered ledger history (Home prefetch + header source). */
   list: (params: Record<string, unknown>) => ["transactions", "list", params] as const,
+  /** Server-filtered presentation history (search/category — not for header). */
+  listDisplay: (params: Record<string, unknown>) =>
+    ["transactions", "list-display", params] as const,
   detail: (id: number) => ["transactions", "detail", id] as const,
   timeline: (params: Record<string, unknown>) => ["timeline", "ledger", params] as const,
   accountsPicker: ["account-options"] as const,
   categories: (householdId: number | null) => ["category-options", householdId] as const,
+  transferPreview: (params: Record<string, unknown>) =>
+    ["transactions", "transfer-preview", params] as const,
 };
 
 export function transactionListQueryParams(input: {
@@ -18,6 +24,8 @@ export function transactionListQueryParams(input: {
   historyStart: string;
   ordering?: string;
   includeRunningBalance?: boolean;
+  categoryId?: number | null;
+  search?: string;
 }): Record<string, unknown> {
   return {
     account: input.accountId ?? undefined,
@@ -26,6 +34,8 @@ export function transactionListQueryParams(input: {
     ...(input.showReconciled
       ? { show_reconciled: true, include_reconciled_after: input.historyStart }
       : { reconciled: false }),
+    ...(input.categoryId != null ? { category: input.categoryId } : {}),
+    ...(input.search?.trim() ? { search: input.search.trim() } : {}),
     ordering: input.ordering,
     include_running_balance: input.includeRunningBalance ? true : undefined,
   };

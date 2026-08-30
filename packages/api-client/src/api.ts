@@ -93,6 +93,19 @@ export interface TransferResponse {
   created_at: string;
 }
 
+export interface TransferBalancePreviewResponse {
+  from_account_id: number;
+  to_account_id: number | null;
+  amount: string;
+  transfer_date: string;
+  source_balance_before: string | null;
+  source_balance_after: string | null;
+  destination_balance_before?: string | null;
+  destination_balance_after?: string | null;
+  destination_balance_owed_before?: string | null;
+  destination_balance_owed_after?: string | null;
+}
+
 // Auth
 export async function register(body: RegisterBody): Promise<TokenResponse & { user: { id: number; username: string }; profile: unknown }> {
   return requestRequired("/api/auth/register/", { method: "POST", body: JSON.stringify(body) });
@@ -875,6 +888,19 @@ export async function disconnectPlaidLinkedAccount(
 // Transfers
 export async function createTransfer(body: TransferCreateBody): Promise<TransferResponse> {
   return requestRequired("/api/transactions/transfers/", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function previewTransferBalances(body: {
+  from_account_id: number;
+  to_account_id?: number | null;
+  amount: string;
+  date: string;
+  exclude_transaction_ids?: number[];
+}): Promise<TransferBalancePreviewResponse> {
+  return requestRequired("/api/transactions/transfers/preview/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // Budgets

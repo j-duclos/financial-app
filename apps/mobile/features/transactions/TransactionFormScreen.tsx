@@ -480,8 +480,23 @@ export function TransactionFormScreen() {
             {selectedAccount && form.dateIso ? (
               <TransferSourceBalancePreview
                 sourceAccount={selectedAccount}
+                destinationAccountId={
+                  typeof form.transfer_to_account_id === "number"
+                    ? form.transfer_to_account_id
+                    : null
+                }
                 transferDateIso={form.dateIso}
                 transferAmount={form.amount}
+                excludeTransactionIds={
+                  isEdit && editId && txnQuery.data
+                    ? [
+                        editId,
+                        ...(txnQuery.data.linked_transaction_id != null
+                          ? [txnQuery.data.linked_transaction_id]
+                          : []),
+                      ]
+                    : []
+                }
                 label={getEffectiveDisplayName(selectedAccount)}
               />
             ) : null}

@@ -35,6 +35,10 @@ type Props = {
   /** Forecast is open — show header only */
   minimized: boolean;
   onToggleExpanded: () => void;
+  /** Older history pages not yet fetched (lazy pagination). */
+  hasMoreHistory?: boolean;
+  isLoadingMoreHistory?: boolean;
+  onLoadMoreHistory?: () => void;
   accountId: number | "";
   onEditRow: (row: import("@budget-app/shared").TimelineRow) => void;
   onEditTransaction: (txn: import("@budget-app/shared").Transaction) => void;
@@ -58,6 +62,9 @@ export default function PastSection({
   expanded,
   minimized,
   onToggleExpanded,
+  hasMoreHistory = false,
+  isLoadingMoreHistory = false,
+  onLoadMoreHistory,
   accountId,
   onEditRow,
   onEditTransaction,
@@ -159,6 +166,19 @@ export default function PastSection({
                 : { height: compactScrollHeight, maxHeight: compactScrollHeight }
             }
           >
+            {hasMoreHistory ? (
+              <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/80">
+                <button
+                  type="button"
+                  onClick={() => onLoadMoreHistory?.()}
+                  disabled={isLoadingMoreHistory}
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                >
+                  {isLoadingMoreHistory ? "Loading older transactions…" : "Load older transactions"}
+                </button>
+              </div>
+            ) : null}
+
             {start?.type === "starting_balance" && (
               <div className={`${LEDGER_TABLE_GRID} px-4 py-2 bg-gray-50 border-b border-gray-100 text-sm`}>
                 <span aria-hidden />

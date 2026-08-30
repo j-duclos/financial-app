@@ -103,6 +103,7 @@ import {
 import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
+import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
 
 export type { TimeFilter, ForecastRange };
 
@@ -385,9 +386,7 @@ export default function Transactions() {
     [txnsData?.pages]
   );
 
-  useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  const historyPagesComplete = !hasNextPage;
   const account = useMemo(() => {
     if (!accountData) return undefined;
     if (
@@ -883,6 +882,27 @@ export default function Transactions() {
     return s;
   }, [editing]);
 
+  const editTransferCounterpartyId = editBankTransferDestId ?? editPayToCardId;
+
+  const editTransferFromId = useMemo(() => {
+    if (typeof accountId !== "number" || editTransferCounterpartyId == null) return null;
+    return editForm.direction === "OUTFLOW" ? accountId : editTransferCounterpartyId;
+  }, [accountId, editTransferCounterpartyId, editForm.direction]);
+
+  const editTransferToId = useMemo(() => {
+    if (typeof accountId !== "number" || editTransferCounterpartyId == null) return null;
+    return editForm.direction === "OUTFLOW" ? editTransferCounterpartyId : accountId;
+  }, [accountId, editTransferCounterpartyId, editForm.direction]);
+
+  const editTransferPreview = useTransferBalancePreview({
+    fromAccountId: editTransferFromId,
+    toAccountId: editTransferToId,
+    amount: editForm.amount,
+    date: editForm.date,
+    excludeTransactionIds: [...editExcludeTxnIds],
+    enabled: Boolean(editing && editTransferCounterpartyId != null),
+  });
+
   const editProjectionRange = useMemo(
     () => (debouncedEditDate ? projectionTimelineRangeForAsOf(debouncedEditDate) : null),
     [debouncedEditDate]
@@ -941,23 +961,8 @@ export default function Transactions() {
   const editCardTimelineLoadingResolved =
     editCardNeedsDedicatedTimeline && editCardTimelineLoading && editCardTimelineFromLedger == null;
 
-  /** Debt on the card as of the payment date, excluding this transfer (what you still owe besides it). */
-  const editOwedAsOfPaymentDate = useMemo(() => {
-    if (editPayToCardId == null || !editForm.date) return null;
-    const cardAccount = accounts.find((a) => a.id === editPayToCardId);
-    const openingSigned = cardAccount
-      ? creditSignedOpeningBalance(cardAccount.starting_balance)
-      : null;
-    const ruleId = (editing as { rule_id?: number | null } | null)?.rule_id ?? null;
-    return creditOwedAsOfDateFromTimeline(
-      editCardTimelineForHint,
-      editPayToCardId,
-      editForm.date,
-      editExcludeTxnIds,
-      openingSigned,
-      ruleId != null ? { ruleId, date: editForm.date } : null
-    );
-  }, [editPayToCardId, editForm.date, editCardTimelineForHint, editExcludeTxnIds, accounts, editing]);
+  /** Debt on the card as of the payment date, excluding this transfer (canonical preview). */
+  const editOwedAsOfPaymentDate = editTransferPreview.data?.destination_balance_owed_before ?? null;
 
   const editBankHintInLedgerRange =
     editBankTransferDestId != null &&
@@ -1016,25 +1021,11 @@ export default function Transactions() {
       ? true
       : editBankNeedsDedicatedTimeline && editBankDestTimelineLoading;
 
-  const editBankDestBalanceExcludingTransfer = useMemo(() => {
-    if (editBankTransferDestId == null || !editForm.date) return null;
-    return assetBalanceAsOfDateFromTimeline(
-      editBankTimelineForHint,
-      editBankTransferDestId,
-      editForm.date,
-      editExcludeTxnIds
-    );
-  }, [editBankTransferDestId, editForm.date, editBankTimelineForHint, editExcludeTxnIds]);
+  const editBankDestBalanceExcludingTransfer =
+    editTransferPreview.data?.destination_balance_before ?? null;
 
-  const editBankDestBalanceAfterTransfer = useMemo(() => {
-    if (editBankDestBalanceExcludingTransfer == null) return null;
-    const amt = parseFloat(String(editForm.amount).trim());
-    if (Number.isNaN(amt)) return null;
-    // transfer_to_account is always the *other* leg (see API serializer). OUTFLOW on this row → counterparty gains amt;
-    // INFLOW on this row → counterparty is the sender, so their balance drops by amt.
-    const deltaOnCounterparty = editForm.direction === "OUTFLOW" ? amt : -amt;
-    return editBankDestBalanceExcludingTransfer + deltaOnCounterparty;
-  }, [editBankDestBalanceExcludingTransfer, editForm.amount, editForm.direction]);
+  const editBankDestBalanceAfterTransfer =
+    editTransferPreview.data?.destination_balance_after ?? null;
 
   const editAccounts = useMemo(() => {
     if (!editing) return [];
@@ -1223,8 +1214,9 @@ export default function Transactions() {
   const ledgerCurrentBalance = useMemo(() => {
     const pendingEnding = pendingSectionEndingBalance(ledgerRows);
     if (pendingEnding != null) return pendingEnding;
+    if (!historyPagesComplete) return null;
     return currentBalanceFromLedgerSections(ledgerSections);
-  }, [ledgerRows, ledgerSections]);
+  }, [ledgerRows, ledgerSections, historyPagesComplete]);
 
   const ledgerForecastRows = useMemo(
     () => [...ledgerSections.pending, ...ledgerSections.future],
@@ -2390,6 +2382,11 @@ export default function Transactions() {
                 return next;
               });
             }}
+            hasMoreHistory={Boolean(hasNextPage)}
+            isLoadingMoreHistory={isFetchingNextPage}
+            onLoadMoreHistory={() => {
+              if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+            }}
             accountId={accountId}
             onEditRow={openEditByLedgerRow}
             onEditTransaction={openEdit}
@@ -2663,7 +2660,7 @@ export default function Transactions() {
                   <div className="text-xs font-medium text-gray-700">
                     Projected balance owed on card (as of {formatDateDisplay(editForm.date)})
                   </div>
-                  {editCardTimelineLoadingResolved ? (
+                  {editTransferPreview.isFetching && !editTransferPreview.data ? (
                     <p className="text-xs text-gray-500 mt-1">Loading…</p>
                   ) : (
                     <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">
@@ -2687,7 +2684,7 @@ export default function Transactions() {
                     {editDestinationAccount?.name ?? "Destination"} — balance on{" "}
                     {formatDateDisplay(editForm.date)} (from your timeline)
                   </div>
-                  {editBankDestTimelineLoadingResolved ? (
+                  {editTransferPreview.isFetching && !editTransferPreview.data ? (
                     <p className="text-xs text-gray-500 mt-1">Loading…</p>
                   ) : (
                     <>
