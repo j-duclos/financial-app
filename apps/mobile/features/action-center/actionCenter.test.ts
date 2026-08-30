@@ -264,6 +264,7 @@ describe("overflow secondary actions", () => {
     });
     const transfer = secondary.find((a) => a.kind === "transfer");
     expect(transfer).toBeTruthy();
+    expect(transfer!.label).toBe("Move money");
     expect(transferPresetPath(transfer!.transferPreset!)).toEqual({
       pathname: "/transaction/new",
       params: {
@@ -274,6 +275,42 @@ describe("overflow secondary actions", () => {
         date: "2026-08-27",
       },
     });
+  });
+
+  it("overflow transfer uses secondary label, not primary Open ledger", () => {
+    const rec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      secondary_action_label: "Move money",
+      secondary_action_type: "move_money",
+    };
+    expect(getRecommendationDestination(rec)?.kind).toBe("open_ledger");
+    const transfer = getRecommendationSecondaryActions(rec).find((a) => a.kind === "transfer");
+    expect(transfer?.label).toBe("Move money");
+    expect(transfer?.label).not.toBe("Open ledger");
+  });
+
+  it("overflow transfer falls back to Move money when secondary label is missing", () => {
+    const rec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      secondary_action_label: null,
+      secondary_action_type: "move_money",
+    };
+    const transfer = getRecommendationSecondaryActions(rec).find((a) => a.kind === "transfer");
+    expect(transfer?.label).toBe("Move money");
+  });
+
+  it("explicit primary move_money keeps transfer label from primary CTA", () => {
+    const rec: DashboardRecommendation = {
+      ...cashShortfallRec(),
+      primary_action_type: "move_money",
+      primary_action_label: "Move money",
+      secondary_action_type: "navigate",
+      secondary_action_label: "Open ledger",
+      secondary_action_url: "/transactions?account=1",
+    };
+    const dest = getRecommendationDestination(rec);
+    expect(dest?.kind).toBe("transfer");
+    expect(dest?.label).toMatch(/^Transfer \$/);
   });
 });
 

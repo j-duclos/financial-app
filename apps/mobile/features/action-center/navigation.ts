@@ -12,6 +12,7 @@ import {
   recommendationPrimaryDestinationKind,
   recommendationSecondaryCtaLabel,
   recommendationShowsResolveRisk,
+  recommendationTransferActionLabel,
   recommendationTransferPreset,
 } from "@budget-app/shared";
 import { calendarDatePath, paymentPlannerAccountPath } from "@/features/dashboard/navigation";
@@ -178,7 +179,7 @@ export function recommendationActions(rec: DashboardRecommendation): Recommendat
     if (preset && preset.transferToAccountId > 0) {
       actions.push({
         kind: "transfer",
-        label: recommendationPrimaryCtaLabel(rec),
+        label: recommendationTransferActionLabel(rec),
         accountId,
         transferPreset: preset,
       });
@@ -294,7 +295,7 @@ function destinationFromKind(
       if (preset) {
         return {
           kind: "transfer",
-          label: recommendationPrimaryCtaLabel(rec),
+          label: recommendationTransferActionLabel(rec),
           accountId: accountId ?? undefined,
           transferPreset: preset,
         };

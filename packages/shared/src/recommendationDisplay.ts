@@ -277,6 +277,17 @@ export function recommendationSecondaryCtaLabel(
   return recommendationActionLabel(resolvedLabel, resolvedUrl);
 }
 
+/** Label for a transfer action — primary CTA when primary is move_money, else secondary. */
+export function recommendationTransferActionLabel(rec: DashboardRecommendation): string {
+  if (recommendationPrimaryOpensTransfer(rec)) {
+    return recommendationPrimaryCtaLabel(rec);
+  }
+  if ((rec.secondary_action_type ?? "").trim().toLowerCase() === "move_money") {
+    return recommendationSecondaryCtaLabel(rec) ?? "Move money";
+  }
+  return "Move money";
+}
+
 /** Extra planner button only for true debt-payoff strategy (not utilization health). */
 export function recommendationPayoffPlannerUrl(rec: DashboardRecommendation): string | null {
   if (!recommendationIsDebtPayoff(rec)) return null;

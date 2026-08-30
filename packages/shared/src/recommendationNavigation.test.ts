@@ -12,6 +12,7 @@ import {
 import {
   recommendationHasTransferAction,
   recommendationPrimaryOpensTransfer,
+  recommendationTransferActionLabel,
 } from "./recommendationDisplay";
 
 function utilizationRec(overrides: Partial<DashboardRecommendation> = {}): DashboardRecommendation {
@@ -105,6 +106,15 @@ describe("recommendationPrimaryDestinationKind", () => {
     expect(recommendationHasTransferAction(rec)).toBe(true);
     expect(recommendationPrimaryOpensTransfer(rec)).toBe(false);
     expect(recommendationPrimaryDestinationKind(rec)).toBe("open_ledger");
+    expect(recommendationTransferActionLabel(rec)).toBe("Move money");
+  });
+
+  it("secondary transfer label falls back to Move money when label missing", () => {
+    expect(
+      recommendationTransferActionLabel(
+        cashRiskRec({ secondary_action_label: null })
+      )
+    ).toBe("Move money");
   });
 
   it("explicit PRIMARY move_money opens transfer", () => {
@@ -116,6 +126,7 @@ describe("recommendationPrimaryDestinationKind", () => {
     });
     expect(recommendationPrimaryOpensTransfer(rec)).toBe(true);
     expect(recommendationPrimaryDestinationKind(rec)).toBe("transfer");
+    expect(recommendationTransferActionLabel(rec)).toMatch(/^Transfer \$/);
   });
 });
 

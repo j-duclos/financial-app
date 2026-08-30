@@ -9,6 +9,7 @@ import {
   recommendationPrimaryCtaLabel,
   recommendationSecondaryCtaLabel,
   recommendationSeverityClass,
+  recommendationTransferActionLabel,
   recommendationWebPrimaryLabel,
   recommendationWebPrimaryTarget,
   type RecommendationDisplayState,
@@ -175,7 +176,7 @@ export function RecommendationCard({
                   onClick={() => onExecuteTransfer?.(rec)}
                   className={secondaryButtonClass}
                 >
-                  {secondaryLabel ?? "Move money"}
+                  {recommendationTransferActionLabel(rec)}
                 </button>
               ) : null}
               {plannerUrl && (
