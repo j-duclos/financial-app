@@ -95,17 +95,6 @@ export function ledgerProjectionRange(
   return { start: asOf, end: addDaysToIsoDate(asOf, forecastDays) };
 }
 
-/** Recent + upcoming window for detecting scheduled rows that match past bank imports. */
-export function matchingImportTimelineRange(
-  forecastDays: OperationalForecastDays,
-  lookbackDays = 90,
-  asOf: string = todayStr()
-): { start: string; end: string } {
-  return {
-    start: addDaysToIsoDate(asOf, -lookbackDays),
-    end: addDaysToIsoDate(asOf, forecastDays),
-  };
-}
 
 export function isTransferCategoryName(name: string | undefined): boolean {
   return name === "Transfer" || name === "Bank Transfer" || name === "Credit Card Payment";

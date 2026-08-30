@@ -3,6 +3,8 @@ import type { Transaction } from "@budget-app/shared";
 import {
   canOpenRecurringRuleDetail,
   getTransactionDetailActions,
+  isAlreadyMatchedToImport,
+  isEligibleForImportMatch,
   recurringRuleDetailPath,
 } from "./transactionDetailActions";
 
@@ -22,7 +24,7 @@ const txn = (partial: Partial<Transaction> & Pick<Transaction, "id">): Transacti
   }) as Transaction;
 
 describe("getTransactionDetailActions", () => {
-  it("RULE occurrence shows Edit this occurrence and Skip, not Delete", () => {
+  it("RULE occurrence shows Edit, Match imported transaction, and Skip", () => {
     const actions = getTransactionDetailActions({
       txn: txn({
         id: 1,
@@ -31,8 +33,11 @@ describe("getTransactionDetailActions", () => {
         rule_id: 42,
       }),
     });
-    expect(actions.map((a) => a.kind)).toEqual(["edit", "skip"]);
+    expect(actions.map((a) => a.kind)).toEqual(["edit", "matchImport", "skip"]);
     expect(actions.find((a) => a.kind === "edit")?.label).toBe("Edit this occurrence");
+    expect(actions.find((a) => a.kind === "matchImport")?.label).toBe(
+      "Match imported transaction"
+    );
     expect(actions.find((a) => a.kind === "skip")?.confirmationTitle).toBe(
       "Skip this occurrence?"
     );
@@ -42,11 +47,11 @@ describe("getTransactionDetailActions", () => {
     expect(actions.some((a) => a.kind === "delete")).toBe(false);
   });
 
-  it("one-time planned occurrence shows Skip on detail (ledger opens edit)", () => {
+  it("one-time planned occurrence shows Match and Skip on detail (ledger opens edit)", () => {
     const actions = getTransactionDetailActions({
       txn: txn({ id: 2, status: "PLANNED", source: "ONE_TIME" }),
     });
-    expect(actions.map((a) => a.kind)).toEqual(["skip"]);
+    expect(actions.map((a) => a.kind)).toEqual(["matchImport", "skip"]);
     expect(actions.some((a) => a.kind === "delete")).toBe(false);
   });
 
@@ -64,12 +69,17 @@ describe("getTransactionDetailActions", () => {
     expect(actions).toEqual([]);
   });
 
-  it("planned row with matching import offers Matched Import instead of Skip", () => {
+  it("already matched planned row has no match or skip actions", () => {
     const actions = getTransactionDetailActions({
-      txn: txn({ id: 5, status: "PLANNED", source: "RULE", rule_id: 7 }),
-      hasMatchingImport: true,
+      txn: txn({
+        id: 5,
+        status: "PLANNED",
+        source: "RULE",
+        rule_id: 7,
+        import_match_status: "matched",
+      }),
     });
-    expect(actions.map((a) => a.kind)).toEqual(["edit", "matchedImport"]);
+    expect(actions.map((a) => a.kind)).toEqual(["edit"]);
   });
 
   it("reconciled row has no actions", () => {
@@ -77,6 +87,26 @@ describe("getTransactionDetailActions", () => {
       txn: txn({ id: 6, status: "CLEARED", source: "ACTUAL", reconciled: true }),
     });
     expect(actions).toEqual([]);
+  });
+});
+
+describe("import match eligibility", () => {
+  it("planned scheduled rows are eligible until matched", () => {
+    const planned = txn({ id: 1, status: "PLANNED", source: "RULE", rule_id: 1 });
+    expect(isEligibleForImportMatch(planned)).toBe(true);
+    expect(isAlreadyMatchedToImport(planned)).toBe(false);
+  });
+
+  it("matched rows are not eligible for another match action", () => {
+    const matched = txn({
+      id: 2,
+      status: "PLANNED",
+      source: "RULE",
+      rule_id: 1,
+      import_match_status: "matched",
+    });
+    expect(isEligibleForImportMatch(matched)).toBe(false);
+    expect(isAlreadyMatchedToImport(matched)).toBe(true);
   });
 });
 
@@ -102,6 +132,75 @@ describe("TransactionDetailScreen wiring", () => {
     expect(src).toMatch(/recurringRuleDetailPath/);
     expect(src).not.toMatch(/canDeleteTransaction/);
   });
+
+  it("match import action does not call skipTransactionOccurrence", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    const matchBlock = src.slice(
+      src.indexOf('action.kind === "matchImport"'),
+      src.indexOf('action.kind === "skip"')
+    );
+    expect(matchBlock).toMatch(/setMatchSheetOpen\(true\)/);
+    expect(matchBlock).not.toMatch(/skipTransactionOccurrence/);
+    expect(matchBlock).not.toMatch(/skipMutation\.mutate/);
+  });
+
+  it("skip action uses skipTransactionOccurrence only", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/skipMutation = useMutation\([\s\S]*skipTransactionOccurrence/);
+    expect(src).toMatch(/matchTransactionToImport/);
+    expect(src).toMatch(/getTransactionImportCandidates/);
+    expect(src).not.toMatch(/getTimeline/);
+    expect(src).not.toMatch(/scheduledRowHasMatchingImport/);
+    expect(src).not.toMatch(/useAccountOptions/);
+  });
+
+  it("loads import candidates lazily when the match sheet opens", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/transactionQueryKeys\.importCandidates/);
+    expect(src).toMatch(/enabled:\s*matchSheetOpen && eligibleForImportMatch/);
+  });
+
+  it("loads category options only when editing is allowed and the sheet opens", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/enabled:\s*canChangeCategory && categorySheetOpen/);
+  });
+
+  it("saves category immediately on selection", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/categoryMutation\.mutate/);
+    expect(src).not.toMatch(/goBackAfterOptionalCategorySave/);
+    expect(src).toMatch(/refreshAfterTransactionEdit\(queryClient,\s*\{\s*categoryOnly:\s*true\s*\}\)/);
+  });
+
+  it("invalidates detail cache after match, skip, delete, and category edits", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
+    expect(src).toMatch(/transactionQueryKeys\.detail\(txnId\)/);
+    expect(src).not.toMatch(/invalidateFinancialQueries/);
+  });
 });
 
 describe("TransactionsScreen row navigation wiring", () => {
@@ -114,5 +213,26 @@ describe("TransactionsScreen row navigation wiring", () => {
     expect(src).toMatch(/getTransactionRowDestination/);
     expect(src).toMatch(/navigateToTransactionRowDestination/);
     expect(src).not.toMatch(/onPressTransaction/);
+  });
+});
+
+describe("dead matching timeline helpers", () => {
+  it("removes obsolete mobile timeline matching adapter", async () => {
+    const { accessSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    expect(() =>
+      accessSync(join(dir, "transactionMatchingTimeline.ts"))
+    ).toThrow();
+  });
+
+  it("removes matchingImportTimelineRange from transactionsLedger", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, "../../lib/transactionsLedger.ts"), "utf8");
+    expect(src).not.toMatch(/matchingImportTimelineRange/);
   });
 });

@@ -9,6 +9,7 @@ export const transactionQueryKeys = {
   listDisplay: (params: Record<string, unknown>) =>
     ["transactions", "list-display", params] as const,
   detail: (id: number) => ["transactions", "detail", id] as const,
+  importCandidates: (id: number) => ["transactions", "import-candidates", id] as const,
   timeline: (params: Record<string, unknown>) => ["timeline", "ledger", params] as const,
   accountsPicker: ["account-options"] as const,
   categories: (householdId: number | null) => ["category-options", householdId] as const,

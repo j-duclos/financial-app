@@ -7,7 +7,7 @@ import {
 import { isPlannedScheduledTransaction } from "./pendingSemantics";
 import { prefersDirectEditFromLedger } from "./transactionRowNavigation";
 
-export type TransactionDetailActionKind = "edit" | "skip" | "matchedImport" | "delete";
+export type TransactionDetailActionKind = "edit" | "skip" | "matchImport" | "delete";
 
 export type TransactionDetailAction = {
   kind: TransactionDetailActionKind;
@@ -19,8 +19,6 @@ export type TransactionDetailAction = {
 
 export type TransactionDetailActionsInput = {
   txn: Transaction;
-  /** When true, a matching Plaid import exists for this planned row. */
-  hasMatchingImport?: boolean;
 };
 
 function isRuleGeneratedOccurrence(txn: Transaction): boolean {
@@ -38,6 +36,15 @@ function skipConfirmationMessage(txn: Transaction): string {
   return "This scheduled payment will be removed from the forecast.";
 }
 
+/** Planned rows that can be linked to an unmatched bank import via the match API. */
+export function isEligibleForImportMatch(txn: Transaction): boolean {
+  return isPlannedScheduledTransaction(txn);
+}
+
+export function isAlreadyMatchedToImport(txn: Transaction): boolean {
+  return (txn.import_match_status ?? "").toLowerCase() === "matched";
+}
+
 /**
  * Canonical Transaction Detail actions — source/status aware.
  *
@@ -47,10 +54,11 @@ function skipConfirmationMessage(txn: Transaction): string {
 export function getTransactionDetailActions(
   input: TransactionDetailActionsInput
 ): TransactionDetailAction[] {
-  const { txn, hasMatchingImport = false } = input;
+  const { txn } = input;
   const actions: TransactionDetailAction[] = [];
   const isPlanned = isPlannedScheduledTransaction(txn);
   const isTransfer = isTransferTransaction(txn);
+  const alreadyMatched = isAlreadyMatchedToImport(txn);
   const canEdit = !txn.reconciled && !isBankImportedTransaction(txn);
 
   if (canEdit && !prefersDirectEditFromLedger(txn)) {
@@ -60,9 +68,10 @@ export function getTransactionDetailActions(
     });
   }
 
-  if (isPlanned && hasMatchingImport) {
-    actions.push({ kind: "matchedImport", label: "Matched Import" });
-  } else if (isPlanned) {
+  if (isPlanned && !alreadyMatched) {
+    if (isEligibleForImportMatch(txn)) {
+      actions.push({ kind: "matchImport", label: "Match imported transaction" });
+    }
     actions.push({
       kind: "skip",
       label: "Skip occurrence",
@@ -71,7 +80,12 @@ export function getTransactionDetailActions(
     });
   }
 
-  if (canDeleteTransaction(txn) && !isPlanned && !prefersDirectEditFromLedger(txn)) {
+  if (
+    canDeleteTransaction(txn) &&
+    !isPlanned &&
+    !alreadyMatched &&
+    !prefersDirectEditFromLedger(txn)
+  ) {
     actions.push({
       kind: "delete",
       label: "Delete transaction",

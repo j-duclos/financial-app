@@ -1,15 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteTransaction,
-  getTimeline,
   getTransaction,
+  getTransactionImportCandidates,
+  matchTransactionToImport,
   skipTransactionOccurrence,
   updateTransaction,
+  type ImportMatchCandidate,
 } from "@budget-app/api-client";
-import { getEffectiveDisplayName, scheduledRowHasMatchingImport } from "@budget-app/shared";
+import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
   AppHeader,
@@ -24,9 +26,7 @@ import {
   StatusChip,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { formatDateDisplay, todayStr } from "@/lib/dates";
-import { matchingImportTimelineRange } from "@/lib/transactionsLedger";
-import { resolveHouseholdId } from "@/lib/householdContext";
+import { formatDateDisplay } from "@/lib/dates";
 import {
   canChangeTransactionCategory,
   isTransferTransaction,
@@ -37,18 +37,16 @@ import {
 import { describeApiError } from "@/services/api";
 import { refreshAfterTransactionEdit } from "@/lib/financialQueryRefresh";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
-import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { transactionQueryKeys } from "./queryKeys";
-import { transactionToMatchingTimelineRow } from "./transactionMatchingTimeline";
 import {
   canOpenRecurringRuleDetail,
   getTransactionDetailActions,
+  isAlreadyMatchedToImport,
+  isEligibleForImportMatch,
   recurringRuleDetailPath,
   type TransactionDetailAction,
 } from "./transactionDetailActions";
-
-const MATCHING_IMPORT_FORECAST_DAYS = 30;
 
 export function TransactionDetailScreen() {
   const theme = useTheme();
@@ -58,9 +56,11 @@ export function TransactionDetailScreen() {
   const txnId = Number(id);
   const [confirmAction, setConfirmAction] = useState<TransactionDetailAction | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
+  const [matchSheetOpen, setMatchSheetOpen] = useState(false);
+  const [pendingMatchCandidate, setPendingMatchCandidate] = useState<ImportMatchCandidate | null>(
+    null
+  );
   const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [savingCategory, setSavingCategory] = useState(false);
-  const savingRef = useRef(false);
 
   const query = useQuery({
     queryKey: transactionQueryKeys.detail(txnId),
@@ -76,21 +76,18 @@ export function TransactionDetailScreen() {
   }, [txn?.id, initialCategoryId]);
 
   const { householdId: defaultHouseholdId } = useDefaultHouseholdId();
-  const { accounts } = useAccountOptions({ householdId: defaultHouseholdId });
   const householdId = useMemo(() => {
     const fromAccount = txn?.account?.household?.id;
     if (fromAccount != null) return fromAccount;
-    return resolveHouseholdId(
-      defaultHouseholdId,
-      txn?.account?.id ?? txn?.account_id ?? null,
-      accounts
-    );
-  }, [txn, defaultHouseholdId, accounts]);
+    return defaultHouseholdId ?? null;
+  }, [txn?.account?.household?.id, defaultHouseholdId]);
 
-  const { categories } = useCategoryOptions({ householdId });
+  const canChangeCategory = txn ? canChangeTransactionCategory(txn) : false;
 
-  const categoryDirty =
-    txn != null && (categoryId ?? null) !== (txn.category?.id ?? txn.category_id ?? null);
+  const { categories } = useCategoryOptions({
+    householdId,
+    enabled: canChangeCategory && categorySheetOpen,
+  });
 
   const selectedCategoryName = useMemo(() => {
     if (categoryId == null) return "Uncategorized";
@@ -99,9 +96,22 @@ export function TransactionDetailScreen() {
     return txn?.category?.name ?? "Uncategorized";
   }, [categoryId, categories, txn?.category?.name]);
 
+  const categoryMutation = useMutation({
+    mutationFn: (nextCategoryId: number | null) =>
+      updateTransaction(txnId, { category_id: nextCategoryId }),
+    onSuccess: async (_data, nextCategoryId) => {
+      setCategoryId(nextCategoryId);
+      setCategorySheetOpen(false);
+      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
+      refreshAfterTransactionEdit(queryClient, { categoryOnly: true });
+    },
+    onError: (err) => Alert.alert("Could not save category", describeApiError(err)),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteTransaction(txnId),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
       refreshAfterTransactionEdit(queryClient);
       router.back();
     },
@@ -110,70 +120,47 @@ export function TransactionDetailScreen() {
 
   const skipMutation = useMutation({
     mutationFn: () => skipTransactionOccurrence(txnId),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
       refreshAfterTransactionEdit(queryClient);
       router.back();
     },
     onError: (err) => Alert.alert("Could not skip occurrence", describeApiError(err)),
   });
 
-  const lockMessage = txn ? transactionEditLockMessage(txn, getEffectiveDisplayName(txn.account)) : null;
-  const isPlanned = (txn?.status ?? "").toUpperCase() === "PLANNED";
-  const canChangeCategory = txn ? canChangeTransactionCategory(txn) : false;
-
-  const matchingTimelineRange = useMemo(
-    () => matchingImportTimelineRange(MATCHING_IMPORT_FORECAST_DAYS),
-    []
-  );
-
-  const timelineQuery = useQuery({
-    queryKey: transactionQueryKeys.timeline({
-      start: matchingTimelineRange.start,
-      end: matchingTimelineRange.end,
-      account_id: txn?.account?.id ?? txn?.account_id,
-    }),
-    queryFn: () =>
-      getTimeline({
-        start: matchingTimelineRange.start,
-        end: matchingTimelineRange.end,
-        as_of: todayStr(),
-        account_id: txn?.account?.id ?? txn?.account_id ?? undefined,
-      }),
-    enabled: isPlanned && (txn?.account?.id ?? txn?.account_id) != null,
-    staleTime: 60_000,
+  const matchMutation = useMutation({
+    mutationFn: (importedTransactionId: number) =>
+      matchTransactionToImport(txnId, importedTransactionId),
+    onSuccess: async () => {
+      setMatchSheetOpen(false);
+      setPendingMatchCandidate(null);
+      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.detail(txnId) });
+      await queryClient.invalidateQueries({ queryKey: transactionQueryKeys.importCandidates(txnId) });
+      refreshAfterTransactionEdit(queryClient);
+      router.back();
+    },
+    onError: (err) => Alert.alert("Could not match import", describeApiError(err)),
   });
 
-  const hasMatchingImport = useMemo(() => {
-    if (!txn || !isPlanned) return false;
-    const timeline = timelineQuery.data?.timeline ?? [];
-    if (timeline.length === 0) return false;
-    return scheduledRowHasMatchingImport(transactionToMatchingTimelineRow(txn), timeline);
-  }, [txn, isPlanned, timelineQuery.data?.timeline]);
+  const lockMessage = txn ? transactionEditLockMessage(txn, getEffectiveDisplayName(txn.account)) : null;
+  const eligibleForImportMatch = txn ? isEligibleForImportMatch(txn) : false;
+
+  const importCandidatesQuery = useQuery({
+    queryKey: transactionQueryKeys.importCandidates(txnId),
+    queryFn: () => getTransactionImportCandidates(txnId),
+    enabled: matchSheetOpen && eligibleForImportMatch,
+    staleTime: 30_000,
+  });
+
+  const selectableCandidates = useMemo(
+    () => (importCandidatesQuery.data?.candidates ?? []).filter((c) => !c.reject),
+    [importCandidatesQuery.data?.candidates]
+  );
 
   const detailActions = useMemo(() => {
     if (!txn) return [];
-    return getTransactionDetailActions({ txn, hasMatchingImport });
-  }, [txn, hasMatchingImport]);
-
-  const goBackAfterOptionalCategorySave = useCallback(async () => {
-    if (savingRef.current) return;
-    if (!txn || !categoryDirty || !canChangeCategory) {
-      router.back();
-      return;
-    }
-    savingRef.current = true;
-    setSavingCategory(true);
-    try {
-      await updateTransaction(txnId, { category_id: categoryId });
-      refreshAfterTransactionEdit(queryClient, { categoryOnly: true });
-      router.back();
-    } catch (err) {
-      Alert.alert("Could not save category", describeApiError(err));
-    } finally {
-      savingRef.current = false;
-      setSavingCategory(false);
-    }
-  }, [txn, categoryDirty, canChangeCategory, txnId, categoryId, queryClient, router]);
+    return getTransactionDetailActions({ txn });
+  }, [txn]);
 
   const runAction = useCallback(
     (action: TransactionDetailAction) => {
@@ -181,8 +168,12 @@ export function TransactionDetailScreen() {
         router.push(`/transaction/edit/${txnId}`);
         return;
       }
-      if (action.kind === "matchedImport" || action.kind === "skip") {
-        if (action.kind === "skip" && action.confirmationTitle) {
+      if (action.kind === "matchImport") {
+        setMatchSheetOpen(true);
+        return;
+      }
+      if (action.kind === "skip") {
+        if (action.confirmationTitle) {
           setConfirmAction(action);
           return;
         }
@@ -194,6 +185,18 @@ export function TransactionDetailScreen() {
       }
     },
     [router, txnId, skipMutation]
+  );
+
+  const selectCategory = useCallback(
+    (nextCategoryId: number | null) => {
+      if (!canChangeCategory || categoryMutation.isPending) return;
+      if ((nextCategoryId ?? null) === (txn?.category?.id ?? txn?.category_id ?? null)) {
+        setCategorySheetOpen(false);
+        return;
+      }
+      categoryMutation.mutate(nextCategoryId);
+    },
+    [canChangeCategory, categoryMutation, txn?.category?.id, txn?.category_id]
   );
 
   if (query.isLoading) {
@@ -217,14 +220,17 @@ export function TransactionDetailScreen() {
   const statusIcons = resolveTransactionStatusIcons(txn);
   const transfer = isTransferTransaction(txn);
   const showRecurringRuleLink = canOpenRecurringRuleDetail(txn);
+  const alreadyMatched = isAlreadyMatchedToImport(txn);
 
   return (
     <Screen scroll>
       <AppHeader
         title="Transaction"
-        onBack={() => void goBackAfterOptionalCategorySave()}
+        onBack={() => router.back()}
         right={
-          savingCategory ? <ActivityIndicator color={theme.colors.tint} /> : undefined
+          categoryMutation.isPending ? (
+            <ActivityIndicator color={theme.colors.tint} />
+          ) : undefined
         }
       />
       <Card>
@@ -237,6 +243,9 @@ export function TransactionDetailScreen() {
           {statusIcons.map((icon) => (
             <StatusChip key={icon} label={STATUS_ICON_LABELS[icon]} tone="neutral" />
           ))}
+          {alreadyMatched ? (
+            <StatusChip label="Matched to bank import" tone="positive" />
+          ) : null}
           {txn.cleared ? <StatusChip label="Cleared" tone="positive" /> : <StatusChip label="Pending" tone="warning" />}
         </View>
       </Card>
@@ -321,9 +330,11 @@ export function TransactionDetailScreen() {
             }
             onPress={() => runAction(action)}
             loading={
-              (action.kind === "skip" || action.kind === "matchedImport") && skipMutation.isPending
+              action.kind === "skip" && skipMutation.isPending
                 ? true
-                : action.kind === "delete" && deleteMutation.isPending
+                : action.kind === "matchImport" && matchMutation.isPending
+                  ? true
+                  : action.kind === "delete" && deleteMutation.isPending
             }
           />
         ))}
@@ -336,10 +347,7 @@ export function TransactionDetailScreen() {
       >
         <ScrollView>
           <Pressable
-            onPress={() => {
-              setCategoryId(null);
-              setCategorySheetOpen(false);
-            }}
+            onPress={() => selectCategory(null)}
             style={{
               paddingVertical: 14,
               borderBottomWidth: 1,
@@ -358,10 +366,7 @@ export function TransactionDetailScreen() {
           {categories.map((c) => (
             <Pressable
               key={c.id}
-              onPress={() => {
-                setCategoryId(c.id);
-                setCategorySheetOpen(false);
-              }}
+              onPress={() => selectCategory(c.id)}
               style={{
                 paddingVertical: 14,
                 borderBottomWidth: 1,
@@ -381,13 +386,78 @@ export function TransactionDetailScreen() {
         </ScrollView>
       </BottomSheet>
 
+      <BottomSheet
+        visible={matchSheetOpen}
+        title="Match imported transaction"
+        onClose={() => {
+          if (matchMutation.isPending) return;
+          setMatchSheetOpen(false);
+          setPendingMatchCandidate(null);
+        }}
+      >
+        {importCandidatesQuery.isLoading ? (
+          <ActivityIndicator color={theme.colors.tint} style={{ marginVertical: 24 }} />
+        ) : importCandidatesQuery.isError ? (
+          <ErrorState
+            message={describeApiError(importCandidatesQuery.error)}
+            onRetry={() => void importCandidatesQuery.refetch()}
+          />
+        ) : selectableCandidates.length === 0 ? (
+          <View style={{ gap: 12, paddingVertical: 8 }}>
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.body }}>
+              No unmatched bank imports were found for this scheduled payment.
+            </Text>
+            <Button
+              label="Skip occurrence"
+              variant="secondary"
+              onPress={() => {
+                setMatchSheetOpen(false);
+                const skipAction = detailActions.find((a) => a.kind === "skip");
+                if (skipAction) runAction(skipAction);
+              }}
+            />
+          </View>
+        ) : (
+          <ScrollView>
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 12 }}>
+              Select the bank import that matches this scheduled payment.
+            </Text>
+            {selectableCandidates.map((candidate) => (
+              <Pressable
+                key={candidate.imported_transaction_id}
+                onPress={() => setPendingMatchCandidate(candidate)}
+                style={{
+                  paddingVertical: 14,
+                  borderBottomWidth: 1,
+                  borderBottomColor: theme.colors.border,
+                  gap: 4,
+                }}
+              >
+                <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
+                  {candidate.payee}
+                </Text>
+                <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
+                  {formatDateDisplay(candidate.date)} · {formatCurrency(candidate.amount)}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+      </BottomSheet>
+
       <ConfirmDialog
         visible={confirmAction != null}
         title={confirmAction?.confirmationTitle ?? "Confirm"}
         message={confirmAction?.confirmationMessage ?? ""}
         confirmLabel={confirmAction?.kind === "skip" ? "Skip" : "Delete"}
         destructive={confirmAction?.destructive === true}
-        loading={confirmAction?.kind === "delete" ? deleteMutation.isPending : skipMutation.isPending}
+        loading={
+          confirmAction?.kind === "delete"
+            ? deleteMutation.isPending
+            : confirmAction?.kind === "skip"
+              ? skipMutation.isPending
+              : false
+        }
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => {
           if (confirmAction?.kind === "delete") {
@@ -396,6 +466,24 @@ export function TransactionDetailScreen() {
           }
           if (confirmAction?.kind === "skip") {
             skipMutation.mutate();
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        visible={pendingMatchCandidate != null}
+        title="Confirm match"
+        message={
+          pendingMatchCandidate
+            ? `Link this scheduled payment to ${pendingMatchCandidate.payee} on ${formatDateDisplay(pendingMatchCandidate.date)} for ${formatCurrency(pendingMatchCandidate.amount)}?`
+            : ""
+        }
+        confirmLabel="Match"
+        loading={matchMutation.isPending}
+        onCancel={() => setPendingMatchCandidate(null)}
+        onConfirm={() => {
+          if (pendingMatchCandidate) {
+            matchMutation.mutate(pendingMatchCandidate.imported_transaction_id);
           }
         }}
       />
