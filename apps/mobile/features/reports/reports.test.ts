@@ -15,20 +15,21 @@ import { reportsQueryKeys } from "./queryKeys";
 import {
   comparisonTone,
   comparisonToneForContext,
-  expenseSharePercent,
   formatDeltaVsPrevious,
+  formatExpenseSharePercent,
   formatSignedAmount,
+  parseOptionalAmount,
   parseReportTypeParam,
-  shouldShowCategoryDelta,
 } from "./reportDisplay";
 import type { CategoryBreakdownItem } from "@budget-app/shared";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const reportSections = readFileSync(join(dir, "components/ReportSections.tsx"), "utf8");
-const moreScreen = readFileSync(
-  join(dir, "../more/MoreScreen.tsx"),
-  "utf8"
-);
+const reportsScreen = readFileSync(join(dir, "ReportsScreen.tsx"), "utf8");
+const reportDetail = readFileSync(join(dir, "ReportDetailScreen.tsx"), "utf8");
+const reportDisplaySrc = readFileSync(join(dir, "reportDisplay.ts"), "utf8");
+const categoryRow = readFileSync(join(dir, "components/CategoryBreakdownRow.tsx"), "utf8");
+const moreScreen = readFileSync(join(dir, "../more/MoreScreen.tsx"), "utf8");
 
 function mockCategory(overrides: Partial<CategoryBreakdownItem> = {}): CategoryBreakdownItem {
   return {
@@ -37,6 +38,9 @@ function mockCategory(overrides: Partial<CategoryBreakdownItem> = {}): CategoryB
     total: "-120.00",
     previous_total: "-100.00",
     delta: "-20.00",
+    expense_share_percent: "50.0",
+    show_comparison: true,
+    percent_change: "20.0",
     ...overrides,
   };
 }
@@ -53,9 +57,27 @@ describe("reportDisplay", () => {
     expect(formatDeltaVsPrevious("0", "2026-07")).toContain("No change");
   });
 
-  it("hides tiny category comparisons", () => {
-    expect(shouldShowCategoryDelta("-5", "1", 5000)).toBe(false);
-    expect(shouldShowCategoryDelta("-812", "-94", 5000)).toBe(true);
+  it("does not contain production dollar/percentage significance thresholds", () => {
+    expect(reportDisplaySrc).not.toMatch(/absDelta < 0\.005/);
+    expect(reportDisplaySrc).not.toMatch(/< 0\.01/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta < 25/);
+    expect(reportDisplaySrc).not.toMatch(/shouldShowCategoryDelta/);
+    expect(reportDisplaySrc).not.toMatch(/expenseSharePercent\(/);
+  });
+
+  it("formats backend expense share without recomputing from amounts", () => {
+    expect(formatExpenseSharePercent("50.0")).toBe("50%");
+    expect(formatExpenseSharePercent("0.4")).toBe("0%");
+    expect(formatExpenseSharePercent(null)).toBeNull();
+    expect(formatExpenseSharePercent("NaN")).toBeNull();
+  });
+
+  it("does not silently treat malformed amounts as zero", () => {
+    expect(parseOptionalAmount("NaN")).toBeNull();
+    expect(parseOptionalAmount("Infinity")).toBeNull();
+    expect(parseOptionalAmount(undefined)).toBeNull();
+    expect(parseOptionalAmount("12.5")).toBe(12.5);
+    expect(formatSignedAmount("not-a-number")).toBe("—");
   });
 
   it("parses report type route params", () => {
@@ -64,11 +86,6 @@ describe("reportDisplay", () => {
     expect(parseReportTypeParam("cash_flow")).toBe("cash-flow");
     expect(parseReportTypeParam("unknown")).toBeNull();
     expect(parseReportTypeParam("budget")).toBeNull();
-  });
-
-  it("computes expense share percentages", () => {
-    expect(expenseSharePercent("-500", 1000)).toBe("50%");
-    expect(expenseSharePercent("-5", 1000)).toBe("<1%");
   });
 
   it("uses neutral MoM tone for expense context", () => {
@@ -81,7 +98,7 @@ describe("reportDisplay", () => {
 });
 
 describe("categoryBreakdownDisplay", () => {
-  it("partitions income and expenses and excludes transfer categories", () => {
+  it("partitions income and expenses without financial subtotals", () => {
     const result = partitionCategoryBreakdown([
       mockCategory({ category_name: "Salary", total: "3000", category_id: 2 }),
       mockCategory(),
@@ -92,8 +109,9 @@ describe("categoryBreakdownDisplay", () => {
 
     expect(result.income).toHaveLength(1);
     expect(result.expenses).toHaveLength(2);
-    expect(result.expenseSubtotal).toBe(-160);
-    expect(result.net).toBe(3000 - 160);
+    expect(result).not.toHaveProperty("incomeSubtotal");
+    expect(result).not.toHaveProperty("expenseSubtotal");
+    expect(result).not.toHaveProperty("net");
   });
 
   it("sorts expenses by amount ascending (most negative first)", () => {
@@ -219,5 +237,50 @@ describe("Reports information architecture", () => {
   it("preserves goal and debt drill-downs to detail screens", () => {
     expect(reportSections).toMatch(/reportGoalDetailPath/);
     expect(reportSections).toMatch(/reportAccountDetailPath/);
+  });
+
+  it("uses backend overview net and does not recompute net client-side", () => {
+    expect(reportSections).toMatch(/overview\.net/);
+    expect(reportSections).not.toMatch(/incomeSubtotal \+ expenseSubtotal/);
+    expect(reportSections).not.toMatch(/total_income\s*-\s*total_expenses/);
+    expect(reportsScreen).toMatch(/data\.overview\.net/);
+  });
+
+  it("uses backend expense_share_percent and show_comparison", () => {
+    expect(categoryRow).toMatch(/expense_share_percent/);
+    expect(categoryRow).toMatch(/show_comparison/);
+    expect(categoryRow).not.toMatch(/expenseSharePercent\(/);
+    expect(categoryRow).not.toMatch(/shouldShowCategoryDelta/);
+  });
+});
+
+describe("Reports pull refresh and month-switch integrity", () => {
+  it("uses explicit pullRefreshing, not passive isFetching, for RefreshControl", () => {
+    expect(reportsScreen).toMatch(/pullRefreshing/);
+    expect(reportsScreen).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(reportsScreen).not.toMatch(/refreshing=\{isFetching && !isLoading\}/);
+    expect(reportDetail).toMatch(/pullRefreshing/);
+    expect(reportDetail).toMatch(/refreshing=\{pullRefreshing\}/);
+    expect(reportDetail).not.toMatch(/refreshing=\{isFetching && !isLoading\}/);
+  });
+
+  it("awaits refetch before clearing pullRefreshing", () => {
+    expect(reportsScreen).toMatch(/await refetch\(\)/);
+    expect(reportsScreen).toMatch(/setPullRefreshing\(false\)/);
+    expect(reportDetail).toMatch(/await refetch\(\)/);
+  });
+
+  it("labels month switches as updating and does not treat placeholder as current month", () => {
+    expect(reportsScreen).toMatch(/dataMatchesMonth/);
+    expect(reportsScreen).toMatch(/Updating/);
+    expect(reportsScreen).toMatch(/isPlaceholderData/);
+    expect(reportDetail).toMatch(/dataMatchesMonth/);
+    expect(reportDetail).toMatch(/Updating/);
+  });
+
+  it("distinguishes error from empty data", () => {
+    expect(reportsScreen).toMatch(/isError && !data/);
+    expect(reportsScreen).toMatch(/ErrorState/);
+    expect(reportDetail).toMatch(/isError && !data/);
   });
 });

@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import type { MonthComparisonMetric } from "@budget-app/shared";
 import { Card, CurrencyDisplay } from "@/components/ui";
 import { financialToneColors, useTheme } from "@/theme";
-import { comparisonSubtitle, parseAmount } from "../reportDisplay";
+import { comparisonSubtitle, parseOptionalAmount } from "../reportDisplay";
 import { PeriodComparisonBadge } from "./PeriodComparisonBadge";
 
 type Metric = {
@@ -26,15 +26,18 @@ export function ReportMetricGrid({ metrics }: Props) {
     <Card>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.md }}>
         {metrics.map((m) => {
+          const amountN = parseOptionalAmount(m.amount);
           const resolvedTone =
             m.tone ??
             (m.label.toLowerCase().includes("expense")
               ? "negative"
               : m.label.toLowerCase().includes("income")
                 ? "positive"
-                : parseAmount(m.amount) >= 0
-                  ? "positive"
-                  : "negative");
+                : amountN == null
+                  ? "neutral"
+                  : amountN >= 0
+                    ? "positive"
+                    : "negative");
           const subtitle = m.comparison
             ? comparisonSubtitle(m.comparison.delta, m.comparison.percent_change, m.previousMonth)
             : undefined;
@@ -50,12 +53,16 @@ export function ReportMetricGrid({ metrics }: Props) {
               <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "600" }}>
                 {m.label}
               </Text>
-              <CurrencyDisplay
-                amount={m.amount}
-                tone={resolvedTone === "neutral" ? "neutral" : resolvedTone}
-                showSign={resolvedTone !== "neutral"}
-                style={{ fontSize: 18 }}
-              />
+              {amountN == null && !m.amount ? (
+                <Text style={{ color: theme.colors.textMuted, fontSize: 18, fontWeight: "600" }}>—</Text>
+              ) : (
+                <CurrencyDisplay
+                  amount={m.amount}
+                  tone={resolvedTone === "neutral" ? "neutral" : resolvedTone}
+                  showSign={resolvedTone !== "neutral" && amountN != null}
+                  style={{ fontSize: 18 }}
+                />
+              )}
               {subtitle ? (
                 <PeriodComparisonBadge
                   text={subtitle}

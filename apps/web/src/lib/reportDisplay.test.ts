@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   formatDeltaVsPrevious,
+  formatExpenseSharePercent,
   formatSignedAmount,
+  parseOptionalAmount,
   parseReportViewParam,
-  shouldShowCategoryDelta,
 } from "./reportDisplay";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const reportDisplaySrc = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "reportDisplay.ts"),
+  "utf8"
+);
 
 describe("reportDisplay", () => {
   it("formats signed amounts with an explicit plus or minus", () => {
@@ -18,9 +27,22 @@ describe("reportDisplay", () => {
     expect(formatDeltaVsPrevious("0", "2026-07")).toContain("No change");
   });
 
-  it("hides tiny category comparisons", () => {
-    expect(shouldShowCategoryDelta("-5", "1", 5000)).toBe(false);
-    expect(shouldShowCategoryDelta("-812", "-94", 5000)).toBe(true);
+  it("does not contain production dollar/percentage significance thresholds", () => {
+    expect(reportDisplaySrc).not.toMatch(/absDelta < 0\.005/);
+    expect(reportDisplaySrc).not.toMatch(/shouldShowCategoryDelta/);
+    expect(reportDisplaySrc).not.toMatch(/absDelta < 25/);
+  });
+
+  it("formats backend expense share without recomputing", () => {
+    expect(formatExpenseSharePercent("42.0")).toBe("42%");
+    expect(formatExpenseSharePercent(null)).toBeNull();
+    expect(formatExpenseSharePercent("NaN")).toBeNull();
+  });
+
+  it("does not silently treat malformed amounts as zero", () => {
+    expect(parseOptionalAmount("NaN")).toBeNull();
+    expect(parseOptionalAmount("Infinity")).toBeNull();
+    expect(formatSignedAmount("bad")).toBe("—");
   });
 
   it("parses report view query params", () => {

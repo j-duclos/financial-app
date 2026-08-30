@@ -9,14 +9,14 @@ import {
   spendingTargetProgressPercent,
   spendingTargetStatusTone,
 } from "@/features/budget/spendingTargetDisplay";
-import { parseAmount } from "../reportDisplay";
+import { parseOptionalAmount } from "../reportDisplay";
 
 export function SpendingLimitCard({ metrics }: { metrics: SpendingTargetMetrics }) {
   const theme = useTheme();
   const pct = spendingTargetProgressPercent(metrics);
   const tone = spendingTargetStatusTone(metrics.status);
-  const remaining = parseAmount(metrics.remaining_to_target);
-  const scheduled = parseAmount(metrics.scheduled_in_period);
+  const remaining = parseOptionalAmount(metrics.remaining_to_target);
+  const scheduled = parseOptionalAmount(metrics.scheduled_in_period);
 
   return (
     <Card>
@@ -38,11 +38,13 @@ export function SpendingLimitCard({ metrics }: { metrics: SpendingTargetMetrics 
       <View style={{ marginTop: 12, gap: 6 }}>
         <MetricRow label="Limit" amount={metrics.target_amount} />
         <MetricRow label="Spent" amount={metrics.spent_so_far} />
-        {scheduled > 0.005 ? <MetricRow label="Scheduled" amount={metrics.scheduled_in_period ?? "0"} /> : null}
+        {scheduled != null && scheduled > 0 ? (
+          <MetricRow label="Scheduled" amount={metrics.scheduled_in_period!} />
+        ) : null}
         <MetricRow
           label="Remaining"
           amount={metrics.remaining_to_target}
-          tone={remaining < 0 ? "negative" : "neutral"}
+          tone={remaining != null && remaining < 0 ? "negative" : "neutral"}
         />
       </View>
     </Card>
@@ -83,7 +85,8 @@ export function GoalProgressRow({
   projectedCompletion: string | null;
 }) {
   const theme = useTheme();
-  const pct = Math.min(100, Math.max(0, parseAmount(progressPercent)));
+  const parsedPct = parseOptionalAmount(progressPercent);
+  const pct = parsedPct == null ? null : Math.min(100, Math.max(0, parsedPct));
 
   return (
     <View
@@ -99,25 +102,27 @@ export function GoalProgressRow({
           {formatCurrency(current)} / {formatCurrency(target)}
         </Text>
       </View>
-      <View
-        style={{
-          marginTop: 8,
-          height: 8,
-          borderRadius: 4,
-          backgroundColor: theme.colors.surfaceMuted,
-          overflow: "hidden",
-        }}
-      >
+      {pct != null ? (
         <View
           style={{
-            width: `${pct}%`,
-            height: "100%",
-            backgroundColor: theme.colors.moneyPositive,
+            marginTop: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: theme.colors.surfaceMuted,
+            overflow: "hidden",
           }}
-        />
-      </View>
+        >
+          <View
+            style={{
+              width: `${pct}%`,
+              height: "100%",
+              backgroundColor: theme.colors.moneyPositive,
+            }}
+          />
+        </View>
+      ) : null}
       <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginTop: 6 }}>
-        {pct.toFixed(0)}% complete
+        {pct != null ? `${pct.toFixed(0)}% complete` : "Progress unavailable"}
         {monthlyRequired ? ` · ${formatCurrency(monthlyRequired)}/mo needed` : ""}
         {projectedCompletion ? ` · Projected ${projectedCompletion}` : ""}
       </Text>

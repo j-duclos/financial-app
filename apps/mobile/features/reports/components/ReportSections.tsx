@@ -15,7 +15,7 @@ import {
   formatMonthLabel,
   formatProjectedCompletion,
   formatSignedAmount,
-  parseAmount,
+  parseOptionalAmount,
 } from "../reportDisplay";
 import type { ReportFilters, ReportHistoryMonths } from "../types";
 import { CategoryBreakdownRow, CategorySpendBarChart } from "./CategoryBreakdownRow";
@@ -45,9 +45,7 @@ export function OverviewSection({ data, filters }: OverviewProps) {
   const topCats = overview.top_expense_categories ?? [];
   const goals = overview.goals_snapshot;
   const debt = overview.debt_snapshot;
-  const totalDebtOwed = useMemo(() => {
-    return (data.debt.by_card ?? []).reduce((sum, row) => sum + parseAmount(row.balance_owed), 0);
-  }, [data.debt.by_card]);
+  const totalDebtOwed = parseOptionalAmount(data.debt.total_balance_owed);
 
   const metrics = useMemo(
     () => [
@@ -70,7 +68,7 @@ export function OverviewSection({ data, filters }: OverviewProps) {
       {
         label: "Net",
         amount: overview.net,
-        tone: parseAmount(overview.net) >= 0 ? ("positive" as const) : ("negative" as const),
+        tone: (parseOptionalAmount(overview.net) ?? 0) >= 0 ? ("positive" as const) : ("negative" as const),
         comparison: overview.comparison?.net,
         previousMonth,
         comparisonContext: "net" as const,
@@ -127,7 +125,9 @@ export function OverviewSection({ data, filters }: OverviewProps) {
           {debt.highest_apr_card
             ? `Highest APR: ${debt.highest_apr_card.account_name} ${debt.highest_apr_card.apr}%`
             : "No credit cards"}
-          {totalDebtOwed > 0.005 ? ` · ${formatCurrency(totalDebtOwed)} owed` : ""}
+          {totalDebtOwed != null && totalDebtOwed > 0
+            ? ` · ${formatCurrency(data.debt.total_balance_owed!)} owed`
+            : ""}
         </Text>
       </ReportNavSection>
 
@@ -178,7 +178,7 @@ export function CashFlowSection({ data, historyMonths, onHistoryMonthsChange }: 
       {
         label: "Net cash flow",
         amount: overview.net,
-        tone: parseAmount(overview.net) >= 0 ? ("positive" as const) : ("negative" as const),
+        tone: (parseOptionalAmount(overview.net) ?? 0) >= 0 ? ("positive" as const) : ("negative" as const),
         comparison: overview.comparison?.net,
         previousMonth,
         comparisonContext: "net" as const,
@@ -221,7 +221,6 @@ export function SpendingSection({
     () => partitionCategoryBreakdown(data.category_breakdown.breakdown),
     [data.category_breakdown.breakdown]
   );
-  const expenseAbs = Math.abs(partitioned.expenseSubtotal);
   const topCats = useMemo(
     () => topExpenseCategories(data.category_breakdown.breakdown, TOP_CATEGORY_LIMIT),
     [data.category_breakdown.breakdown]
@@ -245,7 +244,6 @@ export function SpendingSection({
               <CategoryBreakdownRow
                 key={row.category_id ?? `all-${row.category_name}`}
                 row={row}
-                expenseSubtotal={expenseAbs}
                 previousMonth={previousMonth}
                 onPress={
                   row.category_id != null
@@ -292,13 +290,12 @@ export function SpendingSection({
       {partitioned.income.length > 0 ? (
         <CollapsibleReportSection
           title="Income"
-          subtitle={`${partitioned.income.length} categories · ${formatSignedAmount(partitioned.incomeSubtotal)}`}
+          subtitle={`${partitioned.income.length} categories · ${formatSignedAmount(data.overview.total_income)}`}
         >
           {partitioned.income.map((row) => (
             <CategoryBreakdownRow
               key={row.category_id ?? "uncategorized-income"}
               row={row}
-              expenseSubtotal={expenseAbs}
               previousMonth={previousMonth}
               showShare={false}
               onPress={
@@ -313,14 +310,13 @@ export function SpendingSection({
 
       <CollapsibleReportSection
         title="Expenses"
-        subtitle={`${partitioned.expenses.length} categories · ${formatSignedAmount(partitioned.expenseSubtotal)}`}
+        subtitle={`${partitioned.expenses.length} categories · ${formatSignedAmount(data.overview.total_expenses)}`}
         initiallyExpanded={false}
       >
         {partitioned.expenses.map((row) => (
           <CategoryBreakdownRow
             key={row.category_id ?? "uncategorized-expense"}
             row={row}
-            expenseSubtotal={expenseAbs}
             previousMonth={previousMonth}
             onPress={
               row.category_id != null
@@ -364,11 +360,11 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
     <View style={{ gap: theme.spacing.lg }}>
       <ReportMetricGrid
         metrics={[
-          { label: "Total saved", amount: summary.total_saved ?? "0", tone: "positive" },
-          { label: "Total targets", amount: summary.total_target ?? "0", tone: "neutral" },
+          { label: "Total saved", amount: summary.total_saved ?? "", tone: "positive" },
+          { label: "Total targets", amount: summary.total_target ?? "", tone: "neutral" },
           {
             label: "Monthly needed",
-            amount: summary.monthly_needed_total ?? "0",
+            amount: summary.monthly_needed_total ?? "",
             tone: "neutral",
           },
         ]}
@@ -475,7 +471,8 @@ export function DebtSection({ data }: { data: MonthlyReports }) {
   const router = useRouter();
   const debt = data.debt;
 
-  if (debt.by_card.length === 0 && parseAmount(debt.total_interest_paid) === 0) {
+  const interestPaid = parseOptionalAmount(debt.total_interest_paid);
+  if (debt.by_card.length === 0 && (interestPaid == null || interestPaid === 0)) {
     return (
       <ReportEmptyState
         title="No credit-card interest"

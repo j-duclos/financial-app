@@ -22,8 +22,62 @@ def _decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
+def _finite_decimal(value) -> Decimal | None:
+    """Return a finite Decimal, or None when the value is missing/non-finite."""
+    if value is None:
+        return None
+    try:
+        d = value if isinstance(value, Decimal) else Decimal(str(value))
+    except Exception:
+        return None
+    if not d.is_finite():
+        return None
+    return d
+
+
 def _money(value) -> str:
-    return str(_decimal(value).quantize(Decimal("0.01")))
+    """Serialize a money amount. Non-finite inputs become explicit null via callers of _money_or_none."""
+    d = _finite_decimal(value)
+    if d is None:
+        # Known empty aggregates use Decimal("0"); refuse NaN/Infinity emission.
+        raise ValueError(f"non-finite money value: {value!r}")
+    return str(d.quantize(Decimal("0.01")))
+
+
+def _money_or_none(value) -> str | None:
+    d = _finite_decimal(value)
+    if d is None:
+        return None
+    return str(d.quantize(Decimal("0.01")))
+
+
+def _percent_or_none(value: Decimal | None) -> str | None:
+    if value is None or not value.is_finite():
+        return None
+    return str(value.quantize(Decimal("0.1")))
+
+
+def _show_category_comparison(
+    *,
+    total: Decimal,
+    delta: Decimal,
+    expense_abs_total: Decimal,
+) -> bool:
+    """
+    Backend policy: whether a category MoM delta is material enough to display.
+    Kept server-side so clients do not invent dollar/percentage significance rules.
+    """
+    abs_delta = abs(delta)
+    if abs_delta < Decimal("0.005"):
+        return False
+    abs_total = abs(total)
+    if (
+        expense_abs_total > 0
+        and abs_total / expense_abs_total < Decimal("0.01")
+        and abs_delta < Decimal("25")
+    ):
+        return False
+    return True
 
 
 def exclude_internal_transfers(qs: QuerySet) -> QuerySet:
@@ -98,14 +152,14 @@ def comparison_payload(current: dict[str, Decimal], previous: dict[str, Decimal]
         cur = current[key]
         prev = previous[key]
         delta = cur - prev
-        pct = None
+        pct: Decimal | None = None
         if prev != 0:
-            pct = (delta / abs(prev) * Decimal("100")).quantize(Decimal("0.1"))
+            pct = delta / abs(prev) * Decimal("100")
         out[key] = {
             "current": _money(cur),
             "previous": _money(prev),
             "delta": _money(delta),
-            "percent_change": str(pct) if pct is not None else None,
+            "percent_change": _percent_or_none(pct),
         }
     return out
 
@@ -169,22 +223,49 @@ def build_category_breakdown(
         elif include_previous and key == previous_key:
             previous[cat_id] += total
 
+    expense_abs_total = sum(
+        (abs(item["total"]) for item in current.values() if item["total"] < 0),
+        Decimal("0"),
+    )
+
     breakdown = []
     for cat_id, item in current.items():
         total = item["total"]
         prev = previous.get(cat_id, Decimal("0"))
         delta = total - prev
-        row = {
+        row: dict[str, Any] = {
             "category_id": item["category_id"],
             "category_name": item["category_name"],
             "total": _money(total),
         }
+        # Expense share of month expense subtotal — backend-owned analytical field.
+        if total < 0 and expense_abs_total > 0:
+            share = abs(total) / expense_abs_total * Decimal("100")
+            row["expense_share_percent"] = _percent_or_none(share)
+        else:
+            row["expense_share_percent"] = None
         if include_previous:
             row["previous_total"] = _money(prev)
             row["delta"] = _money(delta)
+            pct: Decimal | None = None
+            if prev != 0:
+                pct = delta / abs(prev) * Decimal("100")
+            row["percent_change"] = _percent_or_none(pct)
+            row["show_comparison"] = _show_category_comparison(
+                total=total,
+                delta=delta,
+                expense_abs_total=expense_abs_total,
+            )
         breakdown.append(row)
 
     # Categories that only appeared last month are omitted from current breakdown
     # (they did not spend/earn in the selected month).
-    breakdown.sort(key=lambda r: r["category_name"])
+    # Prefer expense magnitude (most negative first), then name — backend ordering.
+    breakdown.sort(
+        key=lambda r: (
+            0 if Decimal(r["total"]) < 0 else 1,
+            Decimal(r["total"]) if Decimal(r["total"]) < 0 else Decimal("0"),
+            r["category_name"],
+        )
+    )
     return {"month": ctx.period.month, "breakdown": breakdown}

@@ -113,6 +113,55 @@ def test_category_breakdown_includes_previous_delta(auth_client, household, user
     assert Decimal(groceries["total"]) == Decimal("-220.00")
     assert Decimal(groceries["previous_total"]) == Decimal("-310.00")
     assert Decimal(groceries["delta"]) == Decimal("90.00")
+    assert groceries["expense_share_percent"] is not None
+    assert Decimal(groceries["expense_share_percent"]) > 0
+    assert "show_comparison" in groceries
+    assert groceries["percent_change"] is not None
+
+
+@pytest.mark.django_db
+def test_category_share_and_comparison_are_backend_owned(auth_client, household, user):
+    seed_reports_world(household, user)
+    res = auth_client.get("/api/insights/reports/monthly/?month=2026-08&months=12")
+    assert res.status_code == 200
+    breakdown = res.json()["category_breakdown"]["breakdown"]
+    expenses = [row for row in breakdown if Decimal(row["total"]) < 0]
+    assert expenses
+    shares = [Decimal(row["expense_share_percent"]) for row in expenses if row["expense_share_percent"]]
+    assert shares
+    # Shares of expense categories sum to ~100 (allow rounding).
+    assert abs(sum(shares) - Decimal("100")) < Decimal("1.0")
+    for row in expenses:
+        assert "show_comparison" in row
+        assert row["expense_share_percent"] is not None
+    incomes = [row for row in breakdown if Decimal(row["total"]) >= 0]
+    for row in incomes:
+        assert row.get("expense_share_percent") is None
+
+
+@pytest.mark.django_db
+def test_monthly_reports_never_emit_nan_or_infinity(auth_client, household, user):
+    seed_reports_world(household, user)
+    res = auth_client.get("/api/insights/reports/monthly/?month=2026-08&months=12")
+    assert res.status_code == 200
+    payload = res.json()
+
+    def walk(obj, path="$"):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                walk(v, f"{path}[{i}]")
+        elif isinstance(obj, str):
+            assert obj.lower() not in {"nan", "inf", "-inf", "infinity", "-infinity"}, path
+        elif isinstance(obj, float):
+            import math
+
+            assert math.isfinite(obj), path
+
+    walk(payload)
+    assert "total_balance_owed" in payload["debt"]
 
 
 @pytest.mark.django_db

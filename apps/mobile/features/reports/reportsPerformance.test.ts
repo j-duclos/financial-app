@@ -31,4 +31,11 @@ describe("Reports request orchestration", () => {
     expect(reportsData).not.toMatch(/listTransactions/);
     expect(reportsData).not.toMatch(/getTransactions/);
   });
+
+  it("landing and detail reuse the same query helper — no duplicate monthly fetch path", () => {
+    expect(reportsScreen).toMatch(/useReportsData\(activeFilters\)/);
+    expect(reportDetail).toMatch(/useReportsData\(filters\)/);
+    expect(reportsScreen).not.toMatch(/getMonthlyReports\(/);
+    expect(reportDetail).not.toMatch(/getMonthlyReports\(/);
+  });
 });

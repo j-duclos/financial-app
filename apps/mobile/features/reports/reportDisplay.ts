@@ -1,14 +1,28 @@
 import { formatCurrency, formatMonth, parseMonth } from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
 
-export function parseAmount(value: string | number | null | undefined): number {
-  const n = typeof value === "number" ? value : parseFloat(String(value ?? "0"));
-  return Number.isFinite(n) ? n : 0;
+/**
+ * Parse a canonical report amount. Returns null for missing/malformed/non-finite values.
+ * Do not treat invalid API data as $0.
+ */
+export function parseOptionalAmount(value: string | number | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : parseFloat(String(value));
+  return Number.isFinite(n) ? n : null;
 }
 
-/** Signed money for Reports: +$X / -$X / $0.00 */
-export function formatSignedAmount(value: string | number): string {
-  const n = parseAmount(value);
+/**
+ * Parse when a numeric value is required for presentation (sign/tone).
+ * Prefer {@link parseOptionalAmount} when distinguishing invalid from zero.
+ */
+export function parseAmount(value: string | number | null | undefined): number {
+  return parseOptionalAmount(value) ?? 0;
+}
+
+/** Signed money for Reports: +$X / -$X / $0.00. Invalid → em dash. */
+export function formatSignedAmount(value: string | number | null | undefined): string {
+  const n = parseOptionalAmount(value);
+  if (n == null) return "—";
   const abs = formatCurrency(Math.abs(n));
   if (n > 0) return `+${abs}`;
   if (n < 0) return `-${abs}`;
@@ -29,7 +43,8 @@ export function formatShortMonth(ym: string): string {
 
 export function formatDeltaVsPrevious(delta: string | undefined, previousMonth: string): string {
   if (delta == null) return "—";
-  const n = parseAmount(delta);
+  const n = parseOptionalAmount(delta);
+  if (n == null) return "—";
   const label = formatShortMonth(previousMonth);
   if (n === 0) return `No change vs ${label}`;
   return `${formatSignedAmount(delta)} vs ${label}`;
@@ -37,20 +52,30 @@ export function formatDeltaVsPrevious(delta: string | undefined, previousMonth: 
 
 export function formatPercentChange(pct: string | null | undefined): string | null {
   if (pct == null || pct === "") return null;
-  const n = parseAmount(pct);
-  if (!Number.isFinite(n)) return null;
+  const n = parseOptionalAmount(pct);
+  if (n == null) return null;
   const sign = n > 0 ? "+" : "";
   return `${sign}${n}%`;
+}
+
+/**
+ * Format backend-owned expense_share_percent. Does not compute share from amounts.
+ */
+export function formatExpenseSharePercent(share: string | null | undefined): string | null {
+  if (share == null || share === "") return null;
+  const n = parseOptionalAmount(share);
+  if (n == null) return null;
+  return `${Math.round(n)}%`;
 }
 
 export type ComparisonTone = "positive" | "negative" | "neutral";
 
 /** Raw signed-delta tone (income / net). Positive delta → green. */
 export function comparisonTone(delta: string | number | undefined): ComparisonTone {
-  const n = parseAmount(delta);
+  const n = parseOptionalAmount(delta);
+  if (n == null || n === 0) return "neutral";
   if (n > 0) return "positive";
-  if (n < 0) return "negative";
-  return "neutral";
+  return "negative";
 }
 
 /**
@@ -71,25 +96,10 @@ export function comparisonSubtitle(
   previousMonth: string | undefined
 ): string | undefined {
   if (!previousMonth || delta == null) return undefined;
+  if (parseOptionalAmount(delta) == null) return undefined;
   const pct = formatPercentChange(percentChange);
   const vs = formatDeltaVsPrevious(delta, previousMonth);
   return pct ? `${vs} (${pct})` : vs;
-}
-
-/** Hide noisy comparisons for tiny category rows. */
-export function shouldShowCategoryDelta(
-  total: string,
-  delta: string | undefined,
-  expenseAbsTotal: number
-): boolean {
-  if (delta == null) return false;
-  const absTotal = Math.abs(parseAmount(total));
-  const absDelta = Math.abs(parseAmount(delta));
-  if (absDelta < 0.005) return false;
-  if (expenseAbsTotal > 0 && absTotal / expenseAbsTotal < 0.01 && absDelta < 25) {
-    return false;
-  }
-  return true;
 }
 
 export const REPORT_TABS = [
@@ -115,11 +125,4 @@ export function reportTabLabel(tab: ReportTab): string {
 export function formatProjectedCompletion(iso: string | null | undefined): string | null {
   if (!iso) return null;
   return formatDateDisplay(iso);
-}
-
-export function expenseSharePercent(amount: string, expenseSubtotal: number): string {
-  const abs = Math.abs(parseAmount(amount));
-  if (expenseSubtotal <= 0) return "—";
-  const share = (abs / expenseSubtotal) * 100;
-  return share >= 1 ? `${share.toFixed(0)}%` : "<1%";
 }

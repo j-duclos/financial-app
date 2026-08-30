@@ -17,7 +17,7 @@ import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { ReportFiltersSheet } from "./ReportFiltersSheet";
-import { formatMonthLabel, formatSignedAmount, parseAmount } from "./reportDisplay";
+import { formatMonthLabel, formatSignedAmount, parseOptionalAmount } from "./reportDisplay";
 import { reportDetailPath } from "./navigation";
 import { countActiveReportFilters, REPORT_TYPE_CARDS, type ReportFilters } from "./types";
 import { useReportsData } from "./useReportsData";
@@ -41,18 +41,42 @@ export function ReportsScreen() {
   const [period, setPeriod] = useState(() => periodFromMonthKey(DEFAULT_FILTERS.monthKey));
   const [filters, setFilters] = useState<ReportFilters>(DEFAULT_FILTERS);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const activeFilters = useMemo(
     () => ({ ...filters, monthKey: monthKeyFromPeriod(period) }),
     [filters, period]
   );
 
-  const { data, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
-    useReportsData(activeFilters);
+  const {
+    data,
+    householdReady,
+    householdId,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+    monthKey,
+  } = useReportsData(activeFilters);
   const activeFilterCount = countActiveReportFilters(filters, DEFAULT_FILTERS);
+  const dataMatchesMonth = data != null && data.month === monthKey;
+  const updatingPeriod = Boolean(
+    (isFetching || isPlaceholderData || (data != null && !dataMatchesMonth)) && !pullRefreshing
+  );
 
   const onPeriodChange = (next: typeof period) => {
     setPeriod(next);
+  };
+
+  const onPullRefresh = async () => {
+    setPullRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
   };
 
   if (!householdReady) {
@@ -80,14 +104,20 @@ export function ReportsScreen() {
     );
   }
 
-  const previewNet = data?.overview.net;
+  const previewNet = dataMatchesMonth ? data?.overview.net : undefined;
+  const expenseCategoryCount = dataMatchesMonth
+    ? data?.category_breakdown.breakdown.filter((r) => {
+        const n = parseOptionalAmount(r.total);
+        return n != null && n < 0;
+      }).length
+    : undefined;
 
   return (
     <Screen scroll={false}>
       <AppHeader title="Reports" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />}
+        refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} />}
       >
         <Text style={{ color: theme.colors.textSecondary, marginBottom: 12, ...theme.typography.body }}>
           Understand where your money goes — monthly insights from your accounts.
@@ -116,13 +146,19 @@ export function ReportsScreen() {
           </Text>
         ) : null}
 
+        {updatingPeriod ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginBottom: 8 }}>
+            Updating {formatMonthLabel(monthKey)}…
+          </Text>
+        ) : null}
+
         {isLoading && !data ? (
           <SkeletonBlock lines={5} />
         ) : isError && !data ? (
-          <ErrorState message={describeApiError(error)} onRetry={refetch} />
+          <ErrorState message={describeApiError(error)} onRetry={() => void refetch()} />
         ) : (
           <>
-            {data ? (
+            {data && dataMatchesMonth ? (
               <Card style={{ marginBottom: theme.spacing.lg }}>
                 <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "600" }}>
                   {formatMonthLabel(data.month)} SUMMARY
@@ -145,7 +181,7 @@ export function ReportsScreen() {
                     <Text
                       style={{
                         color:
-                          parseAmount(data.overview.net) >= 0
+                          (parseOptionalAmount(data.overview.net) ?? 0) >= 0
                             ? theme.colors.moneyPositive
                             : theme.colors.moneyNegative,
                         fontWeight: "700",
@@ -157,6 +193,8 @@ export function ReportsScreen() {
                   </View>
                 </View>
               </Card>
+            ) : updatingPeriod ? (
+              <SkeletonBlock lines={3} />
             ) : null}
 
             {isError && data ? (
@@ -204,13 +242,12 @@ export function ReportsScreen() {
                           Net {formatSignedAmount(previewNet)} this month
                         </Text>
                       ) : null}
-                      {card.id === "spending" && data?.category_breakdown.breakdown.length ? (
+                      {card.id === "spending" && expenseCategoryCount != null && expenseCategoryCount > 0 ? (
                         <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
-                          {data.category_breakdown.breakdown.filter((r) => parseAmount(r.total) < 0).length} expense
-                          categories
+                          {expenseCategoryCount} expense categories
                         </Text>
                       ) : null}
-                      {card.id === "debt" && data?.debt.total_interest_paid ? (
+                      {card.id === "debt" && dataMatchesMonth && data?.debt.total_interest_paid ? (
                         <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
                           {formatCurrency(data.debt.total_interest_paid)} interest this month
                         </Text>

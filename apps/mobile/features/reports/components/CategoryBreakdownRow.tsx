@@ -6,17 +6,15 @@ import { formatCurrency } from "@budget-app/shared";
 import { CurrencyDisplay } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
-  expenseSharePercent,
   formatDeltaVsPrevious,
+  formatExpenseSharePercent,
   formatSignedAmount,
-  parseAmount,
-  shouldShowCategoryDelta,
+  parseOptionalAmount,
 } from "../reportDisplay";
 import { PeriodComparisonBadge } from "./PeriodComparisonBadge";
 
 type Props = {
   row: CategoryBreakdownItem;
-  expenseSubtotal: number;
   previousMonth?: string;
   onPress?: () => void;
   showShare?: boolean;
@@ -24,16 +22,16 @@ type Props = {
 
 export const CategoryBreakdownRow = React.memo(function CategoryBreakdownRow({
   row,
-  expenseSubtotal,
   previousMonth,
   onPress,
   showShare = true,
 }: Props) {
   const theme = useTheme();
-  const isExpense = parseAmount(row.total) < 0;
-  const share = showShare && isExpense ? expenseSharePercent(row.total, Math.abs(expenseSubtotal)) : null;
-  const showDelta =
-    previousMonth && shouldShowCategoryDelta(row.total, row.delta, Math.abs(expenseSubtotal));
+  const total = parseOptionalAmount(row.total);
+  const isExpense = total != null && total < 0;
+  const share =
+    showShare && isExpense ? formatExpenseSharePercent(row.expense_share_percent) : null;
+  const showDelta = Boolean(previousMonth && row.show_comparison && row.delta != null);
 
   const content = (
     <View
@@ -96,15 +94,18 @@ export function CategorySpendBarChart({
   onCategoryPress?: (categoryId: number, categoryName: string) => void;
 }) {
   const theme = useTheme();
-  const ranked = React.useMemo(
-    () =>
-      [...rows]
-        .filter((row) => parseAmount(row.total) < 0)
-        .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
-        .slice(0, limit)
-        .map((row) => ({ ...row, abs: Math.abs(parseAmount(row.total)) })),
-    [rows, limit]
-  );
+  // Relative bar widths vs peak are presentation-only (not expense share %).
+  const ranked = React.useMemo(() => {
+    return rows
+      .map((row) => {
+        const total = parseOptionalAmount(row.total);
+        if (total == null || total >= 0) return null;
+        return { ...row, abs: Math.abs(total) };
+      })
+      .filter((row): row is CategoryBreakdownItem & { abs: number } => row != null)
+      .sort((a, b) => b.abs - a.abs)
+      .slice(0, limit);
+  }, [rows, limit]);
 
   if (ranked.length === 0) return null;
 

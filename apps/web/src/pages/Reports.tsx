@@ -1,6 +1,6 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { formatCurrency, currentMonthStr } from "@budget-app/shared";
 import type {
   CategoryBreakdownItem,
@@ -31,16 +31,17 @@ import {
 import {
   deltaClassName,
   formatDeltaVsPrevious,
+  formatExpenseSharePercent,
   formatMonthLabel,
   formatPercentChange,
   formatSignedAmount,
-  parseAmount,
+  parseOptionalAmount,
   parseReportViewParam,
   REPORT_TABS,
-  shouldShowCategoryDelta,
   type ReportTab,
 } from "../lib/reportDisplay";
 import { SPENDING_GOALS_PATH } from "../lib/spendingTargetDisplay";
+import { useProfileQuery } from "../lib/profileQuery";
 const TOP_CATEGORY_LIMIT = 8;
 
 function comparisonSubtitle(
@@ -73,20 +74,24 @@ function CategoryTable({
   previousMonth,
   showAll,
   onToggleShowAll,
+  incomeTotal,
+  expenseTotal,
+  netTotal,
 }: {
   breakdown: CategoryBreakdownItem[];
   previousMonth?: string;
   showAll: boolean;
   onToggleShowAll: () => void;
+  incomeTotal: string;
+  expenseTotal: string;
+  netTotal: string;
 }) {
   const partitioned = useMemo(() => partitionCategoryBreakdown(breakdown), [breakdown]);
-  const expenseAbs = Math.abs(partitioned.expenseSubtotal);
   const visibleExpenses = showAll
     ? partitioned.expenses
-    : [...partitioned.expenses]
-        .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
-        .slice(0, TOP_CATEGORY_LIMIT);
+    : partitioned.expenses.slice(0, TOP_CATEGORY_LIMIT);
   const hiddenCount = partitioned.expenses.length - visibleExpenses.length;
+  const netTone = (parseOptionalAmount(netTotal) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700";
 
   return (
     <div className="overflow-x-auto">
@@ -128,7 +133,7 @@ function CategoryTable({
               </td>
               <td className="px-4 py-2 text-right text-gray-400 hidden sm:table-cell">—</td>
               <td className="px-4 py-2 text-right text-xs">
-                {shouldShowCategoryDelta(row.total, row.delta, expenseAbs) ? (
+                {row.show_comparison ? (
                   <ComparisonLine delta={row.delta} previousMonth={previousMonth} />
                 ) : (
                   <span className="text-gray-400">—</span>
@@ -139,7 +144,7 @@ function CategoryTable({
           <tr className="bg-gray-50 font-semibold">
             <td className="px-4 py-2 pl-6">Income subtotal</td>
             <td className="px-4 py-2 text-right text-emerald-700 tabular-nums">
-              {formatSignedAmount(partitioned.incomeSubtotal)}
+              {formatSignedAmount(incomeTotal)}
             </td>
             <td className="hidden sm:table-cell" />
             <td />
@@ -150,8 +155,7 @@ function CategoryTable({
             </td>
           </tr>
           {visibleExpenses.map((row) => {
-            const share =
-              expenseAbs > 0 ? (Math.abs(parseAmount(row.total)) / expenseAbs) * 100 : 0;
+            const share = formatExpenseSharePercent(row.expense_share_percent);
             return (
               <tr key={row.category_id ?? "uncategorized-expense"}>
                 <td className="px-4 py-2 pl-6">
@@ -170,10 +174,10 @@ function CategoryTable({
                   {formatSignedAmount(row.total)}
                 </td>
                 <td className="px-4 py-2 text-right text-gray-500 tabular-nums hidden sm:table-cell">
-                  {share >= 1 ? `${share.toFixed(0)}%` : "<1%"}
+                  {share ?? "—"}
                 </td>
                 <td className="px-4 py-2 text-right text-xs">
-                  {shouldShowCategoryDelta(row.total, row.delta, expenseAbs) ? (
+                  {row.show_comparison ? (
                     <ComparisonLine delta={row.delta} previousMonth={previousMonth} />
                   ) : (
                     <span className="text-gray-400">—</span>
@@ -211,19 +215,15 @@ function CategoryTable({
           <tr className="bg-gray-50 font-semibold">
             <td className="px-4 py-2 pl-6">Expense subtotal</td>
             <td className="px-4 py-2 text-right text-red-700 tabular-nums">
-              {formatSignedAmount(partitioned.expenseSubtotal)}
+              {formatSignedAmount(expenseTotal)}
             </td>
             <td className="hidden sm:table-cell" />
             <td />
           </tr>
           <tr className="border-t-2 border-gray-300 font-bold">
             <td className="px-4 py-3">Net</td>
-            <td
-              className={`px-4 py-3 text-right tabular-nums ${
-                partitioned.net >= 0 ? "text-emerald-700" : "text-red-700"
-              }`}
-            >
-              {formatSignedAmount(partitioned.net)}
+            <td className={`px-4 py-3 text-right tabular-nums ${netTone}`}>
+              {formatSignedAmount(netTotal)}
             </td>
             <td className="hidden sm:table-cell" />
             <td />
@@ -242,8 +242,8 @@ function SpendingLimitCards({ targets }: { targets: SpendingTargetMetrics[] }) {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
       {targets.map((metrics) => {
         const pct = spendingTargetProgressPercent(metrics);
-        const remaining = parseAmount(metrics.remaining_to_target);
-        const scheduled = parseAmount(metrics.scheduled_in_period);
+        const remaining = parseOptionalAmount(metrics.remaining_to_target);
+        const scheduled = parseOptionalAmount(metrics.scheduled_in_period);
         return (
           <article
             key={metrics.target_id}
@@ -282,7 +282,7 @@ function SpendingLimitCards({ targets }: { targets: SpendingTargetMetrics[] }) {
                 <dt className="text-gray-600">Spent</dt>
                 <dd className="tabular-nums">{formatCurrency(metrics.spent_so_far)}</dd>
               </div>
-              {scheduled > 0.005 && (
+              {scheduled != null && scheduled > 0 && (
                 <div className="flex justify-between gap-2">
                   <dt className="text-gray-600">Scheduled</dt>
                   <dd className="tabular-nums">{formatCurrency(metrics.scheduled_in_period)}</dd>
@@ -290,7 +290,7 @@ function SpendingLimitCards({ targets }: { targets: SpendingTargetMetrics[] }) {
               )}
               <div className="flex justify-between gap-2">
                 <dt className="text-gray-600">Remaining</dt>
-                <dd className={`tabular-nums ${remaining < 0 ? "text-red-700 font-medium" : ""}`}>
+                <dd className={`tabular-nums ${remaining != null && remaining < 0 ? "text-red-700 font-medium" : ""}`}>
                   {formatCurrency(metrics.remaining_to_target)}
                 </dd>
               </div>
@@ -310,19 +310,24 @@ function GoalProgressList({ goals }: { goals: FinancialGoal[] }) {
   return (
     <ul className="divide-y divide-gray-100">
       {active.map((goal) => {
-        const pct = Math.min(100, Math.max(0, parseAmount(goal.progress_percent)));
+        const parsedPct = parseOptionalAmount(goal.progress_percent);
+        const pct = parsedPct == null ? null : Math.min(100, Math.max(0, parsedPct));
         return (
           <li key={goal.id} className="px-4 py-3">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
               <p className="font-medium text-gray-900">{goal.name}</p>
               <p className="text-sm tabular-nums text-gray-700">
                 {formatCurrency(goal.current_amount)} / {formatCurrency(goal.target_amount)}
-                <span className="ml-2 text-gray-500">{pct.toFixed(0)}%</span>
+                <span className="ml-2 text-gray-500">
+                  {pct != null ? `${pct.toFixed(0)}%` : "—"}
+                </span>
               </p>
             </div>
-            <div className="mt-1.5 h-2 rounded-full bg-gray-100 overflow-hidden" aria-hidden>
-              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
-            </div>
+            {pct != null ? (
+              <div className="mt-1.5 h-2 rounded-full bg-gray-100 overflow-hidden" aria-hidden>
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+              </div>
+            ) : null}
             <p className="mt-1 text-xs text-gray-500">
               Monthly needed:{" "}
               {goal.monthly_required ? `${formatCurrency(goal.monthly_required)}/mo` : "—"}
@@ -363,7 +368,7 @@ function FundingTables({ report }: { report: GoalsReport }) {
                 {formatCurrency(row.contributed ?? "0")}
               </td>
               <td className="px-4 py-2 text-right tabular-nums text-amber-800">
-                {parseAmount(row.released) > 0 ? formatCurrency(row.released ?? "0") : "—"}
+                {(parseOptionalAmount(row.released) ?? 0) > 0 ? formatCurrency(row.released!) : "—"}
               </td>
               <td className={`px-4 py-2 text-right tabular-nums ${deltaClassName(row.total)}`}>
                 {formatSignedAmount(row.total)}
@@ -398,7 +403,8 @@ function FundingTables({ report }: { report: GoalsReport }) {
 }
 
 function DebtSection({ debt }: { debt: CreditCardInterestReport }) {
-  if (debt.by_card.length === 0 && parseAmount(debt.total_interest_paid) === 0) {
+  const interestPaid = parseOptionalAmount(debt.total_interest_paid);
+  if (debt.by_card.length === 0 && (interestPaid == null || interestPaid === 0)) {
     return <p className="px-4 py-3 text-sm text-gray-500">No credit-card interest in this month.</p>;
   }
   return (
@@ -514,7 +520,7 @@ function OverviewSection({
         <DashboardMetricTile
           label="Net"
           value={formatSignedAmount(overview.net)}
-          valueClassName={parseAmount(overview.net) >= 0 ? "text-emerald-700" : "text-red-700"}
+          valueClassName={(parseOptionalAmount(overview.net) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}
           subtitle={comparisonSubtitle(overview.comparison?.net, previousMonth)}
         />
       </div>
@@ -631,7 +637,7 @@ function CashFlowSection({ data }: { data: MonthlyReports }) {
         <DashboardMetricTile
           label="Net cash flow"
           value={formatSignedAmount(overview.net)}
-          valueClassName={parseAmount(overview.net) >= 0 ? "text-emerald-700" : "text-red-700"}
+          valueClassName={(parseOptionalAmount(overview.net) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}
           subtitle={comparisonSubtitle(overview.comparison?.net, previousMonth)}
         />
       </div>
@@ -650,13 +656,22 @@ export default function Reports() {
   const tab: ReportTab = urlTab ?? "overview";
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [fundingOpen, setFundingOpen] = useState(false);
+  const { data: profile } = useProfileQuery();
+  const householdId = profile?.default_household ?? undefined;
 
-  const { data, isPending, isError } = useQuery({
-    queryKey: ["monthly-reports", month],
-    queryFn: () => getMonthlyReports(month, { months: 12 }),
+  const { data, isPending, isError, isFetching, isPlaceholderData } = useQuery({
+    queryKey: ["monthly-reports", month, householdId ?? null, 12],
+    queryFn: () =>
+      getMonthlyReports(month, {
+        months: 12,
+        household_id: householdId,
+      }),
+    placeholderData: keepPreviousData,
   });
 
   const previousMonth = data?.overview.previous_month;
+  const dataMatchesMonth = data != null && data.month === month;
+  const updatingPeriod = Boolean(isFetching || isPlaceholderData || (data != null && !dataMatchesMonth));
 
   function setTab(next: ReportTab) {
     const params = new URLSearchParams(searchParams);
@@ -687,6 +702,9 @@ export default function Reports() {
           <p className="text-sm text-gray-500 mt-1">
             Why it happened — trends for cash flow, spending, goals, and debt.
           </p>
+          {updatingPeriod ? (
+            <p className="text-xs text-gray-400 mt-1">Updating {formatMonthLabel(month)}…</p>
+          ) : null}
         </div>
         <input
           type="month"
@@ -728,30 +746,35 @@ export default function Reports() {
         })}
       </div>
 
-      {isPending && (
+      {isPending && !data && (
         <div className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500">
           Loading {formatMonthLabel(month)}…
         </div>
       )}
-      {isError && (
+      {isError && !data && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           Could not load reports for {formatMonthLabel(month)}.
         </div>
       )}
+      {isError && data ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Could not refresh — showing cached data.
+        </div>
+      ) : null}
 
-      {data && tab === "overview" && (
+      {data && dataMatchesMonth && tab === "overview" && (
         <div role="tabpanel" id="report-panel-overview" aria-labelledby="report-tab-overview">
           <OverviewSection data={data} onOpenTab={setTab} />
         </div>
       )}
 
-      {data && tab === "cash-flow" && (
+      {data && dataMatchesMonth && tab === "cash-flow" && (
         <div role="tabpanel" id="report-panel-cash-flow" aria-labelledby="report-tab-cash-flow">
           <CashFlowSection data={data} />
         </div>
       )}
 
-      {data && tab === "spending" && (
+      {data && dataMatchesMonth && tab === "spending" && (
         <div
           role="tabpanel"
           id="report-panel-spending"
@@ -768,6 +791,9 @@ export default function Reports() {
               previousMonth={previousMonth}
               showAll={showAllCategories}
               onToggleShowAll={() => setShowAllCategories((v) => !v)}
+              incomeTotal={data.overview.total_income}
+              expenseTotal={data.overview.total_expenses}
+              netTotal={data.overview.net}
             />
           </div>
           <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -782,7 +808,7 @@ export default function Reports() {
         </div>
       )}
 
-      {data && tab === "goals" && (
+      {data && dataMatchesMonth && tab === "goals" && (
         <div
           role="tabpanel"
           id="report-panel-goals"
@@ -829,7 +855,7 @@ export default function Reports() {
         </div>
       )}
 
-      {data && tab === "debt" && (
+      {data && dataMatchesMonth && tab === "debt" && (
         <div
           role="tabpanel"
           id="report-panel-debt"

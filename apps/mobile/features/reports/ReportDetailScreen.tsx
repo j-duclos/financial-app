@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { currentMonthStr } from "@budget-app/shared";
@@ -29,6 +29,7 @@ export function ReportDetailScreen() {
     section?: string;
   }>();
   const reportType = parseReportTypeParam(params.type);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const routeFilters = parseReportRouteParams(params);
   const filters: ReportFilters = useMemo(
@@ -41,8 +42,23 @@ export function ReportDetailScreen() {
   const expandLimits = routeFilters?.section === "limits";
 
   const period = periodAnchorFromDate(`${filters.monthKey}-15`);
-  const { data, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
-    useReportsData(filters);
+  const {
+    data,
+    householdReady,
+    householdId,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+    monthKey,
+  } = useReportsData(filters);
+
+  const dataMatchesMonth = data != null && data.month === monthKey;
+  const updatingPeriod = Boolean(
+    (isFetching || isPlaceholderData || (data != null && !dataMatchesMonth)) && !pullRefreshing
+  );
 
   if (!reportType) {
     return (
@@ -59,6 +75,15 @@ export function ReportDetailScreen() {
 
   const onHistoryMonthsChange = (months: ReportHistoryMonths) => {
     router.setParams({ months: String(months) });
+  };
+
+  const onPullRefresh = async () => {
+    setPullRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
   };
 
   if (!householdReady) {
@@ -89,7 +114,7 @@ export function ReportDetailScreen() {
       <AppHeader title={reportTabLabel(reportType)} onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />}
+        refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} />}
       >
         <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginBottom: 8 }}>
           {formatMonthLabel(filters.monthKey)}
@@ -114,20 +139,21 @@ export function ReportDetailScreen() {
           }
         />
 
+        {updatingPeriod ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginBottom: 8 }}>
+            Updating {formatMonthLabel(monthKey)}…
+          </Text>
+        ) : null}
+
         {isLoading && !data ? (
           <SkeletonBlock lines={6} />
         ) : isError && !data ? (
-          <ErrorState message={describeApiError(error)} onRetry={refetch} />
-        ) : data ? (
+          <ErrorState message={describeApiError(error)} onRetry={() => void refetch()} />
+        ) : data && dataMatchesMonth ? (
           <>
             {isError ? (
               <Text style={{ color: theme.colors.warning, fontSize: 13, marginBottom: 12 }}>
                 Showing cached data — refresh failed.
-              </Text>
-            ) : null}
-            {isFetching && data && !isLoading ? (
-              <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginBottom: 8 }}>
-                Updating…
               </Text>
             ) : null}
             {reportType === "overview" ? <OverviewSection data={data} filters={filters} /> : null}
@@ -149,6 +175,8 @@ export function ReportDetailScreen() {
             {reportType === "goals" ? <GoalsSection data={data} /> : null}
             {reportType === "debt" ? <DebtSection data={data} /> : null}
           </>
+        ) : updatingPeriod ? (
+          <SkeletonBlock lines={6} />
         ) : null}
       </ScrollView>
     </Screen>

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { CategoryBreakdownItem, GoalMonthlyFunding, MonthlySummary } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { formatShortMonth, parseAmount } from "../../lib/reportDisplay";
+import { formatShortMonth, parseOptionalAmount } from "../../lib/reportDisplay";
 
 type TrendPoint = Pick<MonthlySummary, "month" | "total_income" | "total_expenses">;
 
@@ -23,8 +23,8 @@ export function IncomeExpenseTrendChart({
     () =>
       trend.map((row) => ({
         month: row.month,
-        income: parseAmount(row.total_income),
-        expense: Math.abs(parseAmount(row.total_expenses)),
+        income: parseOptionalAmount(row.total_income) ?? 0,
+        expense: Math.abs(parseOptionalAmount(row.total_expenses) ?? 0),
       })),
     [trend]
   );
@@ -101,12 +101,12 @@ export function CategorySpendBarChart({
 }) {
   const ranked = useMemo(() => {
     return [...rows]
-      .filter((row) => parseAmount(row.total) < 0)
-      .sort((a, b) => parseAmount(a.total) - parseAmount(b.total))
+      .filter((row) => (parseOptionalAmount(row.total) ?? 0) < 0)
+      .sort((a, b) => (parseOptionalAmount(a.total) ?? 0) - (parseOptionalAmount(b.total) ?? 0))
       .slice(0, 6)
       .map((row) => ({
         ...row,
-        abs: Math.abs(parseAmount(row.total)),
+        abs: Math.abs(parseOptionalAmount(row.total) ?? 0),
       }));
   }, [rows]);
   const peak = maxAbs(ranked.map((r) => r.abs));
@@ -156,11 +156,11 @@ export function GoalFundingChart({
   const series = useMemo(() => {
     const actualPts = actual.map((row) => ({
       month: row.month,
-      total: parseAmount(row.total),
+      total: parseOptionalAmount(row.total) ?? 0,
     }));
     const projectedPts = projected.map((row) => ({
       month: row.month,
-      total: parseAmount(row.total),
+      total: parseOptionalAmount(row.total) ?? 0,
     }));
     const months = Array.from(
       new Set([...actualPts.map((p) => p.month), ...projectedPts.map((p) => p.month)])
@@ -255,7 +255,7 @@ export function InterestTrendChart({
   trend: Array<{ month: string; interest_paid: string }>;
 }) {
   const points = useMemo(
-    () => trend.map((row) => ({ month: row.month, paid: parseAmount(row.interest_paid) })),
+    () => trend.map((row) => ({ month: row.month, paid: parseOptionalAmount(row.interest_paid) ?? 0 })),
     [trend]
   );
   const nonzero = points.filter((p) => p.paid > 0);

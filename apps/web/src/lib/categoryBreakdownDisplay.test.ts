@@ -7,7 +7,7 @@ function row(name: string, total: string, id: number | null = 1): CategoryBreakd
 }
 
 describe("partitionCategoryBreakdown", () => {
-  it("splits income and expenses, sorts by name, and computes subtotals and net", () => {
+  it("splits income and expenses and sorts by name without financial subtotals", () => {
     const items: CategoryBreakdownItem[] = [
       row("Uncategorized", "-2488.92", null),
       row("Paycheck / Salary", "7342.08", 2),
@@ -19,9 +19,9 @@ describe("partitionCategoryBreakdown", () => {
 
     expect(result.income.map((r) => r.category_name)).toEqual(["Paycheck / Salary"]);
     expect(result.expenses.map((r) => r.category_name)).toEqual(["Rent / Mortgage", "Uncategorized"]);
-    expect(result.incomeSubtotal).toBeCloseTo(7342.08);
-    expect(result.expenseSubtotal).toBeCloseTo(-5588.92);
-    expect(result.net).toBeCloseTo(1753.16);
+    expect(result).not.toHaveProperty("incomeSubtotal");
+    expect(result).not.toHaveProperty("expenseSubtotal");
+    expect(result).not.toHaveProperty("net");
   });
 
   it("drops internal transfer categories", () => {
@@ -32,6 +32,5 @@ describe("partitionCategoryBreakdown", () => {
     ]);
     expect(result.income).toHaveLength(1);
     expect(result.expenses).toHaveLength(0);
-    expect(result.incomeSubtotal).toBeCloseTo(100);
   });
 });

@@ -348,6 +348,8 @@ export interface CreditCardInterestReport {
   }>;
   total_interest_paid: string;
   total_projected_interest_remaining: string;
+  /** Backend sum of card balances owed — do not re-sum by_card client-side. */
+  total_balance_owed?: string;
   highest_apr_card?: {
     account_id: number;
     account_name: string;
@@ -1267,8 +1269,14 @@ export interface CategoryBreakdownItem {
   category_id: number | null;
   category_name: string;
   total: string;
+  /** Backend-owned share of month expense subtotal (expenses only). */
+  expense_share_percent?: string | null;
   previous_total?: string;
   delta?: string;
+  /** Backend-owned MoM percent change when previous is non-zero. */
+  percent_change?: string | null;
+  /** Backend policy: whether MoM comparison is material enough to display. */
+  show_comparison?: boolean;
 }
 
 export interface MonthlyReportsPeriod {

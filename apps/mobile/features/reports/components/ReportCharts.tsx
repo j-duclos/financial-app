@@ -3,7 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import type { MonthlySummary } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 import { useTheme } from "@/theme";
-import { formatShortMonth, parseAmount } from "../reportDisplay";
+import { formatShortMonth, parseOptionalAmount } from "../reportDisplay";
 import type { ReportHistoryMonths } from "../types";
 
 type TrendPoint = Pick<MonthlySummary, "month" | "total_income" | "total_expenses">;
@@ -24,8 +24,8 @@ export function IncomeExpenseTrendChart({
     () =>
       trend.map((row) => ({
         month: row.month,
-        income: parseAmount(row.total_income),
-        expense: Math.abs(parseAmount(row.total_expenses)),
+        income: parseOptionalAmount(row.total_income) ?? 0,
+        expense: Math.abs(parseOptionalAmount(row.total_expenses) ?? 0),
       })),
     [trend]
   );
@@ -169,10 +169,10 @@ export function InterestTrendChart({
   const points = useMemo(
     () =>
       trend
-        .filter((row) => parseAmount(row.interest_paid) > 0)
+        .filter((row) => (parseOptionalAmount(row.interest_paid) ?? 0) > 0)
         .map((row) => ({
           month: row.month,
-          amount: parseAmount(row.interest_paid),
+          amount: parseOptionalAmount(row.interest_paid) ?? 0,
         })),
     [trend]
   );

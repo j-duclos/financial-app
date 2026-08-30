@@ -14,15 +14,13 @@ import {
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { PeriodComparisonBadge } from "./components/PeriodComparisonBadge";
-import { partitionCategoryBreakdown } from "./categoryBreakdownDisplay";
 import { parseReportRouteParams, transactionsForReportCategory } from "./navigation";
 import {
-  expenseSharePercent,
   formatDeltaVsPrevious,
+  formatExpenseSharePercent,
   formatMonthLabel,
   formatSignedAmount,
-  parseAmount,
-  shouldShowCategoryDelta,
+  parseOptionalAmount,
 } from "./reportDisplay";
 import type { ReportFilters } from "./types";
 import { useReportsData } from "./useReportsData";
@@ -47,7 +45,8 @@ export function CategoryDetailScreen() {
     [routeFilters]
   );
 
-  const { data, isLoading, isError, error, refetch } = useReportsData(filters);
+  const { data, isLoading, isError, error, refetch, isPlaceholderData, isFetching } =
+    useReportsData(filters);
 
   const row = useMemo(() => {
     if (!data) return null;
@@ -56,11 +55,11 @@ export function CategoryDetailScreen() {
 
   const categoryName = params.name || row?.category_name || "Category";
   const previousMonth = data?.overview.previous_month;
-  const expenseAbs = data
-    ? Math.abs(partitionCategoryBreakdown(data.category_breakdown.breakdown).expenseSubtotal)
-    : 0;
-  const isExpense = row ? parseAmount(row.total) < 0 : true;
-  const share = row && isExpense ? expenseSharePercent(row.total, expenseAbs) : null;
+  const total = row ? parseOptionalAmount(row.total) : null;
+  const isExpense = total != null ? total < 0 : true;
+  const share = row && isExpense ? formatExpenseSharePercent(row.expense_share_percent) : null;
+  const dataMatchesMonth = data != null && data.month === filters.monthKey;
+  const updatingPeriod = Boolean(isFetching || isPlaceholderData || (data && !dataMatchesMonth));
 
   if (!Number.isInteger(categoryId) || categoryId <= 0) {
     return (
@@ -77,15 +76,28 @@ export function CategoryDetailScreen() {
       <ScrollView contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 32 }}>
         <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
           {formatMonthLabel(filters.monthKey)}
-          {data ? ` · ${data.period.start} – ${data.period.end}` : ""}
+          {data && dataMatchesMonth ? ` · ${data.period.start} – ${data.period.end}` : ""}
         </Text>
 
-        {isLoading ? (
+        {updatingPeriod && data ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginBottom: 8 }}>
+            Updating {formatMonthLabel(filters.monthKey)}…
+          </Text>
+        ) : null}
+
+        {isLoading && !data ? (
           <SkeletonBlock lines={4} />
-        ) : isError || !data ? (
+        ) : isError && !data ? (
           <ErrorState message={describeApiError(error)} onRetry={refetch} />
-        ) : !row ? (
-          <ErrorState message="No activity for this category in the selected month." onRetry={() => router.back()} />
+        ) : !row || !dataMatchesMonth ? (
+          updatingPeriod ? (
+            <SkeletonBlock lines={4} />
+          ) : (
+            <ErrorState
+              message="No activity for this category in the selected month."
+              onRetry={() => router.back()}
+            />
+          )
         ) : (
           <>
             <Card>
@@ -101,9 +113,7 @@ export function CategoryDetailScreen() {
                   {share} of total spending
                 </Text>
               ) : null}
-              {previousMonth &&
-              row.delta != null &&
-              shouldShowCategoryDelta(row.total, row.delta, expenseAbs) ? (
+              {previousMonth && row.show_comparison && row.delta != null ? (
                 <PeriodComparisonBadge
                   text={formatDeltaVsPrevious(row.delta, previousMonth)}
                   delta={row.delta}

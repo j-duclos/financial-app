@@ -22,7 +22,10 @@ def _decimal(value) -> Decimal:
 
 
 def _money(value: Decimal) -> str:
-    return str(value.quantize(Decimal("0.01")))
+    d = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not d.is_finite():
+        raise ValueError(f"non-finite money value: {value!r}")
+    return str(d.quantize(Decimal("0.01")))
 
 
 def _cards_from_context(ctx: ReportContext) -> list[Account]:
@@ -156,6 +159,7 @@ def build_credit_card_interest_report(
     by_card: list[dict[str, Any]] = []
     total_paid_period = Decimal("0")
     total_projected_remaining = Decimal("0")
+    total_balance_owed = Decimal("0")
     highest_apr: Account | None = None
     highest_util: tuple[Account, Decimal] | None = None
 
@@ -167,7 +171,9 @@ def build_credit_card_interest_report(
         util = None
         if limit > 0:
             util = (owed / limit * Decimal("100")).quantize(Decimal("0.1"))
-            if highest_util is None or util > highest_util[1]:
+            if not util.is_finite():
+                util = None
+            elif highest_util is None or util > highest_util[1]:
                 highest_util = (card, util)
         apr = _decimal(card.apr or 0)
         if highest_apr is None or apr > _decimal(highest_apr.apr or 0):
@@ -178,19 +184,21 @@ def build_credit_card_interest_report(
                 "account_name": card.effective_display_name,
                 "interest_paid": _money(interest_paid),
                 "projected_interest_remaining": _money(projected_remaining),
-                "apr": str(apr.quantize(Decimal("0.01"))) if apr else None,
+                "apr": str(apr.quantize(Decimal("0.01"))) if apr and apr.is_finite() else None,
                 "utilization_percent": str(util) if util is not None else None,
                 "balance_owed": _money(owed),
             }
         )
         total_paid_period += interest_paid
         total_projected_remaining += projected_remaining
+        total_balance_owed += owed
 
     return {
         "month": period.month,
         "by_card": by_card,
         "total_interest_paid": _money(total_paid_period),
         "total_projected_interest_remaining": _money(total_projected_remaining),
+        "total_balance_owed": _money(total_balance_owed),
         "highest_apr_card": (
             {
                 "account_id": highest_apr.pk,
