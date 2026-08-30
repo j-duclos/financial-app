@@ -327,6 +327,40 @@ def test_calendar_summary_is_side_effect_free_for_chunk(
 
 
 @pytest.mark.django_db
+def test_calendar_safe_until_status_contract(user, household, main_checking):
+    """Summary safe_until must expose explicit status semantics."""
+    today = date.today()
+    cache.clear()
+
+    calendar = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=30),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=30,
+    )
+    safe_until = calendar["summary"]["safe_until"]
+    assert safe_until["status"] in {"available", "no_upcoming_income", "unavailable"}
+    assert "reason" in safe_until
+
+    _planned(main_checking, today + timedelta(days=10), "Paycheck", Decimal("1500.00"))
+    cache.clear()
+    with_income = build_timeline_calendar(
+        user,
+        start_date=today,
+        end_date=today + timedelta(days=30),
+        household_id=household.id,
+        account_id=main_checking.id,
+        as_of_date=today,
+        forecast_days=30,
+    )["summary"]["safe_until"]
+    assert with_income["status"] == "available"
+    assert with_income["next_income_date"] is not None
+
+
+@pytest.mark.django_db
 def test_calendar_household_lookback_with_past_planned(api_client, user, household, main_checking):
     """Household calendar must not mix historical planned rows into risk metrics."""
     today = date.today()

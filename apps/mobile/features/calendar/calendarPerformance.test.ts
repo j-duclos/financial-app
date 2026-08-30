@@ -33,6 +33,11 @@ describe("Calendar request orchestration", () => {
     expect(calendarScreen).toMatch(/accountsLoading/);
   });
 
+  it("uses shared calendar query keys via forecastScope mapping", () => {
+    expect(calendarData).toMatch(/forecastScope: filters\.forecastDays/);
+    expect(calendarData).toMatch(/calendarQueryKeys\.summary\(queryFilters\)/);
+  });
+
   it("starts calendar summary concurrently with chunk data", () => {
     expect(calendarData).toMatch(/enabled,/);
     expect(calendarData).not.toMatch(/visibleChunkQuery\.isSuccess/);

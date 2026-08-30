@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  CALENDAR_QUERY_VERSION,
+  calendarQueryKeys,
+  isStaleCalendarChunkQuery,
+} from "@budget-app/shared";
 
 const source = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "useMoneyFlowCalendar.ts"),
@@ -9,14 +14,12 @@ const source = readFileSync(
 );
 
 describe("useMoneyFlowCalendar", () => {
-  it("uses stable summary and chunk query keys scoped to filters", () => {
-    expect(source).toMatch(/\["calendar-summary"/);
-    expect(source).toMatch(/\["calendar-chunk"/);
-    expect(source).toMatch(/\["calendar-timeline-upcoming"/);
-    expect(source).toMatch(/horizon/);
-    expect(source).toMatch(/lookbackMonths/);
-    expect(source).toMatch(/accountId/);
-    expect(source).toMatch(/scenarioId/);
+  it("uses shared calendar query keys scoped to filters", () => {
+    expect(source).toMatch(/calendarQueryKeys\.summary/);
+    expect(source).toMatch(/calendarQueryKeys\.chunk/);
+    expect(source).toMatch(/isStaleCalendarSummaryQuery/);
+    expect(source).toMatch(/isStaleCalendarChunkQuery/);
+    expect(source).toMatch(/forecastScope: filters\.horizon/);
   });
 
   it("does not fetch calendar chunks while Timeline view is active", () => {
@@ -44,9 +47,48 @@ describe("useMoneyFlowCalendar", () => {
     expect(source).toMatch(/signal/);
   });
 
-  it("reuses chunk windows across horizon changes via keys without horizon", () => {
-    expect(source).toMatch(/\["calendar-chunk"/);
-    expect(source).toMatch(/queryKey: \[[\s\S]*?"calendar-chunk"[\s\S]*?lookbackMonths/);
-    expect(source).not.toMatch(/\["calendar-chunk",\s*horizon/);
+  it("includes horizon in chunk query keys so identical windows differ by horizon", () => {
+    const filters = {
+      forecastScope: "6m" as const,
+      lookbackMonths: 0,
+      accountId: "" as const,
+      scenarioId: "" as const,
+      householdId: 1,
+    };
+    const sixMonth = calendarQueryKeys.chunk(filters, "2026-08-01", "2026-09-30");
+    const twelveMonth = calendarQueryKeys.chunk(
+      { ...filters, forecastScope: "12m" },
+      "2026-08-01",
+      "2026-09-30"
+    );
+    expect(sixMonth).not.toEqual(twelveMonth);
+    expect(sixMonth[2]).toBe("6m");
+    expect(twelveMonth[2]).toBe("12m");
+    expect(sixMonth[0]).toBe("calendar-chunk");
+    expect(sixMonth[1]).toBe(CALENDAR_QUERY_VERSION);
+  });
+
+  it("cancels stale chunk queries when horizon changes", () => {
+    const valid = new Set(["2026-08-01:2026-09-30"]);
+    const active = {
+      forecastScope: "6m" as const,
+      lookbackMonths: 0,
+      accountId: "" as const,
+      scenarioId: "" as const,
+      householdId: 1,
+    };
+    const stale = calendarQueryKeys.chunk(
+      { ...active, forecastScope: "12m" },
+      "2026-08-01",
+      "2026-09-30"
+    );
+    expect(isStaleCalendarChunkQuery(stale, active, valid)).toBe(true);
+    expect(
+      isStaleCalendarChunkQuery(
+        calendarQueryKeys.chunk(active, "2026-08-01", "2026-09-30"),
+        active,
+        valid
+      )
+    ).toBe(false);
   });
 });

@@ -1122,10 +1122,18 @@ def calendar_chunk_payload(
     }
 
 
-def _compute_safe_until(days_out: list[dict[str, Any]], today: date) -> dict[str, Any] | None:
-    """Cash remaining after obligations until the next projected income (matches frontend)."""
+def _compute_safe_until(days_out: list[dict[str, Any]], today: date) -> dict[str, Any]:
+    """Cash remaining after obligations until the next projected income."""
     if not days_out:
-        return None
+        return {
+            "status": "unavailable",
+            "reason": "no_calendar_days",
+            "next_income_date": None,
+            "safe_amount": None,
+            "unsafe_date": None,
+            "obligations_before_income": None,
+            "current_balance": None,
+        }
     today_iso = today.isoformat()
     today_day = next((day for day in days_out if day.get("date") == today_iso), None)
     anchor = today_day or days_out[0]
@@ -1155,10 +1163,21 @@ def _compute_safe_until(days_out: list[dict[str, Any]], today: date) -> dict[str
         running -= outflow
         if unsafe_date is None and running < 0:
             unsafe_date = day_iso
-    return {
+    payload = {
         "next_income_date": next_income_date,
         "safe_amount": str((current_balance - obligations).quantize(Decimal("0.01"))),
         "unsafe_date": unsafe_date,
         "obligations_before_income": str(obligations.quantize(Decimal("0.01"))),
         "current_balance": str(current_balance.quantize(Decimal("0.01"))),
+    }
+    if next_income_date is None:
+        return {
+            "status": "no_upcoming_income",
+            "reason": "no_projected_income_in_horizon",
+            **payload,
+        }
+    return {
+        "status": "available",
+        "reason": None,
+        **payload,
     }

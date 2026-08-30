@@ -1940,15 +1940,21 @@ export interface TimelineCalendarSummary {
   total_expenses: string;
   total_net: string;
   risky_accounts: TimelineCalendarRiskyAccount[];
-  safe_until?: CalendarSafeUntil | null;
+  /** Always present on loaded Calendar summary payloads. */
+  safe_until: CalendarSafeUntil;
 }
 
+export type CalendarSafeUntilStatus = "available" | "no_upcoming_income" | "unavailable";
+
 export interface CalendarSafeUntil {
+  status: CalendarSafeUntilStatus;
+  /** Machine-readable detail when status is not `available`. */
+  reason: string | null;
   next_income_date: string | null;
-  safe_amount: string;
+  safe_amount: string | null;
   unsafe_date: string | null;
-  obligations_before_income: string;
-  current_balance: string;
+  obligations_before_income: string | null;
+  current_balance: string | null;
 }
 
 export interface TimelineCalendarResponse {

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getTimelineCalendarChunk, getTimelineCalendarSummary } from "@budget-app/api-client";
 import type { TimelineCalendarDay } from "@budget-app/shared";
 import { todayStr } from "@/lib/dates";
-import { calendarQueryKeys } from "./queryKeys";
+import { calendarQueryKeys, type CalendarQueryFilters } from "./queryKeys";
 import {
   calendarMonthRangeState,
   calendarRangeForSelection,
@@ -78,9 +78,20 @@ export function useCalendarData({
   const enabled = Boolean(filters.householdId);
   const chunkEnabled = enabled && visibleMonthInRange && chunkWindow != null;
 
+  const queryFilters = useMemo(
+    (): CalendarQueryFilters => ({
+      forecastScope: filters.forecastDays,
+      lookbackMonths: filters.lookbackMonths,
+      accountId: filters.accountId,
+      scenarioId: filters.scenarioId,
+      householdId: filters.householdId,
+    }),
+    [filters]
+  );
+
   const visibleChunkQuery = useQuery({
     queryKey: calendarQueryKeys.chunk(
-      filters,
+      queryFilters,
       chunkWindow?.start ?? "none",
       chunkWindow?.end ?? "none"
     ),
@@ -95,7 +106,7 @@ export function useCalendarData({
   });
 
   const summaryQuery = useQuery({
-    queryKey: calendarQueryKeys.summary(filters),
+    queryKey: calendarQueryKeys.summary(queryFilters),
     queryFn: ({ signal }) =>
       getTimelineCalendarSummary(
         {

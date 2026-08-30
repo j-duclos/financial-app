@@ -142,9 +142,16 @@ describe("calendar query keys", () => {
       scenarioId: "" as const,
       householdId: 1,
     };
-    expect(calendarQueryKeys.chunk(filters, "2026-08-01", "2026-08-31")).toEqual([
+    const queryFilters = {
+      forecastScope: filters.forecastDays,
+      lookbackMonths: filters.lookbackMonths,
+      accountId: filters.accountId,
+      scenarioId: filters.scenarioId,
+      householdId: filters.householdId,
+    };
+    expect(calendarQueryKeys.chunk(queryFilters, "2026-08-01", "2026-08-31")).toEqual([
       "calendar-chunk",
-      4,
+      5,
       30,
       1,
       5,

@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarTransaction } from "@budget-app/shared";
+import { calendarSafeUntilPresentation } from "@budget-app/shared";
 import { formatDateDisplay } from "../lib/dateDisplay";
 import { listScenarios, getProfile, listHouseholds } from "@budget-app/api-client";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
@@ -25,7 +26,6 @@ import {
   type TimelineHorizon,
   type TimelineLookbackMonths,
   type TimelineViewMode,
-  type SafeUntilSummary,
 } from "../lib/timelineCalendarUtils";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import { CALENDAR_SUMMARY } from "../lib/timelineTerminology";
@@ -86,29 +86,18 @@ function CalendarSkeleton() {
   );
 }
 
-/** Backend-owned safe_until only — no client-side financial fallback from calendar rows. */
-function safeUntilFromSummary(
-  summary:
-    | {
-        safe_until?: {
-          next_income_date: string | null;
-          safe_amount: string;
-          unsafe_date: string | null;
-          obligations_before_income: string;
-          current_balance: string;
-        } | null;
-      }
-    | undefined
-): SafeUntilSummary | null {
-  const raw = summary?.safe_until;
-  if (!raw) return null;
-  return {
-    nextIncomeDate: raw.next_income_date,
-    safeAmount: Number(raw.safe_amount),
-    unsafeDate: raw.unsafe_date,
-    obligationsBeforeIncome: Number(raw.obligations_before_income),
-    currentBalance: Number(raw.current_balance),
-  };
+/** Backend-owned safe_until presentation — no client-side financial fallback. */
+function safeUntilToneClass(tone: "positive" | "negative" | "neutral" | "muted"): string {
+  switch (tone) {
+    case "positive":
+      return "text-emerald-700";
+    case "negative":
+      return "text-red-700";
+    case "muted":
+      return "text-gray-500";
+    default:
+      return "text-gray-700";
+  }
 }
 
 export default function Timeline() {
@@ -181,6 +170,8 @@ export default function Timeline() {
     householdId: resolvedHousehold || undefined,
   });
 
+  const summary = calendar.summary;
+
   const upcomingMoneyFlow = useMemo(
     () =>
       viewMode === "timeline" && calendar.upcomingDays.length
@@ -188,9 +179,14 @@ export default function Timeline() {
         : null,
     [calendar.upcomingDays, viewMode]
   );
-  const safeUntil = useMemo(
-    () => (viewMode === "calendar" ? safeUntilFromSummary(calendar.summary) : null),
-    [calendar.summary, viewMode]
+  const safeUntilPresentation = useMemo(
+    () =>
+      viewMode === "calendar" && summary
+        ? calendarSafeUntilPresentation(summary.safe_until, (amount) =>
+            formatCurrency(amount, "USD")
+          )
+        : null,
+    [summary, viewMode]
   );
 
   const onSelectDay = useCallback((day: TimelineCalendarDay) => {
@@ -211,7 +207,6 @@ export default function Timeline() {
     focusCalendarDay(urlFocusDate, calendar.days);
   }, [urlFocusDate, calendar.days, focusCalendarDay]);
 
-  const summary = calendar.summary;
   const riskyAccounts = summary?.risky_accounts ?? [];
   const calendarError = viewMode === "calendar" ? calendar.calendarError : calendar.upcomingError;
 
@@ -336,38 +331,11 @@ export default function Timeline() {
           <DashboardMetricTile
             label={CALENDAR_SUMMARY.safeUntilNextIncome.label}
             help={CALENDAR_SUMMARY.safeUntilNextIncome.help}
-            value={
-              summary.safe_until == null
-                ? "Unavailable"
-                : safeUntil?.nextIncomeDate
-                  ? safeUntil.safeAmount >= 0
-                    ? `Safe until ${formatDateDisplay(safeUntil.nextIncomeDate)}: ${formatCurrency(safeUntil.safeAmount, "USD")}`
-                    : `Unsafe before next paycheck: ${formatCurrency(safeUntil.safeAmount, "USD")}`
-                  : "No projected income in horizon"
-            }
-            valueClassName={
-              summary.safe_until == null
-                ? "text-gray-500"
-                : safeUntil?.nextIncomeDate
-                  ? safeUntil.safeAmount >= 0
-                    ? "text-emerald-700"
-                    : "text-red-700"
-                  : "text-gray-700"
-            }
+            value={safeUntilPresentation?.primaryText ?? "Unavailable"}
+            valueClassName={safeUntilToneClass(safeUntilPresentation?.tone ?? "muted")}
             subtitle={
-              summary.safe_until == null ? (
-                <span className="text-gray-500">Safe-until summary not loaded</span>
-              ) : safeUntil?.nextIncomeDate ? (
-                safeUntil.safeAmount >= 0 ? (
-                  <span className="text-gray-500">
-                    Current balance less obligations before next income
-                  </span>
-                ) : (
-                  <span className="text-gray-500">
-                    Projected unsafe date:{" "}
-                    {safeUntil.unsafeDate ? formatDateDisplay(safeUntil.unsafeDate) : "Unknown"}
-                  </span>
-                )
+              safeUntilPresentation?.subtitle ? (
+                <span className="text-gray-500">{safeUntilPresentation.subtitle}</span>
               ) : undefined
             }
           />

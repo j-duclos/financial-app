@@ -36,7 +36,13 @@ describe("Calendar page structure", () => {
 
   it("does not compute safe-until from calendar rows on the client", () => {
     expect(timelineSource).not.toMatch(/computeSafeUntilNextIncome/);
-    expect(timelineSource).toMatch(/safeUntilFromSummary/);
+    expect(timelineSource).toMatch(/calendarSafeUntilPresentation/);
     expect(timelineSource).toMatch(/summary\.safe_until/);
+    expect(timelineSource).not.toMatch(/safeUntilFromSummary/);
+  });
+
+  it("renders safe-until from explicit backend status", () => {
+    expect(timelineSource).toMatch(/safeUntilPresentation/);
+    expect(timelineSource).not.toMatch(/Safe-until summary not loaded/);
   });
 });

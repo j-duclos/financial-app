@@ -11,6 +11,12 @@ import type {
   TimelineCalendarSummaryResponse,
 } from "@budget-app/shared";
 import {
+  calendarQueryKeys,
+  isStaleCalendarChunkQuery,
+  isStaleCalendarSummaryQuery,
+  type CalendarQueryFilters,
+} from "@budget-app/shared";
+import {
   calendarChunkWindows,
   calendarRangeForSelection,
   type CalendarChunkWindow,
@@ -36,6 +42,16 @@ export type CalendarFilterKey = {
   scenarioId: number | "";
   householdId: number | undefined;
 };
+
+function toQueryFilters(filters: CalendarFilterKey): CalendarQueryFilters {
+  return {
+    forecastScope: filters.horizon,
+    lookbackMonths: filters.lookbackMonths,
+    accountId: filters.accountId,
+    scenarioId: filters.scenarioId,
+    householdId: filters.householdId,
+  };
+}
 
 function chunkParams(filters: CalendarFilterKey, window: CalendarChunkWindow, range: { start: string; end: string }) {
   return {
@@ -76,6 +92,7 @@ export function useMoneyFlowCalendar({
     scenarioId,
     householdId,
   };
+  const queryFilters = useMemo(() => toQueryFilters(filters), [horizon, lookbackMonths, accountId, scenarioId, householdId]);
   const eagerAll = shouldEagerFetchAllChunks(windows.length);
 
   const [loadCount, setLoadCount] = useState(1);
@@ -88,28 +105,11 @@ export function useMoneyFlowCalendar({
     void queryClient.cancelQueries({
       predicate: (query) => {
         const key = query.queryKey;
-        if (key[0] === "calendar-summary") {
-          return (
-            key[1] !== horizon ||
-            key[2] !== lookbackMonths ||
-            key[3] !== accountId ||
-            key[4] !== scenarioId ||
-            key[5] !== householdId
-          );
-        }
-        if (key[0] !== "calendar-chunk") return false;
-        if (
-          key[1] !== lookbackMonths ||
-          key[2] !== accountId ||
-          key[3] !== scenarioId ||
-          key[4] !== householdId
-        ) {
-          return true;
-        }
-        return !validChunks.has(`${key[5]}:${key[6]}`);
+        if (isStaleCalendarSummaryQuery(key, queryFilters)) return true;
+        return isStaleCalendarChunkQuery(key, queryFilters, validChunks);
       },
     });
-  }, [horizon, lookbackMonths, accountId, scenarioId, householdId, windows, queryClient]);
+  }, [queryFilters, windows, queryClient]);
 
   useEffect(() => {
     if (viewMode !== "calendar") {
@@ -122,15 +122,7 @@ export function useMoneyFlowCalendar({
 
   const chunkQueries = useQueries({
     queries: windows.map((window, index) => ({
-      queryKey: [
-        "calendar-chunk",
-        lookbackMonths,
-        accountId,
-        scenarioId,
-        householdId,
-        window.start,
-        window.end,
-      ],
+      queryKey: calendarQueryKeys.chunk(queryFilters, window.start, window.end),
       queryFn: ({ signal }: { signal?: AbortSignal }) =>
         getTimelineCalendarChunk(chunkParams(filters, window, range), { signal }),
       enabled: viewMode === "calendar" && Boolean(householdId) && index < loadCount,
@@ -156,7 +148,7 @@ export function useMoneyFlowCalendar({
     Boolean(householdId);
 
   const summaryQuery = useQuery({
-    queryKey: ["calendar-summary", horizon, lookbackMonths, accountId, scenarioId, householdId],
+    queryKey: calendarQueryKeys.summary(queryFilters),
     queryFn: ({ signal }) =>
       getTimelineCalendarSummary(
         {
