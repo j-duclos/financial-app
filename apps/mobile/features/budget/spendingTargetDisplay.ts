@@ -1,8 +1,4 @@
-import type {
-  SpendingTargetMetrics,
-  SpendingTargetStatus,
-  SpendingTargetsSummary,
-} from "@budget-app/shared";
+import type { SpendingTargetMetrics, SpendingTargetStatus } from "@budget-app/shared";
 
 export const SPENDING_TARGET_CARD_ROW_LABELS = ["Limit", "Spent", "Upcoming", "Remaining"] as const;
 
@@ -27,32 +23,21 @@ export const SPENDING_TARGET_STATUS_LABELS: Record<SpendingTargetStatus, string>
   risky: "At risk",
 };
 
-export function spendingTargetCommittedAmount(metrics: SpendingTargetMetrics): number {
-  const spent = parseFloat(metrics.spent_so_far ?? "0");
-  const scheduled = parseFloat(metrics.scheduled_in_period ?? "0");
-  if (!Number.isFinite(spent)) return 0;
-  if (!Number.isFinite(scheduled)) return spent;
-  return spent + scheduled;
+/** Parse optional backend money/percent strings without coercing garbage to 0. */
+export function parseOptionalMetricAmount(value: string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Visual progress bar width from backend percent_used.
+ * Clamps to 0–100 for display only — does not recompute utilization.
+ */
 export function spendingTargetProgressPercent(metrics: SpendingTargetMetrics): number {
-  const committed = spendingTargetCommittedAmount(metrics);
-  const target = parseFloat(metrics.target_amount);
-  if (!Number.isFinite(committed) || !Number.isFinite(target) || target <= 0) {
-    const n = parseFloat(metrics.percent_used);
-    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
-  }
-  return Math.min(100, Math.max(0, (committed / target) * 100));
-}
-
-export function spendingTargetsRemainingFromSummary(summary: SpendingTargetsSummary): number {
-  const budget = parseFloat(summary.total_monthly_targets);
-  const spent = parseFloat(summary.spent_so_far_total);
-  const scheduled = parseFloat(summary.scheduled_in_period_total ?? "0");
-  const safeBudget = Number.isFinite(budget) ? budget : 0;
-  const safeSpent = Number.isFinite(spent) ? spent : 0;
-  const safeScheduled = Number.isFinite(scheduled) ? scheduled : 0;
-  return safeBudget - safeSpent - safeScheduled;
+  const n = parseOptionalMetricAmount(metrics.percent_used);
+  if (n == null) return 0;
+  return Math.min(100, Math.max(0, n));
 }
 
 export function spendingTargetStatusTone(
@@ -84,10 +69,27 @@ export function spendingTargetPeriodLabel(period: string): string {
   }
 }
 
-export function sortBudgetRows<T extends { metrics: SpendingTargetMetrics; target: { name: string; category: { name: string } } }>(
-  rows: T[],
-  sortKey: import("./types").BudgetSortKey
-): T[] {
+function compareOptionalDesc(a: string | null | undefined, b: string | null | undefined): number {
+  const na = parseOptionalMetricAmount(a);
+  const nb = parseOptionalMetricAmount(b);
+  if (na == null && nb == null) return 0;
+  if (na == null) return 1;
+  if (nb == null) return -1;
+  return nb - na;
+}
+
+function compareOptionalAsc(a: string | null | undefined, b: string | null | undefined): number {
+  const na = parseOptionalMetricAmount(a);
+  const nb = parseOptionalMetricAmount(b);
+  if (na == null && nb == null) return 0;
+  if (na == null) return 1;
+  if (nb == null) return -1;
+  return na - nb;
+}
+
+export function sortBudgetRows<
+  T extends { metrics: SpendingTargetMetrics; target: { name: string; category: { name: string } } },
+>(rows: T[], sortKey: import("./types").BudgetSortKey): T[] {
   const sorted = [...rows];
   sorted.sort((a, b) => {
     switch (sortKey) {
@@ -96,19 +98,19 @@ export function sortBudgetRows<T extends { metrics: SpendingTargetMetrics; targe
           b.target.name || b.metrics.category_name
         );
       case "spent":
-        return parseFloat(b.metrics.spent_so_far) - parseFloat(a.metrics.spent_so_far);
+        return compareOptionalDesc(a.metrics.spent_so_far, b.metrics.spent_so_far);
       case "remaining":
-        return parseFloat(a.metrics.remaining_to_target) - parseFloat(b.metrics.remaining_to_target);
+        return compareOptionalAsc(a.metrics.remaining_to_target, b.metrics.remaining_to_target);
       case "over": {
         const rank = (s: SpendingTargetStatus) =>
           s === "above_target" || s === "risky" ? 0 : s === "approaching_target" ? 1 : 2;
         const diff = rank(a.metrics.status) - rank(b.metrics.status);
         if (diff !== 0) return diff;
-        return spendingTargetProgressPercent(b.metrics) - spendingTargetProgressPercent(a.metrics);
+        return compareOptionalDesc(a.metrics.percent_used, b.metrics.percent_used);
       }
       case "utilization":
       default:
-        return spendingTargetProgressPercent(b.metrics) - spendingTargetProgressPercent(a.metrics);
+        return compareOptionalDesc(a.metrics.percent_used, b.metrics.percent_used);
     }
   });
   return sorted;

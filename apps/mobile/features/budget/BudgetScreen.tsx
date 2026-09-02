@@ -32,8 +32,20 @@ export function BudgetScreen() {
   const [period, setPeriod] = useState(currentPeriodAnchor);
   const [sortKey, setSortKey] = useState<BudgetSortKey>("over");
 
-  const { summary, rows, householdReady, householdId, isLoading, isError, error, isFetching, refetch } =
-    useBudgetData(period);
+  const {
+    summary,
+    rows,
+    householdReady,
+    householdId,
+    isLoading,
+    isError,
+    summaryError,
+    error,
+    pullRefreshing,
+    refetch,
+    isUpdatingPeriod,
+    dataMatchesPeriod,
+  } = useBudgetData(period);
 
   const sortedRows = useMemo(() => sortBudgetRows(rows, sortKey), [rows, sortKey]);
 
@@ -112,6 +124,14 @@ export function BudgetScreen() {
           onToday={() => setPeriod(currentPeriodAnchor())}
         />
         {summary ? <BudgetSummaryCard summary={summary} /> : null}
+        {summaryError && !summary ? (
+          <Text style={{ color: theme.colors.critical, fontSize: 13, marginTop: 8 }}>
+            Could not load budget summary. Limits below may still be available.
+          </Text>
+        ) : null}
+        {isUpdatingPeriod ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginTop: 8 }}>Updating…</Text>
+        ) : null}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 12 }}>
           {SORT_OPTIONS.map((opt) => (
             <Pressable
@@ -140,7 +160,7 @@ export function BudgetScreen() {
         </View>
       </View>
 
-      {isLoading ? (
+      {isLoading || (isUpdatingPeriod && !dataMatchesPeriod && sortedRows.length === 0) ? (
         <View style={{ padding: theme.spacing.lg }}>
           <SkeletonBlock lines={4} />
         </View>
@@ -159,9 +179,7 @@ export function BudgetScreen() {
           keyExtractor={keyExtractor}
           renderItem={renderItem}
           {...FINANCIAL_LIST_PROPS}
-          refreshControl={
-            <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
-          }
+          refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={refetch} />}
           contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
         />
       )}

@@ -137,6 +137,7 @@ describe("spending limit mutation invalidation", () => {
         "spending-targets",
         "spending-targets-summary",
         "spending-target",
+        "spending-target-edit",
         "dashboard-summary-fast",
         "recommendations",
         "monthly-reports",

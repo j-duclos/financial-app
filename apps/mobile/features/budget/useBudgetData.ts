@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   getSpendingTargetsSummary,
@@ -11,6 +11,7 @@ import type { BudgetCategoryRow, BudgetPeriodAnchor } from "./types";
 
 export function useBudgetData(period: BudgetPeriodAnchor) {
   const { householdId, isReady: householdReady } = useDefaultHouseholdId();
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const summaryQuery = useQuery({
     queryKey: budgetQueryKeys.summary(householdId, period.monthKey, period.anchor),
@@ -37,6 +38,13 @@ export function useBudgetData(period: BudgetPeriodAnchor) {
     placeholderData: keepPreviousData,
   });
 
+  const summaryMatchesPeriod =
+    summaryQuery.data != null && summaryQuery.data.anchor_date.slice(0, 7) === period.monthKey;
+  const targetsMatchPeriod = !targetsQuery.isPlaceholderData;
+  const dataMatchesPeriod = summaryMatchesPeriod && targetsMatchPeriod;
+  const isUpdatingPeriod =
+    (summaryQuery.isFetching || targetsQuery.isFetching) && !dataMatchesPeriod;
+
   const metricsById = useMemo(() => {
     const map = new Map<number, SpendingTargetMetrics>();
     for (const row of summaryQuery.data?.targets ?? []) {
@@ -61,20 +69,31 @@ export function useBudgetData(period: BudgetPeriodAnchor) {
     rows.length === 0 &&
     (summaryQuery.isPending || targetsQuery.isPending);
 
+  const refetch = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([summaryQuery.refetch(), targetsQuery.refetch()]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [summaryQuery, targetsQuery]);
+
   return {
     householdId,
     householdReady,
     summaryQuery,
     targetsQuery,
-    summary: summaryQuery.data,
-    rows,
+    summary: dataMatchesPeriod ? summaryQuery.data : undefined,
+    rows: dataMatchesPeriod ? rows : [],
+    dataMatchesPeriod,
+    isUpdatingPeriod,
     isLoading: !householdReady || primaryLoading,
-    isError: summaryQuery.isError || targetsQuery.isError,
-    error: summaryQuery.error ?? targetsQuery.error,
+    /** List is unusable without targets; summary failure is progressive. */
+    isError: targetsQuery.isError,
+    summaryError: summaryQuery.isError,
+    error: targetsQuery.error ?? summaryQuery.error,
     isFetching: summaryQuery.isFetching || targetsQuery.isFetching,
-    refetch: () => {
-      void summaryQuery.refetch();
-      void targetsQuery.refetch();
-    },
+    pullRefreshing,
+    refetch,
   };
 }

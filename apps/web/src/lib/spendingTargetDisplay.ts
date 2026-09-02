@@ -63,38 +63,21 @@ export function spendingTargetStatusClass(status: SpendingTargetStatus): string 
   }
 }
 
-/** Spent plus known future scheduled amounts (used for status/progress only). */
-export function spendingTargetCommittedAmount(metrics: SpendingTargetMetrics): number {
-  const spent = parseFloat(metrics.spent_so_far ?? "0");
-  const scheduled = parseFloat(metrics.scheduled_in_period ?? "0");
-  if (!Number.isFinite(spent)) return 0;
-  if (!Number.isFinite(scheduled)) return spent;
-  return spent + scheduled;
+/** Parse optional backend money/percent strings without coercing garbage to 0. */
+export function parseOptionalMetricAmount(value: string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Visual progress bar width from backend percent_used.
+ * Clamps to 0–100 for display only — does not recompute utilization.
+ */
 export function spendingTargetProgressPercent(metrics: SpendingTargetMetrics): number {
-  const committed = spendingTargetCommittedAmount(metrics);
-  const target = parseFloat(metrics.target_amount);
-  if (!Number.isFinite(committed) || !Number.isFinite(target) || target <= 0) {
-    const n = parseFloat(metrics.percent_used);
-    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
-  }
-  return Math.min(100, Math.max(0, (committed / target) * 100));
-}
-
-/** Remaining category budget from already-fetched summary totals (not a new forecast). */
-export function spendingTargetsRemainingFromSummary(summary: {
-  total_monthly_targets: string;
-  spent_so_far_total: string;
-  scheduled_in_period_total?: string;
-}): number {
-  const budget = parseFloat(summary.total_monthly_targets);
-  const spent = parseFloat(summary.spent_so_far_total);
-  const scheduled = parseFloat(summary.scheduled_in_period_total ?? "0");
-  const safeBudget = Number.isFinite(budget) ? budget : 0;
-  const safeSpent = Number.isFinite(spent) ? spent : 0;
-  const safeScheduled = Number.isFinite(scheduled) ? scheduled : 0;
-  return safeBudget - safeSpent - safeScheduled;
+  const n = parseOptionalMetricAmount(metrics.percent_used);
+  if (n == null) return 0;
+  return Math.min(100, Math.max(0, n));
 }
 
 export function spendingTargetPeriodLabel(period: string): string {

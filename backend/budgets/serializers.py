@@ -94,6 +94,17 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
             "notes",
         ]
         read_only_fields = ["id"]
+        # UniqueConstraint would force account required via UniqueTogetherValidator;
+        # uniqueness is enforced in validate() so null account remains optional.
+        validators = []
+        extra_kwargs = {
+            # Omit → model default applies. Do not invent client-side defaults.
+            "warning_threshold_percent": {"required": False},
+            "account": {"required": False, "allow_null": True},
+            "name": {"required": False, "allow_blank": True},
+            "notes": {"required": False, "allow_blank": True},
+            "target_type": {"required": False},
+        }
 
     def validate_category(self, category: Category) -> Category:
         if category.category_type != Category.CategoryType.EXPENSE:
@@ -104,6 +115,52 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
         if household and category.household_id != int(household):
             raise serializers.ValidationError("Category must belong to the same household.")
         return category
+
+    def validate_target_amount(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("Limit amount must be greater than zero.")
+        return value
+
+    def validate_warning_threshold_percent(self, value):
+        if value is None:
+            return value
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Warning threshold must be between 0 and 100.")
+        return value
+
+    def validate(self, attrs):
+        household = attrs.get("household") or (
+            self.instance.household if self.instance else None
+        )
+        category = attrs.get("category") or (
+            self.instance.category if self.instance else None
+        )
+        period = attrs.get("period") or (self.instance.period if self.instance else None)
+        if "account" in attrs:
+            account = attrs.get("account")
+        elif self.instance is not None:
+            account = self.instance.account
+        else:
+            account = None
+        if household and category and period:
+            qs = SpendingTarget.objects.filter(
+                household=household,
+                category=category,
+                period=period,
+                account=account,
+            )
+            if self.instance is not None:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {
+                        "category": (
+                            "A spending limit already exists for this category, "
+                            "period, and account."
+                        )
+                    }
+                )
+        return attrs
 
     def create(self, validated_data):
         if not validated_data.get("target_type"):

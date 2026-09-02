@@ -35,7 +35,15 @@ STATUS_ABOVE = "above_target"
 STATUS_RISKY = "risky"  # legacy; no longer assigned
 
 SCHEDULED_ONLY = "scheduled_only"
-APPROACHING_THRESHOLD_PERCENT = Decimal("80")
+
+
+def _default_warning_threshold_percent() -> Decimal:
+    """Model-field default — the sole production source for approaching threshold."""
+    field = SpendingTarget._meta.get_field("warning_threshold_percent")
+    default = field.default
+    if callable(default):
+        default = default()
+    return Decimal(str(default))
 
 
 def _decimal(value) -> Decimal:
@@ -368,7 +376,7 @@ def _target_status(
     threshold = (
         warning_threshold_percent
         if warning_threshold_percent is not None
-        else APPROACHING_THRESHOLD_PERCENT
+        else _default_warning_threshold_percent()
     )
     pct = (committed_amount / target_amount * Decimal("100")) if target_amount else Decimal("0")
     if pct >= threshold:
@@ -562,6 +570,8 @@ def calculate_target_metrics(
         "target_amount": str(target_amount.quantize(Decimal("0.01"))),
         "spent_so_far": spent_str,
         "scheduled_in_period": scheduled_str,
+        # Canonical committed spend (spent + scheduled). forecast_amount/period_total kept as aliases.
+        "committed_amount": committed_str,
         "forecast_amount": committed_str,
         "period_total": committed_str,
         "remaining_to_target": str(remaining.quantize(Decimal("0.01"))),
@@ -626,11 +636,14 @@ def spending_targets_summary(
         spent += _decimal(row["spent_so_far"])
         scheduled += _decimal(row["scheduled_in_period"])
 
+    remaining_total = monthly_targets - spent - scheduled
+
     return {
         "anchor_date": anchor.isoformat(),
         "total_monthly_targets": str(monthly_targets.quantize(Decimal("0.01"))),
         "spent_so_far_total": str(spent.quantize(Decimal("0.01"))),
         "scheduled_in_period_total": str(scheduled.quantize(Decimal("0.01"))),
+        "remaining_to_targets_total": str(remaining_total.quantize(Decimal("0.01"))),
         "above_target_count": len([r for r in rows if r["status"] in (STATUS_ABOVE, STATUS_RISKY)]),
         "approaching_target_count": len([r for r in rows if r["status"] == STATUS_APPROACHING]),
         "targets": rows,

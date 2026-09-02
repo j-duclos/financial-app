@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
-import { listSpendingTargets } from "@budget-app/api-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getSpendingTarget } from "@budget-app/api-client";
+import type { SpendingTarget } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 import {
   AppHeader,
@@ -20,6 +21,7 @@ import { describeApiError } from "@/services/api";
 import { budgetQueryKeys } from "./queryKeys";
 import {
   SPENDING_TARGET_STATUS_LABELS,
+  parseOptionalMetricAmount,
   spendingTargetCardRows,
   spendingTargetProgressPercent,
   spendingTargetStatusTone,
@@ -28,31 +30,46 @@ import {
 import { currentPeriodAnchor, formatPeriodRange } from "./periodUtils";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 
+function findCachedTarget(
+  queryClient: ReturnType<typeof useQueryClient>,
+  targetId: number
+): SpendingTarget | undefined {
+  const caches = queryClient.getQueriesData<{ results?: SpendingTarget[] }>({
+    queryKey: ["spending-targets"],
+  });
+  for (const [, data] of caches) {
+    const hit = data?.results?.find((t) => t.id === targetId);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 export function BudgetCategoryDetailScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ targetId: string; anchor?: string }>();
   const targetId = Number(params.targetId);
   const anchor = params.anchor ?? currentPeriodAnchor().anchor;
   const { householdId } = useDefaultHouseholdId();
 
+  const cachedShell = useMemo(
+    () => (Number.isInteger(targetId) ? findCachedTarget(queryClient, targetId) : undefined),
+    [queryClient, targetId]
+  );
+
   const targetQuery = useQuery({
     queryKey: budgetQueryKeys.targetDetail(targetId, anchor),
-    queryFn: () =>
-      listSpendingTargets({
-        household: householdId ?? undefined,
-        anchor,
-        active: true,
-      }),
+    queryFn: () => getSpendingTarget(targetId, { anchor }),
     enabled: householdId != null && Number.isInteger(targetId) && targetId > 0,
-    select: (data) => data.results.find((t) => t.id === targetId) ?? null,
+    initialData: cachedShell,
     staleTime: 60_000,
   });
 
   const target = targetQuery.data;
   const metrics = target?.metrics;
 
-  if (targetQuery.isLoading) {
+  if (targetQuery.isLoading && !cachedShell) {
     return (
       <Screen scroll={false}>
         <SkeletonBlock lines={6} />
@@ -60,7 +77,7 @@ export function BudgetCategoryDetailScreen() {
     );
   }
 
-  if (targetQuery.isError || !target || !metrics) {
+  if ((targetQuery.isError && !cachedShell) || !target || !metrics) {
     return (
       <Screen scroll={false}>
         <ErrorState message={describeApiError(targetQuery.error)} onRetry={() => targetQuery.refetch()} />
@@ -88,6 +105,9 @@ export function BudgetCategoryDetailScreen() {
     <Screen scroll={false}>
       <AppHeader title={name} onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ gap: theme.spacing.md, paddingBottom: 32 }}>
+        {targetQuery.isFetching && !targetQuery.isPending ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 12 }}>Updating…</Text>
+        ) : null}
         <Card>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             <StatusChip
@@ -131,7 +151,11 @@ export function BudgetCategoryDetailScreen() {
               <Text style={{ color: theme.colors.textSecondary }}>{row.label}</Text>
               <CurrencyDisplay
                 amount={row.amount}
-                tone={row.label === "Remaining" && parseFloat(row.amount) < 0 ? "negative" : "neutral"}
+                tone={
+                  row.label === "Remaining" && (parseOptionalMetricAmount(row.amount) ?? 0) < 0
+                    ? "negative"
+                    : "neutral"
+                }
                 style={{ fontSize: 16 }}
               />
             </View>

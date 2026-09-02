@@ -6,12 +6,19 @@ import {
   SPENDING_TARGET_TYPE_LABELS,
   SPENDING_TARGET_CARD_ROW_LABELS,
   spendingTargetCardRows,
-  spendingTargetCommittedAmount,
   spendingTargetProgressPercent,
-  spendingTargetsRemainingFromSummary,
+  parseOptionalMetricAmount,
   SPENDING_GOALS_PATH,
   SPENDING_TARGETS_PATH,
 } from "./spendingTargetDisplay";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const displaySrc = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "spendingTargetDisplay.ts"),
+  "utf8"
+);
 
 const metrics: SpendingTargetMetrics = {
   target_id: 1,
@@ -26,6 +33,7 @@ const metrics: SpendingTargetMetrics = {
   target_amount: "550",
   spent_so_far: "177.13",
   scheduled_in_period: "0",
+  committed_amount: "177.13",
   forecast_amount: "177.13",
   remaining_to_target: "372.87",
   percent_used: "32.2",
@@ -56,30 +64,21 @@ describe("spendingTargetDisplay", () => {
     expect(SPENDING_TARGET_TYPE_LABELS.variable).toBe("Variable spending");
   });
 
-  it("groceries with no scheduled uses spent only for progress", () => {
-    expect(spendingTargetCommittedAmount(metrics)).toBeCloseTo(177.13, 2);
+  it("uses backend percent_used for progress (visual clamp only)", () => {
     expect(spendingTargetProgressPercent(metrics)).toBeCloseTo(32.2, 1);
+    expect(spendingTargetProgressPercent({ ...metrics, percent_used: "150" })).toBe(100);
+    expect(spendingTargetProgressPercent({ ...metrics, percent_used: "NaN" })).toBe(0);
   });
 
-  it("includes scheduled amounts in committed total", () => {
-    const withScheduled = { ...metrics, scheduled_in_period: "620", spent_so_far: "520" };
-    expect(spendingTargetCommittedAmount(withScheduled)).toBeCloseTo(1140, 2);
+  it("does not recompute committed amount or remaining from component amounts", () => {
+    expect(displaySrc).not.toMatch(/spent_so_far.*scheduled_in_period/);
+    expect(displaySrc).not.toMatch(/total_monthly_targets\s*-/);
+    expect(displaySrc).not.toMatch(/spendingTargetCommittedAmount/);
+    expect(displaySrc).not.toMatch(/spendingTargetsRemainingFromSummary/);
   });
 
-  it("includes known upcoming in progress even when nothing has posted", () => {
-    const insurance: SpendingTargetMetrics = {
-      ...metrics,
-      category_name: "Auto Insurance",
-      name: "Auto Insurance",
-      target_amount: "404",
-      spent_so_far: "0",
-      scheduled_in_period: "403.43",
-      remaining_to_target: "0.57",
-      percent_used: "99.9",
-      status: "approaching_target",
-    };
-    expect(spendingTargetCommittedAmount(insurance)).toBeCloseTo(403.43, 2);
-    expect(spendingTargetProgressPercent(insurance)).toBeCloseTo(99.86, 1);
+  it("contains no production hard-coded warning threshold", () => {
+    expect(displaySrc).not.toMatch(/["']80["']/);
   });
 
   it("always shows Limit / Spent / Upcoming / Remaining, including $0.00 upcoming", () => {
@@ -87,26 +86,11 @@ describe("spendingTargetDisplay", () => {
     const rows = spendingTargetCardRows(metrics);
     expect(rows.map((row) => row.label)).toEqual(["Limit", "Spent", "Upcoming", "Remaining"]);
     expect(formatCurrency(rows[2]!.amount)).toBe(formatCurrency("0"));
-    const empty: SpendingTargetMetrics = {
-      ...metrics,
-      spent_so_far: "0",
-      scheduled_in_period: "0",
-      remaining_to_target: "550",
-    };
-    const emptyRows = spendingTargetCardRows(empty);
-    expect(emptyRows).toHaveLength(4);
-    expect(emptyRows[1]!.amount).toBe("0");
-    expect(emptyRows[2]!.amount).toBe("0");
-    expect(emptyRows[3]!.amount).toBe("550");
   });
 
-  it("derives remaining category budget from summary totals", () => {
-    expect(
-      spendingTargetsRemainingFromSummary({
-        total_monthly_targets: "1000",
-        spent_so_far_total: "400",
-        scheduled_in_period_total: "150",
-      })
-    ).toBeCloseTo(450, 2);
+  it("parses optional metrics without coercing garbage to zero", () => {
+    expect(parseOptionalMetricAmount("12.5")).toBe(12.5);
+    expect(parseOptionalMetricAmount("bad")).toBeNull();
+    expect(parseOptionalMetricAmount(undefined)).toBeNull();
   });
 });

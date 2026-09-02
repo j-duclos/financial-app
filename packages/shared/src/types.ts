@@ -1203,9 +1203,12 @@ export interface SpendingTargetMetrics {
   spent_so_far: string;
   /** Known future scheduled amounts in the period. */
   scheduled_in_period: string;
-  /** Spent + scheduled; used for status/progress only. */
+  /** Backend-owned: spent_so_far + scheduled_in_period. */
+  committed_amount: string;
+  /** @deprecated alias of committed_amount */
   forecast_amount: string;
   remaining_to_target: string;
+  /** Backend-owned utilization of committed spend vs target (may exceed 100). */
   percent_used: string;
   status: SpendingTargetStatus;
   recommendation: string | null;
@@ -1240,6 +1243,8 @@ export interface SpendingTargetsSummary {
   total_monthly_targets: string;
   spent_so_far_total: string;
   scheduled_in_period_total: string;
+  /** Backend-owned: total_monthly_targets − spent − scheduled. */
+  remaining_to_targets_total: string;
   above_target_count: number;
   approaching_target_count: number;
   targets: SpendingTargetMetrics[];

@@ -815,3 +815,118 @@ def test_action_center_budget_recs_use_same_status_as_metrics(user, household, c
     assert matching
     assert "approaching" in matching[0]["why"].lower()
     assert matching[0]["primary_action_url"] == "/spending-goals"
+
+
+@pytest.mark.django_db
+def test_metrics_expose_committed_amount_alias(user, household, checking, expense_category, target):
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF,
+        payee="Shop",
+        amount=Decimal("-100"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    metrics = calculate_target_metrics(target, anchor=AS_OF, today=AS_OF)
+    assert "committed_amount" in metrics
+    assert Decimal(metrics["committed_amount"]) == Decimal(metrics["forecast_amount"])
+    assert Decimal(metrics["committed_amount"]) == Decimal(metrics["spent_so_far"]) + Decimal(
+        metrics["scheduled_in_period"]
+    )
+
+
+@pytest.mark.django_db
+def test_summary_exposes_remaining_to_targets_total(user, household, checking, expense_category, target):
+    Transaction.objects.create(
+        account=checking,
+        date=AS_OF,
+        payee="Shop",
+        amount=Decimal("-100"),
+        category=expense_category,
+        status=Transaction.Status.CLEARED,
+    )
+    summary = spending_targets_summary(user, anchor=AS_OF, household_id=household.id)
+    assert "remaining_to_targets_total" in summary
+    expected = (
+        Decimal(summary["total_monthly_targets"])
+        - Decimal(summary["spent_so_far_total"])
+        - Decimal(summary["scheduled_in_period_total"])
+    )
+    assert Decimal(summary["remaining_to_targets_total"]) == expected.quantize(Decimal("0.01"))
+
+
+@pytest.mark.django_db
+def test_create_omits_warning_threshold_uses_model_default(api_client, user, household, expense_category):
+    api_client.force_authenticate(user=user)
+    res = api_client.post(
+        "/api/spending-targets/",
+        {
+            "household": household.id,
+            "category": expense_category.id,
+            "target_amount": "250.00",
+            "period": "monthly",
+            "target_type": "variable",
+        },
+        format="json",
+    )
+    assert res.status_code == 201, res.content
+    body = res.json()
+    field_default = SpendingTarget._meta.get_field("warning_threshold_percent").default
+    assert Decimal(body["warning_threshold_percent"]) == Decimal(str(field_default))
+
+
+@pytest.mark.django_db
+def test_duplicate_active_target_rejected(api_client, user, household, expense_category, target):
+    api_client.force_authenticate(user=user)
+    res = api_client.post(
+        "/api/spending-targets/",
+        {
+            "household": household.id,
+            "category": expense_category.id,
+            "target_amount": "100.00",
+            "period": target.period,
+            "target_type": "variable",
+        },
+        format="json",
+    )
+    assert res.status_code == 400
+    assert "category" in res.json()
+
+
+@pytest.mark.django_db
+def test_reject_non_positive_target_amount(api_client, user, household, expense_category):
+    api_client.force_authenticate(user=user)
+    res = api_client.post(
+        "/api/spending-targets/",
+        {
+            "household": household.id,
+            "category": expense_category.id,
+            "target_amount": "0",
+            "period": "monthly",
+        },
+        format="json",
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.django_db
+def test_retrieve_single_target_includes_metrics(api_client, user, target):
+    api_client.force_authenticate(user=user)
+    res = api_client.get(f"/api/spending-targets/{target.id}/")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["id"] == target.id
+    assert "metrics" in body
+    assert "committed_amount" in body["metrics"]
+    assert "percent_used" in body["metrics"]
+    assert "status" in body["metrics"]
+
+
+def test_service_has_no_inline_approaching_threshold_literal():
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "services" / "spending_targets.py"
+    text = src.read_text(encoding="utf-8")
+    assert "APPROACHING_THRESHOLD_PERCENT" not in text
+    assert 'Decimal("80")' not in text
+    assert "_default_warning_threshold_percent" in text

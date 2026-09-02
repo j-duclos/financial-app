@@ -1,3 +1,15 @@
+/**
+ * LEGACY — unrouted. Web Budget UI lives in SpendingTargets.tsx (/spending-goals).
+ *
+ * Remaining consumers of the Budget model/API (do not delete blindly):
+ * - backend/budgets/models.py Budget + BudgetViewSet (/api/budgets/)
+ * - packages/api-client listBudgets/createBudget/updateBudget/deleteBudget
+ * - packages/shared Budget type
+ * - categories dedupe service may reference Budget rows
+ *
+ * This page derives spent from getCategoryBreakdown and must not be re-mounted
+ * as the product Budget surface.
+ */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatMonth, currentMonthStr } from "@budget-app/shared";

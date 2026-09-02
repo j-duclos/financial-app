@@ -117,6 +117,7 @@ export function invalidateSpendingLimitQueries(queryClient: QueryClient): void {
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.spendingTargets);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.spendingTargetsSummary);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.spendingTarget);
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.spendingTargetEdit);
 }
 
 export function invalidateReconcileQueries(queryClient: QueryClient): void {

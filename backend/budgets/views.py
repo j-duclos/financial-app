@@ -86,6 +86,39 @@ class SpendingTargetViewSet(ModelViewSet):
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
+    def retrieve(self, request, *args, **kwargs):
+        from datetime import date as date_cls
+
+        from .services.spending_targets import build_spending_target_context
+
+        instance = self.get_object()
+        include_scheduled = (
+            request.query_params.get("include_scheduled", "true").lower() != "false"
+            and request.query_params.get("include_forecast", "true").lower() != "false"
+        )
+        anchor = None
+        anchor_str = request.query_params.get("anchor")
+        if anchor_str:
+            try:
+                anchor = date_cls.fromisoformat(anchor_str[:10])
+            except ValueError:
+                anchor = None
+        today = date_cls.today()
+        calc_ctx = build_spending_target_context(
+            [instance],
+            today=today,
+            anchor=anchor or today,
+            include_scheduled=include_scheduled,
+        )
+        serializer = self.get_serializer(
+            instance,
+            context={
+                **self.get_serializer_context(),
+                "spending_target_calc_context": calc_ctx,
+            },
+        )
+        return Response(serializer.data)
+
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         anchor_str = request.query_params.get("anchor")

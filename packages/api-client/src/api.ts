@@ -954,6 +954,16 @@ export async function listSpendingTargets(params?: {
   return requestRequired("/api/spending-targets/", { params: q });
 }
 
+export async function getSpendingTarget(
+  id: number,
+  params?: { anchor?: string; include_scheduled?: boolean }
+): Promise<import("@budget-app/shared").SpendingTarget> {
+  const q: Record<string, string> = {};
+  if (params?.anchor) q.anchor = params.anchor;
+  if (params?.include_scheduled === false) q.include_scheduled = "false";
+  return requestRequired(`/api/spending-targets/${id}/`, { params: q });
+}
+
 export async function getSpendingTargetsSummary(params?: {
   household?: number;
   anchor?: string;

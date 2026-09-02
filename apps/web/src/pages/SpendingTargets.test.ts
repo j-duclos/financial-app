@@ -3,25 +3,46 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "SpendingTargets.tsx"),
+const dir = dirname(fileURLToPath(import.meta.url));
+const source = readFileSync(join(dir, "SpendingTargets.tsx"), "utf8");
+const budgetLegacy = readFileSync(join(dir, "Budget.tsx"), "utf8");
+const formModal = readFileSync(
+  join(dir, "../components/spendingTargets/SpendingTargetFormModal.tsx"),
   "utf8"
 );
 
 describe("Budget page", () => {
-  it("loads batched summary data rather than per-card requests", () => {
+  it("uses canonical Spending Targets APIs, not legacy budgets or category-breakdown math", () => {
     expect(source).toMatch(/getSpendingTargetsSummary/);
     expect(source).toMatch(/listSpendingTargets/);
+    expect(source).not.toMatch(/listBudgets/);
+    expect(source).not.toMatch(/getCategoryBreakdown/);
+    expect(source).not.toMatch(/createBudget/);
     expect(source).not.toMatch(/listTransactions/);
-    expect(source).not.toMatch(/getRecommendations/);
   });
 
-  it("keeps the top summary math on canonical totals", () => {
-    expect(source).toMatch(/Known upcoming/);
-    expect(source).toMatch(/spendingTargetsRemainingFromSummary/);
-    expect(source).toMatch(/summary\.scheduled_in_period_total/);
-    expect(source).toMatch(/summary\.spent_so_far_total/);
-    expect(source).toMatch(/summary\.total_monthly_targets/);
+  it("displays backend remaining_to_targets_total without client summary arithmetic", () => {
+    expect(source).toMatch(/remaining_to_targets_total/);
+    expect(source).not.toMatch(/spendingTargetsRemainingFromSummary/);
+    expect(source).toMatch(/scheduled_in_period_total/);
+    expect(source).toMatch(/spent_so_far_total/);
+    expect(source).toMatch(/total_monthly_targets/);
+  });
+
+  it("uses profile default household, not households\\[0\\]", () => {
+    expect(source).toMatch(/useProfileQuery/);
+    expect(source).toMatch(/default_household/);
+    expect(source).not.toMatch(/households\?\.\[0\]/);
+  });
+
+  it("invalidates spending-target dependents on mutation", () => {
+    expect(source).toMatch(/invalidateSpendingTargetDependents/);
+  });
+
+  it("does not mislabel previous-period placeholder data as current", () => {
+    expect(source).toMatch(/keepPreviousData/);
+    expect(source).toMatch(/dataMatchesPeriod/);
+    expect(source).toMatch(/Updating/);
   });
 
   it("does not add sorting or filtering controls", () => {
@@ -32,9 +53,22 @@ describe("Budget page", () => {
   it("uses a short subtitle, keeps progress copy, and labels the add CTA", () => {
     expect(source).toMatch(/Set and track monthly spending by category\./);
     expect(source).toMatch(/Progress uses posted spending plus known future scheduled transactions only\./);
-    expect(source).not.toMatch(/Monthly category budget from posted spending/);
-    expect(source).not.toMatch(/Set a monthly budget per category\./);
     expect(source).toMatch(/Add spending limit/);
-    expect(source).not.toMatch(/>\s*Add limit\s*</);
+  });
+});
+
+describe("legacy Budget.tsx", () => {
+  it("remains unrouted documentation of the old Budget model only", () => {
+    expect(budgetLegacy).toMatch(/LEGACY/);
+    expect(budgetLegacy).toMatch(/listBudgets/);
+  });
+});
+
+describe("SpendingTargetFormModal threshold", () => {
+  it("omits warning_threshold when blank and does not hard-code 80", () => {
+    expect(formModal).not.toMatch(/setWarningThreshold\("80"\)/);
+    expect(formModal).not.toMatch(/\|\| "80"/);
+    expect(formModal).toMatch(/Leave blank for server default/);
+    expect(formModal).toMatch(/if \(threshold\)/);
   });
 });

@@ -5,6 +5,7 @@ import { StatusChip } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
   SPENDING_TARGET_STATUS_LABELS,
+  parseOptionalMetricAmount,
   spendingTargetProgressPercent,
   spendingTargetStatusTone,
 } from "./spendingTargetDisplay";
@@ -66,7 +67,7 @@ export const BudgetCategoryRow = React.memo(function BudgetCategoryRow({ row, on
       </View>
       <Text style={{ color: theme.colors.textMuted, fontSize: 11 }}>
         {Math.round(pct)}% of {formatCurrency(metrics.target_amount)} limit
-        {parseFloat(metrics.scheduled_in_period ?? "0") > 0
+        {(parseOptionalMetricAmount(metrics.scheduled_in_period) ?? 0) > 0
           ? ` · ${formatCurrency(metrics.scheduled_in_period)} upcoming`
           : ""}
       </Text>

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createSpendingTarget,
   deleteSpendingTarget,
-  listSpendingTargets,
+  getSpendingTarget,
   suggestSpendingTargetType,
   updateSpendingTarget,
 } from "@budget-app/api-client";
@@ -46,7 +46,7 @@ export function SpendingLimitFormScreen() {
   const [targetAmount, setTargetAmount] = useState("");
   const [period, setPeriod] = useState<SpendingTargetPeriod>("monthly");
   const [targetType, setTargetType] = useState<SpendingTargetType>("variable");
-  const [warningThreshold, setWarningThreshold] = useState("80");
+  const [warningThreshold, setWarningThreshold] = useState("");
   const [notes, setNotes] = useState("");
   const [suggestReason, setSuggestReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,11 +59,19 @@ export function SpendingLimitFormScreen() {
 
   const editingQuery = useQuery({
     queryKey: ["spending-target-edit", editingId],
-    queryFn: async () => {
-      const data = await listSpendingTargets({ household: householdId ?? undefined, active: true });
-      return data.results.find((t) => t.id === editingId!) ?? null;
-    },
+    queryFn: () => getSpendingTarget(editingId!),
     enabled: isEdit && householdId != null,
+    initialData: () => {
+      if (!editingId) return undefined;
+      const caches = queryClient.getQueriesData<{ results?: { id: number }[] }>({
+        queryKey: ["spending-targets"],
+      });
+      for (const [, data] of caches) {
+        const hit = data?.results?.find((t) => t.id === editingId);
+        if (hit) return hit as import("@budget-app/shared").SpendingTarget;
+      }
+      return undefined;
+    },
   });
 
   useEffect(() => {
@@ -105,15 +113,18 @@ export function SpendingLimitFormScreen() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!householdId) throw new Error("No household selected.");
-      const body = {
+      const body: Parameters<typeof createSpendingTarget>[0] = {
         household: householdId,
         category: categoryId as number,
         target_amount: targetAmount.trim(),
         period,
         target_type: targetType,
-        warning_threshold_percent: warningThreshold.trim() || "80",
         notes: notes.trim() || undefined,
-      } as Parameters<typeof createSpendingTarget>[0];
+      };
+      const threshold = warningThreshold.trim();
+      if (threshold) {
+        body.warning_threshold_percent = threshold;
+      }
       if (isEdit) return updateSpendingTarget(editingId!, body);
       return createSpendingTarget(body);
     },
@@ -196,6 +207,7 @@ export function SpendingLimitFormScreen() {
           value={warningThreshold}
           onChangeText={setWarningThreshold}
           keyboardType="number-pad"
+          placeholder="Leave blank for server default"
         />
 
         <TextField label="Notes" value={notes} onChangeText={setNotes} multiline />

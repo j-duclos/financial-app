@@ -128,3 +128,15 @@ export function invalidateRecurringRuleDependents(queryClient: QueryClient): voi
   void queryClient.invalidateQueries({ queryKey: ["scenarios"] });
   invalidateFinancialQueries(queryClient);
 }
+
+/** Spending-limit definition changes — budget summaries, reports, dashboard/recommendations. */
+export function invalidateSpendingTargetDependents(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ["spending-targets"] });
+  void queryClient.invalidateQueries({ queryKey: ["spending-targets-summary"] });
+  void queryClient.invalidateQueries({ queryKey: ["spending-target"] });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
+  void queryClient.invalidateQueries({ queryKey: ["recommendations"] });
+  void queryClient.invalidateQueries({ queryKey: ["monthly-reports"] });
+}

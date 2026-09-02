@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
 import type { SpendingTarget } from "@budget-app/shared";
 import {
@@ -7,7 +7,6 @@ import {
   deleteSpendingTarget,
   getSpendingTargetsSummary,
   listCategories,
-  listHouseholds,
   listSpendingTargets,
   updateSpendingTarget,
 } from "@budget-app/api-client";
@@ -19,7 +18,9 @@ import {
   METRIC_TILE_SKELETON_CLASS,
 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
-import { spendingTargetsRemainingFromSummary } from "../lib/spendingTargetDisplay";
+import { useProfileQuery } from "../lib/profileQuery";
+import { invalidateSpendingTargetDependents } from "../lib/financialQueryRefresh";
+import { parseOptionalMetricAmount } from "../lib/spendingTargetDisplay";
 
 export default function SpendingTargets() {
   const queryClient = useQueryClient();
@@ -28,20 +29,24 @@ export default function SpendingTargets() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<SpendingTarget | null>(null);
 
-  const { data: households } = useQuery({
-    queryKey: ["households"],
-    queryFn: listHouseholds,
-  });
-  const householdId = households?.[0]?.id ?? null;
+  const { data: profile, isFetched: profileFetched } = useProfileQuery();
+  const householdId = profile?.default_household ?? null;
 
-  const { data: summary, isLoading } = useQuery({
-    queryKey: ["spending-targets-summary", householdId, monthKey],
+  const {
+    data: summary,
+    isLoading,
+    isError: summaryError,
+    isFetching: summaryFetching,
+    isPlaceholderData: summaryPlaceholder,
+  } = useQuery({
+    queryKey: ["spending-targets-summary", householdId, monthKey, anchor],
     queryFn: () =>
       getSpendingTargetsSummary({
         household: householdId ?? undefined,
         anchor,
       }),
     enabled: householdId != null,
+    placeholderData: keepPreviousData,
   });
 
   const { data: categoriesData } = useQuery({
@@ -57,8 +62,12 @@ export default function SpendingTargets() {
   });
   const categories = categoriesData?.results ?? [];
 
-  const { data: targetsData } = useQuery({
-    queryKey: ["spending-targets", householdId, monthKey],
+  const {
+    data: targetsData,
+    isError: targetsError,
+    isPlaceholderData: targetsPlaceholder,
+  } = useQuery({
+    queryKey: ["spending-targets", householdId, monthKey, anchor],
     queryFn: () =>
       listSpendingTargets({
         household: householdId ?? undefined,
@@ -66,19 +75,28 @@ export default function SpendingTargets() {
         active: true,
       }),
     enabled: householdId != null,
+    placeholderData: keepPreviousData,
   });
 
-  const targets = targetsData?.results ?? [];
+  const dataMatchesPeriod =
+    summary != null &&
+    summary.anchor_date.slice(0, 7) === monthKey &&
+    !summaryPlaceholder &&
+    !targetsPlaceholder;
+  const isUpdatingPeriod = (summaryFetching || targetsPlaceholder) && !dataMatchesPeriod;
+
+  const targets = dataMatchesPeriod ? (targetsData?.results ?? []) : [];
   const metricsById = useMemo(() => {
     const map = new Map<
       number,
       import("@budget-app/shared").SpendingTargetMetrics
     >();
+    if (!dataMatchesPeriod) return map;
     for (const row of summary?.targets ?? []) {
       map.set(row.target_id, row);
     }
     return map;
-  }, [summary?.targets]);
+  }, [summary?.targets, dataMatchesPeriod]);
 
   const saveMu = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
@@ -92,18 +110,14 @@ export default function SpendingTargets() {
     onSuccess: async () => {
       setModalOpen(false);
       setEditing(null);
-      await queryClient.invalidateQueries({ queryKey: ["spending-targets"] });
-      await queryClient.invalidateQueries({ queryKey: ["spending-targets-summary"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      invalidateSpendingTargetDependents(queryClient);
     },
   });
 
   const deleteMu = useMutation({
     mutationFn: deleteSpendingTarget,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["spending-targets"] });
-      await queryClient.invalidateQueries({ queryKey: ["spending-targets-summary"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      invalidateSpendingTargetDependents(queryClient);
     },
   });
 
@@ -114,9 +128,20 @@ export default function SpendingTargets() {
     }
   }
 
-  const remaining = summary
-    ? spendingTargetsRemainingFromSummary(summary)
-    : 0;
+  const displaySummary = dataMatchesPeriod ? summary : undefined;
+  const remaining = displaySummary?.remaining_to_targets_total;
+  const remainingNum = parseOptionalMetricAmount(remaining);
+
+  if (profileFetched && householdId == null) {
+    return (
+      <div className={`${PAGE_SHELL_PY} space-y-4`}>
+        <h1 className="text-lg font-semibold text-gray-900">Budget</h1>
+        <p className="text-sm text-gray-600">
+          Set a default household in Profile &amp; Settings to manage spending limits.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`${PAGE_SHELL_PY} space-y-4`}>
@@ -126,34 +151,44 @@ export default function SpendingTargets() {
           Set and track monthly spending by category.
         </p>
       </div>
-      {isLoading ? (
+      {isUpdatingPeriod ? (
+        <p className="text-sm text-gray-500" aria-live="polite">
+          Updating…
+        </p>
+      ) : null}
+      {summaryError && !displaySummary ? (
+        <p className="text-sm text-red-700">Could not load budget summary.</p>
+      ) : null}
+      {isLoading && !displaySummary ? (
         <div className={METRIC_TILE_GRID_5}>
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className={METRIC_TILE_SKELETON_CLASS} aria-hidden />
           ))}
         </div>
-      ) : summary ? (
+      ) : displaySummary ? (
         <div className={METRIC_TILE_GRID_5}>
           <DashboardMetricTile
             label="Category budget"
-            value={formatCurrency(summary.total_monthly_targets)}
+            value={formatCurrency(displaySummary.total_monthly_targets)}
           />
           <DashboardMetricTile
             label="Spent"
-            value={formatCurrency(summary.spent_so_far_total)}
+            value={formatCurrency(displaySummary.spent_so_far_total)}
           />
           <DashboardMetricTile
             label="Known upcoming"
-            value={formatCurrency(summary.scheduled_in_period_total ?? "0")}
+            value={formatCurrency(displaySummary.scheduled_in_period_total ?? "0")}
           />
           <DashboardMetricTile
             label="Remaining"
-            value={formatCurrency(remaining)}
-            valueClassName={remaining < 0 ? "text-red-700" : "text-emerald-700"}
+            value={formatCurrency(remaining ?? "0")}
+            valueClassName={
+              remainingNum != null && remainingNum < 0 ? "text-red-700" : "text-emerald-700"
+            }
           />
           <DashboardMetricTile
             label="Above / approaching"
-            value={`${summary.above_target_count} / ${summary.approaching_target_count}`}
+            value={`${displaySummary.above_target_count} / ${displaySummary.approaching_target_count}`}
             valueClassName="text-gray-900"
           />
         </div>
@@ -175,7 +210,11 @@ export default function SpendingTargets() {
         </button>
       </div>
 
-      {targets.length === 0 && !isLoading && (
+      {targetsError ? (
+        <p className="text-sm text-red-700">Could not load spending limits.</p>
+      ) : null}
+
+      {targets.length === 0 && !isLoading && !targetsError && dataMatchesPeriod && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-600">
           <p className="font-medium text-gray-900">No category budgets yet</p>
           <p className="mt-1">Use Add spending limit to create one for an expense category.</p>

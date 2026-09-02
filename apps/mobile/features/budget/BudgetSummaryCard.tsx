@@ -1,10 +1,9 @@
 import React from "react";
 import { Text, View } from "react-native";
-import { formatCurrency } from "@budget-app/shared";
 import type { SpendingTargetsSummary } from "@budget-app/shared";
 import { Card, CurrencyDisplay } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { spendingTargetsRemainingFromSummary } from "./spendingTargetDisplay";
+import { parseOptionalMetricAmount } from "./spendingTargetDisplay";
 
 type Props = {
   summary: SpendingTargetsSummary;
@@ -12,17 +11,15 @@ type Props = {
 
 export function BudgetSummaryCard({ summary }: Props) {
   const theme = useTheme();
-  const remaining = spendingTargetsRemainingFromSummary(summary);
+  const remaining = summary.remaining_to_targets_total;
+  const remainingTone =
+    (parseOptionalMetricAmount(remaining) ?? 0) < 0 ? ("negative" as const) : ("positive" as const);
 
   const metrics = [
     { label: "Total limits", amount: summary.total_monthly_targets },
     { label: "Spent", amount: summary.spent_so_far_total },
     { label: "Upcoming", amount: summary.scheduled_in_period_total ?? "0" },
-    {
-      label: "Remaining",
-      amount: String(remaining),
-      tone: remaining < 0 ? ("negative" as const) : ("positive" as const),
-    },
+    { label: "Remaining", amount: remaining, tone: remainingTone },
   ];
 
   return (

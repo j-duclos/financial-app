@@ -20,4 +20,8 @@ describe("Budget request orchestration", () => {
     expect(budgetData).toMatch(/getSpendingTargetsSummary/);
     expect(budgetData).toMatch(/listSpendingTargets/);
   });
+
+  it("exposes awaitable refresh that joins summary and targets", () => {
+    expect(budgetData).toMatch(/Promise\.all\(\[summaryQuery\.refetch\(\), targetsQuery\.refetch\(\)\]\)/);
+  });
 });

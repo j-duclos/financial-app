@@ -23,9 +23,16 @@ describe("SpendingTargetFormModal copy", () => {
     expect(source).toMatch(/value="variable"/);
   });
 
-  it("preserves a configurable warning threshold", () => {
+  it("omits warning threshold when blank; backend owns the default", () => {
     expect(source).toMatch(/Warning threshold \(%\)/);
-    expect(source).toMatch(/setWarningThreshold\("80"\)/);
-    expect(source).toMatch(/warning_threshold_percent: warningThreshold/);
+    expect(source).not.toMatch(/setWarningThreshold\("80"\)/);
+    expect(source).not.toMatch(/\|\| "80"/);
+    expect(source).toMatch(/Leave blank for server default/);
+    expect(source).toMatch(/if \(threshold\)/);
+    expect(source).toMatch(/body\.warning_threshold_percent = threshold/);
+  });
+
+  it("preserves backend suggest-type for new limits", () => {
+    expect(source).toMatch(/suggestSpendingTargetType/);
   });
 });

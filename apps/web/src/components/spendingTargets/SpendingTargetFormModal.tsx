@@ -26,7 +26,7 @@ export default function SpendingTargetFormModal({
   const [targetAmount, setTargetAmount] = useState("");
   const [period, setPeriod] = useState<SpendingTargetPeriod>("monthly");
   const [targetType, setTargetType] = useState<SpendingTargetType>("variable");
-  const [warningThreshold, setWarningThreshold] = useState("80");
+  const [warningThreshold, setWarningThreshold] = useState("");
   const [notes, setNotes] = useState("");
   const [suggestReason, setSuggestReason] = useState<string | null>(null);
 
@@ -45,7 +45,7 @@ export default function SpendingTargetFormModal({
       setTargetAmount("");
       setPeriod("monthly");
       setTargetType("variable");
-      setWarningThreshold("80");
+      setWarningThreshold("");
       setNotes("");
       setSuggestReason(null);
     }
@@ -175,8 +175,12 @@ export default function SpendingTargetFormModal({
             max="100"
             value={warningThreshold}
             onChange={(e) => setWarningThreshold(e.target.value)}
+            placeholder="Leave blank for server default"
             className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
           />
+          <span className="mt-1 block text-xs text-gray-500">
+            Optional. When omitted, the backend applies its model default.
+          </span>
         </label>
         <label className="block text-sm">
           <span className="text-gray-600">Notes (optional)</span>
@@ -200,15 +204,19 @@ export default function SpendingTargetFormModal({
             disabled={!householdId || !categoryId || !targetAmount}
             onClick={() => {
               if (!householdId || !categoryId) return;
-              onSave({
+              const body: Record<string, unknown> = {
                 household: householdId,
                 category: categoryId,
                 target_amount: targetAmount,
                 period,
                 target_type: targetType,
-                warning_threshold_percent: warningThreshold,
                 notes,
-              });
+              };
+              const threshold = warningThreshold.trim();
+              if (threshold) {
+                body.warning_threshold_percent = threshold;
+              }
+              onSave(body);
             }}
             className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white disabled:opacity-50"
           >
