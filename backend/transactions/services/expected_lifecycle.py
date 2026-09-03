@@ -19,6 +19,17 @@ from .matching import (
     manual_match_transactions,
     score_candidate,
 )
+
+# Hard incompatibilities only. Description / merchant-family rejects are for
+# automatic matching; this user action uses them to rank, not to hide a unique bank post.
+_RESOLUTION_HARD_REJECTS = frozenset(
+    {
+        "different_account",
+        "amount_mismatch",
+        "plaid_id_mismatch",
+        "date_outside_window",
+    }
+)
 from .posting import delete_transaction_respecting_partner_ledger, get_transfer_group_sibling
 
 if TYPE_CHECKING:
@@ -368,7 +379,8 @@ def _rank_bank_imports_for_expected_resolution(
         ):
             continue
         sc, parts = score_candidate(row, planned)
-        if parts.get("reject"):
+        reject = parts.get("reject")
+        if reject in _RESOLUTION_HARD_REJECTS:
             continue
         ranked.append((row, max(sc, 0)))
     ranked.sort(key=lambda item: (-item[1], item[0].pk))

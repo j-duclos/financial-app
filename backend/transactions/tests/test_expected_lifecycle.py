@@ -478,6 +478,27 @@ class TestResolveExpectedAsImported(ExpectedLifecycleFixture):
         self.assertEqual(imported.plaid_transaction_id, "plaid-materialized-actual")
         self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
 
+    def test_unique_bank_post_matches_even_when_payee_text_differs(self):
+        """User-initiated resolve must not require auto-match payee similarity."""
+        planned = self._expected_planned()
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=planned.date + timedelta(days=4),
+            payee="Zelle payment to LANDLORD JPMabc12xyz9",
+            imported_description="Zelle payment to LANDLORD JPMabc12xyz9",
+            amount=Decimal("-1200.00"),
+            source=Transaction.Source.ACTUAL,
+            status=Transaction.Status.CLEARED,
+            plaid_transaction_id="plaid-zelle-unlike-payee",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+        )
+        result = resolve_expected_as_imported(planned, user=self.user)
+        self.assertEqual(result["imported_transaction_id"], imported.pk)
+        self.assertFalse(Transaction.objects.filter(pk=planned.pk).exists())
+        imported.refresh_from_db()
+        self.assertEqual(imported.plaid_transaction_id, "plaid-zelle-unlike-payee")
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
     def test_imported_date_within_window_stays_canonical(self):
         planned = self._expected_planned()
         bank_date = planned.date + timedelta(days=2)
