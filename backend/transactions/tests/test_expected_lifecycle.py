@@ -11,16 +11,22 @@ from accounts.models import Account
 from core.models import Household, HouseholdMembership
 from timeline.models import RecurringRule, RecurringRuleSkip
 from timeline.services.ledger import build_timeline
-from transactions.models import Transaction, TransactionMatch
+from transactions.models import Transaction, TransactionMatch, Transfer, TransferGroup
 from transactions.services import (
     confirm_expected_transaction,
     find_import_candidates_for_planned,
     is_expected_eligible,
     is_planned_scheduled_eligible,
+    ledger_visible_transactions,
     manual_match_transactions,
     match_expected_to_import,
     move_scheduled_date,
+    resolve_expected_as_imported,
     skip_scheduled_transaction,
+)
+from transactions.services.expected_lifecycle import (
+    AmbiguousImportResolution,
+    ImportResolutionError,
 )
 
 User = get_user_model()
@@ -412,3 +418,337 @@ class TestSectionClassification(ExpectedLifecycleFixture):
         self.assertIsNone(
             TransactionMatch.objects.filter(planned_transaction=txn).first()
         )
+
+
+def _next_month_on_day(anchor: date, day: int) -> date:
+    if anchor.month == 12:
+        return date(anchor.year + 1, 1, day)
+    return date(anchor.year, anchor.month + 1, day)
+
+
+class TestResolveExpectedAsImported(ExpectedLifecycleFixture):
+    def _plaid_import(self, **kwargs) -> Transaction:
+        defaults = dict(
+            account=self.acc,
+            date=date.today(),
+            payee="Rent ACH",
+            amount=Decimal("-1200.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-resolve-1",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        defaults.update(kwargs)
+        return Transaction.objects.create(**defaults)
+
+    def test_ordinary_scheduled_expense_keeps_import_and_deletes_planned(self):
+        planned = self._expected_planned()
+        imported = self._plaid_import()
+        result = resolve_expected_as_imported(planned, user=self.user)
+        self.assertTrue(result["resolved"])
+        self.assertEqual(result["imported_transaction_id"], imported.pk)
+        self.assertEqual(result["removed_planned_transaction_id"], planned.pk)
+        self.assertIsNone(result["preserved_counterpart_transaction_id"])
+        self.assertFalse(Transaction.objects.filter(pk=planned.pk).exists())
+        imported.refresh_from_db()
+        self.assertEqual(imported.source, Transaction.Source.PLAID)
+        self.assertEqual(imported.plaid_transaction_id, "plaid-resolve-1")
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.IGNORED)
+        visible = list(ledger_visible_transactions(Transaction.objects.filter(account=self.acc)))
+        self.assertIn(imported.pk, {t.pk for t in visible})
+        self.assertNotIn(planned.pk, {t.pk for t in visible})
+
+    def test_materialized_actual_with_plaid_id_is_recognized(self):
+        planned = self._expected_planned()
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=date.today(),
+            payee="Rent ACH",
+            amount=Decimal("-1200.00"),
+            source=Transaction.Source.ACTUAL,
+            status=Transaction.Status.CLEARED,
+            plaid_transaction_id="plaid-materialized-actual",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+        )
+        result = resolve_expected_as_imported(planned, user=self.user)
+        self.assertEqual(result["imported_transaction_id"], imported.pk)
+        self.assertFalse(Transaction.objects.filter(pk=planned.pk).exists())
+        imported.refresh_from_db()
+        self.assertEqual(imported.source, Transaction.Source.ACTUAL)
+        self.assertEqual(imported.plaid_transaction_id, "plaid-materialized-actual")
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+
+    def test_imported_date_within_window_stays_canonical(self):
+        planned = self._expected_planned()
+        bank_date = planned.date + timedelta(days=2)
+        imported = self._plaid_import(date=bank_date, plaid_transaction_id="plaid-date-window")
+        resolve_expected_as_imported(planned, user=self.user)
+        imported.refresh_from_db()
+        self.assertEqual(imported.date, bank_date)
+        self.assertFalse(Transaction.objects.filter(pk=planned.pk).exists())
+
+    def test_occurrence_is_not_recreated_on_next_materialization(self):
+        from timeline.services.ledger import _materialize_rule_occurrence
+
+        planned = self._expected_planned()
+        occ_date = planned.date
+        imported = self._plaid_import(date=occ_date + timedelta(days=1), plaid_transaction_id="plaid-no-recreate")
+        resolve_expected_as_imported(planned, user=self.user)
+        again = _materialize_rule_occurrence(
+            self.rule,
+            occ_date,
+            self.acc.id,
+            Decimal("-1200.00"),
+            self.rule.name,
+            None,
+        )
+        self.assertFalse(
+            Transaction.objects.filter(
+                account=self.acc,
+                rule=self.rule,
+                date=occ_date,
+                source=Transaction.Source.RULE,
+                status=Transaction.Status.PLANNED,
+            ).exists()
+        )
+        if again is not None:
+            self.assertEqual(again.pk, imported.pk)
+
+    def test_later_occurrences_still_generate(self):
+        from timeline.services.ledger import _materialize_rule_occurrence
+
+        planned = self._expected_planned()
+        imported = self._plaid_import(plaid_transaction_id="plaid-later-occ")
+        resolve_expected_as_imported(planned, user=self.user)
+        later = _next_month_on_day(date.today().replace(day=1), 1)
+        created = _materialize_rule_occurrence(
+            self.rule,
+            later,
+            self.acc.id,
+            Decimal("-1200.00"),
+            self.rule.name,
+            None,
+        )
+        self.assertIsNotNone(created)
+        self.assertNotEqual(created.pk, imported.pk)
+        self.assertEqual(created.source, Transaction.Source.RULE)
+        self.assertEqual(created.status, Transaction.Status.PLANNED)
+        self.assertEqual(created.date, later)
+
+    def test_ambiguous_imports_return_409_and_delete_nothing(self):
+        planned = self._expected_planned()
+        first = self._plaid_import(plaid_transaction_id="plaid-amb-1", payee="Rent ACH")
+        second = self._plaid_import(plaid_transaction_id="plaid-amb-2", payee="Rent ACH")
+        with self.assertRaises(AmbiguousImportResolution):
+            resolve_expected_as_imported(planned, user=self.user)
+        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=first.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=second.pk).exists())
+        resp = self.client.post(f"/api/transactions/{planned.pk}/resolve-as-imported/")
+        self.assertEqual(resp.status_code, 409)
+        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+
+    def test_no_matching_import_returns_error_and_deletes_nothing(self):
+        planned = self._expected_planned()
+        with self.assertRaises(ImportResolutionError):
+            resolve_expected_as_imported(planned, user=self.user)
+        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+        resp = self.client.post(f"/api/transactions/{planned.pk}/resolve-as-imported/")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("No matching imported bank transaction", resp.json()["detail"])
+        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+
+    def test_reconciled_planned_cannot_be_changed(self):
+        planned = self._expected_planned()
+        planned.reconciled = True
+        planned.save(update_fields=["reconciled"])
+        self._plaid_import(plaid_transaction_id="plaid-recon")
+        resp = self.client.post(f"/api/transactions/{planned.pk}/resolve-as-imported/")
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+
+    def test_api_response_ordinary_never_requires_match_pk(self):
+        planned = self._expected_planned()
+        imported = self._plaid_import(plaid_transaction_id="plaid-api-ord")
+        resp = self.client.post(f"/api/transactions/{planned.pk}/resolve-as-imported/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["resolved"])
+        self.assertEqual(body["imported_transaction_id"], imported.pk)
+        self.assertEqual(body["removed_planned_transaction_id"], planned.pk)
+        self.assertIsNone(body["preserved_counterpart_transaction_id"])
+        self.assertNotIn("match_id", body)
+
+
+class TestResolveExpectedAsImportedTransfers(ExpectedLifecycleFixture):
+    def setUp(self):
+        super().setUp()
+        self.card = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CREDIT,
+            name="Card",
+            currency="USD",
+        )
+        self.payment_rule = RecurringRule.objects.create(
+            household=self.h,
+            account=self.acc,
+            transfer_to_account=self.card,
+            name="Card Payment",
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("100.00"),
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            day_of_month=15,
+            start_date=date(2026, 1, 1),
+            active=True,
+        )
+        self.pay_date = date.today() - timedelta(days=1)
+
+    def _payment_legs(self):
+        tg = TransferGroup.objects.create(
+            household=self.h,
+            from_account=self.acc,
+            to_account=self.card,
+            amount=Decimal("100.00"),
+            scheduled_date=self.pay_date,
+            status=TransferGroup.Status.PLANNED,
+        )
+        checking_leg = Transaction.objects.create(
+            account=self.acc,
+            date=self.pay_date,
+            payee=self.payment_rule.name,
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=self.payment_rule,
+            transfer_group=tg,
+            transaction_type=Transaction.TransactionType.TRANSFER,
+        )
+        card_leg = Transaction.objects.create(
+            account=self.card,
+            date=self.pay_date,
+            payee=self.payment_rule.name,
+            amount=Decimal("100.00"),
+            source=Transaction.Source.RULE,
+            status=Transaction.Status.PLANNED,
+            rule=self.payment_rule,
+            transfer_group=tg,
+            transaction_type=Transaction.TransactionType.CREDIT_CARD_PAYMENT,
+        )
+        Transfer.objects.create(
+            from_transaction=checking_leg,
+            to_transaction=card_leg,
+            amount=Decimal("100.00"),
+            date=self.pay_date,
+        )
+        return checking_leg, card_leg, tg
+
+    def test_checking_side_import_preserves_card_leg(self):
+        checking_leg, card_leg, tg = self._payment_legs()
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=self.pay_date,
+            payee="AUTOPAY PAYMENT",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-cc-checking",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        result = resolve_expected_as_imported(checking_leg, user=self.user)
+        self.assertEqual(result["imported_transaction_id"], imported.pk)
+        self.assertEqual(result["removed_planned_transaction_id"], checking_leg.pk)
+        self.assertEqual(result["preserved_counterpart_transaction_id"], card_leg.pk)
+        self.assertFalse(Transaction.objects.filter(pk=checking_leg.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=card_leg.pk).exists())
+        imported.refresh_from_db()
+        card_leg.refresh_from_db()
+        self.assertEqual(imported.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(imported.plaid_transaction_id, "plaid-cc-checking")
+        self.assertEqual(imported.transfer_group_id, tg.pk)
+        self.assertEqual(card_leg.transfer_group_id, tg.pk)
+        xfer = Transfer.objects.get(to_transaction=card_leg)
+        self.assertEqual(xfer.from_transaction_id, imported.pk)
+        visible_checking = list(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, amount=Decimal("-100.00")))
+        )
+        visible_card = list(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.card, amount=Decimal("100.00")))
+        )
+        self.assertEqual({t.pk for t in visible_checking}, {imported.pk})
+        self.assertEqual({t.pk for t in visible_card}, {card_leg.pk})
+
+    def test_card_side_import_preserves_checking_leg(self):
+        checking_leg, card_leg, tg = self._payment_legs()
+        imported = Transaction.objects.create(
+            account=self.card,
+            date=self.pay_date,
+            payee="AUTOPAY PAYMENT",
+            amount=Decimal("100.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-cc-card",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        result = resolve_expected_as_imported(card_leg, user=self.user)
+        self.assertEqual(result["imported_transaction_id"], imported.pk)
+        self.assertEqual(result["removed_planned_transaction_id"], card_leg.pk)
+        self.assertEqual(result["preserved_counterpart_transaction_id"], checking_leg.pk)
+        self.assertFalse(Transaction.objects.filter(pk=card_leg.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=checking_leg.pk).exists())
+        imported.refresh_from_db()
+        checking_leg.refresh_from_db()
+        self.assertEqual(imported.plaid_transaction_id, "plaid-cc-card")
+        self.assertNotEqual(imported.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(imported.transfer_group_id, tg.pk)
+        self.assertEqual(checking_leg.transfer_group_id, tg.pk)
+        xfer = Transfer.objects.get(from_transaction=checking_leg)
+        self.assertEqual(xfer.to_transaction_id, imported.pk)
+        visible_checking = list(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.acc, amount=Decimal("-100.00")))
+        )
+        visible_card = list(
+            ledger_visible_transactions(Transaction.objects.filter(account=self.card, amount=Decimal("100.00")))
+        )
+        self.assertEqual({t.pk for t in visible_checking}, {checking_leg.pk})
+        self.assertEqual({t.pk for t in visible_card}, {imported.pk})
+
+    def test_transfer_api_response_never_requires_match_pk(self):
+        checking_leg, card_leg, _tg = self._payment_legs()
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=self.pay_date,
+            payee="AUTOPAY PAYMENT",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-cc-api",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        resp = self.client.post(f"/api/transactions/{checking_leg.pk}/resolve-as-imported/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["resolved"])
+        self.assertEqual(body["imported_transaction_id"], imported.pk)
+        self.assertEqual(body["removed_planned_transaction_id"], checking_leg.pk)
+        self.assertEqual(body["preserved_counterpart_transaction_id"], card_leg.pk)
+        self.assertNotIn("match_id", body)
+
+    def test_legacy_match_endpoint_transfer_does_not_dereference_none(self):
+        checking_leg, _card_leg, _tg = self._payment_legs()
+        imported = Transaction.objects.create(
+            account=self.acc,
+            date=self.pay_date,
+            payee="AUTOPAY PAYMENT",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="plaid-legacy-match",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        resp = self.client.post(
+            f"/api/transactions/{checking_leg.pk}/match/",
+            {"imported_transaction_id": imported.pk},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertTrue(body["resolved"])
+        self.assertIsNone(body.get("match_id"))
+        self.assertTrue(Transaction.objects.filter(pk=checking_leg.pk).exists())

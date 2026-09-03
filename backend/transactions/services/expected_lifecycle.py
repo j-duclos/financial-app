@@ -1,22 +1,36 @@
 """Lifecycle actions for scheduled transactions: forecast → expected → actual / matched / skipped."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Iterable, Optional
 
 from django.db import transaction as db_transaction
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from timeline.models import InterestCycleSkip, RecurringRuleSkip
 
-from ..models import Transaction, TransactionMatch, TransferGroup
+from ..models import MatchSuggestion, Transaction, TransactionMatch, Transfer, TransferGroup
 from ..rule_transfer_pairs import find_rule_transfer_counterpart_txn
 from .immutability import reject_if_reconciled
-from .matching import manual_match_transactions
-from .posting import delete_transaction_respecting_partner_ledger
+from .matching import (
+    AMOUNT_TOLERANCE,
+    SAME_ACCOUNT_DATE_WINDOW_DAYS,
+    manual_match_transactions,
+    score_candidate,
+)
+from .posting import delete_transaction_respecting_partner_ledger, get_transfer_group_sibling
 
 if TYPE_CHECKING:
     pass
+
+
+class ImportResolutionError(ValueError):
+    """Automatic import resolution failed without mutating rows."""
+
+
+class AmbiguousImportResolution(ImportResolutionError):
+    """Multiple equally plausible bank imports; refuse to guess."""
 
 
 def _today() -> date:
@@ -295,3 +309,221 @@ def match_expected_to_import(
         imported_id=imported_id,
         user=user,
     )
+
+
+def has_bank_import_provenance(txn: Transaction) -> bool:
+    """True when the row carries an immutable bank/import identifier."""
+    if (txn.plaid_transaction_id or "").strip():
+        return True
+    if (txn.pending_transaction_id or "").strip():
+        return True
+    return txn.source == Transaction.Source.PLAID
+
+
+def _rank_bank_imports_for_expected_resolution(
+    planned: Transaction,
+) -> list[tuple[Transaction, int]]:
+    """
+    Rank real bank records that could fulfill this planned occurrence.
+
+    Does not require source=PLAID or UNMATCHED — materialized ACTUAL rows that still
+    carry a bank id are eligible. Description/payee similarity is used only to rank.
+    """
+    if planned.amount is None:
+        return []
+    household_id = planned.account.household_id
+    low = planned.date - timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    high = planned.date + timedelta(days=SAME_ACCOUNT_DATE_WINDOW_DAYS)
+    nearby = (
+        Transaction.objects.filter(
+            account_id=planned.account_id,
+            account__household_id=household_id,
+            date__gte=low,
+            date__lte=high,
+            scenario__isnull=True,
+        )
+        .exclude(pk=planned.pk)
+        .exclude(
+            import_match_status__in=[
+                Transaction.ImportMatchStatus.DUPLICATE,
+                Transaction.ImportMatchStatus.IGNORED,
+            ]
+        )
+        .exclude(Exists(TransactionMatch.objects.filter(imported_transaction_id=OuterRef("pk"))))
+        .exclude(Exists(TransactionMatch.objects.filter(planned_transaction_id=OuterRef("pk"))))
+        .select_related("account")
+    )
+    ranked: list[tuple[Transaction, int]] = []
+    for row in nearby:
+        if not has_bank_import_provenance(row):
+            continue
+        if row.amount is None:
+            continue
+        if abs(row.amount - planned.amount) > AMOUNT_TOLERANCE:
+            continue
+        if (
+            row.transfer_group_id
+            and planned.transfer_group_id
+            and row.transfer_group_id != planned.transfer_group_id
+        ):
+            continue
+        sc, parts = score_candidate(row, planned)
+        if parts.get("reject"):
+            continue
+        ranked.append((row, max(sc, 0)))
+    ranked.sort(key=lambda item: (-item[1], item[0].pk))
+    return ranked
+
+
+def find_unique_bank_import_for_expected_resolution(planned: Transaction) -> Transaction:
+    """
+    Return the single bank import that can safely replace this planned row.
+
+    Raises ImportResolutionError when none exist and AmbiguousImportResolution when
+    two or more candidates share the top score.
+    """
+    ranked = _rank_bank_imports_for_expected_resolution(planned)
+    if not ranked:
+        raise ImportResolutionError(
+            "No matching imported bank transaction was found for this scheduled item."
+        )
+    best_score = ranked[0][1]
+    ties = [row for row, score in ranked if score == best_score]
+    if len(ties) > 1:
+        raise AmbiguousImportResolution(
+            "Multiple imported bank transactions could match this scheduled item, "
+            "so it was not changed."
+        )
+    return ranked[0][0]
+
+
+def _migrate_planned_leg_transfer_to_imported(
+    planned: Transaction,
+    imported: Transaction,
+) -> Transaction | None:
+    """
+    Move transfer/payment linkage from the planned leg onto the imported bank row.
+
+    Does not delete the counterpart and does not mark the import DUPLICATE.
+    """
+    counterpart = get_transfer_group_sibling(planned)
+    if counterpart is None:
+        counterpart = _find_rule_counterpart(planned)
+
+    from_xfer = Transfer.objects.filter(from_transaction_id=planned.pk).first()
+    if from_xfer is not None:
+        if counterpart is None:
+            counterpart = from_xfer.to_transaction
+        from_xfer.from_transaction = imported
+        from_xfer.save(update_fields=["from_transaction_id"])
+    to_xfer = Transfer.objects.filter(to_transaction_id=planned.pk).first()
+    if to_xfer is not None:
+        if counterpart is None:
+            counterpart = to_xfer.from_transaction
+        to_xfer.to_transaction = imported
+        to_xfer.save(update_fields=["to_transaction_id"])
+
+    if counterpart is not None and counterpart.pk in (planned.pk, imported.pk):
+        counterpart = None
+    return counterpart
+
+
+def resolve_expected_as_imported(planned: Transaction, *, user=None) -> dict:
+    """
+    Replace a scheduled/planned duplicate with the already-imported bank record.
+
+    The imported row stays the visible canonical ledger record. The planned
+    occurrence is removed. For two-leg transfers / card payments, only the
+    matching planned leg is removed; the counterpart is preserved and re-linked.
+    """
+    reject_if_reconciled(planned, action="matched")
+    if user is not None:
+        from core.utils import get_households_for_user
+
+        if not get_households_for_user(user).filter(pk=planned.account.household_id).exists():
+            raise ImportResolutionError("You do not have access to this transaction.")
+    if not is_planned_scheduled_eligible(planned):
+        raise ImportResolutionError(
+            "Only unconfirmed scheduled transactions can be matched to an import."
+        )
+
+    imported = find_unique_bank_import_for_expected_resolution(planned)
+
+    planned_id = planned.pk
+    household_id = planned.account.household_id
+    imported_id = imported.pk
+
+    with db_transaction.atomic():
+        planned = (
+            Transaction.objects.select_for_update()
+            .select_related("account")
+            .get(pk=planned_id)
+        )
+        imported = (
+            Transaction.objects.select_for_update()
+            .select_related("account")
+            .get(pk=imported_id)
+        )
+        reject_if_reconciled(planned, action="matched")
+        if not is_planned_scheduled_eligible(planned):
+            raise ImportResolutionError(
+                "Only unconfirmed scheduled transactions can be matched to an import."
+            )
+
+        TransactionMatch.objects.filter(
+            Q(planned_transaction_id=planned.pk)
+            | Q(imported_transaction_id=planned.pk)
+            | Q(planned_transaction_id=imported.pk)
+            | Q(imported_transaction_id=imported.pk)
+        ).delete()
+        MatchSuggestion.objects.filter(
+            Q(planned_transaction_id=planned.pk)
+            | Q(imported_transaction_id=planned.pk)
+            | Q(planned_transaction_id=imported.pk)
+            | Q(imported_transaction_id=imported.pk)
+        ).delete()
+
+        counterpart = _migrate_planned_leg_transfer_to_imported(planned, imported)
+        tg_id = planned.transfer_group_id or imported.transfer_group_id
+
+        imported_updates: list[str] = []
+        if planned.rule_id and not imported.rule_id:
+            imported.rule_id = planned.rule_id
+            imported_updates.append("rule_id")
+        if imported.import_match_status != Transaction.ImportMatchStatus.MATCHED:
+            imported.import_match_status = Transaction.ImportMatchStatus.MATCHED
+            imported_updates.append("import_match_status")
+        if tg_id and imported.transfer_group_id != tg_id:
+            imported.transfer_group_id = tg_id
+            imported_updates.append("transfer_group_id")
+        if imported_updates:
+            imported.save(update_fields=[*imported_updates, "updated_at"])
+
+        # Delete only this planned leg. Never use skip/pair helpers that remove both legs.
+        planned.delete()
+
+        if tg_id:
+            tg = TransferGroup.objects.filter(pk=tg_id).first()
+            if tg is not None:
+                from .matching import _refresh_transfer_group_status
+
+                _refresh_transfer_group_status(tg)
+                if not Transaction.objects.filter(transfer_group_id=tg.pk).exists():
+                    tg.delete()
+
+        db_transaction.on_commit(
+            lambda hid=household_id: _invalidate_household_cache_id(hid)
+        )
+
+    return {
+        "resolved": True,
+        "imported_transaction_id": imported_id,
+        "removed_planned_transaction_id": planned_id,
+        "preserved_counterpart_transaction_id": counterpart.pk if counterpart is not None else None,
+    }
+
+
+def _invalidate_household_cache_id(household_id: int) -> None:
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    invalidate_financial_cache_for_household(household_id)

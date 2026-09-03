@@ -735,10 +735,26 @@ export async function getTransactionImportCandidates(
 export async function matchTransactionToImport(
   plannedId: number,
   importedTransactionId: number
-): Promise<{ match_id: number }> {
+): Promise<{ match_id: number | null; resolved?: boolean }> {
   return requestRequired(`/api/transactions/${plannedId}/match/`, {
     method: "POST",
     body: JSON.stringify({ imported_transaction_id: importedTransactionId }),
+  });
+}
+
+export type ResolveExpectedAsImportedResult = {
+  resolved: boolean;
+  imported_transaction_id: number;
+  removed_planned_transaction_id: number;
+  preserved_counterpart_transaction_id: number | null;
+};
+
+/** Automatically replace a planned occurrence with the matching bank import. */
+export async function resolveExpectedAsImported(
+  plannedId: number
+): Promise<ResolveExpectedAsImportedResult> {
+  return requestRequired(`/api/transactions/${plannedId}/resolve-as-imported/`, {
+    method: "POST",
   });
 }
 
