@@ -8,7 +8,6 @@ import {
   recommendationPayoffPlannerUrl,
   recommendationPrimaryCtaLabel,
   recommendationSecondaryCtaLabel,
-  recommendationSeverityClass,
   recommendationTransferActionLabel,
   recommendationWebPrimaryLabel,
   recommendationWebPrimaryTarget,
@@ -19,6 +18,7 @@ import {
   recommendationCardCopy,
   type ActionCenterGroup,
 } from "../../lib/actionCenterView";
+import { recommendationSeverityClass } from "../../lib/recommendationDisplay";
 import { recommendationShowsResolveRisk } from "../../lib/resolveRiskDisplay";
 import { severityTokens } from "../../lib/severity";
 import SeverityBadge from "../shared/SeverityBadge";
