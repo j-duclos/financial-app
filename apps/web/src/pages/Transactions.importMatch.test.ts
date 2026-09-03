@@ -16,11 +16,21 @@ const menuSource = readFileSync(
 );
 
 describe("Transactions import match wiring", () => {
-  it("match flow uses backend import candidates and match endpoint", () => {
-    expect(transactionsSource).toMatch(/getTransactionImportCandidates/);
-    expect(transactionsSource).toMatch(/matchTransactionToImport/);
-    expect(transactionsSource).toMatch(/ImportMatchDialog/);
-    expect(transactionsSource).toMatch(/\["transactions", "import-candidates", matchImportFlow\?\.plannedId\]/);
+  it("match action calls the single automatic-resolution API", () => {
+    expect(transactionsSource).toMatch(/resolveExpectedAsImported/);
+    expect(transactionsSource).toMatch(/matchImportMu\.mutate\(transactionId\)/);
+    expect(transactionsSource).not.toMatch(/getTransactionImportCandidates/);
+    expect(transactionsSource).not.toMatch(/matchTransactionToImport/);
+    expect(transactionsSource).not.toMatch(/importedTransactionId/);
+  });
+
+  it("does not render a candidate-selection modal", () => {
+    expect(transactionsSource).not.toMatch(/ImportMatchDialog/);
+    expect(transactionsSource).not.toMatch(/pendingMatchCandidate/);
+    expect(transactionsSource).not.toMatch(/onConfirmMatch/);
+    expect(transactionsSource).not.toMatch(/NO_IMPORT_CANDIDATES_MESSAGE/);
+    expect(transactionsSource).not.toMatch(/import-candidates/);
+    expect(transactionsSource).not.toMatch(/selectableImportMatchCandidates/);
   });
 
   it("match action never calls skipTransactionOccurrence", () => {
@@ -39,19 +49,31 @@ describe("Transactions import match wiring", () => {
     expect(transactionsSource).toMatch(/confirmSkipOccurrence[\s\S]*skipOccurrenceMu\.mutate/);
   });
 
-  it("requires explicit confirmation before match mutation", () => {
-    expect(transactionsSource).toMatch(/pendingMatchCandidate/);
-    expect(transactionsSource).toMatch(/onConfirmMatch/);
-    expect(transactionsSource).toMatch(/matchImportMu\.mutate\(\{/);
+  it("success refreshes ledger and account data through afterFinancialEdit", () => {
+    const matchBlock = transactionsSource.slice(
+      transactionsSource.indexOf("const matchImportMu = useMutation"),
+      transactionsSource.indexOf("const moveDateMu = useMutation")
+    );
+    expect(matchBlock).toMatch(/afterFinancialEdit\(\{ refreshAccounts: true \}\)/);
+    expect(matchBlock).toMatch(/onSuccess:/);
   });
 
-  it("does not auto-skip when no candidates exist", () => {
-    expect(transactionsSource).toMatch(/selectableImportMatchCandidates/);
-    expect(transactionsSource).not.toMatch(/selectableImportCandidates[\s\S]{0,400}skipOccurrenceMu\.mutate/);
+  it("failed request leaves the pending row intact and displays an inline error", () => {
+    const matchBlock = transactionsSource.slice(
+      transactionsSource.indexOf("const matchImportMu = useMutation"),
+      transactionsSource.indexOf("const moveDateMu = useMutation")
+    );
+    const errorBlock = matchBlock.slice(matchBlock.indexOf("onError:"));
+    expect(errorBlock).toMatch(/setDeleteError\(msg \|\| "Could not match imported transaction"\)/);
+    expect(errorBlock).not.toMatch(/afterFinancialEdit/);
+    expect(errorBlock).not.toMatch(/skipOccurrenceMu/);
+    expect(transactionsSource).toMatch(/\{deleteError && \(/);
   });
 
-  it("removes import candidate cache after successful match", () => {
-    expect(transactionsSource).toMatch(/removeQueries\([\s\S]*import-candidates/);
+  it("disables actions while the resolve request is running", () => {
+    expect(transactionsSource).toMatch(/lifecyclePending[\s\S]*matchImportMu\.isPending/);
+    expect(transactionsSource).toMatch(/if \(matchImportMu\.isPending \|\| forecastActionsLocked\) return;/);
+    expect(pendingSource).toMatch(/actionsDisabled=\{actionsPending\}/);
   });
 });
 
@@ -69,9 +91,17 @@ describe("Pending expected row actions", () => {
     expect(menuSource).not.toMatch(/Delete \(advanced\)/);
   });
 
-  it("uses semantic match label on the row button", () => {
-    expect(rowSource).toMatch(/MATCH_IMPORTED_TRANSACTION_LABEL/);
-    expect(rowSource).not.toMatch(/Matched Import/);
+  it("does not render an inline Match imported transaction button on the row", () => {
+    expect(rowSource).not.toMatch(/MATCH_IMPORTED_TRANSACTION_LABEL/);
+    expect(rowSource).not.toMatch(/onClick=\{\(\) => onMatchImport\(\)\}/);
+    expect(rowSource).not.toMatch(/Match imported transaction/);
+  });
+
+  it("puts Match imported transaction in the expected-row three-dot menu", () => {
+    expect(menuSource).toMatch(/onMatchImport/);
+    expect(menuSource).toMatch(/MATCH_IMPORTED_TRANSACTION_LABEL/);
+    expect(menuSource).toMatch(/key: "matchImport"/);
+    expect(rowSource).toMatch(/onMatchImport=\{variant === "expected" \? onMatchImport : undefined\}/);
   });
 
   it("shows matched status instead of another match action", () => {

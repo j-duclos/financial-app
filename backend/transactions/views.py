@@ -20,6 +20,8 @@ from .models import Transaction, TransactionMatch, Transfer
 from .serializers import TransactionSerializer, TransferCreateSerializer, TransferSerializer
 from .rule_transfer_pairs import find_rule_transfer_counterpart_txn
 from .services import (
+    AmbiguousImportResolution,
+    ImportResolutionError,
     cleanup_orphaned_rule_materializations_for_user,
     confirm_expected_transaction,
     create_transfer,
@@ -28,6 +30,7 @@ from .services import (
     match_expected_to_import,
     move_scheduled_date,
     post_transaction,
+    resolve_expected_as_imported,
     skip_scheduled_transaction,
 )
 from .services.immutability import is_financial_update, reject_if_bank_imported, reject_if_reconciled
@@ -695,16 +698,34 @@ class TransactionViewSet(ModelViewSet):
             payload["diagnostics"] = explain_import_candidate_exclusions(planned)[:20]
         return Response(payload)
 
+    def _resolve_expected_import_response(self, request: Request, pk=None):
+        planned = self._get_lifecycle_transaction(pk)
+        try:
+            result = resolve_expected_as_imported(planned, user=request.user)
+        except AmbiguousImportResolution as e:
+            return Response({"detail": str(e)}, status=status.HTTP_409_CONFLICT)
+        except ImportResolutionError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="resolve-as-imported")
+    def resolve_as_imported(self, request: Request, pk=None):
+        """Automatically replace this planned occurrence with the matching bank import."""
+        return self._resolve_expected_import_response(request, pk)
+
     @action(detail=True, methods=["post"], url_path="match")
     def match_import(self, request: Request, pk=None):
-        """Link this planned row to an unmatched Plaid import."""
+        """Resolve a planned row against a bank import.
+
+        When ``imported_transaction_id`` is omitted, automatically identify the
+        imported record. An explicit id is still accepted for legacy mobile callers.
+        """
         planned = self._get_lifecycle_transaction(pk)
-        raw = request.data.get("imported_transaction_id")
-        if raw is None:
-            return Response(
-                {"detail": "imported_transaction_id is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        raw = request.data.get("imported_transaction_id") if request.data is not None else None
+        if raw is None or raw == "":
+            return self._resolve_expected_import_response(request, pk)
         try:
             m = match_expected_to_import(
                 planned,
@@ -713,7 +734,14 @@ class TransactionViewSet(ModelViewSet):
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"match_id": m.pk}, status=status.HTTP_201_CREATED)
+        payload = {
+            "resolved": True,
+            "imported_transaction_id": int(raw),
+            "removed_planned_transaction_id": planned.pk,
+            "preserved_counterpart_transaction_id": None,
+            "match_id": m.pk if m is not None else None,
+        }
+        return Response(payload, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="import-unmatched")
     def import_unmatched(self, request: Request):

@@ -1,11 +1,14 @@
 """Transaction services: posting, transfers, Plaid matching."""
 
 from .expected_lifecycle import (
+    AmbiguousImportResolution,
+    ImportResolutionError,
     confirm_expected_transaction,
     is_expected_eligible,
     is_planned_scheduled_eligible,
     match_expected_to_import,
     move_scheduled_date,
+    resolve_expected_as_imported,
     skip_scheduled_transaction,
 )
 from .import_matching import (
@@ -67,6 +70,8 @@ __all__ = [
     "delete_transaction_respecting_partner_ledger",
     "delete_transactions_with_transfer_pairs_for_queryset",
     "eligible_manual_transactions_queryset",
+    "AmbiguousImportResolution",
+    "ImportResolutionError",
     "confirm_expected_transaction",
     "find_import_candidates_for_planned",
     "find_manual_match_for_import",
@@ -77,6 +82,7 @@ __all__ = [
     "merge_manual_transaction_with_import",
     "move_scheduled_date",
     "reject_manual_import_suggestion",
+    "resolve_expected_as_imported",
     "score_manual_import_match",
     "skip_scheduled_transaction",
     "find_candidate_matches",

@@ -1,10 +1,11 @@
+import { MATCH_IMPORTED_TRANSACTION_LABEL } from "@budget-app/shared";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
 
 export type PastActions = "edit" | "duplicate" | "delete";
 export type FutureActions = "edit" | "skip" | "delete";
-export type ExpectedActions = "skip" | "edit" | "moveDate";
+export type ExpectedActions = "skip" | "edit" | "moveDate" | "matchImport";
 
 type Props = {
   variant: "past" | "future" | "expected";
@@ -13,6 +14,7 @@ type Props = {
   onDelete?: () => void;
   onSkip?: () => void;
   onMoveDate?: () => void;
+  onMatchImport?: () => void;
   disabled?: boolean;
   readOnly?: boolean;
 };
@@ -26,6 +28,7 @@ export default function TransactionContextMenu({
   onDelete,
   onSkip,
   onMoveDate,
+  onMatchImport,
   disabled,
   readOnly,
 }: Props) {
@@ -73,6 +76,11 @@ export default function TransactionContextMenu({
   const primaryItems: MenuItem[] =
     variant === "expected"
       ? ([
+          onMatchImport && {
+            key: "matchImport",
+            label: MATCH_IMPORTED_TRANSACTION_LABEL,
+            action: onMatchImport,
+          },
           onSkip && { key: "skip", label: "Skip", action: onSkip },
           onEdit && { key: "edit", label: "Edit", action: onEdit },
           onMoveDate && { key: "moveDate", label: "Move Date", action: onMoveDate },
@@ -108,9 +116,11 @@ export default function TransactionContextMenu({
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  if (disabled) return;
                   setOpen(false);
                   item.action();
                 }}
+                disabled={disabled}
                 className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 ${
                   item.danger ? "text-red-600" : "text-gray-800"
                 }`}
