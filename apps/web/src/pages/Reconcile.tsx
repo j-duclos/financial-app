@@ -28,8 +28,8 @@ import {
   reconcileBalanceAfterChecksCents,
   selectedActivityCents,
 } from "../lib/reconcileCheckedBalance";
-import { parseBankBalanceCents, parseMoneyToCents } from "../lib/moneyCents";
-import { selectedCountLabel } from "../lib/reconcileWorkflow";
+import { parseMoneyToCents, parseSignedBankBalanceCents, bankBalanceAmountString } from "../lib/moneyCents";
+import { selectedCountLabel, creditBankBalanceHint } from "../lib/reconcileWorkflow";
 import { reconcileSourceTooltip } from "../lib/reconcileSourceLabel";
 import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
@@ -293,7 +293,8 @@ export default function Reconcile() {
   const periodOpeningCents = parseMoneyToCents(
     setupData?.period_opening_balance ?? setupData?.last_reconciled_balance ?? "0",
   );
-  const bankCents = parseBankBalanceCents(bankBalanceInput);
+  const bankCents = parseSignedBankBalanceCents(bankBalanceInput, selectedAccount?.account_type);
+  const creditBalanceHint = creditBankBalanceHint(selectedAccount?.account_type);
 
   const transactions: ReconcileTransactionRow[] = setupSuccess
     ? setupData?.unreconciled_transactions ?? []
@@ -598,7 +599,8 @@ export default function Reconcile() {
     mutationFn: () =>
       completeReconciliation({
         account_id: accountId as number,
-        bank_current_balance: bankBalanceInput.trim(),
+        bank_current_balance:
+          bankCents != null ? bankBalanceAmountString(bankCents) : bankBalanceInput.trim(),
         checked_transaction_ids: Array.from(checkedIds),
         period_start_date: periodStart,
         period_end_date: periodEnd,
@@ -770,6 +772,11 @@ export default function Reconcile() {
               disabled={!accountId || !periodEnd}
               className="rounded border border-gray-300 px-3 py-1.5 text-sm w-40 disabled:bg-gray-50"
             />
+            {creditBalanceHint && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                {creditBalanceHint}
+              </p>
+            )}
           </div>
         </div>
 

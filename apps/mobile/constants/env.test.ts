@@ -16,10 +16,12 @@ describe("getApiBaseUrl", () => {
   async function loadEnv(mocks?: {
     appEnv?: string;
     apiUrl?: string;
+    hostUri?: string;
   }) {
     vi.doMock("expo-constants", () => ({
       default: {
         expoConfig: {
+          hostUri: mocks?.hostUri,
           extra: {
             appEnv: mocks?.appEnv,
             apiUrl: mocks?.apiUrl ?? "",
@@ -54,7 +56,7 @@ describe("getApiBaseUrl", () => {
     expect(getApiTargetLabel()).toBe("render");
   });
 
-  it("throws when API URL is missing in development", async () => {
+  it("in development falls back to the Android emulator API URL when env is empty", async () => {
     delete process.env.EXPO_PUBLIC_API_URL;
     process.env.EXPO_PUBLIC_APP_ENV = "development";
     vi.stubGlobal("__DEV__", true);
@@ -64,7 +66,61 @@ describe("getApiBaseUrl", () => {
       apiUrl: "",
     });
     resetApiBaseUrlCacheForTests();
-    expect(() => getApiBaseUrl()).toThrow(/EXPO_PUBLIC_API_URL is not configured/i);
+    expect(getApiBaseUrl()).toBe("http://10.0.2.2:8000");
+  });
+
+  it("in development derives LAN API URL from Metro hostUri when env is empty", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+      apiUrl: "",
+      hostUri: "192.168.1.174:8081",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("http://192.168.1.174:8000");
+  });
+
+  it("maps Android emulator loopback hostUri to 10.0.2.2", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+      apiUrl: "",
+      hostUri: "127.0.0.1:8081",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("http://10.0.2.2:8000");
+  });
+
+  it("uses extra.apiUrl when process env is empty", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiBaseUrl, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+      apiUrl: "http://192.168.1.174:8000",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiBaseUrl()).toBe("http://192.168.1.174:8000");
+  });
+
+  it("getApiConnectivityHint includes the resolved URL in development", async () => {
+    delete process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    vi.stubGlobal("__DEV__", true);
+
+    const { getApiConnectivityHint, resetApiBaseUrlCacheForTests } = await loadEnv({
+      appEnv: "development",
+      apiUrl: "",
+    });
+    resetApiBaseUrlCacheForTests();
+    expect(getApiConnectivityHint()).toMatch(/http:\/\/10\.0\.2\.2:8000/);
   });
 
   it("throws when production env uses localhost", async () => {

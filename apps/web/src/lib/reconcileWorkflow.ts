@@ -31,3 +31,8 @@ export function formatSignedCurrency(cents: number, currency = "USD"): string {
 export function isReconcileBalanced(differenceCents: number | null): boolean {
   return differenceCents != null && Math.abs(differenceCents) <= RECONCILE_BALANCE_TOLERANCE_CENTS;
 }
+
+export function creditBankBalanceHint(accountType: string | null | undefined): string | null {
+  if (String(accountType ?? "").toUpperCase() !== "CREDIT") return null;
+  return "Enter the amount owed. No minus sign — credit balances are negative or zero.";
+}

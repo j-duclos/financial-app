@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { DashboardRecommendation } from "./types";
 import {
   recommendationIsCashForecastRisk,
-  recommendationIsDebtPayoff,
   recommendationIsUtilizationHealth,
   recommendationLedgerFocus,
   recommendationPrimaryDestinationKind,
@@ -11,6 +10,7 @@ import {
 } from "./recommendationNavigation";
 import {
   recommendationHasTransferAction,
+  recommendationIsDebtPayoff,
   recommendationPrimaryOpensTransfer,
   recommendationTransferActionLabel,
 } from "./recommendationDisplay";

@@ -82,6 +82,8 @@ describe("Reconcile page", () => {
   it("computes live balances from loaded rows in cents", () => {
     expect(reconcileSource).toMatch(/reconcileBalanceAfterChecksCents/);
     expect(reconcileSource).toMatch(/selectedActivityCents/);
-    expect(reconcileSource).toMatch(/parseBankBalanceCents/);
+    expect(reconcileSource).toMatch(/parseSignedBankBalanceCents/);
+    expect(reconcileSource).toMatch(/bankBalanceAmountString/);
+    expect(reconcileSource).toMatch(/creditBankBalanceHint/);
   });
 });

@@ -1144,3 +1144,191 @@ def test_align_linked_transfer_pair_dates_uses_bank_leg(household):
     out_leg.refresh_from_db()
     assert out_leg.date == date(2026, 7, 27)
     assert in_leg.date == date(2026, 7, 27)
+
+
+@pytest.mark.django_db
+def test_patch_rule_transfer_date_removes_stale_rule_leg_on_old_date(auth_client, household):
+    """Moving a CC payment must not leave a RULE card inflow on the old date."""
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    rule = RecurringRule.objects.create(
+        household=household,
+        name="Pay Savor",
+        account=bank,
+        transfer_to_account=card,
+        category=cat,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("50.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=24,
+        start_date=date(2026, 1, 1),
+        active=True,
+    )
+    out_leg = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 8, 24),
+        payee="CREDIT CARD PMT (Savor)",
+        amount=Decimal("-50.00"),
+        category=cat,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+    in_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 24),
+        payee="CREDIT CARD PMT (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("50.00"),
+        date=date(2026, 8, 24),
+        memo="",
+    )
+    stale = Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 24),
+        payee="Credit Card Pmt (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.RULE,
+        rule=rule,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{out_leg.id}/",
+        {"date": "2026-09-04"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    out_leg.refresh_from_db()
+    in_leg.refresh_from_db()
+    assert out_leg.date == date(2026, 9, 4)
+    assert in_leg.date == date(2026, 9, 4)
+    assert not Transaction.objects.filter(pk=stale.pk).exists()
+    assert (
+        Transaction.objects.filter(
+            account=card,
+            date=date(2026, 8, 24),
+            amount=Decimal("50.00"),
+        ).count()
+        == 0
+    )
+
+
+@pytest.mark.django_db
+def test_purge_unpaired_moved_credit_inflows(household):
+    from transactions.services.posting import purge_unpaired_moved_transfer_inflows
+
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    out_leg = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 9, 4),
+        payee="CREDIT CARD PMT (Savor)",
+        amount=Decimal("-50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    in_leg = Transaction.objects.create(
+        account=card,
+        date=date(2026, 9, 4),
+        payee="CREDIT CARD PMT (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    Transfer.objects.create(
+        from_transaction=out_leg,
+        to_transaction=in_leg,
+        amount=Decimal("50.00"),
+        date=date(2026, 9, 4),
+        memo="",
+    )
+    leftover = Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 24),
+        payee="Credit Card Pmt (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    leftover_same_day = Transaction.objects.create(
+        account=card,
+        date=date(2026, 9, 4),
+        payee="Credit Card Pmt (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    real_same_day = Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 10),
+        payee="Credit Card Pmt (Savor)",
+        amount=Decimal("50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    Transaction.objects.create(
+        account=bank,
+        date=date(2026, 8, 10),
+        payee="CREDIT CARD PMT (Savor)",
+        amount=Decimal("-50.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    plaid_keep = Transaction.objects.create(
+        account=card,
+        date=date(2026, 8, 15),
+        payee="CREDIT CARD PMT",
+        amount=Decimal("50.00"),
+        source=Transaction.Source.PLAID,
+        plaid_transaction_id="plaid-savor-50",
+    )
+
+    removed = purge_unpaired_moved_transfer_inflows(card)
+    assert removed == 2
+    assert not Transaction.objects.filter(pk=leftover.pk).exists()
+    assert not Transaction.objects.filter(pk=leftover_same_day.pk).exists()
+    assert Transaction.objects.filter(pk=real_same_day.pk).exists()
+    assert Transaction.objects.filter(pk=plaid_keep.pk).exists()
+    assert Transaction.objects.filter(pk=in_leg.pk).exists()

@@ -167,7 +167,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    syncApiClient();
+    try {
+      syncApiClient();
+    } catch (err) {
+      if (__DEV__) {
+        console.error("Failed to configure API client", err);
+      }
+    }
   }, [syncApiClient, auth.access, auth.refresh]);
 
   useEffect(() => {

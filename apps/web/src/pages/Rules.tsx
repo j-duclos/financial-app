@@ -883,12 +883,19 @@ export default function Rules() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Day of month (1–31)</label>
                   <input
-                    type="number"
-                    min={1}
-                    max={31}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={2}
                     value={form.day_of_month ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, day_of_month: e.target.value ? Number(e.target.value) : 15 }))}
-                    className="mt-1 block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, "").slice(0, 2);
+                      setForm((f) => ({
+                        ...f,
+                        day_of_month: digits ? Math.min(31, Math.max(1, Number(digits))) : 15,
+                      }));
+                    }}
+                    className="mt-1 block w-full rounded border border-gray-300 px-2 py-1.5 text-sm tabular-nums"
                   />
                 </div>
               )}

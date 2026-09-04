@@ -97,10 +97,10 @@ export function lastReconciledSummary(opts: {
   };
 }
 
-/** Credit accounts: user enters positive amount owed (matches web). */
+/** Credit accounts: enter amount owed; signed as negative (matches web + backend). */
 export function bankBalanceHint(accountType: string | undefined): string {
-  if (accountType === "CREDIT") {
-    return "Enter the statement ending balance as the amount owed (positive).";
+  if (String(accountType ?? "").toUpperCase() === "CREDIT") {
+    return "Enter the amount owed. No minus sign — credit balances are negative or zero.";
   }
   return "Enter the ending balance from your bank statement.";
 }

@@ -301,6 +301,42 @@ def resolve_transfer_sibling(
     )
 
 
+_STALE_TRANSFER_LEG_SOURCES = (
+    Transaction.Source.ACTUAL,
+    Transaction.Source.RULE,
+    Transaction.Source.ONE_TIME,
+)
+
+
+def delete_stale_transfer_legs_on_date(
+    *,
+    old_date,
+    keep_ids: set[int],
+    account_ids: list[int],
+    amount_abs: Decimal,
+) -> int:
+    """Remove duplicate transfer/payment legs left on the old date after a date move.
+
+    Never deletes Plaid imports, bank-id rows, or already-reconciled transactions.
+    """
+    if not old_date or not account_ids or amount_abs <= 0:
+        return 0
+    amounts = [amount_abs, -amount_abs]
+    qs = (
+        Transaction.objects.filter(
+            date=old_date,
+            account_id__in=account_ids,
+            source__in=_STALE_TRANSFER_LEG_SOURCES,
+            amount__in=amounts,
+        )
+        .exclude(pk__in=keep_ids)
+        .filter(Q(plaid_transaction_id="") | Q(plaid_transaction_id__isnull=True))
+        .exclude(reconciled=True)
+    )
+    deleted, _ = qs.delete()
+    return int(deleted)
+
+
 def sync_transfer_pair_date(
     txn: Transaction,
     new_date: date,
@@ -337,6 +373,17 @@ def sync_transfer_pair_date(
     tg_ids = {tid for tid in (txn.transfer_group_id, sibling.transfer_group_id) if tid}
     if tg_ids:
         TransferGroup.objects.filter(pk__in=tg_ids).update(scheduled_date=new_date)
+    lookup = lookup_date or txn.date
+    if lookup and lookup != new_date:
+        amt = abs(txn.amount or Decimal("0"))
+        if amt <= 0 and sibling.amount is not None:
+            amt = abs(sibling.amount)
+        delete_stale_transfer_legs_on_date(
+            old_date=lookup,
+            keep_ids={txn.pk, sibling.pk},
+            account_ids=[txn.account_id, sibling.account_id],
+            amount_abs=amt,
+        )
     return sibling
 
 
@@ -376,6 +423,67 @@ def _txn_has_transfer_bridge(txn: Transaction) -> bool:
         return True
     except Transfer.DoesNotExist:
         return False
+
+
+def purge_unpaired_moved_transfer_inflows(account: Account) -> int:
+    """
+    Delete leftover credit-card payment inflows after a date change moved the real pair.
+
+    Pattern: unpaired, non-Plaid inflow on a credit account with the same amount as a
+    transfer-linked inflow on a different date, and no opposite-amount counterpart on
+    this leftover's own date.
+    """
+    if not account.is_credit_card():
+        return 0
+    candidates = list(
+        Transaction.objects.filter(
+            account=account,
+            amount__gt=0,
+            source__in=_STALE_TRANSFER_LEG_SOURCES,
+            reconciled=False,
+        ).filter(Q(plaid_transaction_id="") | Q(plaid_transaction_id__isnull=True))
+    )
+    removed = 0
+    for leftover in candidates:
+        if _txn_has_transfer_bridge(leftover):
+            continue
+        if leftover.transfer_group_id and get_transfer_group_sibling(leftover) is not None:
+            continue
+        has_same_date_counterparty = (
+            Transaction.objects.filter(
+                account__household_id=account.household_id,
+                date=leftover.date,
+                amount=-leftover.amount,
+            )
+            .exclude(account_id=account.pk)
+            .exclude(pk=leftover.pk)
+            .exists()
+        )
+        twins = list(
+            Transaction.objects.filter(
+                account=account,
+                amount=leftover.amount,
+            ).exclude(pk=leftover.pk)
+        )
+        linked_same_date = False
+        linked_other_date = False
+        for twin in twins:
+            if not (
+                _txn_has_transfer_bridge(twin)
+                or (twin.transfer_group_id and get_transfer_group_sibling(twin) is not None)
+            ):
+                continue
+            if leftover.date and twin.date == leftover.date:
+                linked_same_date = True
+            else:
+                linked_other_date = True
+        if has_same_date_counterparty and not linked_same_date:
+            continue
+        if not linked_same_date and not linked_other_date:
+            continue
+        leftover.delete()
+        removed += 1
+    return removed
 
 
 def _create_missing_transfer_leg_for_group(

@@ -7,6 +7,7 @@ import {
   normalizeMoneyInput,
   partitionReconcileTransactions,
   sessionStatusLabel,
+  bankBalanceHint,
 } from "./reconcileDisplay";
 
 function txn(overrides: Partial<ReconcileTransactionRow> = {}): ReconcileTransactionRow {
@@ -60,5 +61,10 @@ describe("reconcileDisplay", () => {
   it("labels session status for history rows", () => {
     expect(sessionStatusLabel({ is_active: true, is_balanced: true })).toBe("Completed");
     expect(sessionStatusLabel({ is_active: false, is_balanced: true })).toBe("Undone");
+  });
+
+  it("tells credit reconcile to enter amount owed without a minus", () => {
+    expect(bankBalanceHint("CREDIT")).toMatch(/no minus sign/i);
+    expect(bankBalanceHint("CHECKING")).toMatch(/ending balance/i);
   });
 });

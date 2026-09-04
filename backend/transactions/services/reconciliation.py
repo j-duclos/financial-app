@@ -833,6 +833,10 @@ def get_setup_data(
     as_of = _as_of_date(as_of)
     # Restore editability for leftovers incorrectly locked by seal-all (safe on read).
     unseal_surplus_reconciled_beyond_session_count(account)
+    if account.is_credit_card():
+        from transactions.services.posting import purge_unpaired_moved_transfer_inflows
+
+        purge_unpaired_moved_transfer_inflows(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (
