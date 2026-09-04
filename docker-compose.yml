@@ -47,3 +47,4 @@ services:
       # Override in backend/.env for local Django outside Docker: redis://localhost:6379/0
       REDIS_URL: redis://redis:6379/0
       GUNICORN_TIMEOUT: "240"
+      GUNICORN_WORKERS: "2"

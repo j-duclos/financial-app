@@ -53,6 +53,21 @@ describe("debtCardOutcomeLines", () => {
     expect(lines.suggestedLine).toMatch(/150/);
     expect(lines.interestLine).toMatch(/164/);
   });
+
+  it("explains when the minimum does not cover interest", () => {
+    const lines = debtCardOutcomeLines(
+      planCard({
+        payoff_status: "non_amortizing",
+        months_remaining: null,
+        payoff_date: null,
+        minimum_payment: "25.00",
+        interest_this_month: "46.32",
+      })
+    );
+    expect(lines.headline).toMatch(/doesn't cover this month's interest/i);
+    expect(lines.interestLine).toMatch(/46\.32/);
+    expect(lines.headline).not.toMatch(/increase payment to model payoff/i);
+  });
 });
 
 describe("portfolioImpactMessage", () => {

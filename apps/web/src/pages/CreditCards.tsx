@@ -8,13 +8,19 @@ import type {
   PayoffStrategy,
 } from "@budget-app/shared";
 import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
-import { formatDateDisplay } from "../components/transactions/transactionsLedgerUtils";
+import {
+  PLANNER_SUMMARY_METRICS,
+  debtFreeSummary,
+  strategyNeedsExtraHint,
+  survivalIgnoresExtraHint,
+} from "@budget-app/shared/paymentPlannerDisplay";
 import DebtPlannerCard from "../components/paymentPlanner/DebtPlannerCard";
 import DebtStrategyDrawer from "../components/paymentPlanner/DebtStrategyDrawer";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_4 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import PlanningSubnav from "../components/PlanningSubnav";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { whatIfDebtPath } from "../lib/whatIfContext";
 import {
   DEBT_MODE_OPTIONS,
@@ -28,6 +34,7 @@ import {
   parseDebtModeParam,
 } from "../lib/debtPayoffDisplay";
 import {
+  WHAT_IF_NUMERIC_DEBOUNCE_MS,
   buildDrawerPayoffParams,
   drawerStrategyRequiresAmountInput,
   isCreditCardAccount,
@@ -51,14 +58,11 @@ export default function CreditCards() {
     () => parseDebtModeParam(searchParams.get("mode")) ?? "aggressive"
   );
 
-  // Draft what-if inputs (do not drive the plan query until Apply).
-  const [draftExtraMonthly, setDraftExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
-  const [draftLump, setDraftLump] = useState("");
-  const [draftLumpAccount, setDraftLumpAccount] = useState("");
-  // Applied scenario — only these change the debt-plan query key.
-  const [appliedExtraMonthly, setAppliedExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
-  const [appliedLump, setAppliedLump] = useState("");
-  const [appliedLumpAccount, setAppliedLumpAccount] = useState("");
+  const [extraMonthly, setExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
+  const [lump, setLump] = useState("");
+  const [lumpAccount, setLumpAccount] = useState("");
+  const debouncedExtraMonthly = useDebouncedValue(extraMonthly, WHAT_IF_NUMERIC_DEBOUNCE_MS);
+  const debouncedLump = useDebouncedValue(lump, WHAT_IF_NUMERIC_DEBOUNCE_MS);
 
   const [cardStrategy, setCardStrategy] = useState<PayoffStrategy>("minimum_payment");
   const [amountInput, setAmountInput] = useState(amountFromUrl);
@@ -103,15 +107,16 @@ export default function CreditCards() {
   const accounts = accountsQuery.data?.results ?? [];
   const creditCards = useMemo(() => accounts.filter(isCreditCardAccount), [accounts]);
 
+  const lumpReady = Number(debouncedLump) > 0 && lumpAccount !== "";
   const scenarioInputs: PlannerScenarioInputs = useMemo(
     () => ({
       strategy,
       mode,
-      extraMonthly: appliedExtraMonthly,
-      lumpSum: appliedLump,
-      lumpSumAccountId: appliedLumpAccount ? Number(appliedLumpAccount) : null,
+      extraMonthly: debouncedExtraMonthly,
+      lumpSum: lumpReady ? debouncedLump : "",
+      lumpSumAccountId: lumpReady ? Number(lumpAccount) : null,
     }),
-    [strategy, mode, appliedExtraMonthly, appliedLump, appliedLumpAccount]
+    [strategy, mode, debouncedExtraMonthly, debouncedLump, lumpAccount, lumpReady]
   );
 
   const planQuery = useQuery({
@@ -179,18 +184,13 @@ export default function CreditCards() {
   const projectionError =
     projectionQuery.error instanceof Error ? projectionQuery.error.message : null;
 
-  const whatIfDirty =
-    draftExtraMonthly !== appliedExtraMonthly ||
-    draftLump !== appliedLump ||
-    draftLumpAccount !== appliedLumpAccount;
-
   const customAmountDirty = amountInput !== appliedAmountInput;
-
-  function applyWhatIf() {
-    setAppliedExtraMonthly(draftExtraMonthly);
-    setAppliedLump(draftLump);
-    setAppliedLumpAccount(draftLumpAccount);
-  }
+  const extraPending = extraMonthly !== debouncedExtraMonthly;
+  const lumpPending = lump !== debouncedLump;
+  const lumpNeedsCard = Number(lump) > 0 && lumpAccount === "";
+  const survivalBlocksExtra = survivalIgnoresExtraHint(mode, extraMonthly);
+  const extraHint = strategyNeedsExtraHint(extraMonthly);
+  const debtFree = plan ? debtFreeSummary(plan) : null;
 
   function selectAccount(accountId: number) {
     const id = String(accountId);
@@ -291,22 +291,27 @@ export default function CreditCards() {
             <p className="text-xs text-indigo-700 animate-pulse">Recalculating plan…</p>
           ) : null}
           <div className={METRIC_TILE_GRID_4}>
-            <DashboardMetricTile label="Total debt" value={formatCurrency(plan.total_debt)} />
-            <DashboardMetricTile label="Weighted APR" value={`${plan.weighted_apr}%`} />
             <DashboardMetricTile
-              label="Interest burn / mo"
+              label={PLANNER_SUMMARY_METRICS.totalDebt.label}
+              help={PLANNER_SUMMARY_METRICS.totalDebt.help}
+              value={formatCurrency(plan.total_debt)}
+            />
+            <DashboardMetricTile
+              label={PLANNER_SUMMARY_METRICS.weightedApr.label}
+              help={PLANNER_SUMMARY_METRICS.weightedApr.help}
+              value={`${plan.weighted_apr}%`}
+            />
+            <DashboardMetricTile
+              label={PLANNER_SUMMARY_METRICS.interestThisMonth.label}
+              help={PLANNER_SUMMARY_METRICS.interestThisMonth.help}
               value={formatCurrency(plan.monthly_interest_burn)}
               valueClassName="text-red-700"
             />
             <DashboardMetricTile
-              label="Debt-free"
-              value={
-                plan.debt_free_date
-                  ? formatDateDisplay(plan.debt_free_date)
-                  : plan.debt_free_possible
-                    ? "—"
-                    : "Needs higher pay"
-              }
+              label={PLANNER_SUMMARY_METRICS.debtFree.label}
+              help={PLANNER_SUMMARY_METRICS.debtFree.help}
+              value={debtFree?.value ?? "—"}
+              subtitle={debtFree?.subtitle ?? undefined}
             />
           </div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
@@ -365,37 +370,59 @@ export default function CreditCards() {
               <span className="font-medium text-gray-800">{debtModeLabel(mode)}:</span>{" "}
               {debtModeDescription(mode)}
             </p>
+            {strategy === "custom" ? (
+              <p className="text-xs text-amber-800 leading-snug">
+                Custom order isn&apos;t set yet, so this still follows Avalanche (highest APR first).
+              </p>
+            ) : extraHint ? (
+              <p className="text-xs text-gray-500 leading-snug">{extraHint}</p>
+            ) : null}
           </div>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-3 space-y-2 min-w-0">
           <h2 className="text-sm font-semibold text-gray-900">What-if simulator</h2>
+          <p className="text-xs text-gray-500">
+            Changes apply as you type. Extra goes to the Pay first card.
+          </p>
           <label className="block text-xs">
-            <span className="text-gray-600">Extra $/month toward debt</span>
+            <span className="text-gray-600">Extra per month</span>
             <input
               type="number"
               min="0"
-              value={draftExtraMonthly}
-              onChange={(e) => setDraftExtraMonthly(e.target.value)}
+              value={extraMonthly}
+              onChange={(e) => setExtraMonthly(e.target.value)}
               className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </label>
+          {survivalBlocksExtra ? (
+            <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 leading-snug">
+              Survival uses minimums only, so this extra isn&apos;t in the plan.{" "}
+              <button
+                type="button"
+                className="font-semibold underline hover:no-underline"
+                onClick={() => setMode("aggressive")}
+              >
+                Switch to Aggressive payoff
+              </button>
+            </p>
+          ) : null}
           <label className="block text-xs">
-            <span className="text-gray-600">One-time lump sum $</span>
+            <span className="text-gray-600">One-time lump sum</span>
             <input
               type="number"
               min="0"
-              value={draftLump}
-              onChange={(e) => setDraftLump(e.target.value)}
+              value={lump}
+              onChange={(e) => setLump(e.target.value)}
               className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </label>
-          {draftLump && (
+          {Number(lump) > 0 && (
             <label className="block text-xs">
               <span className="text-gray-600">Apply lump sum to card</span>
               <select
-                value={draftLumpAccount}
-                onChange={(e) => setDraftLumpAccount(e.target.value)}
+                value={lumpAccount}
+                onChange={(e) => setLumpAccount(e.target.value)}
                 className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               >
                 <option value="">Select card</option>
@@ -407,14 +434,27 @@ export default function CreditCards() {
               </select>
             </label>
           )}
-          <button
-            type="button"
-            disabled={!whatIfDirty}
-            onClick={applyWhatIf}
-            className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-indigo-700"
-          >
-            Update plan
-          </button>
+          {lumpNeedsCard ? (
+            <p className="text-xs text-amber-800">Pick a card so the lump sum is applied.</p>
+          ) : null}
+          {plan ? (
+            <p className="text-xs text-gray-700">
+              This plan pays{" "}
+              <span className="font-semibold tabular-nums">
+                {formatCurrency(plan.monthly_payment_budget)}
+              </span>
+              /mo toward debt
+              {mode === "survival"
+                ? " (minimums only)"
+                : Number(extraMonthly) > 0
+                  ? " (minimums + extra)"
+                  : " (minimums)"}
+              .
+            </p>
+          ) : null}
+          {extraPending || lumpPending ? (
+            <p className="text-xs text-indigo-700 animate-pulse">Updating plan…</p>
+          ) : null}
         </div>
 
         {plan && (

@@ -10,8 +10,9 @@ import {
   type PayoffStrategy,
 } from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
+import { debtFreePlanMessage, debtFreeSummary } from "@budget-app/shared/paymentPlannerDisplay";
 
-/** Prefer explicit Apply over per-keystroke refetch. Kept for scenario drawer debounce. */
+/** Pause after the last keystroke before refetching the household debt plan. */
 export const WHAT_IF_NUMERIC_DEBOUNCE_MS = 400;
 
 export const DEBT_STRATEGY_OPTIONS: Array<{
@@ -64,18 +65,7 @@ export function formatMoneyOrDash(raw: string | number | null | undefined): stri
 }
 
 export function formatDebtFreeMonth(plan: DebtPayoffPlan): string {
-  if (parseMoney(plan.total_debt) <= 0) return "Paid off";
-  if (plan.debt_free_date) {
-    const d = new Date(`${plan.debt_free_date.slice(0, 10)}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
-    }
-    return formatDateDisplay(plan.debt_free_date);
-  }
-  if (plan.simulation_status === "non_amortizing" || !plan.debt_free_possible) {
-    return "—";
-  }
-  return "—";
+  return debtFreeSummary(plan).value;
 }
 
 export function isCreditCardAccount(account: Account): boolean {
@@ -107,12 +97,11 @@ export function parseDebtModeParam(raw: string | null | undefined): DebtPayoffMo
 
 export function debtFreeHeadline(plan: DebtPayoffPlan | null | undefined): string {
   if (!plan) return "";
-  if (parseMoney(plan.total_debt) <= 0) return "You're credit card debt free.";
-  if (!plan.debt_free_possible) return "Increase payments to reach a payoff date.";
-  if (plan.debt_free_date) {
-    return `Debt-free by ${formatDateDisplay(plan.debt_free_date)} (projected)`;
+  const message = debtFreePlanMessage(plan);
+  if (plan.debt_free_date && !message.includes("(projected)")) {
+    return `${message} (projected)`;
   }
-  return "";
+  return message;
 }
 
 export function interestSavedLine(plan: DebtPayoffPlan): string | null {
@@ -139,7 +128,7 @@ export function debtCardOutcomeLines(card: DebtPayoffCardSummary): DebtCardOutco
 
   if (card.payoff_status === "non_amortizing") {
     return {
-      headline: "Payment too low for modeled payoff",
+      headline: "Min doesn't cover this month's interest",
       suggestedLine,
       interestLine: null,
     };

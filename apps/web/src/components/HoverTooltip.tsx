@@ -60,7 +60,7 @@ export default function HoverTooltip({ label, children, className = "", decorate
             ref={tooltipRef}
             role="tooltip"
             style={{ position: "fixed", top: 0, left: 0 }}
-            className="pointer-events-none z-[100] whitespace-nowrap rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm"
+            className="pointer-events-none z-[100] max-w-xs whitespace-normal rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-medium leading-snug text-white shadow-sm"
           >
             {label}
           </span>,

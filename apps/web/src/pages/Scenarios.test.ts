@@ -74,6 +74,7 @@ describe("What-If context from Planning", () => {
 
   it("marks mismatched scenario comparison while switching plans", () => {
     expect(scenariosSource).toMatch(/comparisonBelongsToSelection/);
+    expect(scenariosSource).toMatch(/Calculating this plan/);
     expect(scenariosSource).toMatch(/Updating scenario/);
     expect(scenariosSource).toMatch(/No hypothetical changes yet/);
   });
@@ -122,7 +123,7 @@ describe("What-If context from Planning", () => {
       "utf8"
     );
     expect(apiSource).toMatch(
-      /export async function getScenarioComparison[\s\S]*timeoutMs:\s*240_000/m
+      /export async function getScenarioComparison[\s\S]*timeoutMs:\s*300_000/m
     );
   });
 

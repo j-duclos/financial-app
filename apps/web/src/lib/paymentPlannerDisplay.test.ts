@@ -152,7 +152,6 @@ describe("paymentPlannerDisplay", () => {
   });
 
   it("debounces typing helper still models one settled request for tests", () => {
-    // Debounce helper retained for non-Apply surfaces; Payment Planner uses explicit Apply.
     const before = countPlanRequestsForTypedValue("1500", 0, 50);
     const after = countPlanRequestsForTypedValue("1500", WHAT_IF_NUMERIC_DEBOUNCE_MS, 50);
     expect(before).toBe(4);

@@ -532,6 +532,12 @@ class ScenarioViewSet(ModelViewSet):
         horizon = request.query_params.get("horizon", "12m")
         household_id = request.query_params.get("household_id")
         household_id = int(household_id) if household_id else None
+        logger.info(
+            "scenario compare start scenario_id=%s horizon=%s household_id=%s",
+            scenario.id,
+            horizon,
+            household_id,
+        )
         try:
             comparison_ctx = build_scenario_comparison_context(
                 request.user,

@@ -22,13 +22,12 @@ describe("Payment Planner mobile UI structure", () => {
     expect(screen).not.toMatch(/ChipRow/);
   });
 
-  it("requires explicit Update plan for what-if inputs", () => {
-    expect(whatIf).toContain("Update plan");
-    expect(whatIf).toContain("onApply");
-    expect(screen).toMatch(/onApply=\{/);
-    expect(screen).toMatch(/appliedExtraMonthly/);
-    expect(whatIf).toMatch(/appliedExtraMonthly/);
-    expect(whatIf).toMatch(/draftExtra/);
+  it("applies what-if extra/lump as you type after debounce", () => {
+    expect(whatIf).toContain("Extra per month");
+    expect(whatIf).toContain("onExtraMonthlyChange");
+    expect(screen).toMatch(/onExtraMonthlyChange=\{setExtraMonthly\}/);
+    expect(screen).toMatch(/debouncedExtraMonthly/);
+    expect(whatIf).not.toMatch(/draftExtra/);
   });
 
   it("does not invent a $150 extra-monthly default", () => {
@@ -108,8 +107,9 @@ describe("Payment Planner performance structure", () => {
     expect(screen).toMatch(/enabled: !!selectedAccount && !!selectedPlanCard/);
   });
 
-  it("applies scenario updates explicitly rather than per keystroke on the plan", () => {
-    expect(whatIf).toContain("Update plan");
+  it("debounces scenario updates rather than per keystroke on the plan", () => {
+    expect(screen).toContain("useDebouncedValue");
+    expect(whatIf).not.toContain("Update plan");
     expect(sheet).toContain("Update scenario");
   });
 });

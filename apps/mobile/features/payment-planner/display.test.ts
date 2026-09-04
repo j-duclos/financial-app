@@ -120,14 +120,14 @@ describe("payment planner display", () => {
       formatDebtFreeMonth(
         mockPlan({ debt_free_date: null, debt_free_possible: false, simulation_status: "non_amortizing" })
       )
-    ).toBe("—");
+    ).toBe("No date yet");
   });
 
   it("uses compact debt card outcome lines", () => {
     const lines = debtCardOutcomeLines(mockPlanCard({ months_remaining: 1 }));
     expect(lines.headline).toBe("Payoff next payment");
     expect(debtCardOutcomeLines(mockPlanCard({ payoff_status: "non_amortizing" })).headline).toMatch(
-      /too low/i
+      /doesn't cover this month's interest/i
     );
     expect(debtRowMetaLine(mockPlanCard())).toMatch(/18\.00% APR/);
   });

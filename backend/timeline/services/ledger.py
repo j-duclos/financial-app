@@ -2802,7 +2802,11 @@ def _build_timeline_impl(
             balance_cache,
             households,
             end_date,
-            min_as_of=today if projection_only else start_date,
+            min_as_of=(
+                start_date
+                if opening_balances is not None
+                else (today if projection_only else start_date)
+            ),
         )
         scenario = None
         if scenario_id:

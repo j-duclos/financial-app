@@ -29,12 +29,13 @@ describe("Payment Planner Audit Pass 1 contracts", () => {
     expect(webPlanner).not.toMatch(/useState\(["']150["']\)/);
   });
 
-  it("draft what-if edits do not appear in plan query construction", () => {
+  it("debounces what-if extra/lump into the debt-plan query", () => {
     expect(hooks).toMatch(/extra_monthly: inputs\.extraMonthly/);
-    expect(whatIf).toMatch(/draftExtra/);
-    expect(screen).toMatch(/appliedExtraMonthly/);
-    // Screen only passes applied values into scenarioInputs
-    expect(screen).toMatch(/extraMonthly: appliedExtraMonthly/);
+    expect(whatIf).toMatch(/onExtraMonthlyChange/);
+    expect(whatIf).not.toContain("Update plan");
+    expect(whatIf).not.toMatch(/draftExtra/);
+    expect(screen).toMatch(/useDebouncedValue/);
+    expect(screen).toMatch(/extraMonthly: debouncedExtraMonthly/);
   });
 
   it("query keys include every payoff-affecting scenario input", () => {

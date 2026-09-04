@@ -18,12 +18,15 @@ describe("Payment Planner Audit Pass 1", () => {
     expect(source).toMatch(/NEUTRAL_EXTRA_MONTHLY\s*=\s*["']0["']/);
   });
 
-  it("requires Update plan before draft what-if inputs hit the debt-plan query", () => {
-    expect(source).toMatch(/appliedExtraMonthly/);
-    expect(source).toMatch(/draftExtraMonthly/);
-    expect(source).toMatch(/>\s*Update plan\s*</);
+  it("debounces what-if extra/lump into the debt-plan query instead of an Update plan click", () => {
+    expect(source).toMatch(/useDebouncedValue/);
+    expect(source).toMatch(/WHAT_IF_NUMERIC_DEBOUNCE_MS/);
+    expect(source).toMatch(/extraMonthly: debouncedExtraMonthly/);
     expect(source).toMatch(/paymentPlannerQueryKeys\.plan\(scenarioInputs\)/);
-    expect(source).not.toMatch(/useDebouncedValue/);
+    expect(source).not.toMatch(/Update plan/);
+    expect(source).not.toMatch(/draftExtraMonthly/);
+    expect(source).not.toMatch(/Needs higher pay/);
+    expect(source).toMatch(/PLANNER_SUMMARY_METRICS/);
   });
 
   it("requests CREDIT accounts via account_type filter", () => {
