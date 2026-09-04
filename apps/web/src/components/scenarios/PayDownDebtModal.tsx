@@ -188,7 +188,7 @@ export default function PayDownDebtModal({
         const body = {
           rule_id: ruleId as number,
           override_amount: String(Math.abs(parseFloat(newMonthlyAmount))),
-          override_active: true as const,
+          override_active: null,
           override_start_date: effectiveDate,
           override_end_date: null as string | null,
           override_account_id: null as number | null,

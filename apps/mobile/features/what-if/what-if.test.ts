@@ -320,4 +320,10 @@ describe("what-if screen isolation contract", () => {
     expect(oneTime).not.toMatch(/ending_balance\s*[+\-]/);
     expect(oneTime).not.toMatch(/projectedBalance/);
   });
+
+  it("does not stamp override_active true on a monthly debt payment increase", () => {
+    const debt = readFileSync(join(root, "forms/DebtPaymentSheet.tsx"), "utf8");
+    expect(debt).toMatch(/override_active:\s*null/);
+    expect(debt).not.toMatch(/override_active:\s*true as const/);
+  });
 });

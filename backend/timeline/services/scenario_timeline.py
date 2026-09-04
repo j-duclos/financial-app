@@ -22,13 +22,17 @@ def override_changes_timing(ov: ScenarioRuleOverride) -> bool:
 
     Saved overrides often include the rule's default account/category and a start date
     meaning "raise effective" — that must not delete payroll before that date.
+
+    Pay Down Debt monthly increases stamp ``override_active=True`` with a start date.
+    That is still a raise-effective amount edit unless active/account/category actually
+    differ from the live rule.
     """
     rule = ov.rule
     if ov.override_end_date is not None:
         return True
     if ov.override_start_date is None:
         return False
-    if ov.override_active is not None:
+    if ov.override_active is not None and ov.override_active != bool(rule.active):
         return True
     if ov.override_account_id is not None and ov.override_account_id != rule.account_id:
         return True
@@ -57,10 +61,12 @@ def _future_rule_row(row: dict, rule_id: int, today: date) -> bool:
 
 
 def _date_in_effective_window(
-    row_date: date,
+    row_date: date | None,
     eff_start: date,
     eff_end: date | None,
 ) -> bool:
+    if row_date is None:
+        return False
     if row_date < eff_start:
         return False
     if eff_end is not None and row_date > eff_end:

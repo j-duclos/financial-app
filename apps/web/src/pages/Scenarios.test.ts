@@ -115,4 +115,26 @@ describe("What-If context from Planning", () => {
     expect(displaySource).not.toMatch(/\* 26\) \/ 12/);
     expect(displaySource).toMatch(/delta_monthly/);
   });
+
+  it("gives scenario compare a long timeout so 12-month forecasts can finish", () => {
+    const apiSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../../../packages/api-client/src/api.ts"),
+      "utf8"
+    );
+    expect(apiSource).toMatch(
+      /export async function getScenarioComparison[\s\S]*timeoutMs:\s*240_000/m
+    );
+  });
+
+  it("does not stamp override_active true on a monthly debt payment increase", () => {
+    const payDownSource = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../components/scenarios/PayDownDebtModal.tsx"
+      ),
+      "utf8"
+    );
+    expect(payDownSource).toMatch(/override_active:\s*null/);
+    expect(payDownSource).not.toMatch(/override_active:\s*true as const/);
+  });
 });
