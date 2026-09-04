@@ -19,6 +19,20 @@ export function debtCardOutcomeLines(card: DebtPayoffCardSummary): DebtCardOutco
   const suggested = formatCurrency(card.suggested_payment);
   const suggestedLine = `Suggested payoff: ${suggested}/mo`;
 
+  if (card.payoff_status === "non_amortizing") {
+    const interest = parseMoney(card.interest_this_month);
+    const min = parseMoney(card.minimum_payment);
+    const interestLine =
+      interest > 0 && min > 0 && min < interest
+        ? `Interest ${formatCurrency(card.interest_this_month)} vs min ${formatCurrency(card.minimum_payment)}`
+        : null;
+    return {
+      headline: "Min doesn't cover this month's interest",
+      suggestedLine,
+      interestLine,
+    };
+  }
+
   if (card.months_remaining != null && card.months_remaining > 0) {
     const months = card.months_remaining;
     const monthLabel = `${months} month${months === 1 ? "" : "s"}`;
@@ -40,7 +54,7 @@ export function debtCardOutcomeLines(card: DebtPayoffCardSummary): DebtCardOutco
   }
 
   return {
-    headline: "Increase payment to model payoff",
+    headline: "Min doesn't cover this month's interest",
     suggestedLine,
     interestLine: null,
   };

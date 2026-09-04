@@ -718,11 +718,7 @@ function PlanSummaryCard({
   emptyScenario?: boolean;
   comparisonFailed?: boolean;
 }) {
-  if (loading) {
-    return <div className="h-28 bg-gray-100 animate-pulse rounded-xl mb-6" />;
-  }
-
-  if (comparisonFailed && !comparison) {
+  if comparisonFailed && !comparison) {
     return (
       <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-900">
         <p className="text-xs font-semibold tracking-widest uppercase opacity-80">{scenario.name}</p>
@@ -744,6 +740,19 @@ function PlanSummaryCard({
           baseline is expected until you add a change.
         </p>
         {recalculating ? <p className="text-xs mt-2 opacity-70">Updating scenario…</p> : null}
+      </div>
+    );
+  }
+
+  if (loading || !comparison) {
+    return (
+      <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950">
+        <p className="text-xs font-semibold tracking-widest uppercase opacity-80">{scenario.name}</p>
+        <h2 className="text-lg font-semibold mt-2">Calculating this plan</h2>
+        <p className="text-sm mt-1">
+          Comparing your change to the real forecast. The first 12-month run can take a couple of
+          minutes — this is not a zero-impact result.
+        </p>
       </div>
     );
   }

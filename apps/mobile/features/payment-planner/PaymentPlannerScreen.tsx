@@ -21,9 +21,11 @@ import {
   debtStrategyLabel,
   parseDebtModeParam,
   topRecommendation,
+  WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "./display";
 import { planDetailsPath } from "./navigation";
 import type { PlannerScenarioInputs } from "./queryKeys";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   useAccountPayoffProjection,
   useCreditCardsFromAccounts,
@@ -48,10 +50,11 @@ export function PaymentPlannerScreen() {
   const [mode, setMode] = useState<DebtPayoffMode>(
     () => parseDebtModeParam(params.mode) ?? "aggressive"
   );
-  // Applied scenario only — drives debt-plan query. Draft lives in WhatIfPanel.
-  const [appliedExtraMonthly, setAppliedExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
-  const [appliedLumpSum, setAppliedLumpSum] = useState("");
-  const [appliedLumpSumAccountId, setAppliedLumpSumAccountId] = useState<number | null>(null);
+  const [extraMonthly, setExtraMonthly] = useState(NEUTRAL_EXTRA_MONTHLY);
+  const [lumpSum, setLumpSum] = useState("");
+  const [lumpSumAccountId, setLumpSumAccountId] = useState<number | null>(null);
+  const debouncedExtraMonthly = useDebouncedValue(extraMonthly, WHAT_IF_NUMERIC_DEBOUNCE_MS);
+  const debouncedLumpSum = useDebouncedValue(lumpSum, WHAT_IF_NUMERIC_DEBOUNCE_MS);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(
     params.account ? Number(params.account) : null
   );
@@ -60,15 +63,16 @@ export function PaymentPlannerScreen() {
   const [appliedAmountInput, setAppliedAmountInput] = useState(params.amount ?? "");
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
+  const lumpReady = Number(debouncedLumpSum) > 0 && lumpSumAccountId != null;
   const scenarioInputs: PlannerScenarioInputs = useMemo(
     () => ({
       strategy,
       mode,
-      extraMonthly: appliedExtraMonthly,
-      lumpSum: appliedLumpSum,
-      lumpSumAccountId: appliedLumpSumAccountId,
+      extraMonthly: debouncedExtraMonthly,
+      lumpSum: lumpReady ? debouncedLumpSum : "",
+      lumpSumAccountId: lumpReady ? lumpSumAccountId : null,
     }),
-    [strategy, mode, appliedExtraMonthly, appliedLumpSum, appliedLumpSumAccountId]
+    [strategy, mode, debouncedExtraMonthly, debouncedLumpSum, lumpSumAccountId, lumpReady]
   );
 
   const accountsQuery = usePaymentPlannerAccounts();
@@ -221,14 +225,15 @@ export function PaymentPlannerScreen() {
 
       <WhatIfPanel
         creditCards={creditCards}
-        appliedExtraMonthly={appliedExtraMonthly}
-        appliedLumpSum={appliedLumpSum}
-        appliedLumpSumAccountId={appliedLumpSumAccountId}
-        onApply={({ extraMonthly: nextExtra, lumpSum: nextLump, lumpSumAccountId: nextAccount }) => {
-          setAppliedExtraMonthly(nextExtra);
-          setAppliedLumpSum(nextLump);
-          setAppliedLumpSumAccountId(nextAccount);
-        }}
+        extraMonthly={extraMonthly}
+        lumpSum={lumpSum}
+        lumpSumAccountId={lumpSumAccountId}
+        mode={mode}
+        monthlyBudget={plan?.monthly_payment_budget}
+        onExtraMonthlyChange={setExtraMonthly}
+        onLumpSumChange={setLumpSum}
+        onLumpSumAccountChange={setLumpSumAccountId}
+        onSwitchToAggressive={() => setMode("aggressive")}
       />
 
       {plan && plan.recommendations.length > 0 ? (
@@ -253,10 +258,10 @@ export function PaymentPlannerScreen() {
               params: {
                 strategy,
                 mode,
-                extraMonthly: appliedExtraMonthly,
-                lumpSum: appliedLumpSum,
-                lumpSumAccountId: appliedLumpSumAccountId
-                  ? String(appliedLumpSumAccountId)
+                extraMonthly: extraMonthly,
+                lumpSum: lumpSum,
+                lumpSumAccountId: lumpSumAccountId
+                  ? String(lumpSumAccountId)
                   : "",
               },
             })

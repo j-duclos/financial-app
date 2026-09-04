@@ -1610,7 +1610,7 @@ export async function getScenarioComparison(
     params: q,
     signal: params?.signal,
     // 12m canonical builds can exceed the default 90s on a cold local Docker timeline.
-    timeoutMs: 240_000,
+    timeoutMs: 300_000,
   });
 }
 

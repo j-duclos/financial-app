@@ -1,6 +1,6 @@
 import type { DebtPayoffPlan, DebtPayoffStrategy, DebtPayoffMode } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { formatDateDisplay } from "./dateDisplay";
+import { debtFreePlanMessage } from "@budget-app/shared/paymentPlannerDisplay";
 
 export const DEBT_STRATEGY_OPTIONS: Array<{
   id: DebtPayoffStrategy;
@@ -53,12 +53,7 @@ export function parseDebtModeParam(raw: string | null | undefined): DebtPayoffMo
 
 export function debtFreeHeadline(plan: DebtPayoffPlan | null | undefined): string {
   if (!plan) return "";
-  if (Decimal(plan.total_debt) <= 0) return "You're credit card debt free.";
-  if (!plan.debt_free_possible) return "Increase payments to reach a payoff date.";
-  if (plan.debt_free_date) {
-    return `Debt-free by ${formatDateDisplay(plan.debt_free_date)}`;
-  }
-  return "";
+  return debtFreePlanMessage(plan);
 }
 
 function Decimal(s: string): number {

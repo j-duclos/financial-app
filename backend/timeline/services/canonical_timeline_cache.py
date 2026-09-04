@@ -69,6 +69,83 @@ def peek_canonical_forecast_timeline(
     return cached if isinstance(cached, list) else None
 
 
+_SEED_FORECAST_DAYS = 30
+
+
+def _ending_balances_from_seed_rows(
+    rows: list[dict[str, Any]],
+    accounts: list,
+    *,
+    today: date,
+    window_end: date,
+) -> dict[int, Any]:
+    from decimal import Decimal
+
+    from accounts.services.extended_cash_risk import ending_balances_from_detailed_forecast
+
+    if not accounts:
+        return {}
+    try:
+        return ending_balances_from_detailed_forecast(
+            rows,
+            accounts,
+            today=today,
+            window_end=window_end,
+        )
+    except ValueError:
+        ending: dict[int, Decimal] = {}
+        for row in reversed(rows):
+            aid = row.get("account_id")
+            if aid is None or int(aid) in ending:
+                continue
+            raw = row.get("balance_after")
+            if raw is None:
+                raw = row.get("running_balance")
+            if raw is None:
+                continue
+            ending[int(aid)] = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+        return ending
+
+
+def _extend_canonical_seed(
+    user,
+    seed: list[dict[str, Any]],
+    *,
+    today: date,
+    forecast_days: int,
+    household_id: int | None,
+    scenario_id: int | None,
+    caller: str,
+) -> list[dict[str, Any]]:
+    from accounts.models import Account
+    from timeline.services.ledger import build_forecast_projection_timeline
+
+    window_end = today + timedelta(days=_SEED_FORECAST_DAYS)
+    start_date = window_end + timedelta(days=1)
+    end_date = today + timedelta(days=forecast_days)
+    if start_date > end_date:
+        return list(seed)
+
+    household_ids = _resolved_household_ids(user, household_id=household_id)
+    accounts = list(
+        Account.objects.filter(household_id__in=household_ids, is_hidden=False)
+    )
+    openings = _ending_balances_from_seed_rows(
+        seed, accounts, today=today, window_end=window_end
+    )
+    continuation = build_forecast_projection_timeline(
+        user,
+        today=today,
+        start_date=start_date,
+        end_date=end_date,
+        household_id=household_id,
+        scenario_id=scenario_id,
+        opening_balances=openings,
+        caller=f"{caller}_extend",
+    )
+    return list(seed) + list(continuation)
+
+
 def get_or_build_canonical_forecast_timeline(
     user,
     *,
@@ -120,6 +197,37 @@ def get_or_build_canonical_forecast_timeline(
         cached = cache.get(key)
         if isinstance(cached, list):
             return cached, True
+
+        if forecast_days > _SEED_FORECAST_DAYS and scenario_id is None:
+            seed, _ = get_or_build_canonical_forecast_timeline(
+                user,
+                today=today,
+                forecast_days=_SEED_FORECAST_DAYS,
+                household_id=household_id,
+                scenario_id=None,
+                caller=caller,
+            )
+            if seed:
+                build_start = time.perf_counter()
+                rows = _extend_canonical_seed(
+                    user,
+                    seed,
+                    today=today,
+                    forecast_days=forecast_days,
+                    household_id=household_id,
+                    scenario_id=scenario_id,
+                    caller=caller,
+                )
+                if rows:
+                    cache.set(key, rows, CANONICAL_TIMELINE_CACHE_SECONDS)
+                    if perf_enabled():
+                        elapsed_ms = (time.perf_counter() - build_start) * 1000
+                        perf_print(
+                            f"[PERF] canonical_timeline cache=EXTEND seed_days={_SEED_FORECAST_DAYS} "
+                            f"days={forecast_days} caller={caller} rows={len(rows)} "
+                            f"extend_elapsed_ms={elapsed_ms:.0f}"
+                        )
+                    return rows, False
 
         build_start = time.perf_counter()
         end_date = today + timedelta(days=forecast_days)
