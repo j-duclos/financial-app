@@ -718,7 +718,7 @@ function PlanSummaryCard({
   emptyScenario?: boolean;
   comparisonFailed?: boolean;
 }) {
-  if comparisonFailed && !comparison) {
+  if (comparisonFailed && !comparison) {
     return (
       <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-900">
         <p className="text-xs font-semibold tracking-widest uppercase opacity-80">{scenario.name}</p>
