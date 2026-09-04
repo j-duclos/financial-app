@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   completeDisabledReason,
+  creditBankBalanceHint,
   formatSignedCurrency,
   isReconcileBalanced,
   selectedCountLabel,
@@ -46,5 +47,12 @@ describe("formatSignedCurrency", () => {
   it("prefixes selected activity", () => {
     expect(formatSignedCurrency(107669)).toMatch(/^\+/);
     expect(formatSignedCurrency(-7099)).toMatch(/^-/);
+  });
+});
+
+describe("creditBankBalanceHint", () => {
+  it("explains unsigned entry only for credit accounts", () => {
+    expect(creditBankBalanceHint("CREDIT")).toMatch(/no minus sign/i);
+    expect(creditBankBalanceHint("CHECKING")).toBeNull();
   });
 });

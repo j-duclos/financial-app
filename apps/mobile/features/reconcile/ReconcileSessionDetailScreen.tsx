@@ -18,7 +18,8 @@ import {
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { formatReconcileMoney, formatStatementDate, sessionStatusLabel } from "./reconcileDisplay";
-import { invalidateAfterReconcileMutation, reconcileQueryKeys } from "./queryKeys";
+import { invalidateAfterReconcileMutation } from "@/lib/financialQueryRefresh";
+import { reconcileQueryKeys } from "./queryKeys";
 import { transactionDetailPath } from "./navigation";
 
 export function ReconcileSessionDetailScreen() {

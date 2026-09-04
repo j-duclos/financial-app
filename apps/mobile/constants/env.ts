@@ -25,7 +25,37 @@ type ExpoExtra = {
 };
 
 function extra(): ExpoExtra {
-  return (Constants.expoConfig?.extra ?? {}) as ExpoExtra;
+  const fromExpoConfig = (Constants.expoConfig?.extra ?? {}) as ExpoExtra;
+  const fromManifest = (
+    Constants as { manifest?: { extra?: ExpoExtra } }
+  ).manifest?.extra;
+  return { ...fromManifest, ...fromExpoConfig };
+}
+
+function getMetroHostname(): string {
+  const hostUri =
+    Constants.expoConfig?.hostUri ||
+    (Constants as { debuggerHost?: string }).debuggerHost ||
+    "";
+  return String(hostUri).split(":")[0]?.trim() ?? "";
+}
+
+/**
+ * Last-resort origin when Metro was started before `.env` existed.
+ * Android emulator loopback is the host machine, reached at 10.0.2.2 — not 127.0.0.1.
+ */
+function getDevFallbackApiUrl(): string | null {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return null;
+  const hostname = getMetroHostname();
+  if (
+    !hostname ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.startsWith("10.0.2.")
+  ) {
+    return "http://10.0.2.2:8000";
+  }
+  return `http://${hostname}:8000`;
 }
 
 export function getAppEnvironment(): AppEnvironment {
@@ -93,15 +123,23 @@ let cachedApiBaseUrl: string | null = null;
 /**
  * Resolve the single mobile API origin (canonical API_BASE_URL).
  * Requires EXPO_PUBLIC_API_URL (or app.config extra.apiUrl) in every environment —
- * no silent localhost fallback and no device-based auto-selection.
+ * no silent localhost fallback. In __DEV__ only, if those are empty, derive
+ * the API origin from Expo's hostUri (Android emulator → http://10.0.2.2:8000).
  */
 export function getApiBaseUrl(): string {
   if (cachedApiBaseUrl) return cachedApiBaseUrl;
 
   const env = getAppEnvironment();
-  const fromEnv = (process.env.EXPO_PUBLIC_API_URL || extra().apiUrl || "").trim();
+  const fromEnv = [
+    process.env.EXPO_PUBLIC_API_URL,
+    extra().apiUrl,
+  ]
+    .map((value) => (value ?? "").trim())
+    .find((value) => value.length > 0 && value !== "undefined") ?? "";
+  const fromDevHost = fromEnv ? "" : getDevFallbackApiUrl() ?? "";
+  const chosen = fromEnv || fromDevHost;
 
-  if (!fromEnv) {
+  if (!chosen) {
     throw new Error(
       "EXPO_PUBLIC_API_URL is not configured. " +
         "Copy apps/mobile/.env.local.example or .env.render.example to .env, " +
@@ -109,7 +147,15 @@ export function getApiBaseUrl(): string {
     );
   }
 
-  const resolved = stripTrailingSlash(fromEnv);
+  if (fromDevHost && __DEV__) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[MOBILE ENV] EXPO_PUBLIC_API_URL missing in this Metro process; using ${fromDevHost}. ` +
+        `Stop every Expo/Metro instance, then: npx expo start --clear`
+    );
+  }
+
+  const resolved = stripTrailingSlash(chosen);
   try {
     parseUrl(resolved);
   } catch {
@@ -174,13 +220,17 @@ export function resetApiBaseUrlCacheForTests(): void {
 
 /** Dev-only hint for login/settings when diagnosing connectivity. */
 export function getApiConnectivityHint(): string {
-  const url = getApiBaseUrl();
-  if (!__DEV__) return url;
-  return (
-    `${url}\n` +
-    `Env: ${getAppEnvironment()} · Target: ${getApiTargetDisplayLabel()}\n` +
-    `Local API: cd backend && ALLOWED_HOSTS='*' python3 manage.py runserver 0.0.0.0:8000`
-  );
+  try {
+    const url = getApiBaseUrl();
+    if (!__DEV__) return url;
+    return (
+      `${url}\n` +
+      `Env: ${getAppEnvironment()} · Target: ${getApiTargetDisplayLabel()}\n` +
+      `Local API: cd backend && ALLOWED_HOSTS='*' python3 manage.py runserver 0.0.0.0:8000`
+    );
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 export const API_REQUEST_TIMEOUT_MS = 90_000;

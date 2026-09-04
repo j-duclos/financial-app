@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsToAmount, parseBankBalanceCents, parseMoneyToCents } from "./moneyCents";
+import { centsToAmount, parseBankBalanceCents, parseMoneyToCents, parseSignedBankBalanceCents, bankBalanceAmountString } from "./moneyCents";
 
 describe("moneyCents", () => {
   it("adds 0.10 and 0.20 as cents without float drift", () => {
@@ -24,5 +24,19 @@ describe("moneyCents", () => {
     expect(parseBankBalanceCents("abc")).toBeNull();
     expect(parseBankBalanceCents("2316.63")).toBe(231663);
     expect(parseBankBalanceCents("0")).toBe(0);
+  });
+
+  it("signs credit statement balances as negative without requiring a minus", () => {
+    expect(parseSignedBankBalanceCents("2018.31", "CREDIT")).toBe(-201831);
+    expect(parseSignedBankBalanceCents("-2018.31", "CREDIT")).toBe(-201831);
+    expect(parseSignedBankBalanceCents("0", "CREDIT")).toBe(0);
+    expect(parseSignedBankBalanceCents("2018.31", "CHECKING")).toBe(201831);
+    expect(parseSignedBankBalanceCents("", "CREDIT")).toBeNull();
+  });
+
+  it("formats signed cents as a two-decimal API amount", () => {
+    expect(bankBalanceAmountString(-201831)).toBe("-2018.31");
+    expect(bankBalanceAmountString(0)).toBe("0.00");
+    expect(bankBalanceAmountString(123456)).toBe("1234.56");
   });
 });

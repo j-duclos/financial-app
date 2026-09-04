@@ -1,6 +1,7 @@
 import type { DashboardRecommendation } from "./types";
 import {
   recommendationAccountId,
+  recommendationIsDebtPayoff,
   recommendationPrimaryOpensTransfer,
 } from "./recommendationDisplay";
 
@@ -28,11 +29,6 @@ export function recommendationIsUtilizationHealth(rec: DashboardRecommendation):
   if ((rec.id ?? "").startsWith("utilization-")) return true;
   if (type === "pay_credit_card" && rec.impact_type === "credit_utilization") return true;
   return false;
-}
-
-/** Avalanche / snowball / household debt strategy — Payment Planner. */
-export function recommendationIsDebtPayoff(rec: DashboardRecommendation): boolean {
-  return rec.type === "debt_payoff";
 }
 
 /** Cash/checking forecast risk — ledger with optional focus context. */

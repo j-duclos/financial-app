@@ -52,7 +52,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     extra: {
       appEnv,
-      apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "",
+      apiUrl:
+        process.env.EXPO_PUBLIC_API_URL ||
+        (appEnv === "development" ? "http://10.0.2.2:8000" : ""),
       privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_URL ?? "",
       termsUrl: process.env.EXPO_PUBLIC_TERMS_URL ?? "",
       supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? "",

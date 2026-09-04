@@ -32,3 +32,31 @@ export function parseBankBalanceCents(input: string): number | null {
   if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
   return parseMoneyToCents(cleaned);
 }
+
+export function isCreditAccountType(accountType: string | null | undefined): boolean {
+  return String(accountType ?? "").toUpperCase() === "CREDIT";
+}
+
+/**
+ * Statement ending balance in signed cents.
+ * Credit debt is negative or zero — a typed positive amount is treated as owed (no minus required).
+ * Already-negative input is left as-is. Matches backend `_normalize_credit_balance`.
+ */
+export function parseSignedBankBalanceCents(
+  input: string,
+  accountType?: string | null
+): number | null {
+  const cents = parseBankBalanceCents(input);
+  if (cents == null) return null;
+  if (isCreditAccountType(accountType) && cents > 0) return -cents;
+  return cents;
+}
+
+/** Exact two-decimal string for reconcile API payloads. */
+export function bankBalanceAmountString(cents: number): string {
+  const negative = cents < 0;
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100);
+  const frac = String(abs % 100).padStart(2, "0");
+  return `${negative ? "-" : ""}${whole}.${frac}`;
+}

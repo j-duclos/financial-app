@@ -1,5 +1,4 @@
 import type { DashboardInsight, DashboardRecommendation } from "./types";
-import { recommendationIsDebtPayoff } from "./recommendationNavigation";
 import { normalizePaymentActionLabel, PAYMENT_PLANNER_LABEL } from "./paymentPlannerDisplay";
 import { normalizeSeverity, severityLabel, severityRank, severityShowsAlert } from "./severity";
 
@@ -286,6 +285,11 @@ export function recommendationTransferActionLabel(rec: DashboardRecommendation):
     return recommendationSecondaryCtaLabel(rec) ?? "Move money";
   }
   return "Move money";
+}
+
+/** Avalanche / snowball / household debt strategy — Payment Planner. */
+export function recommendationIsDebtPayoff(rec: DashboardRecommendation): boolean {
+  return rec.type === "debt_payoff";
 }
 
 /** Extra planner button only for true debt-payoff strategy (not utilization health). */

@@ -79,7 +79,9 @@ describe("Reconcile query keys", () => {
   });
 
   it("invalidates targeted caches only after complete/undo mutations", () => {
-    expect(queryKeysSource).toMatch(/invalidateAfterReconcileMutation/);
+    expect(financialRefreshSource).toMatch(/export function invalidateAfterReconcileMutation/);
+    expect(screenSource).toMatch(/invalidateAfterReconcileMutation/);
+    expect(queryKeysSource).not.toMatch(/invalidateAfterReconcileMutation/);
     expect(financialRefreshSource).not.toMatch(/\["reconcile-setup"\]/);
   });
 });

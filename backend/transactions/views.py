@@ -257,15 +257,15 @@ def _delete_stale_transfer_legs_on_date(
     account_ids: list[int],
     amount_abs: Decimal,
 ) -> None:
-    """Remove duplicate ACTUAL legs left on the old date after a transfer date move."""
-    if not old_date or not account_ids or amount_abs <= 0:
-        return
-    amounts = [amount_abs, -amount_abs]
-    Transaction.objects.filter(
-        date=old_date,
-        account_id__in=account_ids,
-        source=Transaction.Source.ACTUAL,
-    ).exclude(pk__in=keep_ids).filter(amount__in=amounts).delete()
+    """Remove duplicate transfer/payment legs left on the old date after a transfer date move."""
+    from transactions.services.posting import delete_stale_transfer_legs_on_date
+
+    delete_stale_transfer_legs_on_date(
+        old_date=old_date,
+        keep_ids=keep_ids,
+        account_ids=account_ids,
+        amount_abs=amount_abs,
+    )
 
 
 def _ensure_rule_transfer_counterpart_after_update(
