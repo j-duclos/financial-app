@@ -541,6 +541,16 @@ class ScenarioViewSet(ModelViewSet):
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            logger.exception(
+                "scenario compare failed scenario_id=%s horizon=%s",
+                scenario.id,
+                horizon,
+            )
+            return Response(
+                {"detail": "Could not recalculate this plan."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         payload = serialize_scenario_comparison(comparison_ctx)
         from recommendations.services.engine import build_scenario_recommendations
 

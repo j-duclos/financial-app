@@ -1609,6 +1609,8 @@ export async function getScenarioComparison(
   return requestRequired(`/api/scenarios/${scenarioId}/compare/`, {
     params: q,
     signal: params?.signal,
+    // 12m canonical builds can exceed the default 90s on a cold local Docker timeline.
+    timeoutMs: 240_000,
   });
 }
 

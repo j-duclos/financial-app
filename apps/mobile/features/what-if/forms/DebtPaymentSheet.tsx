@@ -122,7 +122,7 @@ export function DebtPaymentSheet({
         const body = {
           rule_id: Number(rid),
           override_amount: String(Math.abs(parseFloat(amount))),
-          override_active: true as const,
+          override_active: null,
           override_start_date: null,
           override_end_date: null,
           override_account_id: Number(sourceId),

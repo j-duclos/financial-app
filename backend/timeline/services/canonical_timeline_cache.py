@@ -19,8 +19,9 @@ from timeline.services.ledger import build_forecast_projection_timeline
 
 CANONICAL_TIMELINE_CACHE_VERSION = "v7"
 CANONICAL_TIMELINE_CACHE_SECONDS = 300
-_LOCK_TIMEOUT_SECONDS = 60
-_LOCK_WAIT_SECONDS = 60.0
+# Must outlive a cold 12m build (local Docker 30-day timeline is already 20–40s).
+_LOCK_TIMEOUT_SECONDS = 240
+_LOCK_WAIT_SECONDS = 240.0
 _LOCK_POLL_SECONDS = 0.05
 
 
