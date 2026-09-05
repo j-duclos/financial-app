@@ -802,18 +802,46 @@ def default_profile_input() -> ProfileInput:
     )
 
 
-def suggestion_from_account(account) -> CreditCardSuggestion:
+def suggestion_from_account(
+    account, *, current_balance: Decimal | None = None
+) -> CreditCardSuggestion:
     min_pay = account.minimum_payment_amount
     min_dec = as_decimal(min_pay) if min_pay is not None else None
+    owed = (
+        current_balance
+        if current_balance is not None
+        else as_decimal(account.current_balance)
+    )
     return CreditCardSuggestion(
         account_id=account.id,
         name=account.name,
         effective_display_name=account.effective_display_name,
-        current_balance=as_decimal(account.current_balance),
+        current_balance=owed,
         minimum_payment_amount=min_dec,
         minimum_payment_usable=is_minimum_usable(min_dec),
         suggested_debt_type="credit_card",
     )
+
+
+def suggestions_from_accounts(accounts) -> list[CreditCardSuggestion]:
+    """Suggestion balances match the Accounts page: ledger owed, not the stored snapshot.
+
+    Does not change DTI formulas. The calculate path still avoids the ledger.
+    """
+    from accounts.services.balances import (
+        bulk_signed_ledger_balances,
+        credit_owed_from_signed_balance,
+    )
+
+    account_list = list(accounts)
+    signed = bulk_signed_ledger_balances(account_list) if account_list else {}
+    return [
+        suggestion_from_account(
+            account,
+            current_balance=credit_owed_from_signed_balance(signed.get(account.pk, ZERO)),
+        )
+        for account in account_list
+    ]
 
 
 def load_dti_records(household) -> tuple[ProfileInput, list[IncomeInput], list[DebtInput], list[CreditCardSuggestion]]:

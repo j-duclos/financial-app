@@ -25,7 +25,7 @@ from affordability.services.dti import (
     calculate_dti,
     load_dti_records,
     serialize_dti_result,
-    suggestion_from_account,
+    suggestions_from_accounts,
 )
 from core.models import Household
 from core.permissions import IsHouseholdMember
@@ -292,4 +292,4 @@ class DtiCreditCardSuggestionView(APIView):
             .exclude(id__in=linked_ids)
             .order_by("position", "name", "id")
         )
-        return Response([suggestion_from_account(card).to_dict() for card in cards])
+        return Response([item.to_dict() for item in suggestions_from_accounts(cards)])
