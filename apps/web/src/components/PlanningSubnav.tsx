@@ -4,6 +4,7 @@ import { PLANNING_NAV_LINKS, pathMatchesNavLink } from "../lib/appNavigation";
 const HINTS: Record<string, string> = {
   "/goals": "What am I trying to accomplish?",
   "/credit-cards": "How should I eliminate debt?",
+  "/debt-to-income": "How much of my gross income is committed to debt?",
   "/scenarios": "What happens if I change something?",
 };
 
