@@ -863,6 +863,12 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
      * are not reapplied on top of pastOpeningOverride.
      */
     checkpointPeriodEnd?: string | null;
+    /**
+     * Posted / planned rows dated after today. The past /transactions/ window ends
+     * today, so one-off future adds only show if the projection timeline includes
+     * them — merge any that the timeline omitted.
+     */
+    futurePostedTransactions?: Transaction[];
   }
 ): LedgerRow[] {
   const pastSource =
@@ -925,13 +931,57 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
       balance: timelineRowLedgerBalance(r),
     });
   }
-  for (const r of future) {
-    rows.push({
-      type: "recurring",
-      row: r,
-      balance: timelineRowLedgerBalance(r),
-    });
+
+  const futureRows: LedgerRow[] = future.map((r) => ({
+    type: "recurring" as const,
+    row: r,
+    balance: timelineRowLedgerBalance(r),
+  }));
+  const timelineTxnIds = new Set(
+    future
+      .map((r) => r.transaction_id)
+      .filter((id): id is number => id != null)
+      .map((id) => Number(id))
+  );
+  const extraFutureTxns = (options?.futurePostedTransactions ?? []).filter(
+    (t) =>
+      t.date > today &&
+      (t.source || "").toUpperCase() !== "INTEREST" &&
+      !timelineTxnIds.has(t.id)
+  );
+  for (const txn of extraFutureTxns) {
+    futureRows.push({ type: "transaction", txn, balance: null });
   }
+  futureRows.sort((a, b) => {
+    const da = ledgerFutureRowDate(a) ?? "";
+    const db = ledgerFutureRowDate(b) ?? "";
+    if (da !== db) return da.localeCompare(db);
+    const ia = a.type === "transaction" ? a.txn.id : Number(a.row.transaction_id ?? 0);
+    const ib = b.type === "transaction" ? b.txn.id : Number(b.row.transaction_id ?? 0);
+    return ia - ib;
+  });
+
+  if (extraFutureTxns.length > 0) {
+    let walk =
+      pending.length > 0
+        ? timelineRowLedgerBalance(pending[pending.length - 1])
+        : todayBalance;
+    if (walk == null || !Number.isFinite(walk)) walk = todayBalance;
+    for (const row of futureRows) {
+      const amt =
+        row.type === "transaction"
+          ? signedTransactionLedgerAmount(row.txn)
+          : row.type === "recurring"
+            ? signedTimelineLedgerAmount(row.row)
+            : NaN;
+      if (!Number.isNaN(amt)) {
+        walk = applyTimelineAmountToBalance(walk, amt, isCredit);
+        row.balance = walk;
+      }
+    }
+  }
+
+  rows.push(...futureRows);
   return rows;
 }
 

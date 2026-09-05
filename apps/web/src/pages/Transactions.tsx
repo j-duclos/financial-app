@@ -48,6 +48,7 @@ import {
 import {
   todayStr,
   formatDateDisplay,
+  addDaysToIsoDate,
   addMonths,
   buildLedgerRows,
   buildLedgerRowsFromPastAndUpcomingTimeline,
@@ -372,6 +373,34 @@ export default function Transactions() {
   const transactions = useMemo(
     () => txnsData?.pages.flatMap((p) => p.results) ?? [],
     [txnsData?.pages]
+  );
+
+  /** One-off rows dated after today — not in the past listTransactions window. */
+  const { data: futurePostedTxnsData } = useQuery({
+    queryKey: [
+      "transactions",
+      "future-posted",
+      accountId || undefined,
+      addDaysToIsoDate(todayStr(), 1),
+      upcomingRange.end,
+      hideReconciledPast,
+    ],
+    queryFn: () =>
+      listTransactions({
+        account: accountId as number,
+        date_after: addDaysToIsoDate(todayStr(), 1),
+        date_before: upcomingRange.end,
+        page_size: WEB_LEDGER_PAGE_SIZE,
+        ordering: "date,id",
+        ...(hideReconciledPast ? { reconciled: false } : { show_reconciled: true }),
+      }),
+    enabled: typeof accountId === "number" && !!upcomingRange.end,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+  const futurePostedTransactions = useMemo(
+    () => futurePostedTxnsData?.results ?? [],
+    [futurePostedTxnsData?.results]
   );
 
   const historyPagesComplete = !hasNextPage;
@@ -953,6 +982,7 @@ export default function Transactions() {
         checkpointPeriodEnd: hasPastOpeningOverride
           ? reconcileSetupData?.last_reconcile_period_end ?? null
           : null,
+        futurePostedTransactions,
       }
     );
   }, [
@@ -973,6 +1003,7 @@ export default function Transactions() {
     reconcileSetupData?.min_start_date,
     reconcileSetupFetching,
     ledgerTimelineFetching,
+    futurePostedTransactions,
   ]);
 
   const accountTimeline = useMemo(() => {
@@ -1644,7 +1675,6 @@ export default function Transactions() {
 
     inlineAddInFlight.current = true;
     setDeleteError(null);
-    resetInlineRow();
 
     const restoreInlineForm = () => setInlineRow(formSnapshot);
     const onAddError = (err: Error) => {
@@ -1654,6 +1684,9 @@ export default function Transactions() {
     };
     const onAddSettled = () => {
       inlineAddInFlight.current = false;
+    };
+    const onAddSuccess = () => {
+      resetInlineRow();
     };
 
     if (isTransferCategory && formSnapshot.transfer_to_account_id) {
@@ -1668,7 +1701,7 @@ export default function Transactions() {
           payee: formSnapshot.payee.trim(),
           from_category_id: formSnapshot.category_id ? formSnapshot.category_id : undefined,
         },
-        { onError: onAddError, onSettled: onAddSettled }
+        { onSuccess: onAddSuccess, onError: onAddError, onSettled: onAddSettled }
       );
     } else {
       createMu.mutate(
@@ -1681,7 +1714,7 @@ export default function Transactions() {
           memo: "",
           ...(navState?.fromBillChecklist ? { is_bill: true } : {}),
         },
-        { onError: onAddError, onSettled: onAddSettled }
+        { onSuccess: onAddSuccess, onError: onAddError, onSettled: onAddSettled }
       );
     }
   }
