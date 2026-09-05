@@ -146,6 +146,8 @@ def dedupe_future_rule_occurrence_rows(rows: list[dict], today: date) -> list[di
         aid = row.get("account_id")
         if rid is None or rd is None or rd < today:
             continue
+        if (row.get("source") or "").lower() == "scenario_guided_strategy":
+            continue
         groups[(rid, rd, aid)].append((idx, row))
 
     drop: set[int] = set()

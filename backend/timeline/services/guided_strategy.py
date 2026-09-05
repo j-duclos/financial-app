@@ -1,9 +1,9 @@
 """
 Guided What-If strategy: eligibility, validation, persistence, and serialization.
 
-Phase 1 stores configuration only. Simulation / cash reallocation is Phase 2.
-Saving a strategy must not create real Transaction or RecurringRule rows, bump
-household financial_revision, or change comparison results.
+Saving a strategy must not create real Transaction or RecurringRule rows or bump
+household financial_revision. Comparison applies the strategy hypothetically in
+Phase 2 via ``guided_strategy_simulation``.
 """
 from __future__ import annotations
 
@@ -21,6 +21,15 @@ from timeline.models import RecurringRule, Scenario, ScenarioGuidedDebtPriority,
 
 _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
+
+
+class GuidedStrategyConfigError(Exception):
+    """Stale or invalid persisted guided strategy — return a structured comparison error."""
+
+    def __init__(self, errors: dict[str, Any], detail: str = "Guided strategy configuration is invalid."):
+        self.errors = errors
+        self.detail = detail
+        super().__init__(detail)
 
 GUIDED_SOURCE_ACCOUNT_TYPES = frozenset(
     {
@@ -263,6 +272,37 @@ def load_guided_strategy(scenario: Scenario) -> ScenarioGuidedStrategy | None:
         )
         .first()
     )
+
+
+def validate_loaded_guided_strategy(strategy: ScenarioGuidedStrategy) -> None:
+    """Re-validate a persisted strategy against current accounts and rules."""
+    debt_accounts = list(strategy.included_debt_accounts.all())
+    transfer_rules = list(strategy.savings_transfer_rules.all())
+    custom_order: list[Account] = []
+    if strategy.payoff_strategy == ScenarioGuidedStrategy.PayoffStrategy.CUSTOM:
+        custom_order = [
+            row.account
+            for row in sorted(
+                strategy.debt_priorities.all(),
+                key=lambda row: (row.priority, row.pk or 0),
+            )
+        ]
+    try:
+        validate_guided_strategy_config(
+            scenario=strategy.scenario,
+            strategy_type=strategy.strategy_type,
+            source_account=strategy.source_account,
+            savings_account=strategy.savings_account,
+            included_debt_accounts=debt_accounts,
+            savings_transfer_rules=transfer_rules,
+            start_date=strategy.start_date,
+            minimum_cash_buffer=strategy.minimum_cash_buffer,
+            allocation_percent=strategy.allocation_percent,
+            payoff_strategy=strategy.payoff_strategy,
+            custom_debt_order=custom_order,
+        )
+    except serializers.ValidationError as exc:
+        raise GuidedStrategyConfigError(exc.detail) from exc
 
 
 @transaction.atomic

@@ -44,6 +44,7 @@ from .services.scenario_comparison import (
     evaluate_affordability,
     serialize_scenario_comparison,
 )
+from .services.guided_strategy import GuidedStrategyConfigError
 from .services.ledger import build_timeline
 from .services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
 from .services.ledger_section_balances import rows_need_ledger_balance_after
@@ -591,6 +592,11 @@ class ScenarioViewSet(ModelViewSet):
                 scenario.id,
                 horizon=horizon,
                 household_id=household_id,
+            )
+        except GuidedStrategyConfigError as e:
+            return Response(
+                {"detail": e.detail, "errors": e.errors},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_404_NOT_FOUND)

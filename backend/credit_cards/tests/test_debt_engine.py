@@ -759,3 +759,21 @@ def test_simulation_and_projections_are_sql_free_with_balance_map(user, card_a, 
         )
     assert len(ctx.captured_queries) == 0
     assert Decimal(plan["weighted_apr"]) > 0
+
+
+def test_rank_debt_accounts_for_payoff_matches_planner_rules():
+    from credit_cards.services.debt_engine import DebtPrioritySnapshot, rank_debt_accounts_for_payoff
+
+    high_apr = DebtPrioritySnapshot(account_id=1, owed=Decimal("2000"), apr=Decimal("24"), utilization=Decimal("40"))
+    small = DebtPrioritySnapshot(account_id=2, owed=Decimal("300"), apr=Decimal("18"), utilization=Decimal("90"))
+    mid = DebtPrioritySnapshot(account_id=3, owed=Decimal("800"), apr=Decimal("20"), utilization=Decimal("50"))
+    paid = DebtPrioritySnapshot(account_id=4, owed=Decimal("0"), apr=Decimal("30"), utilization=Decimal("0"))
+    credit = DebtPrioritySnapshot(account_id=5, owed=Decimal("-10"), apr=Decimal("22"), utilization=Decimal("0"))
+    cards = [high_apr, small, mid, paid, credit]
+
+    assert rank_debt_accounts_for_payoff(cards, "avalanche") == [1, 3, 2]
+    assert rank_debt_accounts_for_payoff(cards, "snowball") == [2, 3, 1]
+    assert rank_debt_accounts_for_payoff(cards, "utilization_target") == [2, 3, 1]
+    assert rank_debt_accounts_for_payoff(cards, "custom", [3, 1, 2, 4]) == [3, 1, 2]
+    assert 4 not in rank_debt_accounts_for_payoff(cards, "avalanche")
+    assert 5 not in rank_debt_accounts_for_payoff(cards, "avalanche")
