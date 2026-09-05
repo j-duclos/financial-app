@@ -1533,7 +1533,6 @@ def repair_broken_transfer_payment_wiring(
         _create_missing_transfer_leg_for_group,
         _txn_has_transfer_bridge,
         _wire_transfer_legs,
-        align_linked_transfer_pair_dates,
     )
 
     if account_ids is not None:
@@ -1757,14 +1756,7 @@ def repair_broken_transfer_payment_wiring(
                         source_legs_created += 1
                         touched_households.add(tg.household_id)
 
-    aligned = 0
-    if not dry_run:
-        aligned = align_linked_transfer_pair_dates(account_ids=ids)
-        if aligned:
-            hid_qs = Account.objects.filter(pk__in=ids).values_list("household_id", flat=True)
-            touched_households.update(hid_qs)
-
-    if (rewired or source_legs_created or merged or aligned) and not dry_run:
+    if (rewired or source_legs_created or merged) and not dry_run:
         from common.services.cache import invalidate_financial_cache_for_household
         from core.timeline_cache import bump_timeline_cache_for_household
 
@@ -1776,7 +1768,7 @@ def repair_broken_transfer_payment_wiring(
         "rewired": rewired,
         "merged": merged,
         "source_legs_created": source_legs_created,
-        "dates_aligned": aligned,
+        "dates_aligned": 0,
     }
 
 

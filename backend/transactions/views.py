@@ -57,12 +57,12 @@ def _dedupe_rule_rows_on_date(
     keep_ids: set[int],
     account_ids: list[int],
 ) -> None:
-    """One materialized row per rule occurrence per account — drop extras after date moves."""
-    Transaction.objects.filter(
-        rule_id=rule_id,
-        date=occurrence_date,
-        account_id__in=account_ids,
-    ).exclude(pk__in=keep_ids).delete()
+    """No-op.
+
+    Date edits must not delete other rule rows. Duplicate cleanup is only allowed
+    when a Plaid import matches a rule or manual row within ±5 days.
+    """
+    return
 
 
 def _record_rule_occurrence_date_move(
@@ -72,7 +72,7 @@ def _record_rule_occurrence_date_move(
     new_date,
     other: Optional[Transaction],
 ) -> None:
-    """Skip the old schedule date and remove duplicate rule rows after a one-off date change."""
+    """Skip the old schedule date after a one-off date change. Do not delete other rows."""
     if instance.rule_id is None or old_date == new_date or new_date is None:
         return
     from timeline.models import RecurringRule, RecurringRuleSkip
@@ -247,24 +247,6 @@ def _link_rule_transfer_pair_if_needed(instance: Transaction, other: Transaction
         from_acc_id=txn_from.account_id,
         to_acc_id=txn_to.account_id,
         in_amount=in_amount,
-    )
-
-
-def _delete_stale_transfer_legs_on_date(
-    *,
-    old_date,
-    keep_ids: set[int],
-    account_ids: list[int],
-    amount_abs: Decimal,
-) -> None:
-    """Remove duplicate transfer/payment legs left on the old date after a transfer date move."""
-    from transactions.services.posting import delete_stale_transfer_legs_on_date
-
-    delete_stale_transfer_legs_on_date(
-        old_date=old_date,
-        keep_ids=keep_ids,
-        account_ids=account_ids,
-        amount_abs=amount_abs,
     )
 
 
@@ -501,7 +483,7 @@ class TransactionViewSet(ModelViewSet):
         serializer.save()
         # Serializer may create a Transfer + card leg (link_in_leg). get_queryset uses
         # select_related(transfer_out); without a refresh this row still looks unlinked in memory,
-        # so pairing/sync and stale cleanup see the wrong counterpart — especially for rule
+        # so pairing/sync sees the wrong counterpart — especially for rule
         # materializations that had no bridge before PATCH.
         instance = Transaction.objects.select_related("account", "category").get(pk=instance.pk)
         new_date = serializer.validated_data.get("date")
@@ -534,8 +516,9 @@ class TransactionViewSet(ModelViewSet):
                 .exclude(pk=instance.pk)
                 .first()
             )
-        if other is None:
-            # Prefer the pre-edit date (leg may still sit there), then the saved date.
+        # Never fuzzy-match another same-amount payment. Only the linked Transfer /
+        # TransferGroup sibling, or the same recurring rule's other leg.
+        if other is None and instance.rule_id is not None:
             other = _find_likely_transfer_counterpart(instance, on_date=old_date)
             if other is None and instance.date != old_date:
                 other = _find_likely_transfer_counterpart(instance, on_date=instance.date)
@@ -602,21 +585,6 @@ class TransactionViewSet(ModelViewSet):
                     Transfer.objects.filter(pk=transfer.pk).update(
                         amount=abs(serializer.validated_data["amount"])
                     )
-            if (
-                "date" in serializer.validated_data
-                and old_date != serializer.validated_data["date"]
-            ):
-                instance.refresh_from_db()
-                other.refresh_from_db()
-                amt = abs(instance.amount or Decimal("0"))
-                if amt <= 0 and other.amount is not None:
-                    amt = abs(other.amount)
-                _delete_stale_transfer_legs_on_date(
-                    old_date=old_date,
-                    keep_ids={instance.pk, other.pk},
-                    account_ids=[instance.account_id, other.account_id],
-                    amount_abs=amt,
-                )
         if (
             instance.rule_id is not None
             and new_date is not None
