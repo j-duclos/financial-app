@@ -520,6 +520,36 @@ def test_credit_card_suggestions_skip_linked_and_inactive(
     assert checking.id not in ids
 
 
+def test_credit_card_suggestions_use_ledger_owed_not_stale_current_balance(
+    auth_client, household
+):
+    from datetime import date
+
+    from transactions.models import Transaction
+
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        current_balance=Decimal("5413.31"),
+        minimum_payment_amount=Decimal("25.00"),
+    )
+    Transaction.objects.create(
+        account=card,
+        date=date.today(),
+        payee="Purchase",
+        amount=Decimal("-812.44"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    res = auth_client.get(SUGGEST_URL, {"household_id": household.id})
+    assert res.status_code == 200
+    row = next(item for item in res.json() if item["account_id"] == card.id)
+    assert row["current_balance"] == "812.44"
+    assert row["current_balance"] != "5413.31"
+    assert row["minimum_payment_amount"] == "25.00"
+
+
 def test_months_remaining_must_be_positive(auth_client, household):
     res = _add_debt(auth_client, household, months_remaining=0)
     assert res.status_code == 400
