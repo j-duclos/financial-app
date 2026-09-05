@@ -27,4 +27,8 @@ describe("financialQueryRefresh utilization preference", () => {
   it("includes account-payoff in financial mutation prefixes", () => {
     expect(source).toMatch(/\["account-payoff"\]/);
   });
+
+  it("refetches future-posted transactions after a financial edit", () => {
+    expect(source).toMatch(/\["transactions", "future-posted"\]/);
+  });
 });

@@ -70,3 +70,18 @@ export function destinationCardOwedAmount(args: {
   }
   return null;
 }
+
+/**
+ * Dated transfer/card-payment preview only. Never falls back to a current or
+ * starting account balance — those are not future projected balances.
+ */
+export function projectedCardOwedFromPreview(args: {
+  previewOwedBefore?: string | number | null;
+  previewDestSignedBefore?: string | number | null;
+}): number | null {
+  const fromPreviewOwed = positiveOwed(parsePreviewMoney(args.previewOwedBefore));
+  if (fromPreviewOwed != null) return fromPreviewOwed;
+  const signed = parsePreviewMoney(args.previewDestSignedBefore);
+  if (signed != null) return signed < 0 ? Math.abs(signed) : 0;
+  return null;
+}

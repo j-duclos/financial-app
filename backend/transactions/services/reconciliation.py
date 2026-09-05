@@ -623,8 +623,10 @@ def sync_reconciled_ledger_integrity(
     """
     Repair reconciled flags and hide re-imported Plaid duplicates.
 
-    Read paths (timeline, reconcile setup) must NOT call seal — reconciled rows are immutable.
-    Unsealing surplus auto-sealed leftovers is safe on read paths (restores editability).
+    Read paths (timeline, reconcile setup, previews) must NOT call this.
+
+    Unsealing surplus auto-sealed leftovers is an administrative repair only
+    (``sync_reconciled_ledger`` management command).
     seal_closed_period: only True from explicit reconcile-complete or the management command.
     """
     from .matching import (
@@ -830,9 +832,8 @@ def get_setup_data(
     start: Optional[date] = None,
     end: Optional[date] = None,
 ) -> dict[str, Any]:
+    """Read-only reconcile setup. Must not create, update, or delete financial records."""
     as_of = _as_of_date(as_of)
-    # Restore editability for leftovers incorrectly locked by seal-all (safe on read).
-    unseal_surplus_reconciled_beyond_session_count(account)
     prev = last_completed_reconciliation(account)
     last_period_end = last_reconcile_period_end(account)
     starting = (

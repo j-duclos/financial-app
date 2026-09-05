@@ -6,7 +6,11 @@ from transactions.services.reconciliation import sync_reconciled_ledger_integrit
 
 
 class Command(BaseCommand):
-    help = "Seal closed-statement rows as reconciled and fix match-leg flags for one or all accounts."
+    help = (
+        "Administrative ledger repair: unseal surplus auto-sealed leftovers, restore "
+        "reconciled flags from session entries, and optionally seal closed-statement rows. "
+        "Do not run from page loads or previews."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(

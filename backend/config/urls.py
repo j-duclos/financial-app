@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/recommendations/", include("recommendations.urls")),
     path("api/credit-cards/", include("credit_cards.urls")),
     path("api/bills/", include("bills.urls")),
+    path("api/affordability/", include("affordability.urls")),
     path("api/", include("goals.urls")),
     path("api/", include("plaid_link.urls")),
 ]

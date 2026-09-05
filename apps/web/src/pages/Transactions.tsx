@@ -84,6 +84,11 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
 import { refreshAfterTransactionEdit } from "../lib/financialQueryRefresh";
+import { collectPaginatedResults } from "../lib/collectPaginatedResults";
+import {
+  projectedPreviewViewState,
+  projectedTransferBalancesViewState,
+} from "../lib/projectedBalancePreview";
 import {
   loadStoredTransactionsAccountId,
   saveStoredTransactionsAccountId,
@@ -97,7 +102,7 @@ import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
-import { transferPreviewAccountIds, destinationCardOwedAmount } from "../lib/transferPreviewAccounts";
+import { transferPreviewAccountIds } from "../lib/transferPreviewAccounts";
 
 export type { TimeFilter, ForecastRange };
 
@@ -385,15 +390,20 @@ export default function Transactions() {
       upcomingRange.end,
       hideReconciledPast,
     ],
-    queryFn: () =>
-      listTransactions({
-        account: accountId as number,
-        date_after: addDaysToIsoDate(todayStr(), 1),
-        date_before: upcomingRange.end,
-        page_size: WEB_LEDGER_PAGE_SIZE,
-        ordering: "date,id",
-        ...(hideReconciledPast ? { reconciled: false } : { show_reconciled: true }),
-      }),
+    queryFn: async () => {
+      const results = await collectPaginatedResults((page) =>
+        listTransactions({
+          account: accountId as number,
+          date_after: addDaysToIsoDate(todayStr(), 1),
+          date_before: upcomingRange.end,
+          page,
+          page_size: WEB_LEDGER_PAGE_SIZE,
+          ordering: "date,id",
+          ...(hideReconciledPast ? { reconciled: false } : { show_reconciled: true }),
+        })
+      );
+      return { results };
+    },
     enabled: typeof accountId === "number" && !!upcomingRange.end,
     staleTime: 15_000,
     refetchOnWindowFocus: false,
@@ -633,28 +643,24 @@ export default function Transactions() {
     enabled: isTransferCategory && inlineTransferToId != null && typeof accountId === "number",
   });
 
-  const { data: destCardAccount, isFetching: destCardAccountLoading } = useQuery({
-    queryKey: ["account", inlinePayToCardAccountId, "transactions-cc-dest"],
-    queryFn: () => getAccount(inlinePayToCardAccountId as number, true),
-    enabled: inlinePayToCardAccountId != null,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    placeholderData: inlineDestPickAccount ?? undefined,
-  });
-
-  const inlineOwedAsOfPaymentDate = destinationCardOwedAmount({
+  const inlineCardPreviewView = projectedPreviewViewState({
+    previewActive: inlinePayToCardAccountId != null,
+    queryMatchesLiveInputs: inlineTransferPreview.queryMatchesLiveInputs,
+    isFetching: inlineTransferPreview.isFetching,
+    isError: inlineTransferPreview.isError,
+    errorMessage: inlineTransferPreview.errorMessage,
     previewOwedBefore: inlineTransferPreview.data?.destination_balance_owed_before,
     previewDestSignedBefore: inlineTransferPreview.data?.destination_balance_before,
-    destinationAccount: destCardAccount ?? inlineDestPickAccount,
   });
-  const inlineBankDestBalanceBefore =
-    inlineTransferPreview.data?.destination_balance_before ?? null;
-  const inlineBankDestBalanceAfter =
-    inlineTransferPreview.data?.destination_balance_after ?? null;
-  const inlineTransferPreviewLoading =
-    inlineOwedAsOfPaymentDate == null &&
-    ((inlineTransferPreview.isFetching && !inlineTransferPreview.data) ||
-      (inlinePayToCardAccountId != null && destCardAccountLoading));
+  const inlineBankPreviewView = projectedTransferBalancesViewState({
+    previewActive: inlineBankTransferDestId != null,
+    queryMatchesLiveInputs: inlineTransferPreview.queryMatchesLiveInputs,
+    isFetching: inlineTransferPreview.isFetching,
+    isError: inlineTransferPreview.isError,
+    errorMessage: inlineTransferPreview.errorMessage,
+    balanceBefore: inlineTransferPreview.data?.destination_balance_before,
+    balanceAfter: inlineTransferPreview.data?.destination_balance_after,
+  });
 
   const editCategory = useMemo(
     () => (editForm.category_id ? categories.find((c) => c.id === editForm.category_id) : null),
@@ -803,31 +809,24 @@ export default function Transactions() {
     enabled: Boolean(editing && editTransferCounterpartyId != null),
   });
 
-  const { data: editDestCardAccount, isFetching: editDestCardAccountLoading } = useQuery({
-    queryKey: ["account", editPayToCardId, "transactions-cc-dest"],
-    queryFn: () => getAccount(editPayToCardId as number, true),
-    enabled: editPayToCardId != null,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    placeholderData: editDestinationAccount ?? undefined,
-  });
-
-  /** Debt on the card as of the payment date, excluding this transfer (canonical preview). */
-  const editOwedAsOfPaymentDate = destinationCardOwedAmount({
+  const editCardPreviewView = projectedPreviewViewState({
+    previewActive: editPayToCardId != null,
+    queryMatchesLiveInputs: editTransferPreview.queryMatchesLiveInputs,
+    isFetching: editTransferPreview.isFetching,
+    isError: editTransferPreview.isError,
+    errorMessage: editTransferPreview.errorMessage,
     previewOwedBefore: editTransferPreview.data?.destination_balance_owed_before,
     previewDestSignedBefore: editTransferPreview.data?.destination_balance_before,
-    destinationAccount: editDestCardAccount ?? editDestinationAccount,
   });
-  const editOwedLoading =
-    editOwedAsOfPaymentDate == null &&
-    ((editTransferPreview.isFetching && !editTransferPreview.data) ||
-      (editPayToCardId != null && editDestCardAccountLoading));
-
-  const editBankDestBalanceExcludingTransfer =
-    editTransferPreview.data?.destination_balance_before ?? null;
-
-  const editBankDestBalanceAfterTransfer =
-    editTransferPreview.data?.destination_balance_after ?? null;
+  const editBankPreviewView = projectedTransferBalancesViewState({
+    previewActive: editBankTransferDestId != null,
+    queryMatchesLiveInputs: editTransferPreview.queryMatchesLiveInputs,
+    isFetching: editTransferPreview.isFetching,
+    isError: editTransferPreview.isError,
+    errorMessage: editTransferPreview.errorMessage,
+    balanceBefore: editTransferPreview.data?.destination_balance_before,
+    balanceAfter: editTransferPreview.data?.destination_balance_after,
+  });
 
   const editAccounts = useMemo(() => {
     if (!editing) return [];
@@ -2160,12 +2159,11 @@ export default function Transactions() {
             isPending={createMu.isPending || createTransferMu.isPending}
             currency={currency}
             inlinePayToCardAccountId={inlinePayToCardAccountId}
-            inlineTransferPreviewLoading={inlineTransferPreviewLoading}
-            inlineOwedAsOfPaymentDate={inlineOwedAsOfPaymentDate}
+            inlineCardPreviewView={inlineCardPreviewView}
+            inlineBankPreviewView={inlineBankPreviewView}
+            onRetryPreview={() => inlineTransferPreview.refetch()}
             inlineBankTransferDestId={inlineBankTransferDestId}
             inlineDestPickAccount={inlineDestPickAccount}
-            inlineBankDestBalanceBefore={inlineBankDestBalanceBefore}
-            inlineBankDestBalanceAfter={inlineBankDestBalanceAfter}
             cardCurrency={accounts.find((a) => a.id === inlinePayToCardAccountId)?.currency}
           />
           </div>
@@ -2382,18 +2380,27 @@ export default function Transactions() {
                   <div className="text-xs font-medium text-gray-700">
                     Projected balance owed on card (as of {formatDateDisplay(editForm.date)})
                   </div>
-                  {Number.isFinite(editOwedAsOfPaymentDate) ? (
+                  {editCardPreviewView.kind === "ready" ? (
                     <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">
                       {formatCurrency(
-                        editOwedAsOfPaymentDate as number,
+                        editCardPreviewView.amount,
                         accounts.find((a) => a.id === editPayToCardId)?.currency ?? currency
                       )}
                     </p>
-                  ) : editOwedLoading ? (
-                    <p className="text-xs text-gray-500 mt-1">Loading…</p>
-                  ) : (
-                    <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">—</p>
-                  )}
+                  ) : editCardPreviewView.kind === "loading" ? (
+                    <p className="text-xs text-gray-500 mt-1">Calculating projected balance…</p>
+                  ) : editCardPreviewView.kind === "error" ? (
+                    <p className="text-xs text-red-700 mt-1">
+                      {editCardPreviewView.message}{" "}
+                      <button
+                        type="button"
+                        onClick={() => editTransferPreview.refetch()}
+                        className="underline"
+                      >
+                        Retry
+                      </button>
+                    </p>
+                  ) : null}
                   <p className="text-[11px] text-gray-500 mt-1">
                     From the card’s timeline on or before this date. This transfer is excluded so the amount
                     reflects what you still owe besides this payment.
@@ -2406,43 +2413,47 @@ export default function Transactions() {
                     {editDestinationAccount?.name ?? "Destination"} — balance on{" "}
                     {formatDateDisplay(editForm.date)} (from your timeline)
                   </div>
-                  {editTransferPreview.isFetching && !editTransferPreview.data ? (
-                    <p className="text-xs text-gray-500 mt-1">Loading…</p>
-                  ) : (
+                  {editBankPreviewView.kind === "loading" ? (
+                    <p className="text-xs text-gray-500 mt-1">Calculating projected balance…</p>
+                  ) : editBankPreviewView.kind === "error" ? (
+                    <p className="text-xs text-red-700 mt-1">
+                      {editBankPreviewView.message}{" "}
+                      <button
+                        type="button"
+                        onClick={() => editTransferPreview.refetch()}
+                        className="underline"
+                      >
+                        Retry
+                      </button>
+                    </p>
+                  ) : editBankPreviewView.kind === "ready" ? (
                     <>
                       <div className="mt-2 space-y-1">
                         <div className="text-[11px] text-gray-600">Current (this transfer excluded)</div>
                         <p className="text-sm font-medium text-slate-900 tabular-nums">
-                          {editBankDestBalanceExcludingTransfer != null
-                            ? formatCurrency(
-                                String(editBankDestBalanceExcludingTransfer),
-                                editDestinationAccount?.currency ?? currency
-                              )
-                            : "—"}
+                          {formatCurrency(
+                            editBankPreviewView.before,
+                            editDestinationAccount?.currency ?? currency
+                          )}
                         </p>
                       </div>
                       <div className="mt-2 space-y-1 pt-2 border-t border-slate-200/80">
                         <div className="text-[11px] text-gray-600">Projected after this transfer</div>
                         <p
                           className={`text-base font-semibold tabular-nums ${
-                            editBankDestBalanceAfterTransfer != null &&
-                            editBankDestBalanceExcludingTransfer != null
-                              ? editBankDestBalanceAfterTransfer >= editBankDestBalanceExcludingTransfer
-                                ? "text-emerald-800"
-                                : "text-amber-900"
-                              : "text-slate-900"
+                            Number(editBankPreviewView.after) >= Number(editBankPreviewView.before)
+                              ? "text-emerald-800"
+                              : "text-amber-900"
                           }`}
                         >
-                          {editBankDestBalanceAfterTransfer != null
-                            ? formatCurrency(
-                                String(editBankDestBalanceAfterTransfer),
-                                editDestinationAccount?.currency ?? currency
-                              )
-                            : "—"}
+                          {formatCurrency(
+                            editBankPreviewView.after,
+                            editDestinationAccount?.currency ?? currency
+                          )}
                         </p>
                       </div>
                     </>
-                  )}
+                  ) : null}
                   <p className="text-[11px] text-gray-500 mt-2">
                     Scheduled activity on or before this date is included. The first line is the other account’s balance
                     without this transfer. The second applies it: <strong>Out</strong> from the account above means the

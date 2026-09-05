@@ -2331,3 +2331,237 @@ export interface UpcomingChargeNotification {
   created_at: string;
   read_at: string | null;
 }
+
+/** Organizational labels only; inclusion is user-controlled. */
+export const DTI_INCOME_TYPES = [
+  "employment",
+  "self_employment",
+  "contract",
+  "rental",
+  "retirement",
+  "social_security",
+  "disability",
+  "alimony",
+  "child_support",
+  "other",
+] as const;
+export type DtiIncomeType = (typeof DTI_INCOME_TYPES)[number];
+
+export const DTI_DEBT_TYPES = [
+  "credit_card",
+  "auto_loan",
+  "student_loan",
+  "mortgage",
+  "home_equity",
+  "personal_loan",
+  "installment_loan",
+  "alimony",
+  "child_support",
+  "other",
+] as const;
+export type DtiDebtType = (typeof DTI_DEBT_TYPES)[number];
+
+export const DTI_PAYMENT_SOURCES = ["manual", "linked_account_minimum"] as const;
+export type DtiPaymentSource = (typeof DTI_PAYMENT_SOURCES)[number];
+
+export type DtiCalculationStatus = "calculated" | "gross_income_required";
+
+export interface DtiCalculationWarning {
+  code: string;
+  message: string;
+  debt_item_id?: number | null;
+  linked_account_id?: number | null;
+}
+
+export interface DtiLinkedAccountRef {
+  id: number;
+  name: string;
+  effective_display_name: string;
+  account_type: AccountType;
+  status: string;
+  minimum_payment_amount: string | null;
+}
+
+export interface DtiProfile {
+  id: number | null;
+  household_id: number;
+  /** Planning target (%). User-editable; not an approval limit. Decimal string. */
+  target_back_end_dti_percent: string;
+  /** Optional planning target (%). Decimal string, or null when unused. */
+  target_front_end_dti_percent: string | null;
+  current_housing_payment: string;
+  current_housing_label: string;
+  include_current_housing_in_current_dti: boolean;
+  is_saved: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DtiProfileWritePayload {
+  target_back_end_dti_percent?: string;
+  target_front_end_dti_percent?: string | null;
+  current_housing_payment?: string;
+  current_housing_label?: string;
+  include_current_housing_in_current_dti?: boolean;
+}
+
+export interface DtiIncomeSource {
+  id: number;
+  household_id: number;
+  name: string;
+  gross_monthly_amount: string;
+  income_type: DtiIncomeType;
+  included: boolean;
+  notes: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DtiIncomeSourceWritePayload {
+  household_id: number;
+  name: string;
+  gross_monthly_amount: string;
+  income_type?: DtiIncomeType;
+  included?: boolean;
+  notes?: string;
+  position?: number;
+}
+
+export interface DtiDebtItem {
+  id: number;
+  household_id: number;
+  name: string;
+  debt_type: DtiDebtType;
+  monthly_payment: string;
+  payment_source: DtiPaymentSource;
+  effective_monthly_payment: string;
+  outstanding_balance: string | null;
+  linked_account_id: number | null;
+  linked_account: DtiLinkedAccountRef | null;
+  included: boolean;
+  months_remaining: number | null;
+  notes: string;
+  position: number;
+  warnings?: DtiCalculationWarning[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DtiDebtItemWritePayload {
+  household_id: number;
+  name: string;
+  debt_type?: DtiDebtType;
+  monthly_payment?: string;
+  outstanding_balance?: string | null;
+  linked_account_id?: number | null;
+  payment_source?: DtiPaymentSource;
+  included?: boolean;
+  months_remaining?: number | null;
+  notes?: string;
+  position?: number;
+}
+
+export interface DtiProposedHousingInput {
+  principal_and_interest?: string;
+  property_taxes?: string;
+  homeowners_insurance?: string;
+  mortgage_insurance?: string;
+  hoa_dues?: string;
+  other_required_housing_costs?: string;
+}
+
+export interface DtiProposedHousingBreakdown extends Required<DtiProposedHousingInput> {
+  total: string;
+}
+
+export interface DtiCalculationRequest {
+  household_id: number;
+  proposed_housing?: DtiProposedHousingInput | null;
+  target_back_end_dti_percent?: string;
+  target_front_end_dti_percent?: string | null;
+  excluded_debt_item_ids?: number[];
+}
+
+export interface DtiCalculationInputs {
+  gross_monthly_income: string;
+  current_housing_payment: string;
+  non_housing_monthly_debt: string;
+  target_back_end_dti_percent: string;
+  target_front_end_dti_percent: string | null;
+}
+
+export interface DtiBucketResult {
+  front_end_dti_percent: string | null;
+  back_end_dti_percent: string | null;
+  total_monthly_obligations: string;
+  remaining_capacity_at_target: string;
+  amount_over_target: string;
+  housing?: DtiProposedHousingBreakdown;
+}
+
+export interface DtiCapacityResult {
+  /** Planning estimate at the selected target DTI; not an approved mortgage payment. */
+  target_total_obligation_capacity: string;
+  max_proposed_housing_payment_at_target: string;
+}
+
+export interface DtiPayoffImpact {
+  debt_item_id: number | null;
+  name: string;
+  effective_monthly_payment: string;
+  current_back_end_dti: string | null;
+  back_end_dti_after_payoff: string | null;
+  dti_reduction_percentage_points: string | null;
+  additional_housing_capacity_at_target: string;
+  linked_account_id: number | null;
+  warnings: DtiCalculationWarning[];
+}
+
+export interface DtiCreditCardSuggestion {
+  account_id: number;
+  name: string;
+  effective_display_name: string;
+  current_balance: string;
+  minimum_payment_amount: string | null;
+  minimum_payment_usable: boolean;
+  suggested_debt_type: DtiDebtType;
+}
+
+export interface DtiCalculationResponse {
+  household_id: number;
+  status: DtiCalculationStatus;
+  inputs: DtiCalculationInputs;
+  current: DtiBucketResult;
+  proposed: DtiBucketResult | null;
+  capacity: DtiCapacityResult;
+  income_sources: Array<
+    Pick<
+      DtiIncomeSource,
+      "id" | "name" | "gross_monthly_amount" | "income_type" | "included" | "notes" | "position"
+    >
+  >;
+  debt_items: Array<
+    Pick<
+      DtiDebtItem,
+      | "id"
+      | "name"
+      | "debt_type"
+      | "monthly_payment"
+      | "payment_source"
+      | "effective_monthly_payment"
+      | "outstanding_balance"
+      | "linked_account_id"
+      | "linked_account"
+      | "included"
+      | "months_remaining"
+      | "notes"
+      | "position"
+    > & { warnings?: DtiCalculationWarning[] }
+  >;
+  payoff_impacts: DtiPayoffImpact[];
+  credit_card_suggestions?: DtiCreditCardSuggestion[];
+  warnings: DtiCalculationWarning[];
+  disclaimer: string;
+}
+

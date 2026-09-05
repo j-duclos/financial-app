@@ -103,6 +103,7 @@ INSTALLED_APPS = [
     "bills",
     "credit_cards",
     "recommendations",
+    "affordability",
 ]
 
 MIDDLEWARE = [
