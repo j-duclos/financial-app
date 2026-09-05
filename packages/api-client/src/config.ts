@@ -193,14 +193,24 @@ async function requestInner<T>(
             ? (j.detail as string[]).join(" ")
             : undefined;
       const fieldParts: string[] = [];
+      const pushField = (fieldKey: string, val: unknown) => {
+        if (Array.isArray(val) && val.every((x) => typeof x === "string"))
+          fieldParts.push(`${fieldKey}: ${(val as string[]).join(" ")}`);
+        else if (typeof val === "string") fieldParts.push(`${fieldKey}: ${val}`);
+      };
       for (const [key, val] of Object.entries(j)) {
         if (key === "detail" || key === "message" || key === "redirect_uri_sent") continue;
-        if (Array.isArray(val) && val.every((x) => typeof x === "string"))
-          fieldParts.push(`${key}: ${(val as string[]).join(" ")}`);
-        else if (typeof val === "string") fieldParts.push(`${key}: ${val}`);
+        if (key === "errors" && val && typeof val === "object" && !Array.isArray(val)) {
+          for (const [fk, fv] of Object.entries(val as Record<string, unknown>)) {
+            pushField(fk, fv);
+          }
+          continue;
+        }
+        pushField(key, val);
       }
       const fieldStr = fieldParts.length > 0 ? fieldParts.join("; ") : "";
-      detail = detailStr ?? j.message ?? fieldStr ?? text;
+      const head = detailStr ?? j.message;
+      detail = [head, fieldStr].filter(Boolean).join(" — ") || text;
       if (typeof j.redirect_uri_sent === "string" && j.redirect_uri_sent.trim() !== "") {
         detail = `${detail}\n\nPlaid allowlist — add this exact URL (Developers → API): ${j.redirect_uri_sent.trim()}`;
       }

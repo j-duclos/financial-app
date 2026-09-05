@@ -100,6 +100,27 @@ describe("What-If context from Planning", () => {
     expect(a).toBe(b);
   });
 
+  it("input stamp includes guided strategy identity so comparison cannot reuse a prior configuration", () => {
+    const withoutGuided = scenarioInputStamp({
+      scenarioUpdatedAt: "a",
+      overrides: [],
+    });
+    const withGuided = scenarioInputStamp({
+      scenarioUpdatedAt: "a",
+      overrides: [],
+      guidedStrategy: { id: 9, updated_at: "2026-09-04T01:00:00Z" },
+    });
+    const updatedGuided = scenarioInputStamp({
+      scenarioUpdatedAt: "a",
+      overrides: [],
+      guidedStrategy: { id: 9, updated_at: "2026-09-04T02:00:00Z" },
+    });
+    expect(whatIfWebQueryKeys.guidedStrategy(12)).toEqual(["scenario-guided-strategy", 12]);
+    expect(withGuided).not.toBe(withoutGuided);
+    expect(updatedGuided).not.toBe(withGuided);
+    expect(queryKeysSource).toMatch(/guidedStrategy:/);
+  });
+
   it("scenario templates contain no invented production financial amounts", () => {
     const templates = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../lib/scenarioTemplates.ts"),
@@ -137,5 +158,75 @@ describe("What-If context from Planning", () => {
     );
     expect(payDownSource).toMatch(/override_active:\s*null/);
     expect(payDownSource).not.toMatch(/override_active:\s*true as const/);
+  });
+});
+
+describe("What-If guided Debt first vs. save first", () => {
+  const wizardSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../components/scenarios/guided/GuidedStrategyWizard.tsx"),
+    "utf8"
+  );
+  const resultsSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../components/scenarios/guided/GuidedStrategyResults.tsx"),
+    "utf8"
+  );
+  const cardSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../components/scenarios/guided/GuidedStrategyCard.tsx"),
+    "utf8"
+  );
+
+  it("keeps the manual What-If builder available as advanced changes", () => {
+    expect(scenariosSource).toMatch(/Advanced changes/);
+    expect(scenariosSource).toMatch(/Build your own/);
+    expect(scenariosSource).toMatch(/PlanAddToolbar/);
+    expect(scenariosSource).toMatch(/Add Income Change/);
+    expect(scenariosSource).toMatch(/Add Expense Change/);
+    expect(scenariosSource).toMatch(/Pay down debt/);
+    expect(scenariosSource).toMatch(/Transfer money/);
+    expect(scenariosSource).toMatch(/Add Recurring Payment/);
+  });
+
+  it("treats GET 404 as not configured and stamps guided identity into comparison", () => {
+    expect(scenariosSource).toMatch(/fetchScenarioGuidedStrategyOrNull|useScenarioGuidedStrategy/);
+    expect(scenariosSource).toMatch(/guidedStrategy:/);
+    expect(scenariosSource).toMatch(/comparisonMatchesGuidedStrategy/);
+    expect(scenariosSource).toMatch(/planHasHypotheticalChanges/);
+  });
+
+  it("counts a configured guided strategy as a plan change", () => {
+    expect(scenariosSource).toMatch(/GUIDED_PLAN_CHANGE_TITLE/);
+    expect(scenariosSource).toMatch(/No hypothetical changes yet/);
+    expect(scenariosSource).toMatch(/planHasHypotheticalChanges\(planIncludes\.length, guidedStrategy\)/);
+  });
+
+  it("does not auto-save a guided strategy when a plan is created", () => {
+    expect(scenariosSource).not.toMatch(/createScenarioMu[\s\S]*saveScenarioGuidedStrategy/m);
+    expect(scenariosSource).toMatch(/onSuccess: \(s\) => \{[\s\S]*setSelectedScenarioId\(s\.id\)/m);
+  });
+
+  it("uses accessible custom ordering without requiring drag-and-drop", () => {
+    expect(wizardSource).toMatch(/Move up/);
+    expect(wizardSource).toMatch(/Move down/);
+    expect(wizardSource).toMatch(/aria-label=\{`Move \$\{getEffectiveDisplayName\(account\)\} up`\}/);
+    expect(wizardSource).not.toMatch(/onDragStart/);
+  });
+
+  it("labels wizard fields and keeps the decision columns stacked on small screens", () => {
+    expect(wizardSource).toMatch(/htmlFor="guided-source-account"/);
+    expect(wizardSource).toMatch(/htmlFor="guided-savings-account"/);
+    expect(wizardSource).toMatch(/htmlFor="guided-start-date"/);
+    expect(wizardSource).toMatch(/htmlFor="guided-cash-buffer"/);
+    expect(wizardSource).toMatch(/htmlFor="guided-allocation"/);
+    expect(wizardSource).toMatch(/role="dialog"/);
+    expect(resultsSource).toMatch(/grid-cols-1 md:grid-cols-2/);
+    expect(resultsSource).toMatch(/Keep saving/);
+    expect(resultsSource).toMatch(/Pay debt first/);
+    expect(resultsSource).toMatch(/netPositionBreakEvenCopy/);
+    expect(resultsSource).toMatch(/savingsBalanceCatchUpCopy/);
+    expect(resultsSource).toMatch(/Not within this forecast/);
+    expect(cardSource).toMatch(/Compare strategies/);
+    expect(cardSource).toMatch(/View comparison/);
+    expect(cardSource).toMatch(/Edit strategy/);
+    expect(cardSource).toMatch(/Remove strategy/);
   });
 });
