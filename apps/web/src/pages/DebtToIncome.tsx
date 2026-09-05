@@ -42,6 +42,7 @@ import {
   debtRowView,
   formatDtiMoney,
   formatDtiPercent,
+  formatPercentPointChange,
   groupDtiWarnings,
   isZeroMoney,
   payoffImpactSentence,
@@ -120,7 +121,8 @@ export default function DebtToIncome() {
   const listsReady =
     !!householdId && profileQuery.isSuccess && incomeQuery.isSuccess && debtQuery.isSuccess;
 
-  const baselineKey = dtiCalculationInputsKey(
+  const currentKey = dtiCalculationInputsKey(null, []);
+  const proposedKey = dtiCalculationInputsKey(
     appliedProposed ? proposedHousingPayloadForRequest(appliedProposed) : null,
     []
   );
@@ -129,8 +131,20 @@ export default function DebtToIncome() {
     excludedDebtIds
   );
 
-  const baselineQuery = useQuery({
-    queryKey: dtiQueryKeys.calculation(householdId ?? 0, baselineKey),
+  const currentQuery = useQuery({
+    queryKey: dtiQueryKeys.calculation(householdId ?? 0, currentKey),
+    queryFn: () =>
+      calculateDti(
+        buildDtiCalculationRequest({
+          householdId: householdId!,
+          proposedHousing: null,
+          excludedDebtItemIds: [],
+        })
+      ),
+    enabled: listsReady,
+  });
+  const proposedQuery = useQuery({
+    queryKey: dtiQueryKeys.calculation(householdId ?? 0, proposedKey),
     queryFn: () =>
       calculateDti(
         buildDtiCalculationRequest({
@@ -139,7 +153,7 @@ export default function DebtToIncome() {
           excludedDebtItemIds: [],
         })
       ),
-    enabled: listsReady,
+    enabled: listsReady && !!appliedProposed,
   });
   const combinedQuery = useQuery({
     queryKey: dtiQueryKeys.calculation(householdId ?? 0, combinedKey),
@@ -154,7 +168,7 @@ export default function DebtToIncome() {
     enabled: listsReady && excludedDebtIds.length > 0,
   });
 
-  const calc = baselineQuery.data;
+  const calc = currentQuery.data;
   const combined = combinedQuery.data;
   const profile = profileQuery.data;
   const incomes = incomeQuery.data ?? [];
@@ -268,18 +282,37 @@ export default function DebtToIncome() {
 
   const loadingLists =
     !!householdId &&
-    (profileQuery.isLoading || incomeQuery.isLoading || debtQuery.isLoading || baselineQuery.isLoading);
+    (profileQuery.isLoading || incomeQuery.isLoading || debtQuery.isLoading || currentQuery.isLoading);
   const loadError =
-    profileQuery.isError || incomeQuery.isError || debtQuery.isError || baselineQuery.isError;
+    profileQuery.isError || incomeQuery.isError || debtQuery.isError || currentQuery.isError;
   const showPercents = calc?.status === "calculated";
-  const proposedResult = appliedProposed ? calc?.proposed ?? null : null;
+  const proposedBusy = Boolean(appliedProposed) && proposedQuery.isFetching;
+  const proposedResult =
+    appliedProposed && proposedQuery.data?.proposed && !proposedBusy
+      ? proposedQuery.data.proposed
+      : null;
+  const proposedMode = Boolean(proposedResult);
+  const meterBackPercent = proposedMode
+    ? proposedResult?.back_end_dti_percent
+    : showPercents
+      ? calc?.current.back_end_dti_percent
+      : null;
+  const meterFrontPercent = proposedMode
+    ? proposedResult?.front_end_dti_percent
+    : showPercents
+      ? calc?.current.front_end_dti_percent
+      : null;
   const backComparison = compareActualToTarget(
-    showPercents ? calc?.current.back_end_dti_percent : null,
+    meterBackPercent,
     calc?.inputs.target_back_end_dti_percent
   );
   const frontComparison = compareActualToTarget(
-    showPercents ? calc?.current.front_end_dti_percent : null,
+    meterFrontPercent,
     calc?.inputs.target_front_end_dti_percent
+  );
+  const backendChange = formatPercentPointChange(
+    calc?.current.back_end_dti_percent,
+    proposedResult?.back_end_dti_percent
   );
   const enteredProposedTotal = sumProposedHousingDraft(proposedDraft);
   const capacity = calc?.capacity.max_proposed_housing_payment_at_target;
@@ -291,7 +324,11 @@ export default function DebtToIncome() {
       return;
     }
     setProposedErrors({});
-    setAppliedProposed(result.payload);
+    const next = result.payload;
+    const sameRequest =
+      JSON.stringify(appliedProposed) === JSON.stringify(next);
+    setAppliedProposed(next);
+    if (sameRequest) void proposedQuery.refetch();
   }
   function clearProposedHousing() {
     setProposedDraft(emptyProposedHousingDraft());
@@ -350,7 +387,8 @@ export default function DebtToIncome() {
             void incomeQuery.refetch();
             void debtQuery.refetch();
             void suggestionQuery.refetch();
-            void baselineQuery.refetch();
+            void currentQuery.refetch();
+            void proposedQuery.refetch();
           }}
         />
       ) : null}
@@ -387,7 +425,9 @@ export default function DebtToIncome() {
           <div className="xl:grid xl:grid-cols-3 xl:gap-4 space-y-4 xl:space-y-0">
             <section className="xl:col-span-2 space-y-4">
               <h2 className="text-base font-semibold text-gray-900">DTI summary</h2>
-              <div className={METRIC_TILE_GRID_3}>
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-gray-800">Current plan</h3>
+                <div className={METRIC_TILE_GRID_3}>
                 <DashboardMetricTile
                   label="Gross monthly income"
                   value={formatDtiMoney(calc.inputs.gross_monthly_income)}
@@ -417,9 +457,21 @@ export default function DebtToIncome() {
                   value={showPercents ? formatDtiPercent(calc.current.back_end_dti_percent) : "Not available"}
                   subtitle="Housing plus other debt payments ÷ gross monthly income"
                 />
+                </div>
               </div>
+              {proposedBusy ? (
+                <p className="text-sm text-gray-600" aria-live="polite">
+                  Updating proposed home calculation…
+                </p>
+              ) : null}
               {proposedResult ? (
-                <div className={METRIC_TILE_GRID_4}>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Proposed home</h3>
+                  <p className="text-sm text-gray-600">
+                    Proposed housing replaces current housing for this comparison. It is not added on
+                    top of the current housing payment.
+                  </p>
+                  <div className={METRIC_TILE_GRID_4}>
                   <DashboardMetricTile
                     label="Proposed total housing payment"
                     value={formatDtiMoney(proposedResult.housing?.total)}
@@ -436,27 +488,31 @@ export default function DebtToIncome() {
                   />
                   <DashboardMetricTile
                     label="Change from current back-end DTI"
-                    value={
-                      showPercents &&
-                      calc.current.back_end_dti_percent &&
-                      proposedResult.back_end_dti_percent
-                        ? `${calc.current.back_end_dti_percent}% → ${proposedResult.back_end_dti_percent}%`
-                        : "Not available"
-                    }
+                    value={backendChange.label}
+                    subtitle={backendChange.subtitle ?? undefined}
                   />
+                  </div>
                 </div>
               ) : null}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <TargetMeter
-                  label="Back-end DTI vs your selected target"
-                  actual={showPercents ? calc.current.back_end_dti_percent : null}
+                  label={
+                    proposedMode
+                      ? "Proposed back-end DTI vs your selected target"
+                      : "Current back-end DTI vs your selected target"
+                  }
+                  actual={meterBackPercent}
                   target={calc.inputs.target_back_end_dti_percent}
                   comparison={backComparison}
                 />
                 {calc.inputs.target_front_end_dti_percent ? (
                   <TargetMeter
-                    label="Front-end DTI vs your selected target"
-                    actual={showPercents ? calc.current.front_end_dti_percent : null}
+                    label={
+                      proposedMode
+                        ? "Proposed front-end DTI vs your selected target"
+                        : "Current front-end DTI vs your selected target"
+                    }
+                    actual={meterFrontPercent}
                     target={calc.inputs.target_front_end_dti_percent}
                     comparison={frontComparison}
                   />
@@ -509,30 +565,52 @@ export default function DebtToIncome() {
                 Enter the complete estimated monthly housing payment. This replaces your current housing payment for the proposed calculation.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                {PROPOSED_HOUSING_FIELDS.map((field) => (
-                  <label key={field} className="block text-sm">
-                    <span className="text-gray-700">{PROPOSED_FIELD_LABELS[field]}</span>
+                {PROPOSED_HOUSING_FIELDS.map((field) => {
+                  const fieldId = `dti-proposed-${field}`;
+                  const errorId = `${fieldId}-error`;
+                  const error = proposedErrors[field];
+                  return (
+                  <div key={field} className="block text-sm">
+                    <label htmlFor={fieldId} className="text-gray-700">
+                      {PROPOSED_FIELD_LABELS[field]}
+                    </label>
                     <input
+                      id={fieldId}
                       value={proposedDraft[field]}
                       onChange={(e) =>
                         setProposedDraft((draft) => ({ ...draft, [field]: e.target.value }))
                       }
                       inputMode="decimal"
                       className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm min-h-[44px]"
-                      aria-invalid={Boolean(proposedErrors[field])}
+                      aria-invalid={Boolean(error)}
+                      aria-describedby={error ? errorId : undefined}
                     />
-                    {proposedErrors[field] ? (
-                      <p className="mt-1 text-xs text-red-600" role="alert">
-                        {proposedErrors[field]}
+                    {error ? (
+                      <p id={errorId} className="mt-1 text-xs text-red-600" role="alert">
+                        {error}
                       </p>
                     ) : null}
-                  </label>
-                ))}
+                  </div>
+                  );
+                })}
               </div>
               <p className="text-sm text-gray-700">
                 Entered total: {formatCurrency(enteredProposedTotal)}
               </p>
-              {proposedResult?.housing ? (
+              {proposedBusy ? (
+                <p className="text-sm text-gray-600" aria-live="polite">
+                  Updating proposed home calculation…
+                </p>
+              ) : null}
+              {appliedProposed && proposedQuery.isError && !proposedBusy ? (
+                <MutationAlert
+                  message="Could not calculate the proposed home payment."
+                  onRetry={() => {
+                    void proposedQuery.refetch();
+                  }}
+                />
+              ) : null}
+              {proposedResult?.housing && !proposedBusy ? (
                 <p className="text-sm font-medium text-gray-900">
                   Proposed total housing payment: {formatDtiMoney(proposedResult.housing.total)}
                 </p>
@@ -546,9 +624,10 @@ export default function DebtToIncome() {
                 <button
                   type="button"
                   onClick={applyProposedHousing}
-                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 min-h-[44px]"
+                  disabled={proposedBusy}
+                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 min-h-[44px] disabled:opacity-50"
                 >
-                  Calculate
+                  {proposedBusy ? "Calculating…" : "Calculate"}
                 </button>
                 <button
                   type="button"
@@ -611,23 +690,53 @@ export default function DebtToIncome() {
                       </button>
                       <button
                         type="button"
-                        className="text-sm text-red-700 hover:underline min-h-[44px]"
+                        className="text-sm text-red-700 hover:underline min-h-[44px] disabled:opacity-50"
+                        disabled={incomeDeleteMu.isPending && incomeDeleteMu.variables === row.id}
                         onClick={() => {
+                          if (incomeDeleteMu.isPending && incomeDeleteMu.variables === row.id) return;
                           if (window.confirm(`Delete income source "${row.name}"?`)) {
                             incomeDeleteMu.mutate(row.id);
                           }
                         }}
                       >
-                        Delete
+                        {incomeDeleteMu.isPending && incomeDeleteMu.variables === row.id
+                          ? "Deleting…"
+                          : "Delete"}
                       </button>
                     </div>
                   </li>
                 ))}
               </ul>
             )}
+            {!incomeToggleMu.isPending && incomeToggleMu.isError ? (
+              <MutationAlert
+                message="Could not update income inclusion."
+                onRetry={() => {
+                  if (incomeToggleMu.variables) incomeToggleMu.mutate(incomeToggleMu.variables);
+                }}
+              />
+            ) : null}
+            {!incomeDeleteMu.isPending && incomeDeleteMu.isError ? (
+              <MutationAlert
+                message="Could not delete income source."
+                onRetry={() => {
+                  if (incomeDeleteMu.variables != null) incomeDeleteMu.mutate(incomeDeleteMu.variables);
+                }}
+              />
+            ) : null}
           </section>
 
-          {suggestions.length > 0 ? (
+          {suggestionQuery.isError ? (
+            <section className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 space-y-2">
+              <h2 className="text-base font-semibold text-gray-900">Credit cards not yet included</h2>
+              <MutationAlert
+                message="Could not load credit-card suggestions."
+                onRetry={() => {
+                  void suggestionQuery.refetch();
+                }}
+              />
+            </section>
+          ) : suggestions.length > 0 ? (
             <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-3">
               <h2 className="text-base font-semibold text-gray-900">Credit cards not yet included</h2>
               <p className="text-sm text-gray-600">
@@ -698,6 +807,7 @@ export default function DebtToIncome() {
                           modeledPaidOff={excludedDebtIds.includes(row.id)}
                           warnings={warnings.byDebtId[row.id] ?? []}
                           toggling={debtToggleMu.isPending && debtToggleMu.variables?.id === row.id}
+                          deleting={debtDeleteMu.isPending && debtDeleteMu.variables === row.id}
                           onToggle={(included) => debtToggleMu.mutate({ id: row.id, included })}
                           onEdit={() => {
                             setEditingDebt(row);
@@ -706,6 +816,7 @@ export default function DebtToIncome() {
                             setDebtModalOpen(true);
                           }}
                           onDelete={() => {
+                            if (debtDeleteMu.isPending && debtDeleteMu.variables === row.id) return;
                             if (window.confirm(`Delete debt "${row.name}"?`)) {
                               debtDeleteMu.mutate(row.id);
                             }
@@ -784,14 +895,18 @@ export default function DebtToIncome() {
                         </button>
                         <button
                           type="button"
-                          className="text-sm text-red-700 hover:underline min-h-[44px]"
+                          className="text-sm text-red-700 hover:underline min-h-[44px] disabled:opacity-50"
+                          disabled={debtDeleteMu.isPending && debtDeleteMu.variables === row.id}
                           onClick={() => {
+                            if (debtDeleteMu.isPending && debtDeleteMu.variables === row.id) return;
                             if (window.confirm(`Delete debt "${row.name}"?`)) {
                               debtDeleteMu.mutate(row.id);
                             }
                           }}
                         >
-                          Delete
+                          {debtDeleteMu.isPending && debtDeleteMu.variables === row.id
+                            ? "Deleting…"
+                            : "Delete"}
                         </button>
                       </div>
                     </li>
@@ -800,6 +915,22 @@ export default function DebtToIncome() {
                 </ul>
               </>
             )}
+            {!debtToggleMu.isPending && debtToggleMu.isError ? (
+              <MutationAlert
+                message="Could not update debt inclusion."
+                onRetry={() => {
+                  if (debtToggleMu.variables) debtToggleMu.mutate(debtToggleMu.variables);
+                }}
+              />
+            ) : null}
+            {!debtDeleteMu.isPending && debtDeleteMu.isError ? (
+              <MutationAlert
+                message="Could not delete debt."
+                onRetry={() => {
+                  if (debtDeleteMu.variables != null) debtDeleteMu.mutate(debtDeleteMu.variables);
+                }}
+              />
+            ) : null}
           </section>
 
           <section className="space-y-3">
@@ -906,16 +1037,32 @@ export default function DebtToIncome() {
                 </p>
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   <div>
-                    <dt className="text-indigo-800">Current back-end DTI</dt>
+                    <dt className="text-indigo-800">
+                      {proposedMode
+                        ? "Proposed back-end DTI before selected payoffs"
+                        : "Current back-end DTI"}
+                    </dt>
                     <dd className="font-medium">
-                      {showPercents ? formatDtiPercent(calc.current.back_end_dti_percent) : "Not available"}
+                      {proposedMode
+                        ? formatDtiPercent(proposedResult?.back_end_dti_percent)
+                        : showPercents
+                          ? formatDtiPercent(calc.current.back_end_dti_percent)
+                          : "Not available"}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-indigo-800">Back-end DTI after selected payoffs</dt>
+                    <dt className="text-indigo-800">
+                      {proposedMode
+                        ? "Proposed back-end DTI after selected payoffs"
+                        : "Current back-end DTI after selected payoffs"}
+                    </dt>
                     <dd className="font-medium">
                       {combined.status === "calculated"
-                        ? formatDtiPercent(combined.current.back_end_dti_percent)
+                        ? formatDtiPercent(
+                            proposedMode
+                              ? combined.proposed?.back_end_dti_percent
+                              : combined.current.back_end_dti_percent
+                          )
                         : "Not available"}
                     </dd>
                   </div>
@@ -924,8 +1071,13 @@ export default function DebtToIncome() {
                     <dd className="font-medium">
                       {formatDtiMoney(
                         subtractMoneyStrings(
-                          calc.current.total_monthly_obligations,
-                          combined.current.total_monthly_obligations
+                          proposedMode
+                            ? proposedResult?.total_monthly_obligations ?? calc.current.total_monthly_obligations
+                            : calc.current.total_monthly_obligations,
+                          proposedMode
+                            ? combined.proposed?.total_monthly_obligations ??
+                              combined.current.total_monthly_obligations
+                            : combined.current.total_monthly_obligations
                         )
                       )}
                     </dd>
@@ -996,6 +1148,7 @@ export default function DebtToIncome() {
             saving={incomeSaveMu.isPending}
             error={incomeSaveMu.error}
             onClose={() => {
+              if (incomeSaveMu.isPending) return;
               setIncomeModalOpen(false);
               setEditingIncome(null);
             }}
@@ -1011,6 +1164,7 @@ export default function DebtToIncome() {
             saving={debtSaveMu.isPending}
             error={debtSaveMu.error}
             onClose={() => {
+              if (debtSaveMu.isPending) return;
               setDebtModalOpen(false);
               setEditingDebt(null);
               setDebtPrefill(null);
@@ -1022,7 +1176,10 @@ export default function DebtToIncome() {
             initial={profile ?? null}
             saving={profileSaveMu.isPending}
             error={profileSaveMu.error}
-            onClose={() => setProfileModalOpen(false)}
+            onClose={() => {
+              if (profileSaveMu.isPending) return;
+              setProfileModalOpen(false);
+            }}
             onSubmit={(payload) => profileSaveMu.mutate(payload)}
           />
         </>
@@ -1045,9 +1202,9 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+function MutationAlert({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" role="alert">
       <p className="text-sm text-red-600">{message}</p>
       <button
         type="button"
@@ -1058,6 +1215,10 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       </button>
     </div>
   );
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <MutationAlert message={message} onRetry={onRetry} />;
 }
 
 function TargetMeter({
@@ -1100,6 +1261,7 @@ function DebtTableRow({
   modeledPaidOff,
   warnings,
   toggling,
+  deleting,
   onToggle,
   onEdit,
   onDelete,
@@ -1108,6 +1270,7 @@ function DebtTableRow({
   modeledPaidOff: boolean;
   warnings: Array<{ code: string; message: string }>;
   toggling: boolean;
+  deleting: boolean;
   onToggle: (included: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1158,8 +1321,13 @@ function DebtTableRow({
         <button type="button" className="text-blue-700 hover:underline mr-3 min-h-[44px]" onClick={onEdit}>
           Edit
         </button>
-        <button type="button" className="text-red-700 hover:underline min-h-[44px]" onClick={onDelete}>
-          Delete
+        <button
+          type="button"
+          className="text-red-700 hover:underline min-h-[44px] disabled:opacity-50"
+          disabled={deleting}
+          onClick={onDelete}
+        >
+          {deleting ? "Deleting…" : "Delete"}
         </button>
       </td>
     </tr>

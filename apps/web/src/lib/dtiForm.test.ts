@@ -4,6 +4,7 @@ import {
   compareActualToTarget,
   debtRowView,
   formatDtiPercent,
+  formatPercentPointChange,
   groupDtiWarnings,
   rankPayoffImpactsByPayment,
 } from "./dtiDisplay";
@@ -14,6 +15,7 @@ import {
   normalizeMoneyInput,
   normalizePercentInput,
   normalizeProposedHousingDraft,
+  parseApiFieldErrors,
   subtractMoneyStrings,
   suggestionPrefill,
   sumProposedHousingDraft,
@@ -73,6 +75,7 @@ describe("dtiForm calculate request", () => {
   it("toggles payoff selection without mutating saved debt flags", () => {
     expect(toggleExcludedDebtItemId([4], 12)).toEqual([4, 12]);
     expect(toggleExcludedDebtItemId([4, 12], 12)).toEqual([4]);
+    expect(toggleExcludedDebtItemId([12, 4, 12], 8)).toEqual([4, 8, 12]);
   });
 });
 
@@ -134,6 +137,27 @@ describe("dtiDisplay", () => {
     expect(compareActualToTarget("29.81", "31.00").label).toBe("Within your selected target");
     expect(compareActualToTarget("49.20", "46.00").label).toContain("above your selected target");
     expect(compareActualToTarget(null, "36.00").status).toBe("unavailable");
+  });
+
+  it("formats signed percentage-point change from integer hundredths", () => {
+    expect(formatPercentPointChange("46.03", "49.25")).toEqual({
+      label: "+3.22 percentage points",
+      subtitle: "46.03% → 49.25%",
+    });
+    expect(formatPercentPointChange("49.25", "47.80")).toEqual({
+      label: "\u22121.45 percentage points",
+      subtitle: "49.25% → 47.80%",
+    });
+    expect(formatPercentPointChange("46.03", "46.03")).toEqual({
+      label: "No change",
+      subtitle: "46.03% → 46.03%",
+    });
+    expect(formatPercentPointChange(null, "49.25").label).toBe("Not available");
+    expect(formatPercentPointChange("46.03", null).label).toBe("Not available");
+    expect(formatPercentPointChange("10.1", "10.10")).toEqual({
+      label: "No change",
+      subtitle: "10.1% → 10.10%",
+    });
   });
 
   it("presents linked cards by effective payment and months remaining", () => {
@@ -205,6 +229,17 @@ describe("percent input", () => {
     expect(normalizePercentInput("100.01").ok).toBe(false);
     expect(normalizePercentInput("36")).toEqual({ ok: true, value: "36.00" });
     expect(normalizePercentInput("", { optional: true })).toEqual({ ok: true, value: null });
+  });
+});
+
+describe("API error parsing", () => {
+  it("maps field messages without dropping the full form error", () => {
+    const parsed = parseApiFieldErrors(
+      new Error("monthly_payment: Enter a valid amount. — name: Name cannot be blank.")
+    );
+    expect(parsed.fields.monthly_payment).toBe("Enter a valid amount.");
+    expect(parsed.fields.name).toBe("Name cannot be blank.");
+    expect(parsed.form).toContain("monthly_payment");
   });
 });
 

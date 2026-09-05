@@ -37,9 +37,9 @@ function plaidDevHints(): Plugin {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), plaidDevHints()],
-  test: {
+    test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
   // Use patched react-plaid-link from node_modules (postinstall); avoid stale prebundle.
   optimizeDeps: {

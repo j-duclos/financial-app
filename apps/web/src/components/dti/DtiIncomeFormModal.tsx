@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from "react";
 import { DTI_INCOME_TYPES, type DtiIncomeSource, type DtiIncomeSourceWritePayload, type DtiIncomeType } from "@budget-app/shared";
 import { INCOME_TYPE_LABELS } from "../../lib/dtiDisplay";
 import { normalizeIncomeWritePayload, parseApiFieldErrors } from "../../lib/dtiForm";
-import DtiModalFrame, { FieldError, fieldClass } from "./DtiModalFrame";
+import DtiModalFrame, { DtiFieldShell, describedByIds, fieldClass } from "./DtiModalFrame";
 
 type Props = {
   open: boolean;
@@ -45,6 +45,8 @@ export default function DtiIncomeFormModal({
 
   const api = error ? parseApiFieldErrors(error) : { form: "", fields: {} };
   const formError = error && !Object.keys(api.fields).length ? api.form : undefined;
+  const nameError = errors.name || api.fields.name;
+  const amountError = errors.gross_monthly_amount || api.fields.gross_monthly_amount;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,29 +70,35 @@ export default function DtiIncomeFormModal({
       title={initial ? "Edit income source" : "Add income source"}
       labelledBy={titleId}
       onClose={onClose}
+      busy={saving}
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <p className="text-sm text-gray-600">
           Use gross income before taxes and deductions. Only include income you want modeled as
           qualifying income.
         </p>
-        <label className="block text-sm">
-          <span className="text-gray-700">Name</span>
+        <DtiFieldShell id="dti-income-name" label="Name" errorId="dti-income-name-error" error={nameError}>
           <input
+            id="dti-income-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             className={fieldClass}
-            aria-invalid={Boolean(errors.name || api.fields.name)}
-            aria-describedby={errors.name ? "dti-income-name-error" : undefined}
+            aria-invalid={Boolean(nameError)}
+            aria-describedby={describedByIds(nameError, "dti-income-name-error")}
           />
-          <FieldError id="dti-income-name-error" message={errors.name || api.fields.name} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Income type</span>
+        </DtiFieldShell>
+        <DtiFieldShell
+          id="dti-income-type"
+          label="Income type"
+          errorId="dti-income-type-error"
+          hint="Type is a label only. Inclusion decides whether it is used in DTI."
+        >
           <select
+            id="dti-income-type"
             value={incomeType}
             onChange={(e) => setIncomeType(e.target.value as DtiIncomeType)}
             className={fieldClass}
+            aria-describedby="dti-income-type-hint"
           >
             {DTI_INCOME_TYPES.map((type) => (
               <option key={type} value={type}>
@@ -98,21 +106,23 @@ export default function DtiIncomeFormModal({
               </option>
             ))}
           </select>
-          <span className="mt-1 block text-xs text-gray-500">
-            Type is a label only. Inclusion decides whether it is used in DTI.
-          </span>
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Gross monthly amount</span>
+        </DtiFieldShell>
+        <DtiFieldShell
+          id="dti-income-amount"
+          label="Gross monthly amount"
+          errorId="dti-income-amount-error"
+          error={amountError}
+        >
           <input
+            id="dti-income-amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             inputMode="decimal"
             className={fieldClass}
-            aria-invalid={Boolean(errors.gross_monthly_amount || api.fields.gross_monthly_amount)}
+            aria-invalid={Boolean(amountError)}
+            aria-describedby={describedByIds(amountError, "dti-income-amount-error")}
           />
-          <FieldError message={errors.gross_monthly_amount || api.fields.gross_monthly_amount} />
-        </label>
+        </DtiFieldShell>
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
@@ -127,15 +137,18 @@ export default function DtiIncomeFormModal({
             </span>
           </span>
         </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Notes (optional)</span>
+        <div className="block text-sm">
+          <label htmlFor="dti-income-notes" className="text-gray-700">
+            Notes (optional)
+          </label>
           <textarea
+            id="dti-income-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
             className={fieldClass}
           />
-        </label>
+        </div>
         {formError ? (
           <p className="text-sm text-red-600" role="alert">
             {formError}
@@ -145,7 +158,8 @@ export default function DtiIncomeFormModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px]"
+            disabled={saving}
+            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px] disabled:opacity-50"
           >
             Cancel
           </button>

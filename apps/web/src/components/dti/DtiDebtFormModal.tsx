@@ -14,7 +14,7 @@ import {
   normalizeDebtWritePayload,
   parseApiFieldErrors,
 } from "../../lib/dtiForm";
-import DtiModalFrame, { FieldError, fieldClass } from "./DtiModalFrame";
+import DtiModalFrame, { DtiFieldShell, FieldError, describedByIds, fieldClass } from "./DtiModalFrame";
 
 export type DtiDebtFormPrefill = {
   name: string;
@@ -133,6 +133,12 @@ export default function DtiDebtFormModal({
 
   const api = error ? parseApiFieldErrors(error) : { form: "", fields: {} };
   const formError = error && !Object.keys(api.fields).length ? api.form : undefined;
+  const nameError = errors.name || api.fields.name;
+  const linkedError = errors.linked_account_id || api.fields.linked_account_id;
+  const paymentSourceError = errors.payment_source || api.fields.payment_source;
+  const monthlyError = errors.monthly_payment || api.fields.monthly_payment;
+  const balanceError = errors.outstanding_balance || api.fields.outstanding_balance;
+  const monthsError = errors.months_remaining || api.fields.months_remaining;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -150,25 +156,26 @@ export default function DtiDebtFormModal({
       title={initial ? "Edit debt obligation" : "Add debt obligation"}
       labelledBy={titleId}
       onClose={onClose}
+      busy={saving}
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <p className="text-sm text-gray-600">
           Add lender-counted monthly obligations such as auto loans, student loans, or credit-card
           minimums. Do not add ordinary utilities, groceries, or subscriptions.
         </p>
-        <label className="block text-sm">
-          <span className="text-gray-700">Name</span>
+        <DtiFieldShell id="dti-debt-name" label="Name" errorId="dti-debt-name-error" error={nameError}>
           <input
+            id="dti-debt-name"
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             className={fieldClass}
-            aria-invalid={Boolean(errors.name || api.fields.name)}
+            aria-invalid={Boolean(nameError)}
+            aria-describedby={describedByIds(nameError, "dti-debt-name-error")}
           />
-          <FieldError message={errors.name || api.fields.name} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Debt type</span>
+        </DtiFieldShell>
+        <DtiFieldShell id="dti-debt-type" label="Debt type" errorId="dti-debt-type-error">
           <select
+            id="dti-debt-type"
             value={form.debt_type}
             onChange={(e) => {
               const debt_type = e.target.value as DtiDebtType;
@@ -188,11 +195,16 @@ export default function DtiDebtFormModal({
               </option>
             ))}
           </select>
-        </label>
+        </DtiFieldShell>
         {showLink ? (
-          <label className="block text-sm">
-            <span className="text-gray-700">Linked credit-card account (optional)</span>
+          <DtiFieldShell
+            id="dti-debt-linked"
+            label="Linked credit-card account (optional)"
+            errorId="dti-debt-linked-error"
+            error={linkedError}
+          >
             <select
+              id="dti-debt-linked"
               value={form.linked_account_id ?? ""}
               onChange={(e) => {
                 const id = e.target.value ? Number(e.target.value) : null;
@@ -205,6 +217,8 @@ export default function DtiDebtFormModal({
                 }));
               }}
               className={fieldClass}
+              aria-invalid={Boolean(linkedError)}
+              aria-describedby={describedByIds(linkedError, "dti-debt-linked-error")}
             >
               <option value="">No linked account</option>
               {linkable.map((row) => (
@@ -213,11 +227,14 @@ export default function DtiDebtFormModal({
                 </option>
               ))}
             </select>
-            <FieldError message={errors.linked_account_id || api.fields.linked_account_id} />
-          </label>
+          </DtiFieldShell>
         ) : null}
         {showLink && form.linked_account_id != null ? (
-          <fieldset className="space-y-2">
+          <fieldset
+            className="space-y-2"
+            aria-invalid={Boolean(paymentSourceError)}
+            aria-describedby={paymentSourceError ? "dti-debt-payment-source-error" : undefined}
+          >
             <legend className="text-sm text-gray-700">Payment source</legend>
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -252,46 +269,64 @@ export default function DtiDebtFormModal({
                 This card has no usable minimum payment. Enter a monthly obligation manually.
               </p>
             ) : null}
+            <FieldError id="dti-debt-payment-source-error" message={paymentSourceError} />
           </fieldset>
         ) : null}
         {needsManualPayment ? (
-          <label className="block text-sm">
-            <span className="text-gray-700">Monthly payment</span>
+          <DtiFieldShell
+            id="dti-debt-monthly"
+            label="Monthly payment"
+            errorId="dti-debt-monthly-error"
+            error={monthlyError}
+          >
             <input
+              id="dti-debt-monthly"
               value={form.monthly_payment}
               onChange={(e) => setForm((f) => ({ ...f, monthly_payment: e.target.value }))}
               inputMode="decimal"
               className={fieldClass}
-              aria-invalid={Boolean(errors.monthly_payment || api.fields.monthly_payment)}
+              aria-invalid={Boolean(monthlyError)}
+              aria-describedby={describedByIds(monthlyError, "dti-debt-monthly-error")}
             />
-            <FieldError message={errors.monthly_payment || api.fields.monthly_payment} />
-          </label>
+          </DtiFieldShell>
         ) : (
           <p className="text-sm text-gray-600">
             Effective monthly payment uses the linked account minimum and updates when that minimum
             changes.
           </p>
         )}
-        <label className="block text-sm">
-          <span className="text-gray-700">Outstanding balance (optional)</span>
+        <DtiFieldShell
+          id="dti-debt-balance"
+          label="Outstanding balance (optional)"
+          errorId="dti-debt-balance-error"
+          error={balanceError}
+        >
           <input
+            id="dti-debt-balance"
             value={form.outstanding_balance}
             onChange={(e) => setForm((f) => ({ ...f, outstanding_balance: e.target.value }))}
             inputMode="decimal"
             className={fieldClass}
+            aria-invalid={Boolean(balanceError)}
+            aria-describedby={describedByIds(balanceError, "dti-debt-balance-error")}
           />
-          <FieldError message={errors.outstanding_balance || api.fields.outstanding_balance} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Months remaining (optional)</span>
+        </DtiFieldShell>
+        <DtiFieldShell
+          id="dti-debt-months"
+          label="Months remaining (optional)"
+          errorId="dti-debt-months-error"
+          error={monthsError}
+        >
           <input
+            id="dti-debt-months"
             value={form.months_remaining}
             onChange={(e) => setForm((f) => ({ ...f, months_remaining: e.target.value }))}
             inputMode="numeric"
             className={fieldClass}
+            aria-invalid={Boolean(monthsError)}
+            aria-describedby={describedByIds(monthsError, "dti-debt-months-error")}
           />
-          <FieldError message={errors.months_remaining || api.fields.months_remaining} />
-        </label>
+        </DtiFieldShell>
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
@@ -306,15 +341,18 @@ export default function DtiDebtFormModal({
             </span>
           </span>
         </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Notes (optional)</span>
+        <div className="block text-sm">
+          <label htmlFor="dti-debt-notes" className="text-gray-700">
+            Notes (optional)
+          </label>
           <textarea
+            id="dti-debt-notes"
             value={form.notes}
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             rows={2}
             className={fieldClass}
           />
-        </label>
+        </div>
         {formError ? (
           <p className="text-sm text-red-600" role="alert">
             {formError}
@@ -324,7 +362,8 @@ export default function DtiDebtFormModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px]"
+            disabled={saving}
+            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px] disabled:opacity-50"
           >
             Cancel
           </button>

@@ -43,6 +43,32 @@ export function formatDtiPercent(value: string | null | undefined): string {
   return `${value}%`;
 }
 
+export type PercentPointChange = {
+  label: string;
+  subtitle: string | null;
+};
+
+/** Signed percentage-point change using integer hundredths. Not binary float subtraction. */
+export function formatPercentPointChange(
+  fromPercent: string | null | undefined,
+  toPercent: string | null | undefined
+): PercentPointChange {
+  if (fromPercent == null || fromPercent === "" || toPercent == null || toPercent === "") {
+    return { label: "Not available", subtitle: null };
+  }
+  const from = parsePercentToHundredths(fromPercent);
+  const to = parsePercentToHundredths(toPercent);
+  if (from == null || to == null) {
+    return { label: "Not available", subtitle: null };
+  }
+  const subtitle = `${fromPercent}% → ${toPercent}%`;
+  const delta = to - from;
+  if (delta === 0) return { label: "No change", subtitle };
+  const magnitude = centsToMoney(Math.abs(delta));
+  const sign = delta > 0 ? "+" : "\u2212";
+  return { label: `${sign}${magnitude} percentage points`, subtitle };
+}
+
 export function formatDtiMoney(value: string | null | undefined): string {
   if (value == null || value === "") return "Not available";
   return formatCurrency(value);

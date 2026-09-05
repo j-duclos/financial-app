@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { DtiProfile, DtiProfileWritePayload } from "@budget-app/shared";
 import { normalizeProfileWritePayload, parseApiFieldErrors } from "../../lib/dtiForm";
-import DtiModalFrame, { FieldError, fieldClass } from "./DtiModalFrame";
+import DtiModalFrame, { DtiFieldShell, describedByIds, fieldClass } from "./DtiModalFrame";
 
 type Props = {
   open: boolean;
@@ -42,6 +42,9 @@ export default function DtiProfileFormModal({
 
   const api = error ? parseApiFieldErrors(error) : { form: "", fields: {} };
   const formError = error && !Object.keys(api.fields).length ? api.form : undefined;
+  const housingError = errors.current_housing_payment || api.fields.current_housing_payment;
+  const backError = errors.target_back_end_dti_percent || api.fields.target_back_end_dti_percent;
+  const frontError = errors.target_front_end_dti_percent || api.fields.target_front_end_dti_percent;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,29 +64,45 @@ export default function DtiProfileFormModal({
   }
 
   return (
-    <DtiModalFrame title="Housing and target settings" labelledBy={titleId} onClose={onClose}>
+    <DtiModalFrame
+      title="Housing and target settings"
+      labelledBy={titleId}
+      onClose={onClose}
+      busy={saving}
+    >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <p className="text-sm text-gray-600">
           Current housing may be rent or an existing mortgage payment. Proposed housing replaces this
           amount in the home-payment comparison.
         </p>
-        <label className="block text-sm">
-          <span className="text-gray-700">Current housing label</span>
-          <input value={label} onChange={(e) => setLabel(e.target.value)} className={fieldClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Current monthly housing payment</span>
+        <DtiFieldShell
+          id="dti-profile-label"
+          label="Current housing label"
+          errorId="dti-profile-label-error"
+        >
           <input
+            id="dti-profile-label"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            className={fieldClass}
+          />
+        </DtiFieldShell>
+        <DtiFieldShell
+          id="dti-profile-housing"
+          label="Current monthly housing payment"
+          errorId="dti-profile-housing-error"
+          error={housingError}
+        >
+          <input
+            id="dti-profile-housing"
             value={payment}
             onChange={(e) => setPayment(e.target.value)}
             inputMode="decimal"
             className={fieldClass}
-            aria-invalid={Boolean(errors.current_housing_payment)}
+            aria-invalid={Boolean(housingError)}
+            aria-describedby={describedByIds(housingError, "dti-profile-housing-error")}
           />
-          <FieldError
-            message={errors.current_housing_payment || api.fields.current_housing_payment}
-          />
-        </label>
+        </DtiFieldShell>
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
@@ -98,34 +117,39 @@ export default function DtiProfileFormModal({
             </span>
           </span>
         </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Target back-end DTI (%)</span>
+        <DtiFieldShell
+          id="dti-profile-backend"
+          label="Target back-end DTI (%)"
+          errorId="dti-profile-backend-error"
+          error={backError}
+          hint="Planning preference only. Not an approval limit."
+        >
           <input
+            id="dti-profile-backend"
             value={backEnd}
             onChange={(e) => setBackEnd(e.target.value)}
             inputMode="decimal"
             className={fieldClass}
-            aria-invalid={Boolean(errors.target_back_end_dti_percent)}
+            aria-invalid={Boolean(backError)}
+            aria-describedby={describedByIds(backError, "dti-profile-backend-error", "dti-profile-backend-hint")}
           />
-          <span className="mt-1 block text-xs text-gray-500">
-            Planning preference only. Not an approval limit.
-          </span>
-          <FieldError
-            message={errors.target_back_end_dti_percent || api.fields.target_back_end_dti_percent}
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="text-gray-700">Target front-end DTI (%, optional)</span>
+        </DtiFieldShell>
+        <DtiFieldShell
+          id="dti-profile-frontend"
+          label="Target front-end DTI (%, optional)"
+          errorId="dti-profile-frontend-error"
+          error={frontError}
+        >
           <input
+            id="dti-profile-frontend"
             value={frontEnd}
             onChange={(e) => setFrontEnd(e.target.value)}
             inputMode="decimal"
             className={fieldClass}
+            aria-invalid={Boolean(frontError)}
+            aria-describedby={describedByIds(frontError, "dti-profile-frontend-error")}
           />
-          <FieldError
-            message={errors.target_front_end_dti_percent || api.fields.target_front_end_dti_percent}
-          />
-        </label>
+        </DtiFieldShell>
         {formError ? (
           <p className="text-sm text-red-600" role="alert">
             {formError}
@@ -135,7 +159,8 @@ export default function DtiProfileFormModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px]"
+            disabled={saving}
+            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md min-h-[44px] disabled:opacity-50"
           >
             Cancel
           </button>
