@@ -18,8 +18,10 @@ import {
   reorderAccounts,
   clearAllAccountTransactionsPreview,
   clearAllAccountTransactions,
+  syncPlaidItemLiabilities,
 } from "@budget-app/api-client";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
+import { CreditMinimumPaymentFields } from "../components/accounts/CreditMinimumPaymentFields";
 import { ACCOUNT_ROLE_OPTIONS, getAccountRoleMeta } from "../lib/accountRoles";
 import {
   DEFAULT_PASSIVE_FORECAST_DAYS,
@@ -70,6 +72,7 @@ export default function Accounts() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [liabilityRefreshError, setLiabilityRefreshError] = useState<string | null>(null);
   const [forecastDays, setForecastDays] = useState<PassiveForecastDays>(
     DEFAULT_PASSIVE_FORECAST_DAYS
   );
@@ -98,6 +101,7 @@ export default function Accounts() {
     current_balance: string;
     statement_balance: string;
     minimum_payment_amount: string;
+    minimum_payment_mode: "automatic" | "manual";
     autopay_enabled: boolean;
     autopay_account: string;
     autopay_type: string;
@@ -130,6 +134,7 @@ export default function Accounts() {
     current_balance: "",
     statement_balance: "",
     minimum_payment_amount: "",
+    minimum_payment_mode: "manual",
     autopay_enabled: false,
     autopay_account: "",
     autopay_type: "minimum_payment",
@@ -169,6 +174,7 @@ export default function Accounts() {
       current_balance: "",
       statement_balance: "",
       minimum_payment_amount: "",
+      minimum_payment_mode: "manual" as const,
       autopay_enabled: false,
       autopay_account: "",
       autopay_type: "minimum_payment",
@@ -210,7 +216,14 @@ export default function Accounts() {
       payment_due_day: acc.payment_due_day != null ? String(acc.payment_due_day) : "",
       current_balance: acc.current_balance != null ? String(acc.current_balance) : acc.balance_owed ?? "",
       statement_balance: acc.statement_balance != null ? String(acc.statement_balance) : "",
-      minimum_payment_amount: acc.minimum_payment_amount != null ? String(acc.minimum_payment_amount) : "",
+      minimum_payment_amount:
+        acc.manual_minimum_payment_amount != null
+          ? String(acc.manual_minimum_payment_amount)
+          : acc.minimum_payment_amount != null
+            ? String(acc.minimum_payment_amount)
+            : "",
+      minimum_payment_mode:
+        acc.minimum_payment_mode === "automatic" ? ("automatic" as const) : ("manual" as const),
       autopay_enabled: Boolean(acc.autopay_enabled),
       autopay_account: acc.autopay_account != null ? String(acc.autopay_account) : "",
       autopay_type: acc.autopay_type || "minimum_payment",
@@ -323,6 +336,7 @@ export default function Accounts() {
     }) => createAccount(body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["dti"] });
       setModalOpen(false);
       roleManuallySetRef.current = false;
       setForm(emptyFormState());
@@ -335,12 +349,23 @@ export default function Accounts() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["account", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["dti"] });
       invalidateUtilizationPreferenceQueries(queryClient);
       setModalOpen(false);
       setEditing(null);
       setSubmitError(null);
     },
     onError: (err: Error) => setSubmitError(err.message || "Failed to update account"),
+  });
+  const refreshLiabilitiesMu = useMutation({
+    mutationFn: (itemId: number) => syncPlaidItemLiabilities(itemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["dti"] });
+      queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
+      setLiabilityRefreshError(null);
+    },
+    onError: (err: Error) => setLiabilityRefreshError(err.message || "Could not refresh the institution minimum."),
   });
   const [lifecycleTarget, setLifecycleTarget] = useState<Account | null>(null);
   const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null);
@@ -512,8 +537,11 @@ export default function Accounts() {
         payment_due_day: paymentDueDay,
         current_balance: form.account_type === "CREDIT" && form.current_balance.trim() ? form.current_balance : undefined,
         statement_balance: form.account_type === "CREDIT" && form.statement_balance.trim() ? form.statement_balance : undefined,
-        minimum_payment_amount:
-          form.account_type === "CREDIT" && form.minimum_payment_amount.trim() ? form.minimum_payment_amount : undefined,
+        minimum_payment_mode: form.account_type === "CREDIT" ? form.minimum_payment_mode : undefined,
+        manual_minimum_payment_amount:
+          form.account_type === "CREDIT" && form.minimum_payment_amount.trim()
+            ? form.minimum_payment_amount
+            : undefined,
         autopay_enabled: form.account_type === "CREDIT" ? form.autopay_enabled : undefined,
         autopay_account:
           form.account_type === "CREDIT" && form.autopay_account.trim() ? Number(form.autopay_account) : null,
@@ -550,7 +578,8 @@ export default function Accounts() {
         payment_due_day: paymentDueDay ?? null,
         current_balance: form.account_type === "CREDIT" && form.current_balance.trim() ? form.current_balance : null,
         statement_balance: form.account_type === "CREDIT" && form.statement_balance.trim() ? form.statement_balance : null,
-        minimum_payment_amount:
+        minimum_payment_mode: form.account_type === "CREDIT" ? form.minimum_payment_mode : undefined,
+        manual_minimum_payment_amount:
           form.account_type === "CREDIT" && form.minimum_payment_amount.trim() ? form.minimum_payment_amount : null,
         autopay_enabled: form.account_type === "CREDIT" ? form.autopay_enabled : false,
         autopay_account:
@@ -1429,17 +1458,22 @@ export default function Accounts() {
                       className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Minimum payment</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={form.minimum_payment_amount}
-                      onChange={(e) => setForm((f) => ({ ...f, minimum_payment_amount: e.target.value }))}
-                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
-                    />
-                  </div>
+                  <CreditMinimumPaymentFields
+                    account={editing}
+                    mode={form.minimum_payment_mode}
+                    manualAmount={form.minimum_payment_amount}
+                    onModeChange={(mode) => setForm((f) => ({ ...f, minimum_payment_mode: mode }))}
+                    onManualAmountChange={(value) =>
+                      setForm((f) => ({ ...f, minimum_payment_amount: value }))
+                    }
+                    onRefresh={
+                      editing?.plaid_item_id
+                        ? () => refreshLiabilitiesMu.mutate(editing.plaid_item_id as number)
+                        : undefined
+                    }
+                    refreshing={refreshLiabilitiesMu.isPending}
+                    refreshError={liabilityRefreshError}
+                  />
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"

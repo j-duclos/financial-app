@@ -12,10 +12,12 @@ import {
   alreadyLinkedAccountIds,
   buildDtiCalculationRequest,
   emptyProposedHousingDraft,
+  normalizeDebtWritePayload,
   normalizeMoneyInput,
   normalizePercentInput,
   normalizeProposedHousingDraft,
   parseApiFieldErrors,
+  previewFhaDeferredStudentLoanPayment,
   subtractMoneyStrings,
   suggestionPrefill,
   sumProposedHousingDraft,
@@ -194,6 +196,68 @@ describe("dtiDisplay", () => {
     expect(view.linkedAccountLabel).toBe("Everyday Visa");
   });
 
+  it("presents FHA student loans by backend effective payment and calculation source", () => {
+    const view = debtRowView({
+      id: 12,
+      household_id: 1,
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "0.00",
+      payment_source: "manual",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+      effective_monthly_payment: "545.29",
+      outstanding_balance: "109058.00",
+      payment_calculation: {
+        method: "fha_deferred_balance_percent",
+        label: "FHA deferred/zero-payment estimate",
+        balance: "109058.00",
+        percentage: "0.50",
+        multiplier: "0.005",
+        calculated_monthly_payment: "545.29",
+      },
+      linked_account_id: null,
+      linked_account: null,
+      included: true,
+      months_remaining: null,
+      notes: "",
+      position: 0,
+      created_at: "",
+      updated_at: "",
+    });
+    expect(view.effectivePaymentLabel).toContain("545.29");
+    expect(view.balanceLabel).toContain("109,058.00");
+    expect(view.paymentSource).toBe("FHA estimate: 0.5% of outstanding balance");
+    expect(view.calculationSourceLabel).toBe("Calculated at 0.5% of balance");
+    expect(view.studentLoanStatusLabel).toBe("Deferred");
+    expect(view.planningEstimate).toBe(true);
+  });
+
+  it("presents manual student loans as reported payments", () => {
+    const view = debtRowView({
+      id: 13,
+      household_id: 1,
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "250.00",
+      payment_source: "manual",
+      student_loan_status: "repayment",
+      student_loan_payment_method: "manual",
+      effective_monthly_payment: "250.00",
+      outstanding_balance: "80000.00",
+      linked_account_id: null,
+      linked_account: null,
+      included: true,
+      months_remaining: null,
+      notes: "",
+      position: 0,
+      created_at: "",
+      updated_at: "",
+    });
+    expect(view.paymentSource).toBe("Source: Manual or reported payment");
+    expect(view.planningEstimate).toBe(false);
+  });
+
   it("ranks payoff impact by monthly payment, not balance", () => {
     const ranked = rankPayoffImpactsByPayment([
       impact(1, "Low pay", "50.00"),
@@ -240,6 +304,117 @@ describe("API error parsing", () => {
     expect(parsed.fields.monthly_payment).toBe("Enter a valid amount.");
     expect(parsed.fields.name).toBe("Name cannot be blank.");
     expect(parsed.form).toContain("monthly_payment");
+  });
+});
+
+describe("FHA student-loan preview and payload", () => {
+  it("previews 0.5% with integer cents and ROUND_HALF_UP, not 0.0005", () => {
+    expect(previewFhaDeferredStudentLoanPayment("109058.00")).toBe("545.29");
+    expect(previewFhaDeferredStudentLoanPayment("1001.00")).toBe("5.01");
+    expect(previewFhaDeferredStudentLoanPayment("2001.00")).toBe("10.01");
+    expect(previewFhaDeferredStudentLoanPayment("109058.00")).not.toBe("54.53");
+  });
+
+  it("submits student-loan status and FHA method without a custom percentage", () => {
+    const fha = normalizeDebtWritePayload(1, {
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "",
+      outstanding_balance: "109058.00",
+      payment_source: "manual",
+      linked_account_id: null,
+      included: true,
+      months_remaining: "",
+      notes: "",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+    });
+    expect(fha.ok).toBe(true);
+    if (fha.ok) {
+      expect(fha.payload).toMatchObject({
+        student_loan_status: "deferred",
+        student_loan_payment_method: "fha_deferred_balance_percent",
+        outstanding_balance: "109058.00",
+        payment_source: "manual",
+      });
+      expect(fha.payload.monthly_payment).toBeUndefined();
+    }
+    const manual = normalizeDebtWritePayload(1, {
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "250.00",
+      outstanding_balance: "80000.00",
+      payment_source: "manual",
+      linked_account_id: null,
+      included: true,
+      months_remaining: "",
+      notes: "",
+      student_loan_status: "repayment",
+      student_loan_payment_method: "manual",
+    });
+    expect(manual.ok).toBe(true);
+    if (manual.ok) {
+      expect(manual.payload.monthly_payment).toBe("250.00");
+      expect(manual.payload.student_loan_payment_method).toBe("manual");
+    }
+    const blankManual = normalizeDebtWritePayload(1, {
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "",
+      outstanding_balance: "",
+      payment_source: "manual",
+      linked_account_id: null,
+      included: true,
+      months_remaining: "",
+      notes: "",
+      student_loan_status: "repayment",
+      student_loan_payment_method: "manual",
+    });
+    expect(blankManual.ok).toBe(false);
+    const auto = normalizeDebtWritePayload(1, {
+      name: "Car",
+      debt_type: "auto_loan",
+      monthly_payment: "412.00",
+      outstanding_balance: "",
+      payment_source: "manual",
+      linked_account_id: null,
+      included: true,
+      months_remaining: "",
+      notes: "",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+    });
+    expect(auto.ok).toBe(true);
+    if (auto.ok) {
+      expect(auto.payload.student_loan_status).toBeNull();
+      expect(auto.payload.student_loan_payment_method).toBeNull();
+    }
+  });
+});
+
+describe("production DTI sources", () => {
+  it("does not embed example balances, 0.0005, or a page-level DTI formula", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const files = [
+      resolve(here, "dtiForm.ts"),
+      resolve(here, "dtiDisplay.ts"),
+      resolve(here, "../pages/DebtToIncome.tsx"),
+      resolve(here, "../components/dti/DtiDebtFormModal.tsx"),
+    ];
+    for (const file of files) {
+      const src = readFileSync(file, "utf8");
+      expect(src).not.toContain("109058");
+      expect(src).not.toContain("545.29");
+      expect(src).not.toContain("0.0005");
+      expect(src).not.toContain("0.05%");
+    }
+    const page = readFileSync(resolve(here, "../pages/DebtToIncome.tsx"), "utf8");
+    expect(page).not.toContain("0.005");
+    expect(page).not.toContain("non_housing_monthly_debt *");
+    expect(page).not.toMatch(/back_end.*=.*housing.*\+/);
   });
 });
 

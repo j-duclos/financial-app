@@ -201,6 +201,48 @@ describe("DTI API client", () => {
     expect(fetchMock.mock.calls[3]?.[1]?.method).toBe("DELETE");
   });
 
+  it("POSTs student-loan status and FHA method on the existing debt-item endpoint", async () => {
+    const student = {
+      ...debt,
+      id: 30,
+      name: "Federal student loans",
+      debt_type: "student_loan" as const,
+      monthly_payment: "0.00",
+      payment_source: "manual" as const,
+      linked_account_id: null,
+      linked_account: null,
+      outstanding_balance: "109058.00",
+      student_loan_status: "deferred" as const,
+      student_loan_payment_method: "fha_deferred_balance_percent" as const,
+      effective_monthly_payment: "545.29",
+      payment_calculation: {
+        method: "fha_deferred_balance_percent",
+        label: "FHA deferred/zero-payment estimate",
+        balance: "109058.00",
+        percentage: "0.50",
+        multiplier: "0.005",
+        calculated_monthly_payment: "545.29",
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, student));
+    vi.stubGlobal("fetch", fetchMock);
+    const created = await createDtiDebtItem({
+      household_id: 9,
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      outstanding_balance: "109058.00",
+      payment_source: "manual",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+    });
+    expect(created.effective_monthly_payment).toBe("545.29");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/affordability/dti/debt-items/");
+  });
+
   it("POSTs a calculate payload and returns planning results", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, calculation));
     vi.stubGlobal("fetch", fetchMock);

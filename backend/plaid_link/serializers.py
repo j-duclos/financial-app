@@ -31,6 +31,8 @@ class PlaidItemSerializer(serializers.ModelSerializer):
             "institution_name",
             "linked_accounts",
             "last_sync_at",
+            "liabilities_last_sync_at",
+            "liabilities_sync_status",
             "created_at",
             "updated_at",
         ]

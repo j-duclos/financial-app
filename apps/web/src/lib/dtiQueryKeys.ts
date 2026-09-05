@@ -1,5 +1,7 @@
 export type DtiCalculationInputsKey = {
   proposedHousing: Record<string, string> | null;
+  proposedPurchase: Record<string, string | number> | null;
+  proposedHousingMode: "monthly_payment" | "purchase" | null;
   excludedDebtItemIds: number[];
 };
 
@@ -15,10 +17,17 @@ export const dtiQueryKeys = {
 
 export function dtiCalculationInputsKey(
   proposedHousing: Record<string, string> | null,
-  excludedDebtItemIds: number[]
+  excludedDebtItemIds: number[],
+  extras?: {
+    proposedPurchase?: Record<string, string | number> | null;
+    proposedHousingMode?: "monthly_payment" | "purchase" | null;
+  }
 ): DtiCalculationInputsKey {
   return {
     proposedHousing,
+    proposedPurchase: extras?.proposedPurchase ?? null,
+    proposedHousingMode:
+      extras?.proposedHousingMode ?? (proposedHousing ? "monthly_payment" : null),
     excludedDebtItemIds: [...excludedDebtItemIds].sort((a, b) => a - b),
   };
 }

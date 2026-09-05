@@ -18,6 +18,17 @@ class PlaidItem(models.Model):
         blank=True,
         help_text="When transactions were last imported from Plaid for this login.",
     )
+    liabilities_last_sync_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When credit liabilities were last requested from Plaid for this login.",
+    )
+    liabilities_sync_status = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Last liabilities sync status for this Item (ok, unsupported, reauthorization_required, ...).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

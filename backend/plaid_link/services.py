@@ -146,7 +146,7 @@ def sync_all_plaid_items_for_user(
             continue
 
         try:
-            counts = sync_transactions_for_item(item)
+            counts = sync_transactions_for_item(item, liabilities_force=force)
         except (ApiException, PlaidTokenDecryptError, RuntimeError) as exc:
             logger.exception("sync_all failed for plaid_item pk=%s", item.pk)
             item_results.append(
@@ -436,6 +436,7 @@ def create_link_token(
     phone_number: str | None = None,
     email_address: str | None = None,
     link_redirect_uri: str | None = None,
+    access_token: str | None = None,
 ) -> str:
     """
     Prefills Link ``user`` with phone/email when provided — improves SMS MFA eligibility vs typing in iframe.
@@ -443,7 +444,14 @@ def create_link_token(
 
     ``link_redirect_uri``: from the web client (``VITE_PLAID_REDIRECT_URI`` or origin + ``/plaid/oauth-return``)
     work without editing server env. Must still be allowlisted in the Plaid Dashboard.
+
+    When ``access_token`` is set, Link runs in update mode (no required products) and may
+    request additional consent for Liabilities when that product is enabled.
     """
+    from django.conf import settings as django_settings
+
+    from .liabilities import liabilities_enabled
+
     client = get_plaid_client()
     phone = (phone_number or "").strip() or None
     if not phone:
@@ -457,12 +465,22 @@ def create_link_token(
         user_kw["email_address"] = email
     redirect_uri = resolve_plaid_link_redirect_uri(link_redirect_uri)
     req_kw: dict[str, Any] = dict(
-        products=[Products("transactions")],
         client_name="Budget App",
         language="en",
         country_codes=[CountryCode("US")],
         user=LinkTokenCreateRequestUser(**user_kw),
     )
+    if access_token:
+        req_kw["access_token"] = access_token
+        if liabilities_enabled():
+            req_kw["additional_consented_products"] = [Products("liabilities")]
+    else:
+        req_kw["products"] = [Products("transactions")]
+        if liabilities_enabled():
+            req_kw["required_if_supported_products"] = [Products("liabilities")]
+    webhook_url = (getattr(django_settings, "PLAID_WEBHOOK_URL", "") or "").strip()
+    if webhook_url:
+        req_kw["webhook"] = webhook_url
     if redirect_uri:
         req_kw["redirect_uri"] = redirect_uri
     req = LinkTokenCreateRequest(**req_kw)
@@ -600,7 +618,7 @@ def exchange_public_token(
             else:
                 pos += 1
                 lf_new = _normalize_plaid_mask(mask)
-                acct = Account.objects.create(
+                create_kw = dict(
                     household_id=household_id,
                     account_type=acct_type,
                     name=label[:255],
@@ -608,6 +626,9 @@ def exchange_public_token(
                     position=pos,
                     last_four=lf_new if len(lf_new) == 4 else "",
                 )
+                if acct_type == Account.AccountType.CREDIT:
+                    create_kw["minimum_payment_mode"] = Account.MinimumPaymentMode.AUTOMATIC
+                acct = Account.objects.create(**create_kw)
             PlaidLinkedAccount.objects.create(
                 item=plaid_item,
                 plaid_account_id=str(aid),
@@ -618,6 +639,9 @@ def exchange_public_token(
                 acct.plaid_sync_enabled = True
                 acct.save(update_fields=["plaid_sync_enabled", "updated_at"])
 
+    from .liabilities import maybe_sync_credit_card_liabilities_for_item
+
+    maybe_sync_credit_card_liabilities_for_item(plaid_item, force=True)
     return plaid_item
 
 
@@ -725,7 +749,7 @@ def reconcile_linked_account_ids_with_plaid(plaid_item: PlaidItem, client, acces
             break
 
 
-def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
+def sync_transactions_for_item(plaid_item: PlaidItem, *, liabilities_force: bool = False) -> dict[str, int]:
     """
     Ask Plaid to refresh transaction data when supported, then run /transactions/sync
     until caught up. If nothing changes on the first pass (common right after linking),
@@ -928,6 +952,9 @@ def sync_transactions_for_item(plaid_item: PlaidItem) -> dict[str, int]:
     plaid_item.save(update_fields=["last_sync_at", "updated_at"])
     bump_timeline_cache_for_household(plaid_item.household_id)
     invalidate_financial_cache_for_household(plaid_item.household_id)
+    from .liabilities import maybe_sync_credit_card_liabilities_for_item
+
+    maybe_sync_credit_card_liabilities_for_item(plaid_item, force=liabilities_force)
     return totals
 
 

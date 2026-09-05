@@ -22,6 +22,7 @@ import type {
   DtiIncomeSourceWritePayload,
   DtiProfileWritePayload,
   DtiProposedHousingInput,
+  DtiProposedPurchaseInput,
 } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
@@ -34,6 +35,7 @@ import PlanningSubnav from "../components/PlanningSubnav";
 import DtiDebtFormModal, { type DtiDebtFormPrefill } from "../components/dti/DtiDebtFormModal";
 import DtiIncomeFormModal from "../components/dti/DtiIncomeFormModal";
 import DtiProfileFormModal from "../components/dti/DtiProfileFormModal";
+import DtiProposedHomePanel from "../components/dti/DtiProposedHomePanel";
 import { useDefaultHouseholdId } from "../hooks/useDefaultHouseholdId";
 import {
   DTI_PLANNING_DISCLAIMER,
@@ -49,10 +51,8 @@ import {
   rankPayoffImpactsByPayment,
 } from "../lib/dtiDisplay";
 import {
-  PROPOSED_HOUSING_FIELDS,
   buildDtiCalculationRequest,
   emptyProposedHousingDraft,
-  normalizeProposedHousingDraft,
   proposedHousingPayloadForRequest,
   subtractMoneyStrings,
   suggestionPrefill,
@@ -60,26 +60,26 @@ import {
   toggleExcludedDebtItemId,
   type ProposedHousingDraft,
 } from "../lib/dtiForm";
+import {
+  emptyPurchaseEstimateDraft,
+  purchaseEstimateSummary,
+  type AppliedProposedHome,
+  type PurchaseEstimateDraft,
+} from "../lib/dtiProposedHome";
 import { dtiCalculationInputsKey, dtiQueryKeys } from "../lib/dtiQueryKeys";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
-
-const PROPOSED_FIELD_LABELS: Record<(typeof PROPOSED_HOUSING_FIELDS)[number], string> = {
-  principal_and_interest: "Principal and interest",
-  property_taxes: "Property taxes",
-  homeowners_insurance: "Homeowners insurance",
-  mortgage_insurance: "Mortgage insurance",
-  hoa_dues: "HOA dues",
-  other_required_housing_costs: "Other required housing costs",
-};
 
 export default function DebtToIncome() {
   const queryClient = useQueryClient();
   const { householdId, isLoading: householdLoading, isError: householdError, refetch } =
     useDefaultHouseholdId();
 
-  const [proposedDraft, setProposedDraft] = useState<ProposedHousingDraft>(emptyProposedHousingDraft());
-  const [proposedErrors, setProposedErrors] = useState<Partial<ProposedHousingDraft>>({});
-  const [appliedProposed, setAppliedProposed] = useState<DtiProposedHousingInput | null>(null);
+  const [monthlyDraft, setMonthlyDraft] = useState<ProposedHousingDraft>(emptyProposedHousingDraft());
+  const [purchaseDraft, setPurchaseDraft] = useState<PurchaseEstimateDraft>(emptyPurchaseEstimateDraft());
+  const [selectedProposedMode, setSelectedProposedMode] = useState<"monthly_payment" | "purchase">(
+    "monthly_payment"
+  );
+  const [appliedProposed, setAppliedProposed] = useState<AppliedProposedHome | null>(null);
   const [excludedDebtIds, setExcludedDebtIds] = useState<number[]>([]);
 
   const [incomeModalOpen, setIncomeModalOpen] = useState(false);
@@ -91,8 +91,9 @@ export default function DebtToIncome() {
   const [howOpen, setHowOpen] = useState(false);
 
   useEffect(() => {
-    setProposedDraft(emptyProposedHousingDraft());
-    setProposedErrors({});
+    setMonthlyDraft(emptyProposedHousingDraft());
+    setPurchaseDraft(emptyPurchaseEstimateDraft());
+    setSelectedProposedMode("monthly_payment");
     setAppliedProposed(null);
     setExcludedDebtIds([]);
   }, [householdId]);
@@ -122,14 +123,19 @@ export default function DebtToIncome() {
     !!householdId && profileQuery.isSuccess && incomeQuery.isSuccess && debtQuery.isSuccess;
 
   const currentKey = dtiCalculationInputsKey(null, []);
-  const proposedKey = dtiCalculationInputsKey(
-    appliedProposed ? proposedHousingPayloadForRequest(appliedProposed) : null,
-    []
-  );
-  const combinedKey = dtiCalculationInputsKey(
-    appliedProposed ? proposedHousingPayloadForRequest(appliedProposed) : null,
-    excludedDebtIds
-  );
+  const appliedMonthlyHousing =
+    appliedProposed?.mode === "monthly_payment"
+      ? proposedHousingPayloadForRequest(appliedProposed.housing)
+      : null;
+  const appliedPurchase = appliedProposed?.mode === "purchase" ? appliedProposed.purchase : null;
+  const proposedKey = dtiCalculationInputsKey(appliedMonthlyHousing, [], {
+    proposedPurchase: appliedPurchase,
+    proposedHousingMode: appliedProposed?.mode ?? null,
+  });
+  const combinedKey = dtiCalculationInputsKey(appliedMonthlyHousing, excludedDebtIds, {
+    proposedPurchase: appliedPurchase,
+    proposedHousingMode: appliedProposed?.mode ?? null,
+  });
 
   const currentQuery = useQuery({
     queryKey: dtiQueryKeys.calculation(householdId ?? 0, currentKey),
@@ -149,7 +155,9 @@ export default function DebtToIncome() {
       calculateDti(
         buildDtiCalculationRequest({
           householdId: householdId!,
-          proposedHousing: appliedProposed,
+          proposedHousing: appliedProposed?.mode === "monthly_payment" ? appliedProposed.housing : null,
+          proposedPurchase: appliedProposed?.mode === "purchase" ? appliedProposed.purchase : null,
+          proposedHousingMode: appliedProposed?.mode ?? null,
           excludedDebtItemIds: [],
         })
       ),
@@ -161,7 +169,9 @@ export default function DebtToIncome() {
       calculateDti(
         buildDtiCalculationRequest({
           householdId: householdId!,
-          proposedHousing: appliedProposed,
+          proposedHousing: appliedProposed?.mode === "monthly_payment" ? appliedProposed.housing : null,
+          proposedPurchase: appliedProposed?.mode === "purchase" ? appliedProposed.purchase : null,
+          proposedHousingMode: appliedProposed?.mode ?? null,
           excludedDebtItemIds: excludedDebtIds,
         })
       ),
@@ -277,6 +287,8 @@ export default function DebtToIncome() {
       included: pre.included,
       months_remaining: "",
       notes: "",
+      student_loan_status: "",
+      student_loan_payment_method: "manual",
     });
   }
 
@@ -314,26 +326,28 @@ export default function DebtToIncome() {
     calc?.current.back_end_dti_percent,
     proposedResult?.back_end_dti_percent
   );
-  const enteredProposedTotal = sumProposedHousingDraft(proposedDraft);
+  const enteredProposedTotal = sumProposedHousingDraft(monthlyDraft);
   const capacity = calc?.capacity.max_proposed_housing_payment_at_target;
 
-  function applyProposedHousing() {
-    const result = normalizeProposedHousingDraft(proposedDraft);
-    if (!result.ok) {
-      setProposedErrors(result.errors);
-      return;
-    }
-    setProposedErrors({});
-    const next = result.payload;
-    const sameRequest =
-      JSON.stringify(appliedProposed) === JSON.stringify(next);
+  function applyMonthlyHousing(payload: DtiProposedHousingInput) {
+    const next: AppliedProposedHome = { mode: "monthly_payment", housing: payload };
+    const sameRequest = JSON.stringify(appliedProposed) === JSON.stringify(next);
     setAppliedProposed(next);
     if (sameRequest) void proposedQuery.refetch();
   }
-  function clearProposedHousing() {
-    setProposedDraft(emptyProposedHousingDraft());
-    setProposedErrors({});
-    setAppliedProposed(null);
+  function applyPurchaseHousing(payload: DtiProposedPurchaseInput) {
+    const next: AppliedProposedHome = { mode: "purchase", purchase: payload };
+    const sameRequest = JSON.stringify(appliedProposed) === JSON.stringify(next);
+    setAppliedProposed(next);
+    if (sameRequest) void proposedQuery.refetch();
+  }
+  function clearMonthlyEstimate() {
+    setMonthlyDraft(emptyProposedHousingDraft());
+    if (appliedProposed?.mode === "monthly_payment") setAppliedProposed(null);
+  }
+  function clearPurchaseEstimate() {
+    setPurchaseDraft(emptyPurchaseEstimateDraft());
+    if (appliedProposed?.mode === "purchase") setAppliedProposed(null);
   }
 
   if (householdLoading) {
@@ -433,7 +447,7 @@ export default function DebtToIncome() {
                   value={formatDtiMoney(calc.inputs.gross_monthly_income)}
                 />
                 <DashboardMetricTile
-                  label="Current housing payment"
+                  label="Current monthly housing payment"
                   value={formatDtiMoney(calc.inputs.current_housing_payment)}
                   subtitle={profile?.current_housing_label || undefined}
                 />
@@ -446,13 +460,13 @@ export default function DebtToIncome() {
                   value={formatDtiMoney(calc.current.total_monthly_obligations)}
                 />
                 <DashboardMetricTile
-                  label="Front-end DTI"
+                  label="Current front-end DTI"
                   help="Housing payment ÷ gross monthly income"
                   value={showPercents ? formatDtiPercent(calc.current.front_end_dti_percent) : "Not available"}
                   subtitle="Housing payment ÷ gross monthly income"
                 />
                 <DashboardMetricTile
-                  label="Back-end DTI"
+                  label="Current back-end DTI"
                   help="Housing plus other debt payments ÷ gross monthly income"
                   value={showPercents ? formatDtiPercent(calc.current.back_end_dti_percent) : "Not available"}
                   subtitle="Housing plus other debt payments ÷ gross monthly income"
@@ -468,12 +482,13 @@ export default function DebtToIncome() {
                 <div className="space-y-2">
                   <h3 className="text-sm font-semibold text-gray-800">Proposed home</h3>
                   <p className="text-sm text-gray-600">
-                    Proposed housing replaces current housing for this comparison. It is not added on
-                    top of the current housing payment.
+                    {appliedProposed?.mode === "purchase" && proposedQuery.data?.purchase_estimate
+                      ? purchaseEstimateSummary(proposedQuery.data.purchase_estimate)
+                      : "Based on the monthly housing-payment components you entered."}
                   </p>
                   <div className={METRIC_TILE_GRID_4}>
                   <DashboardMetricTile
-                    label="Proposed total housing payment"
+                    label="Estimated total monthly housing payment"
                     value={formatDtiMoney(proposedResult.housing?.total)}
                   />
                   <DashboardMetricTile
@@ -540,15 +555,14 @@ export default function DebtToIncome() {
               ))}
               <section className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 space-y-2">
                 <h3 className="text-sm font-semibold text-indigo-950">
-                  Estimated housing payment at your selected back-end DTI target
+                  Monthly housing payment available at your selected back-end DTI target
                 </h3>
                 <p className="text-2xl font-bold tabular-nums text-indigo-950">
                   {formatDtiMoney(capacity)}
                 </p>
                 <p className="text-sm text-indigo-900">
-                  This is the total housing payment—not the home price—and includes principal,
-                  interest, taxes, insurance, mortgage insurance, HOA dues, and other required housing
-                  costs.
+                  This is the estimated total monthly housing payment that fits within your selected DTI
+                  target after included monthly debts. It is not a home price or loan approval.
                 </p>
                 {capacity && isZeroMoney(capacity) ? (
                   <p className="text-sm text-indigo-900">
@@ -559,85 +573,28 @@ export default function DebtToIncome() {
               </section>
             </section>
 
-            <section className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
-              <h2 className="text-base font-semibold text-gray-900">Test a proposed home payment</h2>
-              <p className="text-sm text-gray-600">
-                Enter the complete estimated monthly housing payment. This replaces your current housing payment for the proposed calculation.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                {PROPOSED_HOUSING_FIELDS.map((field) => {
-                  const fieldId = `dti-proposed-${field}`;
-                  const errorId = `${fieldId}-error`;
-                  const error = proposedErrors[field];
-                  return (
-                  <div key={field} className="block text-sm">
-                    <label htmlFor={fieldId} className="text-gray-700">
-                      {PROPOSED_FIELD_LABELS[field]}
-                    </label>
-                    <input
-                      id={fieldId}
-                      value={proposedDraft[field]}
-                      onChange={(e) =>
-                        setProposedDraft((draft) => ({ ...draft, [field]: e.target.value }))
-                      }
-                      inputMode="decimal"
-                      className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm min-h-[44px]"
-                      aria-invalid={Boolean(error)}
-                      aria-describedby={error ? errorId : undefined}
-                    />
-                    {error ? (
-                      <p id={errorId} className="mt-1 text-xs text-red-600" role="alert">
-                        {error}
-                      </p>
-                    ) : null}
-                  </div>
-                  );
-                })}
-              </div>
-              <p className="text-sm text-gray-700">
-                Entered total: {formatCurrency(enteredProposedTotal)}
-              </p>
-              {proposedBusy ? (
-                <p className="text-sm text-gray-600" aria-live="polite">
-                  Updating proposed home calculation…
-                </p>
-              ) : null}
-              {appliedProposed && proposedQuery.isError && !proposedBusy ? (
-                <MutationAlert
-                  message="Could not calculate the proposed home payment."
-                  onRetry={() => {
-                    void proposedQuery.refetch();
-                  }}
-                />
-              ) : null}
-              {proposedResult?.housing && !proposedBusy ? (
-                <p className="text-sm font-medium text-gray-900">
-                  Proposed total housing payment: {formatDtiMoney(proposedResult.housing.total)}
-                </p>
-              ) : null}
-              {warnings.proposed.map((warning) => (
-                <p key={warning.code} className="text-sm text-amber-900">
-                  {warning.message}
-                </p>
-              ))}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={applyProposedHousing}
-                  disabled={proposedBusy}
-                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 min-h-[44px] disabled:opacity-50"
-                >
-                  {proposedBusy ? "Calculating…" : "Calculate"}
-                </button>
-                <button
-                  type="button"
-                  onClick={clearProposedHousing}
-                  className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 min-h-[44px]"
-                >
-                  Clear proposed home
-                </button>
-              </div>
-            </section>
+            <DtiProposedHomePanel
+              monthlyDraft={monthlyDraft}
+              purchaseDraft={purchaseDraft}
+              selectedMode={selectedProposedMode}
+              applied={appliedProposed}
+              proposedBusy={proposedBusy}
+              proposedError={Boolean(appliedProposed && proposedQuery.isError)}
+              proposedHousingTotal={proposedResult?.housing?.total ?? null}
+              purchaseEstimate={proposedQuery.data?.purchase_estimate ?? null}
+              grossMonthlyIncome={calc.inputs.gross_monthly_income}
+              enteredMonthlyTotal={enteredProposedTotal}
+              onMonthlyDraftChange={setMonthlyDraft}
+              onPurchaseDraftChange={setPurchaseDraft}
+              onSelectMode={setSelectedProposedMode}
+              onApplyMonthly={applyMonthlyHousing}
+              onApplyPurchase={applyPurchaseHousing}
+              onClearMonthly={clearMonthlyEstimate}
+              onClearPurchase={clearPurchaseEstimate}
+              onRetryProposed={() => {
+                void proposedQuery.refetch();
+              }}
+            />
           </div>
 
           <section className="space-y-3">
@@ -860,6 +817,14 @@ export default function DebtToIncome() {
                         <p className="text-sm text-gray-600">
                           Balance {view.balanceLabel}
                         </p>
+                      ) : null}
+                      {view.planningEstimate ? (
+                        <p className="text-xs text-gray-500">
+                          {view.calculationSourceLabel}. Planning estimate only.
+                        </p>
+                      ) : null}
+                      {view.studentLoanStatusLabel ? (
+                        <p className="text-sm text-gray-600">Status: {view.studentLoanStatusLabel}</p>
                       ) : null}
                       {view.monthsRemainingLabel ? (
                         <p className="text-sm text-gray-600">{view.monthsRemainingLabel}</p>
@@ -1300,9 +1265,17 @@ function DebtTableRow({
       <td className="px-3 py-2">{view.effectivePaymentLabel}</td>
       <td className="px-3 py-2">
         {view.paymentSource}
+        {view.planningEstimate ? (
+          <span className="block text-xs text-gray-500">
+            {view.calculationSourceLabel}. Planning estimate only.
+          </span>
+        ) : null}
+        {view.studentLoanStatusLabel ? (
+          <span className="block text-xs text-gray-500">Status: {view.studentLoanStatusLabel}</span>
+        ) : null}
         {view.showLinkedMinimumSync ? (
           <span className="block text-xs text-gray-500">
-            Updates when the linked account minimum changes.
+            {view.linkedMinimumLine ?? "Updates when the linked account minimum changes."}
           </span>
         ) : null}
       </td>

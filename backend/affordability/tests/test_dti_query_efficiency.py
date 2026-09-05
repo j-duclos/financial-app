@@ -94,6 +94,71 @@ def test_calculate_query_count_does_not_grow_linearly_with_debts(auth_client, ho
     assert large_writes == 0
     assert large_count <= small_count + 2
     assert "timeline_" not in " ".join(q["sql"] for q in large.captured_queries).lower()
-    assert "transactions_transaction" not in " ".join(
-        q["sql"] for q in large.captured_queries
-    ).lower()
+def _seed_student_loans(household, n_debts: int) -> None:
+    DtiProfile.objects.create(
+        household=household,
+        current_housing_payment=Decimal("1200.00"),
+        target_back_end_dti_percent=Decimal("36.00"),
+    )
+    DtiIncomeSource.objects.create(
+        household=household,
+        name="Salary",
+        gross_monthly_amount=Decimal("8000.00"),
+        income_type="employment",
+        included=True,
+        position=1,
+    )
+    for i in range(n_debts):
+        DtiDebtItem.objects.create(
+            household=household,
+            name=f"Student {i}",
+            debt_type="student_loan",
+            monthly_payment=Decimal("0.00"),
+            outstanding_balance=Decimal(str(20000 + i)),
+            payment_source="manual",
+            student_loan_status="deferred",
+            student_loan_payment_method="fha_deferred_balance_percent",
+            included=True,
+            position=i,
+        )
+
+
+def test_calculate_query_count_does_not_grow_per_student_loan(auth_client, household):
+    _seed_student_loans(household, 5)
+    connection.queries_log.clear()
+    with CaptureQueriesContext(connection) as small:
+        res = auth_client.post(
+            "/api/affordability/dti/calculate/",
+            {"household_id": household.id},
+            format="json",
+        )
+    assert res.status_code == 200, res.content[:400]
+    small_count = len(small.captured_queries)
+    small_writes = sum(
+        1 for q in small.captured_queries if _sql_verb(q["sql"]) in WRITE_SQL
+    )
+    assert small_writes == 0
+    assert small_count <= 20
+
+    household.dti_income_sources.all().delete()
+    household.dti_debt_items.all().delete()
+    household.dti_profile.delete()
+    _seed_student_loans(household, 25)
+
+    connection.queries_log.clear()
+    with CaptureQueriesContext(connection) as large:
+        res = auth_client.post(
+            "/api/affordability/dti/calculate/",
+            {"household_id": household.id},
+            format="json",
+        )
+    assert res.status_code == 200, res.content[:400]
+    large_count = len(large.captured_queries)
+    large_writes = sum(
+        1 for q in large.captured_queries if _sql_verb(q["sql"]) in WRITE_SQL
+    )
+    assert large_writes == 0
+    assert large_count <= small_count + 2
+    sql = " ".join(q["sql"] for q in large.captured_queries).lower()
+    assert "timeline_" not in sql
+    assert "transactions_transaction" not in sql

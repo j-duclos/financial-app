@@ -23,6 +23,52 @@ export type AccountRole =
   | "cash_reserve"
   | "other";
 
+export type MinimumPaymentMode = "automatic" | "manual";
+export type MinimumPaymentSource = "plaid" | "manual" | "none";
+export type MinimumPaymentFreshness =
+  | "fresh"
+  | "stale"
+  | "manual"
+  | "unavailable"
+  | "unsupported"
+  | "reauthorization_required"
+  | "sync_failed"
+  | "product_not_enabled";
+
+export type PlaidLiabilitySyncStatus =
+  | "success"
+  | "unsupported"
+  | "reauthorization_required"
+  | "product_not_enabled"
+  | "failed"
+  | "disabled"
+  | "no_eligible_accounts";
+
+export interface PlaidLiabilitySyncWarning {
+  code: string;
+  account_id: number | null;
+  message: string;
+}
+
+export interface PlaidLiabilitySyncResult {
+  item_id: number;
+  status: PlaidLiabilitySyncStatus | string;
+  observed_at: string;
+  accounts_seen: number;
+  accounts_updated: number;
+  accounts_unchanged: number;
+  accounts_missing_liability: number;
+  warnings: PlaidLiabilitySyncWarning[];
+  elapsed_ms?: number;
+  message?: string;
+}
+
+export interface PlaidHouseholdLiabilitySyncResult {
+  household_id: number;
+  items: PlaidLiabilitySyncResult[];
+  item_count: number;
+}
+
 /** Category types */
 export type CategoryType = "INCOME" | "EXPENSE";
 
@@ -84,6 +130,21 @@ export interface Account {
   /** Amount from last closed statement (positive owed). */
   statement_balance?: string | null;
   minimum_payment_amount?: string | null;
+  effective_minimum_payment_amount?: string | null;
+  minimum_payment_mode?: MinimumPaymentMode | null;
+  minimum_payment_source?: MinimumPaymentSource | null;
+  manual_minimum_payment_amount?: string | null;
+  provider_minimum_payment_amount?: string | null;
+  provider_minimum_payment_observed_at?: string | null;
+  provider_minimum_payment_statement_date?: string | null;
+  provider_minimum_payment_due_date?: string | null;
+  provider_minimum_payment_sync_status?: string | null;
+  provider_minimum_payment_sync_message?: string | null;
+  minimum_payment_freshness?: MinimumPaymentFreshness | null;
+  minimum_payment_warning?: string | null;
+  minimum_payment_warning_code?: string | null;
+  /** Local PlaidItem primary key when this account is linked. */
+  plaid_item_id?: number | null;
   last_statement_date?: string | null;
   next_statement_date?: string | null;
   /** Next billing cycle close (YYYY-MM-DD); mirrors next_statement_date when closing day is set. */
@@ -257,6 +318,7 @@ export interface DebtPayoffCardSummary {
   credit_limit: string | null;
   utilization_percent: string | null;
   minimum_payment: string;
+  minimum_payment_available?: boolean;
   suggested_payment: string;
   payoff_date: string | null;
   months_remaining: number | null;
@@ -2364,6 +2426,20 @@ export type DtiDebtType = (typeof DTI_DEBT_TYPES)[number];
 export const DTI_PAYMENT_SOURCES = ["manual", "linked_account_minimum"] as const;
 export type DtiPaymentSource = (typeof DTI_PAYMENT_SOURCES)[number];
 
+export const DTI_STUDENT_LOAN_STATUSES = [
+  "repayment",
+  "deferred",
+  "forbearance",
+  "unknown",
+] as const;
+export type DtiStudentLoanStatus = (typeof DTI_STUDENT_LOAN_STATUSES)[number];
+
+export const DTI_STUDENT_LOAN_PAYMENT_METHODS = [
+  "manual",
+  "fha_deferred_balance_percent",
+] as const;
+export type DtiStudentLoanPaymentMethod = (typeof DTI_STUDENT_LOAN_PAYMENT_METHODS)[number];
+
 export type DtiCalculationStatus = "calculated" | "gross_income_required";
 
 export interface DtiCalculationWarning {
@@ -2373,6 +2449,16 @@ export interface DtiCalculationWarning {
   linked_account_id?: number | null;
 }
 
+export interface DtiPaymentCalculation {
+  method: DtiStudentLoanPaymentMethod | DtiPaymentSource | string;
+  label: string;
+  balance?: string;
+  percentage?: string;
+  multiplier?: string;
+  calculated_monthly_payment?: string;
+  configured_monthly_payment?: string;
+}
+
 export interface DtiLinkedAccountRef {
   id: number;
   name: string;
@@ -2380,6 +2466,11 @@ export interface DtiLinkedAccountRef {
   account_type: AccountType;
   status: string;
   minimum_payment_amount: string | null;
+  minimum_payment_source?: MinimumPaymentSource | string | null;
+  minimum_payment_freshness?: MinimumPaymentFreshness | string | null;
+  minimum_payment_warning?: string | null;
+  minimum_payment_warning_code?: string | null;
+  provider_minimum_payment_observed_at?: string | null;
 }
 
 export interface DtiProfile {
@@ -2443,6 +2534,9 @@ export interface DtiDebtItem {
   months_remaining: number | null;
   notes: string;
   position: number;
+  student_loan_status?: DtiStudentLoanStatus | null;
+  student_loan_payment_method?: DtiStudentLoanPaymentMethod | null;
+  payment_calculation?: DtiPaymentCalculation | null;
   warnings?: DtiCalculationWarning[];
   created_at: string;
   updated_at: string;
@@ -2456,6 +2550,8 @@ export interface DtiDebtItemWritePayload {
   outstanding_balance?: string | null;
   linked_account_id?: number | null;
   payment_source?: DtiPaymentSource;
+  student_loan_status?: DtiStudentLoanStatus | null;
+  student_loan_payment_method?: DtiStudentLoanPaymentMethod | null;
   included?: boolean;
   months_remaining?: number | null;
   notes?: string;
@@ -2475,9 +2571,43 @@ export interface DtiProposedHousingBreakdown extends Required<DtiProposedHousing
   total: string;
 }
 
+export const DTI_PROPOSED_HOUSING_MODES = ["monthly_payment", "purchase"] as const;
+export type DtiProposedHousingMode = (typeof DTI_PROPOSED_HOUSING_MODES)[number];
+
+export const DTI_DOWN_PAYMENT_TYPES = ["dollars", "percent"] as const;
+export type DtiDownPaymentType = (typeof DTI_DOWN_PAYMENT_TYPES)[number];
+
+export interface DtiProposedPurchaseInput {
+  purchase_price: string;
+  down_payment_type: DtiDownPaymentType;
+  down_payment_value: string;
+  annual_interest_rate: string;
+  loan_term_years: number;
+  annual_property_taxes?: string;
+  annual_homeowners_insurance?: string;
+  monthly_mortgage_insurance?: string;
+  monthly_hoa_dues?: string;
+  other_required_monthly_housing_costs?: string;
+}
+
+export interface DtiPurchaseEstimateResult {
+  purchase_price: string;
+  down_payment_type: DtiDownPaymentType | string;
+  down_payment_value: string;
+  down_payment_amount: string;
+  down_payment_percent: string;
+  loan_amount: string;
+  annual_interest_rate: string;
+  loan_term_years: number;
+  number_of_payments: number;
+  monthly: DtiProposedHousingBreakdown;
+}
+
 export interface DtiCalculationRequest {
   household_id: number;
+  proposed_housing_mode?: DtiProposedHousingMode | null;
   proposed_housing?: DtiProposedHousingInput | null;
+  proposed_purchase?: DtiProposedPurchaseInput | null;
   target_back_end_dti_percent?: string;
   target_front_end_dti_percent?: string | null;
   excluded_debt_item_ids?: number[];
@@ -2534,6 +2664,8 @@ export interface DtiCalculationResponse {
   inputs: DtiCalculationInputs;
   current: DtiBucketResult;
   proposed: DtiBucketResult | null;
+  proposed_housing_mode?: DtiProposedHousingMode | null;
+  purchase_estimate?: DtiPurchaseEstimateResult | null;
   capacity: DtiCapacityResult;
   income_sources: Array<
     Pick<

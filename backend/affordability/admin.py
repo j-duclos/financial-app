@@ -38,9 +38,17 @@ class DtiDebtItemAdmin(admin.ModelAdmin):
         "debt_type",
         "monthly_payment",
         "payment_source",
+        "student_loan_payment_method",
         "included",
         "linked_account",
         "position",
     )
-    list_filter = ("debt_type", "payment_source", "included", "household")
+    list_filter = (
+        "debt_type",
+        "payment_source",
+        "student_loan_status",
+        "student_loan_payment_method",
+        "included",
+        "household",
+    )
     search_fields = ("name",)

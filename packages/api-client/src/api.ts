@@ -61,6 +61,9 @@ import type {
   DtiCalculationRequest,
   DtiCalculationResponse,
   DtiCreditCardSuggestion,
+  PlaidLiabilitySyncResult,
+  PlaidHouseholdLiabilitySyncResult,
+  MinimumPaymentMode,
 } from "@budget-app/shared";
 import { request, requestRequired } from "./config";
 
@@ -271,6 +274,8 @@ export async function createAccount(data: {
   current_balance?: string | null;
   statement_balance?: string | null;
   minimum_payment_amount?: string | null;
+  minimum_payment_mode?: MinimumPaymentMode;
+  manual_minimum_payment_amount?: string | null;
   autopay_enabled?: boolean;
   autopay_account?: number | null;
   autopay_type?: string;
@@ -895,6 +900,8 @@ export interface PlaidItem {
   institution_name: string;
   linked_accounts: PlaidLinkedAccountRow[];
   last_sync_at?: string | null;
+  liabilities_last_sync_at?: string | null;
+  liabilities_sync_status?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -990,6 +997,31 @@ export async function syncAllPlaidItems(options?: {
     method: "POST",
     params: Object.keys(q).length ? q : undefined,
     timeoutMs: 480_000,
+  });
+}
+
+export async function syncPlaidItemLiabilities(itemId: number): Promise<PlaidLiabilitySyncResult> {
+  return requestRequired(`/api/plaid/items/${itemId}/sync-liabilities/`, {
+    method: "POST",
+    timeoutMs: 120_000,
+  });
+}
+
+export async function syncHouseholdLiabilities(
+  householdId: number
+): Promise<PlaidHouseholdLiabilitySyncResult> {
+  return requestRequired("/api/plaid/sync-liabilities/", {
+    method: "POST",
+    params: { household: String(householdId) },
+    timeoutMs: 240_000,
+  });
+}
+
+export async function createPlaidUpdateModeLinkToken(
+  itemId: number
+): Promise<{ link_token: string; update_mode: boolean }> {
+  return requestRequired(`/api/plaid/items/${itemId}/link-token-update/`, {
+    method: "POST",
   });
 }
 

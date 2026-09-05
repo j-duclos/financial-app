@@ -35,6 +35,11 @@ DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
 # Performance instrumentation ([PERF] logs) — on by default on Render; set ENABLE_PERF_LOGS=false to disable.
 ENABLE_PERF_LOGS = _env_bool("ENABLE_PERF_LOGS", default=_ON_RENDER)
 
+# Credit-card minimum payments from Plaid Liabilities. Off until the Dashboard product is enabled.
+PLAID_ENABLE_LIABILITIES = _env_bool("PLAID_ENABLE_LIABILITIES", default=False)
+PLAID_WEBHOOK_URL = os.environ.get("PLAID_WEBHOOK_URL", "").strip()
+MINIMUM_PAYMENT_FRESHNESS_DAYS = int(os.environ.get("MINIMUM_PAYMENT_FRESHNESS_DAYS", "45"))
+
 if not DEBUG and SECRET_KEY == _INSECURE_DEV_SECRET:
     raise ImproperlyConfigured(
         "Set DJANGO_SECRET_KEY to a unique secret when DEBUG is False (required on Render)."

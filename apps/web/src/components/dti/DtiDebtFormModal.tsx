@@ -1,18 +1,27 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import {
   DTI_DEBT_TYPES,
+  DTI_STUDENT_LOAN_PAYMENT_METHODS,
+  DTI_STUDENT_LOAN_STATUSES,
   type DtiCreditCardSuggestion,
   type DtiDebtItem,
   type DtiDebtItemWritePayload,
   type DtiDebtType,
   type DtiPaymentSource,
+  type DtiStudentLoanPaymentMethod,
+  type DtiStudentLoanStatus,
 } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { DEBT_TYPE_LABELS } from "../../lib/dtiDisplay";
+import {
+  DEBT_TYPE_LABELS,
+  STUDENT_LOAN_METHOD_LABELS,
+  STUDENT_LOAN_STATUS_LABELS,
+} from "../../lib/dtiDisplay";
 import {
   alreadyLinkedAccountIds,
   normalizeDebtWritePayload,
   parseApiFieldErrors,
+  previewFhaDeferredStudentLoanPayment,
 } from "../../lib/dtiForm";
 import DtiModalFrame, { DtiFieldShell, FieldError, describedByIds, fieldClass } from "./DtiModalFrame";
 
@@ -26,6 +35,8 @@ export type DtiDebtFormPrefill = {
   included: boolean;
   months_remaining: string;
   notes: string;
+  student_loan_status: DtiStudentLoanStatus | "";
+  student_loan_payment_method: DtiStudentLoanPaymentMethod;
 };
 
 type Props = {
@@ -52,6 +63,8 @@ function emptyPrefill(): DtiDebtFormPrefill {
     included: true,
     months_remaining: "",
     notes: "",
+    student_loan_status: "",
+    student_loan_payment_method: "manual",
   };
 }
 
@@ -74,7 +87,7 @@ export default function DtiDebtFormModal({
   useEffect(() => {
     if (!open) return;
     if (prefill) {
-      setForm(prefill);
+      setForm({ ...emptyPrefill(), ...prefill });
     } else if (initial) {
       setForm({
         name: initial.name,
@@ -86,6 +99,11 @@ export default function DtiDebtFormModal({
         included: initial.included,
         months_remaining: initial.months_remaining != null ? String(initial.months_remaining) : "",
         notes: initial.notes ?? "",
+        student_loan_status: initial.student_loan_status ?? "",
+        student_loan_payment_method:
+          initial.student_loan_payment_method === "fha_deferred_balance_percent"
+            ? "fha_deferred_balance_percent"
+            : "manual",
       });
     } else {
       setForm(emptyPrefill());
@@ -126,8 +144,11 @@ export default function DtiDebtFormModal({
 
   const selectedLink = linkable.find((row) => row.id === form.linked_account_id) ?? null;
   const showLink = form.debt_type === "credit_card";
+  const isStudentLoan = form.debt_type === "student_loan";
+  const fhaEstimate = isStudentLoan && form.student_loan_payment_method === "fha_deferred_balance_percent";
   const linkedMinimum = form.payment_source === "linked_account_minimum";
-  const needsManualPayment = !linkedMinimum;
+  const needsManualPayment = !linkedMinimum && !fhaEstimate;
+  const fhaPreview = fhaEstimate ? previewFhaDeferredStudentLoanPayment(form.outstanding_balance) : null;
 
   if (!open) return null;
 
@@ -139,6 +160,9 @@ export default function DtiDebtFormModal({
   const monthlyError = errors.monthly_payment || api.fields.monthly_payment;
   const balanceError = errors.outstanding_balance || api.fields.outstanding_balance;
   const monthsError = errors.months_remaining || api.fields.months_remaining;
+  const studentStatusError = errors.student_loan_status || api.fields.student_loan_status;
+  const studentMethodError =
+    errors.student_loan_payment_method || api.fields.student_loan_payment_method;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -185,6 +209,12 @@ export default function DtiDebtFormModal({
                 ...(debt_type !== "credit_card"
                   ? { linked_account_id: null, payment_source: "manual" as const }
                   : {}),
+                ...(debt_type !== "student_loan"
+                  ? {
+                      student_loan_status: "" as const,
+                      student_loan_payment_method: "manual" as const,
+                    }
+                  : {}),
               }));
             }}
             className={fieldClass}
@@ -196,6 +226,70 @@ export default function DtiDebtFormModal({
             ))}
           </select>
         </DtiFieldShell>
+        {isStudentLoan ? (
+          <>
+            <DtiFieldShell
+              id="dti-student-status"
+              label="Loan status"
+              errorId="dti-student-status-error"
+              error={studentStatusError}
+            >
+              <select
+                id="dti-student-status"
+                value={form.student_loan_status}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    student_loan_status: e.target.value as DtiStudentLoanStatus | "",
+                  }))
+                }
+                className={fieldClass}
+                aria-invalid={Boolean(studentStatusError)}
+                aria-describedby={describedByIds(studentStatusError, "dti-student-status-error")}
+              >
+                <option value="">Select status…</option>
+                {DTI_STUDENT_LOAN_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {STUDENT_LOAN_STATUS_LABELS[status]}
+                  </option>
+                ))}
+              </select>
+            </DtiFieldShell>
+            <fieldset
+              className="space-y-2"
+              aria-invalid={Boolean(studentMethodError)}
+              aria-describedby={studentMethodError ? "dti-student-method-error" : undefined}
+            >
+              <legend className="text-sm text-gray-700">
+                How should the monthly DTI payment be calculated?
+              </legend>
+              {DTI_STUDENT_LOAN_PAYMENT_METHODS.map((method) => (
+                <label key={method} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="dti-student-method"
+                    className="mt-1"
+                    checked={form.student_loan_payment_method === method}
+                    onChange={() =>
+                      setForm((f) => ({
+                        ...f,
+                        student_loan_payment_method: method,
+                        payment_source: "manual",
+                        linked_account_id: null,
+                      }))
+                    }
+                  />
+                  <span>{STUDENT_LOAN_METHOD_LABELS[method]}</span>
+                </label>
+              ))}
+              <p className="text-xs text-gray-500">
+                FHA planning estimate: 0.5% of the outstanding balance is used when the reported
+                monthly student-loan payment is $0. Actual lender treatment may vary.
+              </p>
+              <FieldError id="dti-student-method-error" message={studentMethodError} />
+            </fieldset>
+          </>
+        ) : null}
         {showLink ? (
           <DtiFieldShell
             id="dti-debt-linked"
@@ -289,15 +383,15 @@ export default function DtiDebtFormModal({
               aria-describedby={describedByIds(monthlyError, "dti-debt-monthly-error")}
             />
           </DtiFieldShell>
-        ) : (
+        ) : linkedMinimum ? (
           <p className="text-sm text-gray-600">
             Effective monthly payment uses the linked account minimum and updates when that minimum
             changes.
           </p>
-        )}
+        ) : null}
         <DtiFieldShell
           id="dti-debt-balance"
-          label="Outstanding balance (optional)"
+          label={fhaEstimate ? "Outstanding balance" : "Outstanding balance (optional)"}
           errorId="dti-debt-balance-error"
           error={balanceError}
         >
@@ -311,6 +405,15 @@ export default function DtiDebtFormModal({
             aria-describedby={describedByIds(balanceError, "dti-debt-balance-error")}
           />
         </DtiFieldShell>
+        {fhaEstimate ? (
+          <p className="text-sm text-gray-600" data-testid="dti-fha-preview">
+            Estimate (0.5% of balance):{" "}
+            {fhaPreview ? `${formatCurrency(fhaPreview)}/month` : "Enter a positive balance"}
+            <span className="block text-xs text-gray-500 mt-0.5">
+              Preview only. The saved DTI payment comes from the server after you save.
+            </span>
+          </p>
+        ) : null}
         <DtiFieldShell
           id="dti-debt-months"
           label="Months remaining (optional)"
