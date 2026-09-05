@@ -33,6 +33,8 @@ describe("Transactions transfer preview", () => {
     expect(transactions).not.toMatch(/inlineCardTimelineForHint/);
     expect(transactions).not.toMatch(/assetBalanceAsOfDateFromTimeline/);
     expect(transactions).toMatch(/transferPreviewAccountIds/);
+    expect(transactions).toMatch(/destinationCardOwedAmount/);
+    expect(transactions).toMatch(/getAccount\(inlinePayToCardAccountId/);
     expect(transactions).not.toMatch(/isOutflow \? accountId : inlineTransferToId/);
   });
 

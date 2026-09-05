@@ -96,7 +96,7 @@ import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
-import { transferPreviewAccountIds } from "../lib/transferPreviewAccounts";
+import { transferPreviewAccountIds, destinationCardOwedAmount } from "../lib/transferPreviewAccounts";
 
 export type { TimeFilter, ForecastRange };
 
@@ -604,14 +604,28 @@ export default function Transactions() {
     enabled: isTransferCategory && inlineTransferToId != null && typeof accountId === "number",
   });
 
-  const inlineOwedAsOfPaymentDate =
-    inlineTransferPreview.data?.destination_balance_owed_before ?? null;
+  const { data: destCardAccount, isFetching: destCardAccountLoading } = useQuery({
+    queryKey: ["account", inlinePayToCardAccountId, "transactions-cc-dest"],
+    queryFn: () => getAccount(inlinePayToCardAccountId as number, true),
+    enabled: inlinePayToCardAccountId != null,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    placeholderData: inlineDestPickAccount ?? undefined,
+  });
+
+  const inlineOwedAsOfPaymentDate = destinationCardOwedAmount({
+    previewOwedBefore: inlineTransferPreview.data?.destination_balance_owed_before,
+    previewDestSignedBefore: inlineTransferPreview.data?.destination_balance_before,
+    destinationAccount: destCardAccount ?? inlineDestPickAccount,
+  });
   const inlineBankDestBalanceBefore =
     inlineTransferPreview.data?.destination_balance_before ?? null;
   const inlineBankDestBalanceAfter =
     inlineTransferPreview.data?.destination_balance_after ?? null;
   const inlineTransferPreviewLoading =
-    inlineTransferPreview.isFetching && !inlineTransferPreview.data;
+    inlineOwedAsOfPaymentDate == null &&
+    ((inlineTransferPreview.isFetching && !inlineTransferPreview.data) ||
+      (inlinePayToCardAccountId != null && destCardAccountLoading));
 
   const editCategory = useMemo(
     () => (editForm.category_id ? categories.find((c) => c.id === editForm.category_id) : null),
@@ -760,8 +774,25 @@ export default function Transactions() {
     enabled: Boolean(editing && editTransferCounterpartyId != null),
   });
 
+  const { data: editDestCardAccount, isFetching: editDestCardAccountLoading } = useQuery({
+    queryKey: ["account", editPayToCardId, "transactions-cc-dest"],
+    queryFn: () => getAccount(editPayToCardId as number, true),
+    enabled: editPayToCardId != null,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    placeholderData: editDestinationAccount ?? undefined,
+  });
+
   /** Debt on the card as of the payment date, excluding this transfer (canonical preview). */
-  const editOwedAsOfPaymentDate = editTransferPreview.data?.destination_balance_owed_before ?? null;
+  const editOwedAsOfPaymentDate = destinationCardOwedAmount({
+    previewOwedBefore: editTransferPreview.data?.destination_balance_owed_before,
+    previewDestSignedBefore: editTransferPreview.data?.destination_balance_before,
+    destinationAccount: editDestCardAccount ?? editDestinationAccount,
+  });
+  const editOwedLoading =
+    editOwedAsOfPaymentDate == null &&
+    ((editTransferPreview.isFetching && !editTransferPreview.data) ||
+      (editPayToCardId != null && editDestCardAccountLoading));
 
   const editBankDestBalanceExcludingTransfer =
     editTransferPreview.data?.destination_balance_before ?? null;
@@ -2295,17 +2326,17 @@ export default function Transactions() {
                   <div className="text-xs font-medium text-gray-700">
                     Projected balance owed on card (as of {formatDateDisplay(editForm.date)})
                   </div>
-                  {editTransferPreview.isFetching && !editTransferPreview.data ? (
+                  {Number.isFinite(editOwedAsOfPaymentDate) ? (
+                    <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">
+                      {formatCurrency(
+                        editOwedAsOfPaymentDate as number,
+                        accounts.find((a) => a.id === editPayToCardId)?.currency ?? currency
+                      )}
+                    </p>
+                  ) : editOwedLoading ? (
                     <p className="text-xs text-gray-500 mt-1">Loading…</p>
                   ) : (
-                    <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">
-                      {editOwedAsOfPaymentDate != null
-                        ? formatCurrency(
-                            String(editOwedAsOfPaymentDate),
-                            accounts.find((a) => a.id === editPayToCardId)?.currency ?? currency
-                          )
-                        : "—"}
-                    </p>
+                    <p className="text-base font-semibold text-red-700 tabular-nums mt-0.5">—</p>
                   )}
                   <p className="text-[11px] text-gray-500 mt-1">
                     From the card’s timeline on or before this date. This transfer is excluded so the amount
