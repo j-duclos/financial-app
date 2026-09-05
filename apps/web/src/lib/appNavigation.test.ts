@@ -28,12 +28,14 @@ describe("appNavigation", () => {
     expect(PLANNING_NAV_LINKS.map((l) => l.label)).toEqual([
       "Goals",
       "Payment Planner",
+      "Debt-to-Income",
       "What-If",
     ]);
     expect(isNavMenuActive("/goals", PLANNING_NAV_LINKS)).toBe(true);
     expect(isNavMenuActive("/goals/12", PLANNING_NAV_LINKS)).toBe(true);
     expect(isNavMenuActive("/payment-planner", PLANNING_NAV_LINKS)).toBe(false);
     expect(isNavMenuActive("/credit-cards", PLANNING_NAV_LINKS)).toBe(true);
+    expect(isNavMenuActive("/debt-to-income", PLANNING_NAV_LINKS)).toBe(true);
     expect(isNavMenuActive("/scenarios", PLANNING_NAV_LINKS)).toBe(true);
   });
 

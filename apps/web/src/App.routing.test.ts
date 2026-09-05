@@ -32,6 +32,7 @@ describe("Primary navigation structure", () => {
   it("keeps underlying planning and more routes registered", () => {
     expect(appSource).toMatch(/path="goals"/);
     expect(appSource).toMatch(/path="credit-cards"/);
+    expect(appSource).toMatch(/path="debt-to-income"/);
     expect(appSource).toMatch(/path="scenarios"/);
     expect(appSource).toMatch(/path="recurring"/);
     expect(appSource).toMatch(/path="automation"/);

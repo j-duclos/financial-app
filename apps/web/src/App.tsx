@@ -20,6 +20,7 @@ import Reconcile from "./pages/Reconcile";
 import Reports from "./pages/Reports";
 import Recurring from "./pages/Recurring";
 import CreditCards from "./pages/CreditCards";
+import DebtToIncome from "./pages/DebtToIncome";
 import Profile from "./pages/Profile";
 import PlaidOAuthReturn from "./pages/PlaidOAuthReturn";
 
@@ -76,6 +77,7 @@ function AppRoutes() {
         <Route path="recurring" element={<Recurring />} />
         <Route path="bills" element={<Navigate to="/recurring" replace />} />
         <Route path="credit-cards" element={<CreditCards />} />
+        <Route path="debt-to-income" element={<DebtToIncome />} />
         <Route path="goals" element={<Goals />} />
         <Route path="goals/:id" element={<GoalDetail />} />
         <Route path="reconcile" element={<Reconcile />} />

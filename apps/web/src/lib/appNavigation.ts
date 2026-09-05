@@ -24,6 +24,11 @@ export const PLANNING_NAV_LINKS: AppNavLink[] = [
     matchPrefixes: ["/credit-cards"],
   },
   {
+    to: "/debt-to-income",
+    label: "Debt-to-Income",
+    matchPrefixes: ["/debt-to-income"],
+  },
+  {
     to: "/scenarios",
     label: "What-If",
     matchPrefixes: ["/scenarios"],
