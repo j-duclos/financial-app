@@ -674,9 +674,10 @@ class TestGuidedStrategyApi:
         )
         assert "metrics" in payload
         assert payload["scenario_id"] == scenario.id
+        assert "guided_strategy_result" not in payload
         assert Transaction.objects.count() == before_txns
 
-    def test_comparison_unchanged_when_strategy_configured(
+    def test_comparison_applies_strategy_hypothetically(
         self, auth, owner, scenario, checking, savings, card, savings_rule, paycheck_rule, override
     ):
         baseline = build_scenario_comparison(
@@ -685,15 +686,23 @@ class TestGuidedStrategyApi:
         txn_before = Transaction.objects.count()
         res = auth.put(
             _url(scenario.id),
-            _valid_payload(checking, savings, card, savings_rule),
+            _valid_payload(
+                checking,
+                savings,
+                card,
+                savings_rule,
+                start_date=date.today().isoformat(),
+                minimum_cash_buffer="0.00",
+            ),
             format="json",
         )
         assert res.status_code == 200
         with_strategy = build_scenario_comparison(
             owner, scenario.id, horizon="3m", household_id=scenario.household_id
         )
-        assert with_strategy["metrics"] == baseline["metrics"]
-        assert with_strategy["summary"] == baseline["summary"]
+        assert with_strategy["metrics"] != baseline["metrics"]
+        result = with_strategy["guided_strategy_result"]
+        assert result["strategy_type"] == "debt_first_vs_save_first"
         assert ScenarioRuleOverride.objects.filter(pk=override.pk).exists()
         assert RecurringRule.objects.filter(pk=savings_rule.pk, active=True).exists()
         assert Transaction.objects.count() == txn_before

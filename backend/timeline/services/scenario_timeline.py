@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from accounts.models import Account
-from timeline.models import RecurringRule, Scenario, ScenarioRuleOverride
+from timeline.models import RecurringRule, Scenario, ScenarioGuidedStrategy, ScenarioRuleOverride
 
 
 def override_changes_timing(ov: ScenarioRuleOverride) -> bool:
@@ -44,6 +44,7 @@ def override_changes_timing(ov: ScenarioRuleOverride) -> bool:
 from timeline.services.ledger import (
     _append_scenario_projection_rows,
     _apply_scenario_category_shocks,
+    _balance_at_end_of_date,
     _projected_rule_timeline_row,
     _timeline_row_date,
     append_scenario_added_recurring_projections,
@@ -51,6 +52,11 @@ from timeline.services.ledger import (
     dedupe_future_rule_occurrence_rows,
     recompute_future_timeline_running_balances,
     signed_amount_for_rule,
+)
+from timeline.services.guided_strategy_simulation import (
+    GuidedStrategyTrace,
+    apply_debt_first_vs_save_first,
+    snapshot_from_strategy,
 )
 from timeline.services.rule_schedule import generate_rule_occurrence_dates
 
@@ -141,8 +147,18 @@ def build_scenario_timeline_from_base(
     one_time_events: list | None = None,
     added_recurring: list | None = None,
     category_shocks: list | None = None,
-) -> list[dict]:
-    """Apply scenario overrides/events to a copy of the base forecast timeline."""
+    guided_strategy: ScenarioGuidedStrategy | None = None,
+    opening_balances: dict[int, Decimal] | None = None,
+) -> tuple[list[dict], GuidedStrategyTrace | None]:
+    """Apply scenario overrides/events, then an optional guided strategy overlay.
+
+    Order: copy/dedupe → rule overrides → one-time events → added recurring →
+    extra pre-guided dedupe (strategy only) → guided strategy →
+    final dedupe → one running-balance recompute.
+
+    Guided allocation uses an in-memory ledger walk; canonical
+    ``recompute_future_timeline_running_balances`` runs once at the end.
+    """
     rows: list[dict] = [copy.deepcopy(r) for r in base_rows]
     rows = dedupe_future_rule_occurrence_rows(rows, today)
     rows = [r for r in rows if r.get("source") not in ("scenario_event", "scenario_added_recurring")]
@@ -227,10 +243,35 @@ def build_scenario_timeline_from_base(
     )
     _apply_scenario_category_shocks(rows, scenario, category_shocks=category_shocks)
 
+    guided_trace: GuidedStrategyTrace | None = None
+    if guided_strategy is not None:
+        rows = dedupe_future_rule_occurrence_rows(rows, today)
+        snapshot = snapshot_from_strategy(guided_strategy)
+        openings = dict(opening_balances or {})
+        if not openings:
+            involved = {
+                snapshot.source_account.pk,
+                snapshot.savings_account.pk,
+                *snapshot.debt_account_ids,
+            }
+            yesterday = today - timedelta(days=1)
+            openings = {aid: _balance_at_end_of_date(aid, yesterday) for aid in involved}
+        rows, guided_trace = apply_debt_first_vs_save_first(
+            rows,
+            snapshot,
+            today=today,
+            end_date=end_date,
+            opening_balances=openings,
+        )
+
     account_ids = {r.get("account_id") for r in rows if r.get("account_id") is not None}
 
     rows = dedupe_future_rule_occurrence_rows(rows, today)
     recompute_future_timeline_running_balances(
         rows, today=today, account_ids=account_ids
     )
-    return rows
+    for row in rows:
+        rb = row.get("running_balance")
+        if rb is not None and row.get("balance_after") is None:
+            row["balance_after"] = str(rb)
+    return rows, guided_trace

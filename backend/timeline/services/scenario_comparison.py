@@ -28,14 +28,21 @@ from timeline.models import (
     ScenarioOneTimeEvent,
     ScenarioRuleOverride,
     ScenarioAddedRecurring,
+    ScenarioGuidedStrategy,
 )
 from timeline.services.calendar import build_timeline_calendar
 from timeline.services.canonical_timeline_cache import get_or_build_canonical_forecast_timeline
+from timeline.services.guided_strategy import (
+    load_guided_strategy,
+    validate_loaded_guided_strategy,
+)
+from timeline.services.guided_strategy_simulation import build_guided_strategy_result
 from timeline.services.ledger import (
     build_timeline,
     dedupe_future_rule_occurrence_rows,
     forecast_lowest_balance_from_rows,
     is_superseded_planned_row,
+    _balance_at_end_of_date,
 )
 from timeline.services.scenario_timeline import build_scenario_timeline_from_base
 
@@ -102,7 +109,10 @@ class ScenarioComparisonContext:
     base_ending_balance_by_account: dict[int, Decimal]
     scenario_ending_balance_by_account: dict[int, Decimal]
     signed_balances: dict[int, Decimal]
-    net_worth_after_horizon: Decimal
+    base_net_worth_after_horizon: Decimal
+    scenario_net_worth_after_horizon: Decimal
+    guided_strategy: ScenarioGuidedStrategy | None = None
+    guided_strategy_result: dict[str, Any] | None = None
     base_health_by_account: dict[int, dict[str, Any]] = field(default_factory=dict)
     scenario_health_by_account: dict[int, dict[str, Any]] = field(default_factory=dict)
     recurring_rules: list = field(default_factory=list)
@@ -175,6 +185,7 @@ def _affected_accounts_from_scenario(
     events: list | None = None,
     added: list | None = None,
     shocks: list | None = None,
+    guided_strategy: ScenarioGuidedStrategy | None = None,
 ) -> tuple[set[int], set[int], set[int]]:
     """Return (all_affected, cash_affected, credit_affected) account ids."""
     if overrides is None or events is None or added is None or shocks is None:
@@ -217,6 +228,12 @@ def _affected_accounts_from_scenario(
         for aid, acc in accounts_by_id.items():
             if account_supports_available_to_spend(acc):
                 cash_affected.add(aid)
+
+    if guided_strategy is not None:
+        _classify(guided_strategy.source_account_id)
+        _classify(guided_strategy.savings_account_id)
+        for acc in guided_strategy.included_debt_accounts.all():
+            _classify(acc.pk)
 
     return all_affected, cash_affected, credit_affected
 
@@ -958,6 +975,9 @@ def build_scenario_comparison_context(
     forecast_accounts = [a for a in accounts if a.participates_in_forecast()]
 
     overrides, one_time_events, added_recurring, category_shocks = _load_scenario_changes(scenario)
+    guided_strategy = load_guided_strategy(scenario)
+    if guided_strategy is not None:
+        validate_loaded_guided_strategy(guided_strategy)
     all_affected, cash_affected, credit_affected = _affected_accounts_from_scenario(
         scenario,
         account_by_id,
@@ -965,16 +985,13 @@ def build_scenario_comparison_context(
         events=one_time_events,
         added=added_recurring,
         shocks=category_shocks,
+        guided_strategy=guided_strategy,
     )
     # Scope calendar to the one cash account this plan touches (matches Transactions ledger view).
     calendar_account_id = next(iter(cash_affected)) if len(cash_affected) == 1 else None
 
     signed_balances = bulk_signed_ledger_balances(accounts, today)
     nw_accounts = _net_worth_accounts(accounts)
-    nw_balances = bulk_signed_ledger_balances(nw_accounts, end_date)
-    net_worth_after_horizon = compute_net_worth(
-        nw_accounts, end_date, balance_by_account=nw_balances
-    )
 
     household_rules = list(
         RecurringRule.objects.filter(household_id=scenario.household_id).select_related(
@@ -998,7 +1015,19 @@ def build_scenario_comparison_context(
     base_rows = [r for r in base_rows if r.get("date") is None or r["date"] <= end_date]
     base_rows = dedupe_future_rule_occurrence_rows(base_rows, today)
 
-    scenario_rows = build_scenario_timeline_from_base(
+    guided_opening: dict[int, Decimal] | None = None
+    if guided_strategy is not None:
+        yesterday = today - timedelta(days=1)
+        guided_opening = {
+            aid: _balance_at_end_of_date(aid, yesterday)
+            for aid in {
+                guided_strategy.source_account_id,
+                guided_strategy.savings_account_id,
+                *[acc.pk for acc in guided_strategy.included_debt_accounts.all()],
+            }
+        }
+
+    scenario_rows, guided_trace = build_scenario_timeline_from_base(
         base_rows,
         scenario,
         today=today,
@@ -1009,6 +1038,8 @@ def build_scenario_comparison_context(
         one_time_events=one_time_events,
         added_recurring=added_recurring,
         category_shocks=category_shocks,
+        guided_strategy=guided_strategy,
+        opening_balances=guided_opening,
     )
 
     calendar_kwargs = dict(
@@ -1030,6 +1061,25 @@ def build_scenario_comparison_context(
     scenario_ending = _fill_ending_map_from_signed(
         build_ending_balance_map(scenario_rows), accounts, signed_balances
     )
+    # Base vs scenario net worth from each timeline's ending balances (not a
+    # single real-ledger snapshot reused for both sides).
+    base_net_worth_after_horizon = compute_net_worth(
+        nw_accounts, balance_by_account=base_ending
+    )
+    scenario_net_worth_after_horizon = compute_net_worth(
+        nw_accounts, balance_by_account=scenario_ending
+    )
+
+    guided_strategy_result = None
+    if guided_trace is not None:
+        guided_strategy_result = build_guided_strategy_result(
+            guided_trace,
+            today=today,
+            end_date=end_date,
+            base_rows=base_rows,
+            scenario_rows=scenario_rows,
+            opening_balances=guided_opening or {},
+        )
 
     base_forecasts = calculate_forecast_summaries_for_accounts(
         user,
@@ -1117,7 +1167,10 @@ def build_scenario_comparison_context(
         base_ending_balance_by_account=base_ending,
         scenario_ending_balance_by_account=scenario_ending,
         signed_balances=signed_balances,
-        net_worth_after_horizon=net_worth_after_horizon,
+        base_net_worth_after_horizon=base_net_worth_after_horizon,
+        scenario_net_worth_after_horizon=scenario_net_worth_after_horizon,
+        guided_strategy=guided_strategy,
+        guided_strategy_result=guided_strategy_result,
         base_health_by_account=base_health,
         scenario_health_by_account=scenario_health,
         recurring_rules=recurring_rules,
@@ -1137,7 +1190,7 @@ def serialize_scenario_comparison(ctx: ScenarioComparisonContext) -> dict[str, A
             ctx.base_ending_balance_by_account, ctx.accounts
         ),
         savings=_savings_from_ending_map(ctx.base_ending_balance_by_account, ctx.accounts),
-        net_worth=ctx.net_worth_after_horizon,
+        net_worth=ctx.base_net_worth_after_horizon,
         sts=ctx.base_sts,
     )
     scenario_m = _metrics_from_calendar(
@@ -1152,7 +1205,7 @@ def serialize_scenario_comparison(ctx: ScenarioComparisonContext) -> dict[str, A
         savings=_savings_from_ending_map(
             ctx.scenario_ending_balance_by_account, ctx.accounts
         ),
-        net_worth=ctx.net_worth_after_horizon,
+        net_worth=ctx.scenario_net_worth_after_horizon,
         sts=ctx.scenario_sts,
     )
 
@@ -1217,7 +1270,7 @@ def serialize_scenario_comparison(ctx: ScenarioComparisonContext) -> dict[str, A
         scenario_ending=ctx.scenario_ending_balance_by_account,
     )
 
-    return {
+    payload = {
         "scenario_id": ctx.scenario.id,
         "scenario_name": ctx.scenario.name,
         "horizon": ctx.horizon,
@@ -1230,6 +1283,9 @@ def serialize_scenario_comparison(ctx: ScenarioComparisonContext) -> dict[str, A
         "risk_explanation": risk_explanation,
         "credit_utilization_at_horizon": credit_utilization_at_horizon,
     }
+    if ctx.guided_strategy_result is not None:
+        payload["guided_strategy_result"] = ctx.guided_strategy_result
+    return payload
 
 
 def build_scenario_comparison(

@@ -183,19 +183,54 @@ def _load_card_states(
     return [s for s in states if s.balance > 0]
 
 
-def _focus_order(states: list[CardState], strategy: str, custom_order: list[int] | None) -> list[CardState]:
-    active = [s for s in states if s.balance > 0]
+@dataclass(frozen=True)
+class DebtPrioritySnapshot:
+    """Current owed/APR/utilization for Payment Planner payoff ordering."""
+
+    account_id: int
+    owed: Decimal
+    apr: Decimal
+    utilization: Decimal
+
+
+def rank_debt_accounts_for_payoff(
+    snapshots: list[DebtPrioritySnapshot],
+    strategy: str,
+    custom_order: list[int] | None = None,
+) -> list[int]:
+    """
+    Return account IDs with positive owed, in Payment Planner focus order.
+
+    avalanche: highest effective APR, then smallest owed
+    snowball: smallest owed, then highest APR
+    utilization_target: highest utilization, then highest APR, then smallest owed
+    custom: persisted custom_order, skipping paid-off cards
+    """
+    active = [s for s in snapshots if s.owed > 0]
     if strategy == "snowball":
-        return sorted(active, key=lambda s: (s.balance, -s.apr))
-    if strategy == "utilization_target":
-        return sorted(
-            active,
-            key=lambda s: (-s.utilization, -s.apr, s.balance),
-        )
-    if strategy == "custom" and custom_order:
+        ordered = sorted(active, key=lambda s: (s.owed, -s.apr))
+    elif strategy == "utilization_target":
+        ordered = sorted(active, key=lambda s: (-s.utilization, -s.apr, s.owed))
+    elif strategy == "custom" and custom_order:
         order_map = {aid: i for i, aid in enumerate(custom_order)}
-        return sorted(active, key=lambda s: order_map.get(s.account.pk, 999))
-    return sorted(active, key=lambda s: (-s.apr, s.balance))
+        ordered = sorted(active, key=lambda s: order_map.get(s.account_id, 999))
+    else:
+        ordered = sorted(active, key=lambda s: (-s.apr, s.owed))
+    return [s.account_id for s in ordered]
+
+
+def _focus_order(states: list[CardState], strategy: str, custom_order: list[int] | None) -> list[CardState]:
+    snapshots = [
+        DebtPrioritySnapshot(
+            account_id=s.account.pk,
+            owed=s.balance,
+            apr=s.apr,
+            utilization=s.utilization,
+        )
+        for s in states
+    ]
+    by_id = {s.account.pk: s for s in states if s.balance > 0}
+    return [by_id[aid] for aid in rank_debt_accounts_for_payoff(snapshots, strategy, custom_order) if aid in by_id]
 
 
 def _monthly_budget(

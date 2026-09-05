@@ -1740,6 +1740,8 @@ export interface ScenarioComparisonResponse {
   risk_explanation?: ScenarioRiskExplanation;
   /** Credit card utilization at end of the forecast window (base vs scenario). */
   credit_utilization_at_horizon?: ScenarioCreditUtilizationAtHorizon[];
+  /** Present when a guided strategy is configured; null otherwise. */
+  guided_strategy_result?: GuidedStrategyResult | null;
 }
 
 export interface ScenarioAffordabilityResult {
@@ -1807,6 +1809,88 @@ export interface ScenarioGuidedStrategyWritePayload {
   payoff_strategy?: GuidedDebtPayoffStrategy;
   custom_debt_order_ids?: number[];
   resume_savings_after_payoff?: boolean;
+}
+
+/** Status of one selected savings-transfer occurrence after guided allocation. */
+export type GuidedTransferOccurrenceStatus =
+  | "redirected"
+  | "split"
+  | "resumed_savings"
+  | "buffer_limited"
+  | "skipped";
+
+export interface GuidedStrategyHorizonSnapshot {
+  savings_at_horizon: string;
+  selected_debt_at_horizon: string;
+}
+
+export interface GuidedStrategyDebtPayment {
+  date: string;
+  source_account_id: number;
+  debt_account_id: number;
+  amount: string;
+  original_transfer_rule_id: number;
+  original_transfer_amount: string;
+  priority_at_payment: number;
+}
+
+export interface GuidedStrategyTransferOccurrence {
+  date: string;
+  rule_id: number;
+  original_amount: string;
+  affordable_amount: string;
+  redirected_to_debt: string;
+  sent_to_savings: string;
+  left_in_source: string;
+  source_balance_before: string;
+  source_balance_after: string;
+  status: GuidedTransferOccurrenceStatus;
+}
+
+export interface GuidedStrategyDebtAccountSummary {
+  account_id: number;
+  name: string;
+  opening_owed: string;
+  ending_owed: string;
+  guided_payments: string;
+  payoff_date: string | null;
+}
+
+/**
+ * Hypothetical Debt First vs. Save First comparison extras.
+ *
+ * `net_position_break_even_date` is the first date guided (savings − selected debt)
+ * catches up to baseline after previously trailing. It is not a savings-only catch-up.
+ * `break_even_date` is the same net-position date (contract alias).
+ * `savings_balance_catch_up_date` is savings balances only.
+ */
+export interface GuidedStrategyResult {
+  strategy_type: GuidedScenarioStrategyType;
+  start_date: string;
+  end_date: string;
+  source_account_id: number;
+  savings_account_id: number;
+  payoff_strategy: GuidedDebtPayoffStrategy;
+  allocation_percent: string;
+  minimum_cash_buffer: string;
+  baseline: GuidedStrategyHorizonSnapshot;
+  debt_first: GuidedStrategyHorizonSnapshot;
+  total_planned_for_savings: string;
+  total_redirected_to_debt: string;
+  total_sent_to_savings: string;
+  total_left_in_source_due_to_buffer: string;
+  total_unallocated_after_payoff: string;
+  interest_avoided_within_horizon: string;
+  debt_free_date: string | null;
+  savings_resumed_date: string | null;
+  net_position_break_even_date: string | null;
+  savings_balance_catch_up_date: string | null;
+  break_even_date: string | null;
+  lowest_source_balance: string | null;
+  lowest_source_balance_date: string | null;
+  debt_payments: GuidedStrategyDebtPayment[];
+  transfer_occurrences: GuidedStrategyTransferOccurrence[];
+  debt_accounts: GuidedStrategyDebtAccountSummary[];
 }
 
 /** Deterministic what-if transfer simulation (calendar drawer). */
