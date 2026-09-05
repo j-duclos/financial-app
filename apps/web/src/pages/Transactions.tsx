@@ -1147,7 +1147,23 @@ export default function Transactions() {
       setAwaitingTimelineRecalc(true);
 
       await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
+      await queryClient.cancelQueries({ queryKey: ["transactions", "future-posted"] });
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
+      const previousFuturePosted = queryClient.getQueriesData({
+        queryKey: ["transactions", "future-posted"],
+      });
+      const patchTxn = (t: Transaction) =>
+        t.id === id
+          ? {
+              ...t,
+              ...(data.date != null && { date: data.date }),
+              ...(data.payee != null && { payee: data.payee }),
+              ...(data.amount != null && { amount: data.amount }),
+              ...(data.category_id !== undefined && { category_id: data.category_id }),
+              ...(data.memo != null && { memo: data.memo }),
+              ...(data.account_id != null && { account_id: data.account_id }),
+            }
+          : t;
       queryClient.setQueryData(
         transactionsQueryKey,
         (old: { pages?: { results?: Transaction[] }[] } | undefined) => {
@@ -1156,29 +1172,29 @@ export default function Transactions() {
             ...old,
             pages: old.pages.map((page) => ({
               ...page,
-              results: (page.results ?? []).map((t) =>
-                t.id === id
-                  ? {
-                      ...t,
-                      ...(data.date != null && { date: data.date }),
-                      ...(data.payee != null && { payee: data.payee }),
-                      ...(data.amount != null && { amount: data.amount }),
-                      ...(data.category_id !== undefined && { category_id: data.category_id }),
-                      ...(data.memo != null && { memo: data.memo }),
-                      ...(data.account_id != null && { account_id: data.account_id }),
-                    }
-                  : t
-              ),
+              results: (page.results ?? []).map(patchTxn),
             })),
           };
         }
       );
-      return { ...snapshot, previousTxns, transactionsQueryKey };
+      queryClient.setQueriesData(
+        { queryKey: ["transactions", "future-posted"] },
+        (old: { results?: Transaction[] } | undefined) => {
+          if (!old?.results) return old;
+          return { ...old, results: old.results.map(patchTxn) };
+        }
+      );
+      return { ...snapshot, previousTxns, previousFuturePosted, transactionsQueryKey };
     },
     onError: (err: Error, _vars, context) => {
       setAwaitingTimelineRecalc(false);
       if (context?.previousTxns != null && context?.transactionsQueryKey) {
         queryClient.setQueryData(context.transactionsQueryKey, context.previousTxns);
+      }
+      if (context?.previousFuturePosted) {
+        for (const [key, data] of context.previousFuturePosted) {
+          queryClient.setQueryData(key, data);
+        }
       }
       if (context?.editing) {
         setEditing(context.editing);
@@ -1201,6 +1217,13 @@ export default function Transactions() {
         refreshAccounts: affectsBalances,
         skipTransactionsInvalidate: affectsBalances,
       });
+      if (affectsBalances) {
+        void queryClient.invalidateQueries({ queryKey: ["transactions", "future-posted"] });
+        void queryClient.refetchQueries({
+          queryKey: ["transactions", "future-posted"],
+          type: "active",
+        });
+      }
       if (newAccountId != null) setAccountId(newAccountId);
       if (syncedToAccountId != null) {
         void queryClient.refetchQueries({ queryKey: ["account", syncedToAccountId], type: "active" });

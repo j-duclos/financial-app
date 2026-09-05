@@ -310,8 +310,8 @@ def test_patch_date_materializes_missing_counterparty_leg(auth_client, household
 
 
 @pytest.mark.django_db
-def test_patch_date_deletes_extra_counterparty_rows_on_old_date(auth_client, household):
-    """Only one leg pair is synced; duplicate +amount rows on the old date must be removed."""
+def test_patch_date_does_not_delete_extra_counterparty_rows_on_old_date(auth_client, household):
+    """Date edits must not delete another same-amount rule row on the old date."""
     bank = Account.objects.create(
         household=household,
         account_type=Account.AccountType.CHECKING,
@@ -353,14 +353,14 @@ def test_patch_date_deletes_extra_counterparty_rows_on_old_date(auth_client, hou
         category=cat,
         rule=rule,
     )
-    Transaction.objects.create(
+    to_leg = Transaction.objects.create(
         account=card,
         date=date(2026, 3, 29),
         payee="Savor Pmt for Med Ins",
         amount=Decimal("620.00"),
         rule=rule,
     )
-    Transaction.objects.create(
+    extra = Transaction.objects.create(
         account=card,
         date=date(2026, 3, 29),
         payee="Savor Pmt for Med Ins",
@@ -375,9 +375,12 @@ def test_patch_date_deletes_extra_counterparty_rows_on_old_date(auth_client, hou
     )
     assert r.status_code == 200, r.data
 
-    assert not Transaction.objects.filter(rule=rule, date=date(2026, 3, 29)).exists()
+    extra.refresh_from_db()
+    assert extra.date == date(2026, 3, 29)
+    assert extra.amount == Decimal("620.00")
+    assert Transaction.objects.filter(pk=extra.pk).exists()
     assert Transaction.objects.filter(rule=rule, account=bank, date=date(2026, 3, 26), amount=Decimal("-620.00")).count() == 1
-    assert Transaction.objects.filter(rule=rule, account=card, date=date(2026, 3, 26), amount=Decimal("620.00")).count() == 1
+    assert Transaction.objects.filter(pk=to_leg.pk).exists()
 
 
 @pytest.mark.django_db
@@ -462,8 +465,8 @@ def test_patch_imported_date_moves_matched_planned_row_same_account(auth_client,
 
 
 @pytest.mark.django_db
-def test_patch_rent_rule_date_skips_old_day_and_dedupes_new_day(auth_client, household):
-    """Moving a monthly rent occurrence must not respawn on the 1st or duplicate on the new date."""
+def test_patch_rent_rule_date_skips_old_day_and_keeps_other_row(auth_client, household):
+    """Moving a rent occurrence skips the old schedule day and does not delete another rent row."""
     from timeline.models import RecurringRule, RecurringRuleSkip
 
     bank = Account.objects.create(
@@ -519,15 +522,12 @@ def test_patch_rent_rule_date_skips_old_day_and_dedupes_new_day(auth_client, hou
     assert r.status_code == 200, r.data
 
     rent.refresh_from_db()
+    duplicate.refresh_from_db()
     assert rent.date == date(2026, 6, 2)
     assert RecurringRuleSkip.objects.filter(rule_id=rule.id, date=date(2026, 6, 1)).exists()
-    assert not Transaction.objects.filter(pk=duplicate.pk).exists()
-    assert (
-        Transaction.objects.filter(
-            rule_id=rule.id, account=bank, date=date(2026, 6, 2)
-        ).count()
-        == 1
-    )
+    assert Transaction.objects.filter(pk=duplicate.pk).exists()
+    assert duplicate.date == date(2026, 6, 2)
+    assert duplicate.amount == Decimal("-3100.00")
 
 
 @pytest.mark.django_db
@@ -812,8 +812,146 @@ def test_patch_savings_inflow_back_to_today_keeps_checking_outflow(auth_client, 
 
 
 @pytest.mark.django_db
-def test_patch_actual_transfer_date_removes_stale_leg_on_old_date(auth_client, household):
-    """Moving a Transfer-linked pair must not leave a duplicate outflow on the old date."""
+def test_patch_one_same_amount_payment_does_not_delete_the_other(auth_client, household, user):
+    """Two $850 card payments on the same day are independent — moving one must keep the other."""
+    from transactions.services.posting import create_transfer
+
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Venture",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    first = create_transfer(
+        user=user,
+        from_account_id=bank.id,
+        to_account_id=card.id,
+        amount=Decimal("850.00"),
+        transfer_date=date(2026, 10, 5),
+        payee="Payment A",
+        from_category_id=cat.id,
+    )
+    second = create_transfer(
+        user=user,
+        from_account_id=bank.id,
+        to_account_id=card.id,
+        amount=Decimal("850.00"),
+        transfer_date=date(2026, 10, 5),
+        payee="Payment B",
+        from_category_id=cat.id,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{first.from_transaction_id}/",
+        {"date": "2026-10-12"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    first.from_transaction.refresh_from_db()
+    first.to_transaction.refresh_from_db()
+    second.from_transaction.refresh_from_db()
+    second.to_transaction.refresh_from_db()
+    assert first.from_transaction.date == date(2026, 10, 12)
+    assert first.to_transaction.date == date(2026, 10, 12)
+    assert second.from_transaction.date == date(2026, 10, 5)
+    assert second.to_transaction.date == date(2026, 10, 5)
+    assert Transaction.objects.filter(pk=second.from_transaction_id).exists()
+    assert Transaction.objects.filter(pk=second.to_transaction_id).exists()
+
+
+@pytest.mark.django_db
+def test_patch_unlinked_payment_does_not_rewrite_another_same_amount_row(auth_client, household):
+    """Without a Transfer link, a date edit must not steal another same-amount card credit."""
+    bank = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Chase",
+        currency="USD",
+    )
+    card = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Venture",
+        currency="USD",
+    )
+    cat = Category.objects.get_or_create(
+        household=household,
+        name="Credit Card Payment",
+        category_type=Category.CategoryType.EXPENSE,
+        defaults={"sort_order": 1},
+    )[0]
+    first_out = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 10, 5),
+        payee="Payment A",
+        amount=Decimal("-850.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    first_in = Transaction.objects.create(
+        account=card,
+        date=date(2026, 10, 5),
+        payee="Payment A",
+        amount=Decimal("850.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    second_out = Transaction.objects.create(
+        account=bank,
+        date=date(2026, 10, 5),
+        payee="Payment B",
+        amount=Decimal("-850.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+    second_in = Transaction.objects.create(
+        account=card,
+        date=date(2026, 10, 5),
+        payee="Payment B",
+        amount=Decimal("850.00"),
+        category=cat,
+        source=Transaction.Source.ACTUAL,
+    )
+
+    r = auth_client.patch(
+        f"/api/transactions/{first_out.id}/",
+        {"date": "2026-10-12"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+    first_out.refresh_from_db()
+    first_in.refresh_from_db()
+    second_out.refresh_from_db()
+    second_in.refresh_from_db()
+    assert first_out.date == date(2026, 10, 12)
+    assert first_in.date == date(2026, 10, 5)
+    assert first_in.payee == "Payment A"
+    assert second_out.date == date(2026, 10, 5)
+    assert second_in.date == date(2026, 10, 5)
+    assert second_out.payee == "Payment B"
+    assert second_in.payee == "Payment B"
+    assert Transaction.objects.filter(pk=first_in.pk).exists()
+    assert Transaction.objects.filter(pk=second_out.pk).exists()
+    assert Transaction.objects.filter(pk=second_in.pk).exists()
+
+
+@pytest.mark.django_db
+def test_patch_actual_transfer_date_does_not_delete_other_same_amount_row(auth_client, household):
+    """Date edits must not delete another same-amount row on the old date."""
     savings = Account.objects.create(
         household=household,
         account_type=Account.AccountType.SAVINGS,
@@ -873,18 +1011,12 @@ def test_patch_actual_transfer_date_removes_stale_leg_on_old_date(auth_client, h
 
     out_leg.refresh_from_db()
     in_leg.refresh_from_db()
+    stale.refresh_from_db()
     assert out_leg.date == date(2026, 6, 4)
     assert in_leg.date == date(2026, 6, 4)
-    assert not Transaction.objects.filter(pk=stale.pk).exists()
-    assert (
-        Transaction.objects.filter(
-            account=savings,
-            date=date(2026, 6, 3),
-            amount=Decimal("-900.00"),
-            source=Transaction.Source.ACTUAL,
-        ).count()
-        == 0
-    )
+    assert Transaction.objects.filter(pk=stale.pk).exists()
+    assert stale.date == date(2026, 6, 3)
+    assert stale.amount == Decimal("-900.00")
 
 
 @pytest.mark.django_db
@@ -1147,8 +1279,8 @@ def test_align_linked_transfer_pair_dates_uses_bank_leg(household):
 
 
 @pytest.mark.django_db
-def test_patch_rule_transfer_date_removes_stale_rule_leg_on_old_date(auth_client, household):
-    """Moving a CC payment must not leave a RULE card inflow on the old date."""
+def test_patch_rule_transfer_date_does_not_delete_other_rule_leg_on_old_date(auth_client, household):
+    """Date edits must not delete another same-amount RULE row on the old date."""
     bank = Account.objects.create(
         household=household,
         account_type=Account.AccountType.CHECKING,
@@ -1226,17 +1358,12 @@ def test_patch_rule_transfer_date_removes_stale_rule_leg_on_old_date(auth_client
 
     out_leg.refresh_from_db()
     in_leg.refresh_from_db()
+    stale.refresh_from_db()
     assert out_leg.date == date(2026, 9, 4)
     assert in_leg.date == date(2026, 9, 4)
-    assert not Transaction.objects.filter(pk=stale.pk).exists()
-    assert (
-        Transaction.objects.filter(
-            account=card,
-            date=date(2026, 8, 24),
-            amount=Decimal("50.00"),
-        ).count()
-        == 0
-    )
+    assert Transaction.objects.filter(pk=stale.pk).exists()
+    assert stale.date == date(2026, 8, 24)
+    assert stale.amount == Decimal("50.00")
 
 
 @pytest.mark.django_db
@@ -1326,9 +1453,9 @@ def test_purge_unpaired_moved_credit_inflows(household):
     )
 
     removed = purge_unpaired_moved_transfer_inflows(card)
-    assert removed == 2
-    assert not Transaction.objects.filter(pk=leftover.pk).exists()
-    assert not Transaction.objects.filter(pk=leftover_same_day.pk).exists()
+    assert removed == 0
+    assert Transaction.objects.filter(pk=leftover.pk).exists()
+    assert Transaction.objects.filter(pk=leftover_same_day.pk).exists()
     assert Transaction.objects.filter(pk=real_same_day.pk).exists()
     assert Transaction.objects.filter(pk=plaid_keep.pk).exists()
     assert Transaction.objects.filter(pk=in_leg.pk).exists()
