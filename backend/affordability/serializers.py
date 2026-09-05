@@ -5,6 +5,8 @@ from rest_framework import serializers
 from accounts.models import Account
 from affordability.models import DtiDebtItem, DtiIncomeSource, DtiProfile
 from affordability.services.dti import (
+    FHA_DEFERRED_STUDENT_LOAN_STATUSES,
+    STUDENT_LOAN_METHOD_FHA_DEFERRED,
     as_decimal,
     debt_input_from_model,
     enrich_debt,
@@ -185,8 +187,21 @@ class DtiDebtItemSerializer(HouseholdScopedSerializer):
         required=False,
     )
     effective_monthly_payment = serializers.SerializerMethodField()
+    payment_calculation = serializers.SerializerMethodField()
     linked_account = serializers.SerializerMethodField()
     warnings = serializers.SerializerMethodField()
+    student_loan_status = serializers.ChoiceField(
+        choices=DtiDebtItem.StudentLoanStatus.choices,
+        allow_null=True,
+        allow_blank=True,
+        required=False,
+    )
+    student_loan_payment_method = serializers.ChoiceField(
+        choices=DtiDebtItem.StudentLoanPaymentMethod.choices,
+        allow_null=True,
+        allow_blank=True,
+        required=False,
+    )
 
     class Meta:
         model = DtiDebtItem
@@ -200,7 +215,10 @@ class DtiDebtItemSerializer(HouseholdScopedSerializer):
             "linked_account_id",
             "linked_account",
             "payment_source",
+            "student_loan_status",
+            "student_loan_payment_method",
             "effective_monthly_payment",
+            "payment_calculation",
             "included",
             "months_remaining",
             "notes",
@@ -212,6 +230,7 @@ class DtiDebtItemSerializer(HouseholdScopedSerializer):
         read_only_fields = [
             "id",
             "effective_monthly_payment",
+            "payment_calculation",
             "linked_account",
             "warnings",
             "created_at",
@@ -304,6 +323,91 @@ class DtiDebtItemSerializer(HouseholdScopedSerializer):
                 raise serializers.ValidationError(
                     {"linked_account_id": "This account is already linked to a DTI debt item."}
                 )
+
+        debt_type = attrs.get("debt_type")
+        if debt_type is None:
+            debt_type = getattr(self.instance, "debt_type", DtiDebtItem.DebtType.OTHER)
+        status = attrs["student_loan_status"] if "student_loan_status" in attrs else getattr(
+            self.instance, "student_loan_status", None
+        )
+        method = (
+            attrs["student_loan_payment_method"]
+            if "student_loan_payment_method" in attrs
+            else getattr(self.instance, "student_loan_payment_method", None)
+        )
+        if isinstance(status, str) and status.strip() == "":
+            status = None
+        if isinstance(method, str) and method.strip() == "":
+            method = None
+
+        if debt_type != DtiDebtItem.DebtType.STUDENT_LOAN:
+            if method == STUDENT_LOAN_METHOD_FHA_DEFERRED:
+                raise serializers.ValidationError(
+                    {
+                        "student_loan_payment_method": (
+                            "The FHA deferred estimate can only be used with student-loan debts."
+                        )
+                    }
+                )
+            attrs["student_loan_status"] = None
+            attrs["student_loan_payment_method"] = None
+            return attrs
+
+        attrs["student_loan_status"] = status
+        if method is None:
+            method = DtiDebtItem.StudentLoanPaymentMethod.MANUAL
+        attrs["student_loan_payment_method"] = method
+
+        if method == STUDENT_LOAN_METHOD_FHA_DEFERRED:
+            if linked is not None:
+                raise serializers.ValidationError(
+                    {
+                        "linked_account_id": (
+                            "The FHA deferred student-loan estimate cannot be used with a linked credit card."
+                        )
+                    }
+                )
+            if payment_source == DtiDebtItem.PaymentSource.LINKED_ACCOUNT_MINIMUM:
+                raise serializers.ValidationError(
+                    {
+                        "payment_source": (
+                            "The FHA deferred student-loan estimate cannot use a linked-account minimum."
+                        )
+                    }
+                )
+            attrs["payment_source"] = DtiDebtItem.PaymentSource.MANUAL
+            if status not in FHA_DEFERRED_STUDENT_LOAN_STATUSES:
+                raise serializers.ValidationError(
+                    {
+                        "student_loan_status": (
+                            "The FHA 0.5% estimate requires the loan to be deferred or in forbearance."
+                        )
+                    }
+                )
+            balance = attrs["outstanding_balance"] if "outstanding_balance" in attrs else getattr(
+                self.instance, "outstanding_balance", None
+            )
+            if balance is None or balance <= MONEY_ZERO:
+                raise serializers.ValidationError(
+                    {
+                        "outstanding_balance": (
+                            "A positive outstanding balance is required for the FHA 0.5% estimate."
+                        )
+                    }
+                )
+        else:
+            monthly = attrs["monthly_payment"] if "monthly_payment" in attrs else getattr(
+                self.instance, "monthly_payment", None
+            )
+            previous_method = getattr(self.instance, "student_loan_payment_method", None)
+            switching_from_fha = previous_method == STUDENT_LOAN_METHOD_FHA_DEFERRED
+            monthly_in_request = "monthly_payment" in attrs or (
+                hasattr(self, "initial_data") and "monthly_payment" in self.initial_data
+            )
+            if monthly is None or (switching_from_fha and not monthly_in_request):
+                raise serializers.ValidationError(
+                    {"monthly_payment": "Enter a monthly payment for the manual or reported method."}
+                )
         return attrs
 
     def create(self, validated_data):
@@ -330,21 +434,15 @@ class DtiDebtItemSerializer(HouseholdScopedSerializer):
         if account is None:
             return None
         snap = snapshot_from_account(account)
-        return {
-            "id": snap.id,
-            "name": snap.name,
-            "effective_display_name": snap.effective_display_name,
-            "account_type": snap.account_type,
-            "status": snap.status,
-            "minimum_payment_amount": (
-                str(snap.minimum_payment_amount.quantize(Decimal("0.01")))
-                if snap.minimum_payment_amount is not None
-                else None
-            ),
-        }
+        from affordability.services.dti import _serialize_linked_account
+
+        return _serialize_linked_account(snap)
 
     def get_warnings(self, obj: DtiDebtItem):
         return [w.to_dict() for w in enrich_debt(debt_input_from_model(obj)).warnings]
+
+    def get_payment_calculation(self, obj: DtiDebtItem):
+        return serialize_debt_item(enrich_debt(debt_input_from_model(obj)))["payment_calculation"]
 
 
 class ProposedHousingSerializer(serializers.Serializer):
@@ -358,14 +456,128 @@ class ProposedHousingSerializer(serializers.Serializer):
     )
 
 
+class ProposedPurchaseSerializer(serializers.Serializer):
+    purchase_price = _decimal_field(min_value=MONEY_ZERO)
+    down_payment_type = serializers.ChoiceField(choices=["dollars", "percent"])
+    down_payment_value = _decimal_field(min_value=MONEY_ZERO)
+    annual_interest_rate = _percent_field(min_value=MONEY_ZERO)
+    loan_term_years = serializers.IntegerField(min_value=1, max_value=50)
+    annual_property_taxes = _decimal_field(min_value=MONEY_ZERO, required=False, default=MONEY_ZERO)
+    annual_homeowners_insurance = _decimal_field(
+        min_value=MONEY_ZERO, required=False, default=MONEY_ZERO
+    )
+    monthly_mortgage_insurance = _decimal_field(
+        min_value=MONEY_ZERO, required=False, default=MONEY_ZERO
+    )
+    monthly_hoa_dues = _decimal_field(min_value=MONEY_ZERO, required=False, default=MONEY_ZERO)
+    other_required_monthly_housing_costs = _decimal_field(
+        min_value=MONEY_ZERO, required=False, default=MONEY_ZERO
+    )
+
+    def validate_purchase_price(self, value: Decimal) -> Decimal:
+        amount = as_decimal(value)
+        if amount <= MONEY_ZERO:
+            raise serializers.ValidationError("Home purchase price must be greater than zero.")
+        return value
+
+    def validate_annual_interest_rate(self, value: Decimal) -> Decimal:
+        rate = as_decimal(value)
+        if rate < MONEY_ZERO:
+            raise serializers.ValidationError("Annual interest rate cannot be negative.")
+        if rate > Decimal("50"):
+            raise serializers.ValidationError("Annual interest rate cannot be greater than 50.")
+        return value
+
+    def validate(self, attrs):
+        price = as_decimal(attrs["purchase_price"])
+        payment_type = attrs["down_payment_type"]
+        value = as_decimal(attrs["down_payment_value"])
+        if payment_type == "percent":
+            if value > PERCENT_MAX:
+                raise serializers.ValidationError(
+                    {"down_payment_value": "Down payment percentage cannot exceed 100."}
+                )
+            amount = (price * value) / PERCENT_MAX
+        else:
+            amount = value
+        if amount < MONEY_ZERO:
+            raise serializers.ValidationError(
+                {"down_payment_value": "Down payment cannot be negative."}
+            )
+        if amount > price:
+            raise serializers.ValidationError(
+                {"down_payment_value": "Down payment cannot exceed the home purchase price."}
+            )
+        loan_amount = price - amount
+        if loan_amount < MONEY_ZERO:
+            raise serializers.ValidationError(
+                {"down_payment_value": "Estimated loan amount cannot be negative."}
+            )
+        return attrs
+
+
 class DtiCalculateSerializer(serializers.Serializer):
     household_id = serializers.IntegerField()
+    proposed_housing_mode = serializers.ChoiceField(
+        choices=["monthly_payment", "purchase"],
+        required=False,
+        allow_null=True,
+    )
     proposed_housing = ProposedHousingSerializer(required=False, allow_null=True)
+    proposed_purchase = ProposedPurchaseSerializer(required=False, allow_null=True)
     target_back_end_dti_percent = _percent_field(required=False)
     target_front_end_dti_percent = _percent_field(required=False, allow_null=True)
     excluded_debt_item_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=list
     )
+
+    def validate(self, attrs):
+        incoming = self.initial_data if hasattr(self, "initial_data") else {}
+        housing_sent = "proposed_housing" in incoming and incoming.get("proposed_housing") not in (
+            None,
+            "",
+        )
+        purchase_sent = "proposed_purchase" in incoming and incoming.get("proposed_purchase") not in (
+            None,
+            "",
+        )
+        mode = attrs.get("proposed_housing_mode")
+        if housing_sent and purchase_sent:
+            raise serializers.ValidationError(
+                {
+                    "proposed_housing_mode": (
+                        "Send either monthly housing components or a purchase estimate, not both."
+                    )
+                }
+            )
+        if mode is None:
+            if purchase_sent:
+                attrs["proposed_housing_mode"] = "purchase"
+            elif housing_sent:
+                attrs["proposed_housing_mode"] = "monthly_payment"
+            return attrs
+        if mode == "monthly_payment" and purchase_sent:
+            raise serializers.ValidationError(
+                {
+                    "proposed_purchase": (
+                        "Purchase estimate fields cannot be sent with monthly-payment mode."
+                    )
+                }
+            )
+        if mode == "purchase":
+            if housing_sent:
+                raise serializers.ValidationError(
+                    {
+                        "proposed_housing": (
+                            "Monthly housing components cannot be sent with purchase mode."
+                        )
+                    }
+                )
+            if not purchase_sent:
+                raise serializers.ValidationError(
+                    {"proposed_purchase": "A purchase estimate is required for purchase mode."}
+                )
+        return attrs
 
     def validate_target_back_end_dti_percent(self, value: Decimal) -> Decimal:
         return _validate_target_percent(value, allow_null=False)
@@ -414,4 +626,24 @@ def proposed_housing_from_validated(data: dict | None):
         mortgage_insurance=as_decimal(data.get("mortgage_insurance"), ZERO),
         hoa_dues=as_decimal(data.get("hoa_dues"), ZERO),
         other_required_housing_costs=as_decimal(data.get("other_required_housing_costs"), ZERO),
+    )
+
+
+def purchase_estimate_from_validated(data: dict):
+    from affordability.services.dti import ZERO
+    from affordability.services.mortgage import estimate_purchase_housing
+
+    return estimate_purchase_housing(
+        purchase_price=as_decimal(data["purchase_price"]),
+        down_payment_type=data["down_payment_type"],
+        down_payment_value=as_decimal(data["down_payment_value"]),
+        annual_interest_rate=as_decimal(data["annual_interest_rate"]),
+        loan_term_years=int(data["loan_term_years"]),
+        annual_property_taxes=as_decimal(data.get("annual_property_taxes"), ZERO),
+        annual_homeowners_insurance=as_decimal(data.get("annual_homeowners_insurance"), ZERO),
+        monthly_mortgage_insurance=as_decimal(data.get("monthly_mortgage_insurance"), ZERO),
+        monthly_hoa_dues=as_decimal(data.get("monthly_hoa_dues"), ZERO),
+        other_required_monthly_housing_costs=as_decimal(
+            data.get("other_required_monthly_housing_costs"), ZERO
+        ),
     )

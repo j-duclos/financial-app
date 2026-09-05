@@ -142,6 +142,19 @@ class DtiDebtItem(models.Model):
         MANUAL = "manual", "Manual"
         LINKED_ACCOUNT_MINIMUM = "linked_account_minimum", "Linked account minimum"
 
+    class StudentLoanStatus(models.TextChoices):
+        REPAYMENT = "repayment", "In repayment"
+        DEFERRED = "deferred", "Deferred"
+        FORBEARANCE = "forbearance", "Forbearance"
+        UNKNOWN = "unknown", "Unknown"
+
+    class StudentLoanPaymentMethod(models.TextChoices):
+        MANUAL = "manual", "Manual or reported monthly payment"
+        FHA_DEFERRED_BALANCE_PERCENT = (
+            "fha_deferred_balance_percent",
+            "FHA deferred/zero-payment estimate — 0.5% of balance",
+        )
+
     household = models.ForeignKey(
         Household, on_delete=models.CASCADE, related_name="dti_debt_items"
     )
@@ -177,6 +190,23 @@ class DtiDebtItem(models.Model):
         max_length=32,
         choices=PaymentSource.choices,
         default=PaymentSource.MANUAL,
+    )
+    student_loan_status = models.CharField(
+        max_length=16,
+        choices=StudentLoanStatus.choices,
+        null=True,
+        blank=True,
+        help_text="Student-loan repayment status. Ignored for other debt types.",
+    )
+    student_loan_payment_method = models.CharField(
+        max_length=40,
+        choices=StudentLoanPaymentMethod.choices,
+        null=True,
+        blank=True,
+        help_text=(
+            "How the DTI monthly payment is determined for a student loan. "
+            "Ignored for other debt types. Existing rows without a method use the stored monthly payment."
+        ),
     )
     included = models.BooleanField(default=True)
     months_remaining = models.PositiveIntegerField(null=True, blank=True)

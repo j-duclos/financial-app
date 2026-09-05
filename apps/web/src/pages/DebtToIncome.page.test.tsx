@@ -97,11 +97,42 @@ const visaCard: DtiDebtItem = {
     account_type: "CREDIT",
     status: "active",
     minimum_payment_amount: "125.00",
+    minimum_payment_source: "plaid",
+    minimum_payment_freshness: "fresh",
   },
   included: true,
   months_remaining: null,
   notes: "",
   position: 1,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+const studentLoan: DtiDebtItem = {
+  id: 30,
+  household_id: 1,
+  name: "Federal student loans",
+  debt_type: "student_loan",
+  monthly_payment: "0.00",
+  payment_source: "manual",
+  student_loan_status: "deferred",
+  student_loan_payment_method: "fha_deferred_balance_percent",
+  effective_monthly_payment: "545.29",
+  outstanding_balance: "109058.00",
+  payment_calculation: {
+    method: "fha_deferred_balance_percent",
+    label: "FHA deferred/zero-payment estimate",
+    balance: "109058.00",
+    percentage: "0.50",
+    multiplier: "0.005",
+    calculated_monthly_payment: "545.29",
+  },
+  linked_account_id: null,
+  linked_account: null,
+  included: true,
+  months_remaining: null,
+  notes: "",
+  position: 2,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
@@ -319,13 +350,14 @@ describe("DebtToIncome page", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("heading", { name: "DTI summary" });
-    await user.type(screen.getByLabelText("Principal and interest"), "2100");
-    await user.type(screen.getByLabelText("Property taxes"), "250");
-    await user.click(screen.getByRole("button", { name: "Calculate" }));
+    await user.type(screen.getByLabelText("Monthly principal and interest"), "2100");
+    await user.type(screen.getByLabelText("Monthly property taxes"), "250");
+    await user.click(screen.getByRole("button", { name: "Calculate Monthly DTI" }));
     await waitFor(() => {
       expect(api.calculateDti).toHaveBeenCalledWith(
         expect.objectContaining({
           household_id: 1,
+          proposed_housing_mode: "monthly_payment",
           proposed_housing: {
             principal_and_interest: "2100.00",
             property_taxes: "250.00",
@@ -344,7 +376,7 @@ describe("DebtToIncome page", () => {
     expect(screen.getByText("46.03% → 49.25%")).toBeInTheDocument();
     expect(screen.getByText("Proposed back-end DTI vs your selected target")).toBeInTheDocument();
     expect(screen.getByText("Proposed home")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Clear proposed home" }));
+    await user.click(screen.getByRole("button", { name: "Clear Monthly Estimate" }));
     expect(await screen.findByText("Current back-end DTI vs your selected target")).toBeInTheDocument();
     expect(screen.queryByText("Proposed back-end DTI vs your selected target")).not.toBeInTheDocument();
   });
@@ -357,9 +389,9 @@ describe("DebtToIncome page", () => {
     });
     renderPage();
     await screen.findByRole("heading", { name: "DTI summary" });
-    const principal = screen.getByLabelText("Principal and interest");
+    const principal = screen.getByLabelText("Monthly principal and interest");
     await user.type(principal, "2100");
-    await user.click(screen.getByRole("button", { name: "Calculate" }));
+    await user.click(screen.getByRole("button", { name: "Calculate Monthly DTI" }));
     expect(await screen.findByText("Could not calculate the proposed home payment.")).toBeInTheDocument();
     expect(principal).toHaveValue("2100");
   });
@@ -418,6 +450,7 @@ describe("DebtToIncome page", () => {
     expect(screen.getAllByText(/125\.00/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/\$40\.00/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/Synced from account minimum/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/synced from institution/i).length).toBeGreaterThan(0);
   });
 
   it("requires confirmation before creating a suggested card", async () => {
@@ -470,8 +503,8 @@ describe("DebtToIncome page", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("heading", { name: "DTI summary" });
-    await user.type(screen.getByLabelText("Principal and interest"), "2100");
-    await user.click(screen.getByRole("button", { name: "Calculate" }));
+    await user.type(screen.getByLabelText("Monthly principal and interest"), "2100");
+    await user.click(screen.getByRole("button", { name: "Calculate Monthly DTI" }));
     await screen.findByText("Proposed home");
     await user.click(screen.getByRole("checkbox", { name: "Model Auto loan as paid off" }));
     expect(await screen.findByText("Proposed back-end DTI before selected payoffs")).toBeInTheDocument();
@@ -522,5 +555,108 @@ describe("DebtToIncome page", () => {
     const describedBy = name.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy!)).toHaveTextContent(/Name cannot be blank/);
+  });
+
+  it("shows FHA student-loan calculation source, backend payment, and payoff impact", async () => {
+    const user = userEvent.setup();
+    const studentCalc = calculation({
+      inputs: {
+        gross_monthly_income: "5400.00",
+        current_housing_payment: "1800.00",
+        non_housing_monthly_debt: "545.29",
+        target_back_end_dti_percent: "36.00",
+        target_front_end_dti_percent: "28.00",
+      },
+      current: bucket("33.33", "43.43", "2345.29"),
+      debt_items: [studentLoan],
+      payoff_impacts: [
+        {
+          debt_item_id: 30,
+          name: "Federal student loans",
+          effective_monthly_payment: "545.29",
+          current_back_end_dti: "43.43",
+          back_end_dti_after_payoff: "33.33",
+          dti_reduction_percentage_points: "10.10",
+          additional_housing_capacity_at_target: "545.29",
+          linked_account_id: null,
+          warnings: [],
+        },
+      ],
+    });
+    mockHappyPath({
+      debts: [studentLoan],
+      calc: studentCalc,
+    });
+    renderPage();
+    expect(await screen.findAllByText("Federal student loans")).not.toHaveLength(0);
+    expect(screen.getAllByText(/545\.29/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/0\.5% of outstanding balance/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Calculated at 0\.5% of balance/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Status: Deferred/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "DTI summary" })).toBeInTheDocument();
+    expect(screen.getAllByText(/545\.29/).length).toBeGreaterThan(1);
+    await user.click(screen.getByRole("checkbox", { name: "Model Federal student loans as paid off" }));
+    await waitFor(() => {
+      expect(api.calculateDti).toHaveBeenCalledWith(
+        expect.objectContaining({ excluded_debt_item_ids: [30] })
+      );
+    });
+  });
+
+  it("saves a student-loan FHA payload and then shows the backend effective payment", async () => {
+    const user = userEvent.setup();
+    const afterSave = calculation({
+      inputs: {
+        gross_monthly_income: "5400.00",
+        current_housing_payment: "1800.00",
+        non_housing_monthly_debt: "545.29",
+        target_back_end_dti_percent: "36.00",
+        target_front_end_dti_percent: "28.00",
+      },
+      current: bucket("33.33", "43.43", "2345.29"),
+      debt_items: [studentLoan],
+      payoff_impacts: [
+        {
+          debt_item_id: 30,
+          name: "Federal student loans",
+          effective_monthly_payment: "545.29",
+          current_back_end_dti: "43.43",
+          back_end_dti_after_payoff: "33.33",
+          dti_reduction_percentage_points: "10.10",
+          additional_housing_capacity_at_target: "545.29",
+          linked_account_id: null,
+          warnings: [],
+        },
+      ],
+    });
+    mockHappyPath({ debts: [] });
+    api.createDtiDebtItem.mockImplementation(async () => {
+      api.listDtiDebtItems.mockResolvedValue([studentLoan]);
+      api.calculateDti.mockResolvedValue(afterSave);
+      return studentLoan;
+    });
+    renderPage();
+    await user.click((await screen.findAllByRole("button", { name: "Add debt" }))[0]);
+    const dialog = await screen.findByRole("dialog", { name: "Add debt obligation" });
+    await user.type(within(dialog).getByLabelText("Name"), "Federal student loans");
+    await user.selectOptions(within(dialog).getByLabelText("Debt type"), "student_loan");
+    expect(within(dialog).getByLabelText("Manual or reported monthly payment")).toBeChecked();
+    await user.selectOptions(within(dialog).getByLabelText("Loan status"), "deferred");
+    await user.click(
+      within(dialog).getByLabelText("FHA deferred/zero-payment estimate — 0.5% of balance")
+    );
+    await user.type(within(dialog).getByLabelText("Outstanding balance"), "109058.00");
+    await user.click(within(dialog).getByRole("button", { name: "Add debt" }));
+    await waitFor(() => {
+      expect(api.createDtiDebtItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          student_loan_status: "deferred",
+          student_loan_payment_method: "fha_deferred_balance_percent",
+          outstanding_balance: "109058.00",
+        })
+      );
+    });
+    expect(await screen.findAllByText("Federal student loans")).not.toHaveLength(0);
+    expect(screen.getAllByText(/545\.29/).length).toBeGreaterThan(0);
   });
 });

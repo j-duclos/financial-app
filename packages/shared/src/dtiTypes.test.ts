@@ -16,6 +16,8 @@ import {
   DTI_DEBT_TYPES,
   DTI_INCOME_TYPES,
   DTI_PAYMENT_SOURCES,
+  DTI_STUDENT_LOAN_PAYMENT_METHODS,
+  DTI_STUDENT_LOAN_STATUSES,
 } from "./types";
 
 describe("DTI shared types", () => {
@@ -24,6 +26,16 @@ describe("DTI shared types", () => {
     expect(DTI_DEBT_TYPES).toContain("auto_loan");
     expect(DTI_DEBT_TYPES).not.toContain("expense");
     expect(DTI_PAYMENT_SOURCES).toEqual(["manual", "linked_account_minimum"]);
+    expect(DTI_STUDENT_LOAN_STATUSES).toEqual([
+      "repayment",
+      "deferred",
+      "forbearance",
+      "unknown",
+    ]);
+    expect(DTI_STUDENT_LOAN_PAYMENT_METHODS).toEqual([
+      "manual",
+      "fha_deferred_balance_percent",
+    ]);
   });
 
   it("represents money and percents as decimal strings", () => {
@@ -99,10 +111,50 @@ describe("DTI shared types", () => {
       created_at: "2026-09-05T00:00:00Z",
       updated_at: "2026-09-05T00:00:00Z",
     };
+    const studentWrite: DtiDebtItemWritePayload = {
+      household_id: 1,
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      outstanding_balance: "109058.00",
+      payment_source: "manual",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+    };
+    const studentItem: DtiDebtItem = {
+      id: 30,
+      household_id: 1,
+      name: "Federal student loans",
+      debt_type: "student_loan",
+      monthly_payment: "0.00",
+      payment_source: "manual",
+      student_loan_status: "deferred",
+      student_loan_payment_method: "fha_deferred_balance_percent",
+      effective_monthly_payment: "545.29",
+      outstanding_balance: "109058.00",
+      payment_calculation: {
+        method: "fha_deferred_balance_percent",
+        label: "FHA deferred/zero-payment estimate",
+        balance: "109058.00",
+        percentage: "0.50",
+        multiplier: "0.005",
+        calculated_monthly_payment: "545.29",
+      },
+      linked_account_id: null,
+      linked_account: null,
+      included: true,
+      months_remaining: null,
+      notes: "",
+      position: 2,
+      created_at: "2026-09-05T00:00:00Z",
+      updated_at: "2026-09-05T00:00:00Z",
+    };
     expect(income.gross_monthly_amount).toBe("5400.00");
     expect(debt.monthly_payment).toBe("412.00");
     expect(source.included).toBe(true);
     expect(item.effective_monthly_payment).toBe("125.00");
+    expect(studentWrite.student_loan_payment_method).toBe("fha_deferred_balance_percent");
+    expect(studentItem.payment_calculation?.multiplier).toBe("0.005");
+    expect(typeof studentItem.effective_monthly_payment).toBe("string");
   });
 
   it("allows null DTI percentages when income is missing", () => {

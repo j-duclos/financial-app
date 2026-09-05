@@ -189,7 +189,8 @@ class AccountViewSet(ModelViewSet):
             households = get_households_for_user(self.request.user)
             obj = (
                 Account.all_objects.filter(household__in=households, pk=pk)
-                .select_related("household")
+                .select_related("household", "plaid_link")
+                .annotate(plaid_item_pk=F("plaid_link__item_id"))
                 .first()
             )
             return [obj] if obj is not None else []
@@ -327,7 +328,11 @@ class AccountViewSet(ModelViewSet):
         params = self.request.query_params
         include_deleted = params.get("include_deleted", "").lower() in ("true", "1", "yes")
         manager = Account.all_objects if include_deleted else Account.objects
-        qs = manager.filter(household__in=households).select_related("household")
+        qs = (
+            manager.filter(household__in=households)
+            .select_related("household", "plaid_link")
+            .annotate(plaid_item_pk=F("plaid_link__item_id"))
+        )
         household_id = params.get("household")
         if household_id:
             qs = qs.filter(household_id=household_id)

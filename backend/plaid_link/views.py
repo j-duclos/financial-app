@@ -25,7 +25,11 @@ from .serializers import (
     PlaidItemSerializer,
     PlaidLinkTokenRequestSerializer,
 )
-from .crypto import PlaidTokenDecryptError
+from .crypto import PlaidTokenDecryptError, decrypt_plaid_access_token
+from .liabilities import (
+    sync_credit_card_liabilities_for_household,
+    sync_credit_card_liabilities_for_item,
+)
 from .services import (
     create_link_token,
     disconnect_plaid_linked_account,
@@ -180,7 +184,7 @@ class PlaidItemViewSet(
                 }
             )
         try:
-            counts = sync_transactions_for_item(item)
+            counts = sync_transactions_for_item(item, liabilities_force=True)
         except PlaidTokenDecryptError as e:
             return Response(
                 {"detail": str(e), "plaid_env": plaid_api_env()},
@@ -190,6 +194,56 @@ class PlaidItemViewSet(
             payload = format_plaid_api_exception(e, plaid_env=plaid_api_env())
             return Response(payload, status=status.HTTP_400_BAD_REQUEST)
         return Response(counts)
+
+    @action(detail=True, methods=["post"], url_path="sync-liabilities")
+    def sync_liabilities(self, request, pk=None):
+        item = self.get_object()
+        if not plaid_configured():
+            return Response(
+                {
+                    "detail": plaid_unconfigured_detail(),
+                    "plaid_env": plaid_api_env(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            payload = sync_credit_card_liabilities_for_item(item)
+        except PlaidTokenDecryptError as e:
+            return Response(
+                {"detail": str(e), "plaid_env": plaid_api_env()},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(payload)
+
+    @action(detail=True, methods=["post"], url_path="link-token-update")
+    def link_token_update(self, request, pk=None):
+        """Create a Link token in update mode to add Liabilities consent for an existing Item."""
+        item = self.get_object()
+        if not plaid_configured():
+            return Response(
+                {
+                    "detail": plaid_unconfigured_detail(),
+                    "plaid_env": plaid_api_env(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            access_token = decrypt_plaid_access_token(item.access_token_cipher)
+            link_token = create_link_token(
+                client_user_id=f"user-{request.user.pk}-hh-{item.household_id}-item-{item.pk}",
+                access_token=access_token,
+            )
+        except PlaidTokenDecryptError as e:
+            return Response(
+                {"detail": str(e), "plaid_env": plaid_api_env()},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except ApiException as e:
+            payload = format_plaid_api_exception(e, plaid_env=plaid_api_env())
+            return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+        except RuntimeError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"link_token": link_token, "update_mode": True})
 
 
 class PlaidSyncAllView(APIView):
@@ -230,6 +284,58 @@ class PlaidSyncAllView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response(payload)
+
+
+class PlaidSyncLiabilitiesAllView(APIView):
+    """Refresh credit-card minimums for every Item in a household (one Plaid call per Item)."""
+
+    permission_classes = [IsAuthenticated, IsHouseholdMember]
+
+    def post(self, request):
+        if not plaid_configured():
+            return Response(
+                {
+                    "detail": plaid_unconfigured_detail(),
+                    "plaid_env": plaid_api_env(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        household_raw = (request.query_params.get("household") or "").strip()
+        household_id = int(household_raw) if household_raw.isdigit() else None
+        if household_id is None:
+            return Response({"detail": "household is required."}, status=status.HTTP_400_BAD_REQUEST)
+        households = get_households_for_user(request.user)
+        if not households.filter(pk=household_id).exists():
+            return Response({"detail": "Not a member of this household."}, status=status.HTTP_403_FORBIDDEN)
+        payload = sync_credit_card_liabilities_for_household(household_id)
+        return Response(payload)
+
+
+class PlaidLiabilitiesWebhookView(APIView):
+    """Plaid LIABILITIES / DEFAULT_UPDATE receiver. Does not invent webhook event names."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        from django.conf import settings as django_settings
+
+        if not (getattr(django_settings, "PLAID_WEBHOOK_URL", "") or "").strip():
+            return Response({"detail": "Webhooks are not configured."}, status=status.HTTP_404_NOT_FOUND)
+        body = request.data if isinstance(request.data, dict) else {}
+        webhook_type = str(body.get("webhook_type") or "").upper()
+        webhook_code = str(body.get("webhook_code") or "").upper()
+        item_id = str(body.get("item_id") or "").strip()
+        if webhook_type != "LIABILITIES" or webhook_code != "DEFAULT_UPDATE" or not item_id:
+            return Response({"status": "ignored"})
+        item = PlaidItem.objects.filter(item_id=item_id).first()
+        if item is None:
+            return Response({"status": "ignored"})
+        try:
+            sync_credit_card_liabilities_for_item(item)
+        except Exception:
+            return Response({"status": "accepted"})
+        return Response({"status": "ok"})
 
 
 class PlaidLinkedAccountDisconnectView(APIView):

@@ -149,11 +149,9 @@ def _owed_from_inputs(
 
 def _minimum_payment(card: Account, balance: Decimal) -> Decimal:
     configured = Decimal(str(card.minimum_payment_amount or 0))
-    if configured > 0:
+    if configured > 0 and balance > 0:
         return _quantize(min(configured, balance))
-    if balance <= 0:
-        return Decimal("0")
-    return _quantize(max(Decimal("25"), balance * Decimal("0.02")))
+    return Decimal("0")
 
 
 def _load_card_states(
@@ -860,6 +858,7 @@ def _build_card_summaries(
                 "credit_limit": _money(limit) if limit > 0 else None,
                 "utilization_percent": _money(util) if util is not None else None,
                 "minimum_payment": _money(min_pay),
+                "minimum_payment_available": min_pay > 0 or owed <= 0,
                 "suggested_payment": _money(suggested),
                 "payoff_date": single.get("payoff_date") if payoff_possible else None,
                 "months_remaining": months_remaining,

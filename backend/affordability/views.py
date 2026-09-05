@@ -19,6 +19,7 @@ from affordability.serializers import (
     DtiIncomeSourceSerializer,
     DtiProfileSerializer,
     proposed_housing_from_validated,
+    purchase_estimate_from_validated,
 )
 from affordability.services.dti import (
     ProfileInput,
@@ -255,7 +256,14 @@ class DtiCalculateView(APIView):
             )
 
         proposed = None
-        if "proposed_housing" in data and data["proposed_housing"] is not None:
+        purchase_estimate = None
+        mode = data.get("proposed_housing_mode")
+        if mode == "purchase":
+            purchase_estimate = purchase_estimate_from_validated(data["proposed_purchase"])
+            proposed = purchase_estimate.monthly
+        elif mode == "monthly_payment" and data.get("proposed_housing") is not None:
+            proposed = proposed_housing_from_validated(data["proposed_housing"])
+        elif mode is None and data.get("proposed_housing") is not None:
             proposed = proposed_housing_from_validated(data["proposed_housing"])
 
         result = calculate_dti(
@@ -268,7 +276,10 @@ class DtiCalculateView(APIView):
             credit_card_suggestions=suggestions,
             known_debt_item_ids=[item.id for item in debt_items if item.id is not None],
         )
-        return Response(serialize_dti_result(result))
+        payload = serialize_dti_result(result)
+        payload["proposed_housing_mode"] = mode
+        payload["purchase_estimate"] = purchase_estimate.to_dict() if purchase_estimate else None
+        return Response(payload)
 
 
 class DtiCreditCardSuggestionView(APIView):

@@ -38,6 +38,7 @@ from accounts.services.account_health_constants import (
     REASON_LARGE_OUTFLOW,
     REASON_NEAR_LIMIT,
     REASON_NO_PAYMENT_LINK,
+    REASON_MINIMUM_PAYMENT_UNAVAILABLE,
     REASON_OVER_LIMIT,
     REASON_PAYMENT_BELOW_INTEREST,
     REASON_PAYMENT_DUE_SOON,
@@ -549,7 +550,10 @@ def _credit_card_health(
     payoff = _payoff_to_avoid_interest(
         account, payments_since_statement=payments_since_statement
     )
-    min_pay = _decimal(account.minimum_payment_amount or 0)
+    from accounts.services.minimum_payment import resolve_effective_minimum_payment
+
+    resolved_min = resolve_effective_minimum_payment(account, current_owed=owed)
+    min_pay = _decimal(resolved_min.amount or 0)
     meaningful_owed = _credit_owed_is_meaningful(owed, limit=limit, min_payment=min_pay)
 
     past_due_amount = Decimal("0")
@@ -697,6 +701,16 @@ def _credit_card_health(
         issues.append(
             (HEALTH_STATUS_WATCH, "No payment account linked.", REASON_NO_PAYMENT_LINK)
         )
+    if meaningful_owed and resolved_min.amount is None:
+        details["minimum_payment_configuration_needed"] = True
+        if payoff > 0 or past_due_amount > 0:
+            issues.append(
+                (
+                    HEALTH_STATUS_WATCH,
+                    "Minimum payment needs to be configured.",
+                    REASON_MINIMUM_PAYMENT_UNAVAILABLE,
+                )
+            )
 
     due_needs_attention = past_due_amount > 0 or (due_is_stale and meaningful_owed)
     if account.autopay_enabled and payoff <= 0 and not due_needs_attention:

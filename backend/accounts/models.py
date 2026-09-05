@@ -146,7 +146,49 @@ class Account(models.Model):
         max_digits=12,
         decimal_places=2,
         default=Decimal("0"),
+        help_text="Resolved effective minimum used by DTI, Payment Planner, autopay, and health.",
     )
+
+    class MinimumPaymentMode(models.TextChoices):
+        AUTOMATIC = "automatic", "Automatically sync from institution"
+        MANUAL = "manual", "Enter manually"
+
+    minimum_payment_mode = models.CharField(
+        max_length=16,
+        choices=MinimumPaymentMode.choices,
+        default=MinimumPaymentMode.MANUAL,
+        help_text="Whether the effective minimum follows Plaid or a user-entered value.",
+    )
+    manual_minimum_payment_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="User-entered minimum. Preserved as fallback when automatic mode has no provider value.",
+    )
+    provider_minimum_payment_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Last valid minimum observed from Plaid liabilities.",
+    )
+    provider_minimum_payment_source = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        help_text="Provenance of provider_minimum_payment_amount (e.g. plaid).",
+    )
+    provider_minimum_payment_observed_at = models.DateTimeField(null=True, blank=True)
+    provider_minimum_payment_statement_date = models.DateField(null=True, blank=True)
+    provider_minimum_payment_due_date = models.DateField(null=True, blank=True)
+    provider_minimum_payment_sync_status = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Last liabilities sync status for this account.",
+    )
+    provider_minimum_payment_sync_message = models.CharField(max_length=255, blank=True, default="")
     autopay_enabled = models.BooleanField(default=False)
     autopay_account = models.ForeignKey(
         "self",

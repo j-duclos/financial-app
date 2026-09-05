@@ -28,6 +28,7 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["bill-detail"],
   ["recurring-rules-summary"],
   ["subscription-intelligence"],
+  ["dti"],
 ] as const;
 
 /** Preference-only invalidation when credit utilization target changes (not a ledger mutation). */

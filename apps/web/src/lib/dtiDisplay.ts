@@ -6,6 +6,8 @@ import type {
   DtiIncomeType,
   DtiPayoffImpact,
   DtiPaymentSource,
+  DtiStudentLoanPaymentMethod,
+  DtiStudentLoanStatus,
 } from "@budget-app/shared";
 import { parseMoneyToCents, parsePercentToHundredths, centsToMoney } from "./dtiForm";
 
@@ -74,19 +76,69 @@ export function formatDtiMoney(value: string | null | undefined): string {
   return formatCurrency(value);
 }
 
+export const STUDENT_LOAN_STATUS_LABELS: Record<DtiStudentLoanStatus, string> = {
+  repayment: "In repayment",
+  deferred: "Deferred",
+  forbearance: "Forbearance",
+  unknown: "Unknown",
+};
+
+export const STUDENT_LOAN_METHOD_LABELS: Record<DtiStudentLoanPaymentMethod, string> = {
+  manual: "Manual or reported monthly payment",
+  fha_deferred_balance_percent: "FHA deferred/zero-payment estimate — 0.5% of balance",
+};
+
 export function paymentSourceLabel(source: DtiPaymentSource): string {
   return source === "linked_account_minimum" ? "Synced from account minimum" : "Manual payment";
 }
 
+export function formatLinkedMinimumLine(account: {
+  minimum_payment_amount: string | null;
+  minimum_payment_source?: string | null;
+  minimum_payment_freshness?: string | null;
+}): string {
+  const amount = account.minimum_payment_amount;
+  const source = account.minimum_payment_source;
+  const freshness = account.minimum_payment_freshness;
+  if (amount == null || source === "none" || freshness === "unavailable") {
+    return "Minimum unavailable — enter manually";
+  }
+  const money = formatCurrency(amount);
+  if (source === "manual" || freshness === "manual") {
+    return `${money}/month — manually entered`;
+  }
+  if (freshness === "stale") {
+    return `${money}/month — last institution value; refresh recommended`;
+  }
+  if (source === "plaid") {
+    return `${money}/month — synced from institution`;
+  }
+  return `${money}/month`;
+}
+
 export function debtRowView(row: DtiDebtItem) {
+  const fhaEstimate = row.student_loan_payment_method === "fha_deferred_balance_percent";
+  const paymentSource = fhaEstimate
+    ? "FHA estimate: 0.5% of outstanding balance"
+    : row.debt_type === "student_loan"
+      ? "Source: Manual or reported payment"
+      : paymentSourceLabel(row.payment_source);
   return {
     typeLabel: DEBT_TYPE_LABELS[row.debt_type],
     balanceLabel: row.outstanding_balance ? formatCurrency(row.outstanding_balance) : null,
     effectivePaymentLabel: formatCurrency(row.effective_monthly_payment),
-    paymentSource: paymentSourceLabel(row.payment_source),
+    paymentSource,
+    calculationSourceLabel: fhaEstimate
+      ? "Calculated at 0.5% of balance"
+      : row.payment_calculation?.label ?? null,
+    studentLoanStatusLabel: row.student_loan_status
+      ? STUDENT_LOAN_STATUS_LABELS[row.student_loan_status]
+      : null,
+    planningEstimate: fhaEstimate,
     linkedAccountLabel: row.linked_account
       ? row.linked_account.effective_display_name || row.linked_account.name
       : null,
+    linkedMinimumLine: row.linked_account ? formatLinkedMinimumLine(row.linked_account) : null,
     monthsRemainingLabel:
       row.months_remaining != null ? `${row.months_remaining} months remaining` : null,
     showLinkedMinimumSync: row.payment_source === "linked_account_minimum",
@@ -138,8 +190,17 @@ const ROW_WARNING_CODES = new Set([
   "linked_account_ineligible",
   "linked_account_minimum_unavailable",
   "linked_account_missing",
+  "linked_account_minimum_stale",
+  "linked_account_reauthorization_required",
+  "provider_minimum_zero_with_balance",
   "debt_payment_without_balance",
   "debt_balance_without_payment",
+  "student_loan_balance_required",
+  "student_loan_status_required",
+  "student_loan_zero_manual_payment",
+  "student_loan_payment_unavailable",
+  "student_loan_fha_estimate_used",
+  "student_loan_reported_payment_may_be_more_appropriate",
 ]);
 
 const HOUSING_WARNING_CODES = new Set([

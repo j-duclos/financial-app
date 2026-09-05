@@ -59,10 +59,35 @@ WARNING_LINKED_ACCOUNT_INACTIVE = "linked_account_inactive"
 WARNING_LINKED_ACCOUNT_INELIGIBLE = "linked_account_ineligible"
 WARNING_LINKED_ACCOUNT_MINIMUM_UNAVAILABLE = "linked_account_minimum_unavailable"
 WARNING_LINKED_ACCOUNT_MISSING = "linked_account_missing"
+WARNING_LINKED_ACCOUNT_MINIMUM_STALE = "linked_account_minimum_stale"
+WARNING_LINKED_ACCOUNT_REAUTHORIZATION_REQUIRED = "linked_account_reauthorization_required"
+WARNING_PROVIDER_MINIMUM_ZERO_WITH_BALANCE = "provider_minimum_zero_with_balance"
 WARNING_DEBT_PAYMENT_WITHOUT_BALANCE = "debt_payment_without_balance"
 WARNING_DEBT_BALANCE_WITHOUT_PAYMENT = "debt_balance_without_payment"
 WARNING_POSSIBLE_HOUSING_DOUBLE_COUNT = "possible_housing_double_count"
 WARNING_UNKNOWN_EXCLUDED_DEBT_ITEM = "unknown_excluded_debt_item"
+WARNING_STUDENT_LOAN_BALANCE_REQUIRED = "student_loan_balance_required"
+WARNING_STUDENT_LOAN_STATUS_REQUIRED = "student_loan_status_required"
+WARNING_STUDENT_LOAN_ZERO_MANUAL_PAYMENT = "student_loan_zero_manual_payment"
+WARNING_STUDENT_LOAN_PAYMENT_UNAVAILABLE = "student_loan_payment_unavailable"
+WARNING_STUDENT_LOAN_FHA_ESTIMATE_USED = "student_loan_fha_estimate_used"
+WARNING_STUDENT_LOAN_REPORTED_PAYMENT_MAY_BE_MORE_APPROPRIATE = (
+    "student_loan_reported_payment_may_be_more_appropriate"
+)
+
+DEBT_TYPE_STUDENT_LOAN = "student_loan"
+STUDENT_LOAN_METHOD_MANUAL = "manual"
+STUDENT_LOAN_METHOD_FHA_DEFERRED = "fha_deferred_balance_percent"
+STUDENT_LOAN_STATUS_DEFERRED = "deferred"
+STUDENT_LOAN_STATUS_FORBEARANCE = "forbearance"
+FHA_DEFERRED_STUDENT_LOAN_PERCENT = Decimal("0.50")
+FHA_DEFERRED_STUDENT_LOAN_MULTIPLIER = Decimal("0.005")
+FHA_DEFERRED_STUDENT_LOAN_STATUSES = frozenset(
+    {STUDENT_LOAN_STATUS_DEFERRED, STUDENT_LOAN_STATUS_FORBEARANCE}
+)
+PAYMENT_CALC_LABEL_MANUAL = "Manual or reported monthly payment"
+PAYMENT_CALC_LABEL_LINKED = "Linked account minimum"
+PAYMENT_CALC_LABEL_FHA = "FHA deferred/zero-payment estimate"
 
 
 def as_decimal(value: Decimal | int | str | None, default: Decimal = ZERO) -> Decimal:
@@ -79,6 +104,11 @@ def as_decimal(value: Decimal | int | str | None, default: Decimal = ZERO) -> De
 
 def quantize_money(value: Decimal) -> Decimal:
     return as_decimal(value).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+
+def fha_deferred_student_loan_payment(outstanding_balance: Decimal) -> Decimal:
+    """FHA planning estimate: outstanding balance × 0.5% (multiplier 0.005)."""
+    return quantize_money(as_decimal(outstanding_balance) * FHA_DEFERRED_STUDENT_LOAN_MULTIPLIER)
 
 
 def quantize_percent(value: Decimal) -> Decimal:
@@ -129,6 +159,11 @@ class LinkedAccountSnapshot:
     is_hidden: bool
     minimum_payment_amount: Decimal | None
     current_balance: Decimal | None = None
+    minimum_payment_source: str | None = None
+    minimum_payment_freshness: str | None = None
+    minimum_payment_warning: str | None = None
+    minimum_payment_warning_code: str | None = None
+    provider_minimum_payment_observed_at: str | None = None
 
     def is_eligible_credit_card(self) -> bool:
         return (
@@ -140,6 +175,34 @@ class LinkedAccountSnapshot:
 
     def is_operationally_active(self) -> bool:
         return self.status == ACCOUNT_STATUS_ACTIVE and self.is_active and not self.is_hidden
+
+
+@dataclass(frozen=True)
+class PaymentCalculation:
+    method: str
+    label: str
+    balance: Decimal | None = None
+    percentage: Decimal | None = None
+    multiplier: Decimal | None = None
+    calculated_monthly_payment: Decimal | None = None
+    configured_monthly_payment: Decimal | None = None
+
+    def to_dict(self) -> dict:
+        payload: dict = {
+            "method": self.method,
+            "label": self.label,
+        }
+        if self.balance is not None:
+            payload["balance"] = money_str(self.balance)
+        if self.percentage is not None:
+            payload["percentage"] = str(self.percentage.quantize(PERCENT_QUANT))
+        if self.multiplier is not None:
+            payload["multiplier"] = str(self.multiplier)
+        if self.calculated_monthly_payment is not None:
+            payload["calculated_monthly_payment"] = money_str(self.calculated_monthly_payment)
+        if self.configured_monthly_payment is not None:
+            payload["configured_monthly_payment"] = money_str(self.configured_monthly_payment)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -168,6 +231,9 @@ class DebtInput:
     position: int = 0
     warnings: tuple[DtiWarning, ...] = ()
     effective_monthly_payment: Decimal = ZERO
+    student_loan_status: str | None = None
+    student_loan_payment_method: str | None = None
+    payment_calculation: PaymentCalculation | None = None
 
 
 @dataclass(frozen=True)
@@ -363,7 +429,63 @@ def linked_account_warnings(
                     linked_account_id=account.id,
                 )
             )
+        elif account.minimum_payment_warning_code == "provider_minimum_stale":
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_LINKED_ACCOUNT_MINIMUM_STALE,
+                    message=account.minimum_payment_warning
+                    or "Last institution minimum is older than the freshness window; refresh recommended.",
+                    debt_item_id=debt_item_id,
+                    linked_account_id=account.id,
+                )
+            )
+        elif account.minimum_payment_warning_code == "reauthorization_required":
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_LINKED_ACCOUNT_REAUTHORIZATION_REQUIRED,
+                    message=account.minimum_payment_warning
+                    or "Reconnect this bank login to refresh the institution minimum.",
+                    debt_item_id=debt_item_id,
+                    linked_account_id=account.id,
+                )
+            )
+        elif account.minimum_payment_warning_code == "provider_minimum_zero_with_balance":
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_PROVIDER_MINIMUM_ZERO_WITH_BALANCE,
+                    message=account.minimum_payment_warning
+                    or "Plaid reported no required minimum while this account still has a balance.",
+                    debt_item_id=debt_item_id,
+                    linked_account_id=account.id,
+                )
+            )
     return warnings
+
+
+def student_loan_method(debt: DebtInput) -> str:
+    method = (debt.student_loan_payment_method or "").strip()
+    if debt.debt_type != DEBT_TYPE_STUDENT_LOAN:
+        return STUDENT_LOAN_METHOD_MANUAL
+    if method == STUDENT_LOAN_METHOD_FHA_DEFERRED:
+        return STUDENT_LOAN_METHOD_FHA_DEFERRED
+    return STUDENT_LOAN_METHOD_MANUAL
+
+
+def fha_method_is_applicable(debt: DebtInput) -> bool:
+    if debt.debt_type != DEBT_TYPE_STUDENT_LOAN:
+        return False
+    if student_loan_method(debt) != STUDENT_LOAN_METHOD_FHA_DEFERRED:
+        return False
+    status = (debt.student_loan_status or "").strip()
+    if status not in FHA_DEFERRED_STUDENT_LOAN_STATUSES:
+        return False
+    if debt.outstanding_balance is None or debt.outstanding_balance <= ZERO:
+        return False
+    if debt.linked_account is not None:
+        return False
+    if debt.payment_source == PAYMENT_SOURCE_LINKED_ACCOUNT_MINIMUM:
+        return False
+    return True
 
 
 def resolve_effective_monthly_payment(
@@ -371,17 +493,119 @@ def resolve_effective_monthly_payment(
     monthly_payment: Decimal,
     payment_source: str,
     account: LinkedAccountSnapshot | None,
+    debt: DebtInput | None = None,
 ) -> Decimal:
     """Effective obligation for DTI.
 
     linked_account_minimum always reads the account minimum and never falls back
     to the saved monthly_payment (those two values must not drift together).
+    FHA deferred student-loan estimates use outstanding_balance × 0.005.
     """
+    if debt is not None and fha_method_is_applicable(debt):
+        return fha_deferred_student_loan_payment(debt.outstanding_balance or ZERO)
     if payment_source == PAYMENT_SOURCE_LINKED_ACCOUNT_MINIMUM:
         if account is None or account.minimum_payment_amount is None:
             return ZERO
         return as_decimal(account.minimum_payment_amount)
     return as_decimal(monthly_payment)
+
+
+def _payment_calculation_for(debt: DebtInput, effective: Decimal) -> PaymentCalculation:
+    if fha_method_is_applicable(debt):
+        balance = as_decimal(debt.outstanding_balance)
+        return PaymentCalculation(
+            method=STUDENT_LOAN_METHOD_FHA_DEFERRED,
+            label=PAYMENT_CALC_LABEL_FHA,
+            balance=balance,
+            percentage=FHA_DEFERRED_STUDENT_LOAN_PERCENT,
+            multiplier=FHA_DEFERRED_STUDENT_LOAN_MULTIPLIER,
+            calculated_monthly_payment=effective,
+        )
+    if debt.payment_source == PAYMENT_SOURCE_LINKED_ACCOUNT_MINIMUM:
+        return PaymentCalculation(
+            method=PAYMENT_SOURCE_LINKED_ACCOUNT_MINIMUM,
+            label=PAYMENT_CALC_LABEL_LINKED,
+            configured_monthly_payment=effective,
+        )
+    return PaymentCalculation(
+        method=STUDENT_LOAN_METHOD_MANUAL,
+        label=PAYMENT_CALC_LABEL_MANUAL,
+        configured_monthly_payment=as_decimal(debt.monthly_payment),
+    )
+
+
+def _student_loan_warnings(debt: DebtInput, effective: Decimal) -> list[DtiWarning]:
+    if debt.debt_type != DEBT_TYPE_STUDENT_LOAN:
+        return []
+    warnings: list[DtiWarning] = []
+    method = student_loan_method(debt)
+    status = (debt.student_loan_status or "").strip()
+    balance = debt.outstanding_balance
+    has_balance = balance is not None and balance > ZERO
+    if method == STUDENT_LOAN_METHOD_FHA_DEFERRED:
+        if not has_balance:
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_STUDENT_LOAN_BALANCE_REQUIRED,
+                    message="FHA deferred student-loan estimates require a positive outstanding balance.",
+                    debt_item_id=debt.id,
+                )
+            )
+        if status not in FHA_DEFERRED_STUDENT_LOAN_STATUSES:
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_STUDENT_LOAN_STATUS_REQUIRED,
+                    message=(
+                        "The FHA 0.5% estimate can be used only when the student loan is deferred or in forbearance."
+                    ),
+                    debt_item_id=debt.id,
+                )
+            )
+        if fha_method_is_applicable(debt):
+            warnings.append(
+                DtiWarning(
+                    code=WARNING_STUDENT_LOAN_FHA_ESTIMATE_USED,
+                    message=(
+                        "FHA planning estimate: 0.5% of the outstanding balance is used when the "
+                        "reported monthly student-loan payment is $0. Actual lender treatment may vary."
+                    ),
+                    debt_item_id=debt.id,
+                )
+            )
+            if as_decimal(debt.monthly_payment) > ZERO:
+                warnings.append(
+                    DtiWarning(
+                        code=WARNING_STUDENT_LOAN_REPORTED_PAYMENT_MAY_BE_MORE_APPROPRIATE,
+                        message=(
+                            "This loan has a documented monthly payment. A reported payment may be "
+                            "more appropriate than the FHA balance estimate."
+                        ),
+                        debt_item_id=debt.id,
+                    )
+                )
+    elif status in FHA_DEFERRED_STUDENT_LOAN_STATUSES and has_balance and effective <= ZERO:
+        warnings.append(
+            DtiWarning(
+                code=WARNING_STUDENT_LOAN_ZERO_MANUAL_PAYMENT,
+                message=(
+                    "This deferred or forbearance student loan uses a $0 monthly payment. "
+                    "Select the FHA 0.5% estimate if you want a planning obligation from the balance."
+                ),
+                debt_item_id=debt.id,
+            )
+        )
+    if has_balance and effective <= ZERO:
+        warnings.append(
+            DtiWarning(
+                code=WARNING_STUDENT_LOAN_PAYMENT_UNAVAILABLE,
+                message="This student loan has a positive balance but no usable DTI monthly payment.",
+                debt_item_id=debt.id,
+            )
+        )
+    if method == STUDENT_LOAN_METHOD_FHA_DEFERRED and not has_balance:
+        # already added balance_required; still flag unavailable payment
+        pass
+    return warnings
 
 
 def enrich_debt(debt: DebtInput) -> DebtInput:
@@ -398,7 +622,11 @@ def enrich_debt(debt: DebtInput) -> DebtInput:
         monthly_payment=debt.monthly_payment,
         payment_source=debt.payment_source,
         account=debt.linked_account,
+        debt=debt,
     )
+    student_warnings = _student_loan_warnings(debt, effective)
+    warnings.extend(student_warnings)
+    student_codes = {w.code for w in student_warnings}
     if effective > ZERO and (debt.outstanding_balance is None):
         warnings.append(
             DtiWarning(
@@ -408,7 +636,13 @@ def enrich_debt(debt: DebtInput) -> DebtInput:
                 linked_account_id=debt.linked_account.id if debt.linked_account else None,
             )
         )
-    if debt.outstanding_balance is not None and debt.outstanding_balance > ZERO and effective <= ZERO:
+    if (
+        debt.outstanding_balance is not None
+        and debt.outstanding_balance > ZERO
+        and effective <= ZERO
+        and WARNING_STUDENT_LOAN_ZERO_MANUAL_PAYMENT not in student_codes
+        and WARNING_STUDENT_LOAN_PAYMENT_UNAVAILABLE not in student_codes
+    ):
         warnings.append(
             DtiWarning(
                 code=WARNING_DEBT_BALANCE_WITHOUT_PAYMENT,
@@ -433,6 +667,9 @@ def enrich_debt(debt: DebtInput) -> DebtInput:
         position=debt.position,
         warnings=tuple(warnings),
         effective_monthly_payment=effective,
+        student_loan_status=debt.student_loan_status,
+        student_loan_payment_method=debt.student_loan_payment_method,
+        payment_calculation=_payment_calculation_for(debt, effective),
     )
 
 
@@ -655,6 +892,11 @@ def _serialize_linked_account(account: LinkedAccountSnapshot) -> dict:
             if account.minimum_payment_amount is not None
             else None
         ),
+        "minimum_payment_source": account.minimum_payment_source,
+        "minimum_payment_freshness": account.minimum_payment_freshness,
+        "minimum_payment_warning": account.minimum_payment_warning,
+        "minimum_payment_warning_code": account.minimum_payment_warning_code,
+        "provider_minimum_payment_observed_at": account.provider_minimum_payment_observed_at,
     }
 
 
@@ -676,6 +918,11 @@ def serialize_debt_item(item: DebtInput) -> dict:
         "months_remaining": item.months_remaining,
         "notes": item.notes,
         "position": item.position,
+        "student_loan_status": item.student_loan_status,
+        "student_loan_payment_method": item.student_loan_payment_method,
+        "payment_calculation": (
+            item.payment_calculation.to_dict() if item.payment_calculation is not None else None
+        ),
         "warnings": [w.to_dict() for w in item.warnings],
     }
 
@@ -720,8 +967,13 @@ def serialize_dti_result(result: DtiCalculationResult) -> dict:
 
 
 def snapshot_from_account(account) -> LinkedAccountSnapshot:
-    min_pay = getattr(account, "minimum_payment_amount", None)
+    from accounts.services.minimum_payment import resolve_effective_minimum_payment
+
+    resolved = resolve_effective_minimum_payment(account)
     current_balance = getattr(account, "current_balance", None)
+    observed = None
+    if resolved.observed_at is not None:
+        observed = resolved.observed_at.isoformat()
     return LinkedAccountSnapshot(
         id=account.id,
         name=account.name,
@@ -730,8 +982,13 @@ def snapshot_from_account(account) -> LinkedAccountSnapshot:
         status=account.status,
         is_active=bool(account.is_active),
         is_hidden=bool(account.is_hidden),
-        minimum_payment_amount=as_decimal(min_pay) if min_pay is not None else None,
+        minimum_payment_amount=resolved.amount,
         current_balance=as_decimal(current_balance) if current_balance is not None else ZERO,
+        minimum_payment_source=resolved.source,
+        minimum_payment_freshness=resolved.freshness,
+        minimum_payment_warning=resolved.warning_message,
+        minimum_payment_warning_code=resolved.warning_code,
+        provider_minimum_payment_observed_at=observed,
     )
 
 
@@ -770,6 +1027,8 @@ def debt_input_from_model(obj) -> DebtInput:
         months_remaining=obj.months_remaining,
         notes=obj.notes or "",
         position=obj.position,
+        student_loan_status=obj.student_loan_status or None,
+        student_loan_payment_method=obj.student_loan_payment_method or None,
     )
 
 
@@ -805,8 +1064,9 @@ def default_profile_input() -> ProfileInput:
 def suggestion_from_account(
     account, *, current_balance: Decimal | None = None
 ) -> CreditCardSuggestion:
-    min_pay = account.minimum_payment_amount
-    min_dec = as_decimal(min_pay) if min_pay is not None else None
+    from accounts.services.minimum_payment import resolve_effective_minimum_payment
+
+    resolved = resolve_effective_minimum_payment(account)
     owed = (
         current_balance
         if current_balance is not None
@@ -817,8 +1077,8 @@ def suggestion_from_account(
         name=account.name,
         effective_display_name=account.effective_display_name,
         current_balance=owed,
-        minimum_payment_amount=min_dec,
-        minimum_payment_usable=is_minimum_usable(min_dec),
+        minimum_payment_amount=resolved.amount,
+        minimum_payment_usable=is_minimum_usable(resolved.amount),
         suggested_debt_type="credit_card",
     )
 

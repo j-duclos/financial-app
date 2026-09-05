@@ -5,10 +5,12 @@ from .views import (
     PlaidConfigCheckView,
     PlaidExchangeView,
     PlaidItemViewSet,
+    PlaidLiabilitiesWebhookView,
     PlaidLinkTokenView,
     PlaidLinkedAccountDisconnectView,
     PlaidMetaView,
     PlaidSyncAllView,
+    PlaidSyncLiabilitiesAllView,
 )
 
 router = DefaultRouter()
@@ -20,6 +22,8 @@ urlpatterns = [
     path("plaid/link-token/", PlaidLinkTokenView.as_view(), name="plaid-link-token"),
     path("plaid/exchange/", PlaidExchangeView.as_view(), name="plaid-exchange"),
     path("plaid/sync-all/", PlaidSyncAllView.as_view(), name="plaid-sync-all"),
+    path("plaid/sync-liabilities/", PlaidSyncLiabilitiesAllView.as_view(), name="plaid-sync-liabilities"),
+    path("plaid/webhooks/liabilities/", PlaidLiabilitiesWebhookView.as_view(), name="plaid-liabilities-webhook"),
     path(
         "plaid/linked-accounts/<int:pk>/disconnect/",
         PlaidLinkedAccountDisconnectView.as_view(),

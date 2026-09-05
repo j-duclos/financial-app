@@ -7,6 +7,10 @@ import type {
   DtiPaymentSource,
   DtiProfileWritePayload,
   DtiProposedHousingInput,
+  DtiProposedHousingMode,
+  DtiProposedPurchaseInput,
+  DtiStudentLoanPaymentMethod,
+  DtiStudentLoanStatus,
 } from "@budget-app/shared";
 
 export const MONEY_ZERO = "0.00";
@@ -52,6 +56,23 @@ export function centsToMoney(cents: number): string {
   const whole = Math.floor(abs / 100);
   const frac = String(abs % 100).padStart(2, "0");
   return `${cents < 0 ? "-" : ""}${whole}.${frac}`;
+}
+
+/** Display percent used in FHA deferred student-loan estimates (0.50 = 0.5%). */
+export const FHA_DEFERRED_STUDENT_LOAN_PERCENT = "0.50";
+/** Integer form of 0.005: cents × 5 / 1000, rounded half-up. */
+const FHA_PREVIEW_NUMERATOR = 5;
+const FHA_PREVIEW_DENOMINATOR = 1000;
+
+/** Presentation-only FHA 0.5% preview. Backend effective payment is authoritative. */
+export function previewFhaDeferredStudentLoanPayment(balance: string): string | null {
+  const cents = parseMoneyToCents(balance);
+  if (cents == null || cents <= 0) return null;
+  const scaled = cents * FHA_PREVIEW_NUMERATOR;
+  const remainder = scaled % FHA_PREVIEW_DENOMINATOR;
+  const quotient = (scaled - remainder) / FHA_PREVIEW_DENOMINATOR;
+  const rounded = remainder >= FHA_PREVIEW_DENOMINATOR / 2 ? quotient + 1 : quotient;
+  return centsToMoney(rounded);
 }
 
 /** Presentation-only difference of two decimal-string amounts. */
@@ -151,9 +172,17 @@ export function buildDtiCalculationRequest(args: {
   householdId: number;
   proposedHousing: DtiProposedHousingInput | null;
   excludedDebtItemIds: number[];
+  proposedHousingMode?: DtiProposedHousingMode | null;
+  proposedPurchase?: DtiProposedPurchaseInput | null;
 }): DtiCalculationRequest {
   const request: DtiCalculationRequest = { household_id: args.householdId };
-  if (args.proposedHousing) {
+  const mode = args.proposedHousingMode
+    ?? (args.proposedPurchase ? "purchase" : args.proposedHousing ? "monthly_payment" : null);
+  if (mode === "purchase" && args.proposedPurchase) {
+    request.proposed_housing_mode = "purchase";
+    request.proposed_purchase = args.proposedPurchase;
+  } else if (args.proposedHousing) {
+    request.proposed_housing_mode = "monthly_payment";
     request.proposed_housing = proposedHousingPayloadForRequest(args.proposedHousing);
   }
   const excluded = sortedExcludedDebtItemIds(args.excludedDebtItemIds);
@@ -252,28 +281,61 @@ export function normalizeDebtWritePayload(
     included: boolean;
     months_remaining: string;
     notes: string;
+    student_loan_status?: DtiStudentLoanStatus | "";
+    student_loan_payment_method?: DtiStudentLoanPaymentMethod | "";
   }
 ): { ok: true; payload: DtiDebtItemWritePayload } | { ok: false; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
   const name = values.name.trim();
   if (!name) errors.name = "Name cannot be blank.";
+  const isStudentLoan = values.debt_type === "student_loan";
+  const studentMethod: DtiStudentLoanPaymentMethod =
+    isStudentLoan && values.student_loan_payment_method === "fha_deferred_balance_percent"
+      ? "fha_deferred_balance_percent"
+      : "manual";
+  const studentStatus =
+    isStudentLoan && values.student_loan_status ? values.student_loan_status : null;
   if (values.payment_source === "linked_account_minimum" && values.linked_account_id == null) {
     errors.linked_account_id = "Select a linked credit-card account to use its minimum.";
   }
   if (values.payment_source === "linked_account_minimum" && values.debt_type !== "credit_card") {
     errors.payment_source = "Linked account minimums can only be used with credit cards.";
   }
+  if (studentMethod === "fha_deferred_balance_percent") {
+    if (values.debt_type !== "student_loan") {
+      errors.student_loan_payment_method =
+        "The FHA deferred estimate can only be used with student-loan debts.";
+    }
+    if (values.linked_account_id != null || values.payment_source === "linked_account_minimum") {
+      errors.student_loan_payment_method =
+        "The FHA deferred estimate cannot be used with a linked credit card.";
+    }
+    if (studentStatus !== "deferred" && studentStatus !== "forbearance") {
+      errors.student_loan_status =
+        "The FHA 0.5% estimate requires the loan to be deferred or in forbearance.";
+    }
+  }
   let monthly = MONEY_ZERO;
-  if (values.payment_source === "manual") {
-    const amount = normalizeMoneyInput(values.monthly_payment);
-    if (!amount.ok) errors.monthly_payment = amount.error;
-    else monthly = amount.value;
+  if (studentMethod !== "fha_deferred_balance_percent" && values.payment_source === "manual") {
+    if (isStudentLoan && values.monthly_payment.trim() === "") {
+      errors.monthly_payment = "Enter a monthly payment for the manual or reported method.";
+    } else {
+      const amount = normalizeMoneyInput(values.monthly_payment);
+      if (!amount.ok) errors.monthly_payment = amount.error;
+      else monthly = amount.value;
+    }
   }
   let balance: string | null = null;
   if (values.outstanding_balance.trim() !== "") {
     const parsed = normalizeMoneyInput(values.outstanding_balance);
     if (!parsed.ok) errors.outstanding_balance = parsed.error;
     else balance = parsed.value;
+  }
+  if (studentMethod === "fha_deferred_balance_percent") {
+    if (balance == null || parseMoneyToCents(balance) === 0) {
+      errors.outstanding_balance =
+        "A positive outstanding balance is required for the FHA 0.5% estimate.";
+    }
   }
   let months: number | null = null;
   if (values.months_remaining.trim() !== "") {
@@ -289,14 +351,17 @@ export function normalizeDebtWritePayload(
     household_id: householdId,
     name,
     debt_type: values.debt_type,
-    payment_source: values.payment_source,
+    payment_source:
+      studentMethod === "fha_deferred_balance_percent" ? "manual" : values.payment_source,
     included: values.included,
     notes: values.notes.trim(),
     outstanding_balance: balance,
     months_remaining: months,
-    linked_account_id: values.linked_account_id,
+    linked_account_id: isStudentLoan ? null : values.linked_account_id,
+    student_loan_status: isStudentLoan ? studentStatus : null,
+    student_loan_payment_method: isStudentLoan ? studentMethod : null,
   };
-  if (values.payment_source === "manual") {
+  if (studentMethod !== "fha_deferred_balance_percent" && values.payment_source === "manual") {
     payload.monthly_payment = monthly;
   }
   return { ok: true, payload };

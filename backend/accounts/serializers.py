@@ -62,6 +62,12 @@ class AccountSerializer(serializers.ModelSerializer):
     minimum_payment_amount = serializers.DecimalField(
         max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0"),
     )
+    minimum_payment_mode = serializers.ChoiceField(
+        choices=Account.MinimumPaymentMode.choices, required=False
+    )
+    manual_minimum_payment_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0"),
+    )
     autopay_fixed_amount = serializers.DecimalField(
         max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0"),
     )
@@ -115,6 +121,26 @@ class AccountSerializer(serializers.ModelSerializer):
     short_description = serializers.CharField(read_only=True)
     last_activity_date = serializers.SerializerMethodField()
     payoff_estimate = serializers.JSONField(read_only=True, required=False)
+    effective_minimum_payment_amount = serializers.CharField(read_only=True, required=False, allow_null=True)
+    minimum_payment_source = serializers.CharField(read_only=True, required=False, allow_null=True)
+    provider_minimum_payment_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True, required=False, allow_null=True
+    )
+    provider_minimum_payment_observed_at = serializers.DateTimeField(
+        read_only=True, required=False, allow_null=True
+    )
+    provider_minimum_payment_statement_date = serializers.DateField(
+        read_only=True, required=False, allow_null=True
+    )
+    provider_minimum_payment_due_date = serializers.DateField(
+        read_only=True, required=False, allow_null=True
+    )
+    provider_minimum_payment_sync_status = serializers.CharField(read_only=True, required=False)
+    provider_minimum_payment_sync_message = serializers.CharField(read_only=True, required=False)
+    minimum_payment_freshness = serializers.CharField(read_only=True, required=False, allow_null=True)
+    minimum_payment_warning = serializers.CharField(read_only=True, required=False, allow_null=True)
+    minimum_payment_warning_code = serializers.CharField(read_only=True, required=False, allow_null=True)
+    plaid_item_id = serializers.IntegerField(read_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Account
@@ -126,6 +152,13 @@ class AccountSerializer(serializers.ModelSerializer):
             "interest_rate", "interest_cycle_end_day", "credit_limit", "target_utilization_percent",
             "billing_cycle_end_day", "statement_closing_day", "payment_due_day",
             "current_balance", "statement_balance", "minimum_payment_amount",
+            "minimum_payment_mode", "manual_minimum_payment_amount",
+            "effective_minimum_payment_amount", "minimum_payment_source",
+            "provider_minimum_payment_amount", "provider_minimum_payment_observed_at",
+            "provider_minimum_payment_statement_date", "provider_minimum_payment_due_date",
+            "provider_minimum_payment_sync_status", "provider_minimum_payment_sync_message",
+            "minimum_payment_freshness", "minimum_payment_warning",
+            "minimum_payment_warning_code", "plaid_item_id",
             "last_statement_date", "next_statement_date", "next_payment_due_date",
             "autopay_enabled", "autopay_account", "autopay_type", "autopay_fixed_amount",
             "status", "archived_at", "closed_at", "deleted_at", "is_hidden",
@@ -160,6 +193,12 @@ class AccountSerializer(serializers.ModelSerializer):
             "health_risk_date", "health_details", "health_recommended_action",
             "outgoing_relationships", "incoming_relationships",
             "last_activity_date",
+            "effective_minimum_payment_amount", "minimum_payment_source",
+            "provider_minimum_payment_amount", "provider_minimum_payment_observed_at",
+            "provider_minimum_payment_statement_date", "provider_minimum_payment_due_date",
+            "provider_minimum_payment_sync_status", "provider_minimum_payment_sync_message",
+            "minimum_payment_freshness", "minimum_payment_warning",
+            "minimum_payment_warning_code", "plaid_item_id",
         ]
 
     def get_last_activity_date(self, instance):
@@ -293,6 +332,7 @@ class AccountSerializer(serializers.ModelSerializer):
             "current_balance",
             "statement_balance",
             "minimum_payment_amount",
+            "manual_minimum_payment_amount",
             "autopay_fixed_amount",
         ):
             if attrs.get(field) is None:
@@ -340,16 +380,76 @@ class AccountSerializer(serializers.ModelSerializer):
             attrs.pop("target_utilization_percent", None)
         return attrs
 
+    def _extract_minimum_payment_writes(self, validated_data):
+        return {
+            "mode": validated_data.pop("minimum_payment_mode", None),
+            "manual": validated_data.pop("manual_minimum_payment_amount", None),
+            "legacy": validated_data.pop("minimum_payment_amount", None),
+            "has_mode": "minimum_payment_mode" in validated_data,
+            "has_manual": "manual_minimum_payment_amount" in validated_data,
+            "has_legacy": "minimum_payment_amount" in validated_data,
+        }
+
+    def _apply_minimum_payment_writes(self, instance, writes):
+        if not instance.is_credit_card():
+            return instance
+        from accounts.services.minimum_payment import apply_user_minimum_settings
+
+        mode = writes["mode"]
+        manual = writes["manual"]
+        legacy = writes["legacy"]
+        set_manual = writes["has_manual"] or writes["has_legacy"]
+        if writes["has_legacy"] and not writes["has_mode"]:
+            mode = Account.MinimumPaymentMode.MANUAL
+        if writes["has_legacy"] and not writes["has_manual"]:
+            manual = legacy
+            set_manual = True
+        if mode is None and not set_manual:
+            return instance
+        apply_user_minimum_settings(
+            instance,
+            mode=mode,
+            manual_amount=manual if set_manual else None,
+            set_manual=set_manual,
+        )
+        instance.refresh_from_db()
+        return instance
+
     def create(self, validated_data):
+        writes = {
+            "mode": validated_data.pop("minimum_payment_mode", None),
+            "manual": validated_data.pop("manual_minimum_payment_amount", None),
+            "legacy": validated_data.pop("minimum_payment_amount", None),
+            "has_mode": False,
+            "has_manual": False,
+            "has_legacy": False,
+        }
+        writes["has_mode"] = writes["mode"] is not None
+        writes["has_manual"] = writes["manual"] is not None
+        writes["has_legacy"] = writes["legacy"] is not None
         if "role" not in validated_data:
             validated_data["role"] = Account.infer_role_from_account_type(
                 validated_data["account_type"]
             )
         instance = super().create(validated_data)
         self._sync_nickname_from_display_name(instance)
-        return instance
+        return self._apply_minimum_payment_writes(instance, writes)
 
     def update(self, instance, validated_data):
+        writes = {
+            "mode": validated_data.pop("minimum_payment_mode", None),
+            "manual": validated_data.pop("manual_minimum_payment_amount", None),
+            "legacy": validated_data.pop("minimum_payment_amount", None),
+            "has_mode": "minimum_payment_mode" in self.initial_data if hasattr(self, "initial_data") else False,
+            "has_manual": "manual_minimum_payment_amount" in self.initial_data if hasattr(self, "initial_data") else False,
+            "has_legacy": "minimum_payment_amount" in self.initial_data if hasattr(self, "initial_data") else False,
+        }
+        if writes["mode"] is not None:
+            writes["has_mode"] = True
+        if writes["manual"] is not None:
+            writes["has_manual"] = True
+        if writes["legacy"] is not None:
+            writes["has_legacy"] = True
         archived_toggle = validated_data.pop("archived", None)
         if "account_type" in validated_data and "role" not in validated_data:
             validated_data["role"] = Account.infer_role_from_account_type(
@@ -367,7 +467,7 @@ class AccountSerializer(serializers.ModelSerializer):
                 instance.refresh_from_db()
         if "display_name" in validated_data:
             self._sync_nickname_from_display_name(instance)
-        return instance
+        return self._apply_minimum_payment_writes(instance, writes)
 
     def _sync_nickname_from_display_name(self, instance):
         """Keep nickname in sync with display_name for legacy clients."""
@@ -450,11 +550,14 @@ class AccountSerializer(serializers.ModelSerializer):
             data["statement_balance"] = (
                 str(instance.statement_balance) if instance.statement_balance is not None else None
             )
-            data["minimum_payment_amount"] = (
-                str(instance.minimum_payment_amount)
-                if instance.minimum_payment_amount is not None
-                else None
-            )
+            from .services.minimum_payment import serialize_minimum_payment
+
+            data.update(serialize_minimum_payment(instance))
+            item_pk = getattr(instance, "plaid_item_pk", None)
+            if item_pk is None:
+                cached_link = instance.__dict__.get("plaid_link")
+                item_pk = cached_link.item_id if cached_link is not None else None
+            data["plaid_item_id"] = item_pk
             from .services.credit_card import credit_payment_due_state
 
             due_state = credit_payment_due_state(instance)

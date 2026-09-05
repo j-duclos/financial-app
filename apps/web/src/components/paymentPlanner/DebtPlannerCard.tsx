@@ -71,6 +71,9 @@ export default function DebtPlannerCard({ card, selected, onSelect }: Props) {
           <dd className="font-medium text-gray-800 tabular-nums">
             {formatCurrency(card.minimum_payment)}
           </dd>
+          {card.minimum_payment_available === false ? (
+            <p className="text-[10px] text-amber-800">Minimum unavailable — enter it on the account.</p>
+          ) : null}
         </div>
         <div>
           <dt className="text-gray-500">Interest this month</dt>
