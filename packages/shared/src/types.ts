@@ -1754,6 +1754,61 @@ export interface ScenarioAffordabilityResult {
   description: string;
 }
 
+/** Guided What-If strategy type. Extensible; first supported strategy is Debt First vs. Save First. */
+export type GuidedScenarioStrategyType = "debt_first_vs_save_first";
+
+/** Payoff order for guided strategies — same constants as Payment Planner `DebtPayoffStrategy`. */
+export type GuidedDebtPayoffStrategy = DebtPayoffStrategy;
+
+/** Nested account reference on a guided-strategy response. */
+export interface ScenarioGuidedAccountRef {
+  id: number;
+  name: string;
+  effective_display_name: string;
+  account_type: AccountType;
+  priority?: number;
+}
+
+/** Nested recurring-rule reference on a guided-strategy response. */
+export interface ScenarioGuidedRuleRef {
+  id: number;
+  name: string;
+  account_id: number;
+  transfer_to_account_id: number | null;
+}
+
+export interface ScenarioGuidedStrategy {
+  id: number;
+  scenario_id: number;
+  strategy_type: GuidedScenarioStrategyType;
+  source_account: ScenarioGuidedAccountRef;
+  savings_account: ScenarioGuidedAccountRef;
+  included_debt_accounts: ScenarioGuidedAccountRef[];
+  savings_transfer_rules: ScenarioGuidedRuleRef[];
+  start_date: string;
+  minimum_cash_buffer: string;
+  allocation_percent: string;
+  payoff_strategy: GuidedDebtPayoffStrategy;
+  custom_debt_order: ScenarioGuidedAccountRef[];
+  resume_savings_after_payoff: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScenarioGuidedStrategyWritePayload {
+  strategy_type: GuidedScenarioStrategyType;
+  source_account_id: number;
+  savings_account_id: number;
+  included_debt_account_ids: number[];
+  savings_transfer_rule_ids: number[];
+  start_date: string;
+  minimum_cash_buffer?: string;
+  allocation_percent?: string;
+  payoff_strategy?: GuidedDebtPayoffStrategy;
+  custom_debt_order_ids?: number[];
+  resume_savings_after_payoff?: boolean;
+}
+
 /** Deterministic what-if transfer simulation (calendar drawer). */
 export type TransferSimulationResultStatus = "resolved" | "partial" | "failed";
 

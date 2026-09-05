@@ -594,10 +594,16 @@ def simulate_household_debt(
         loop.months,
         utilization_target=_household_utilization_target(opening_states),
     )
+    # Rank cards by strategy focus (who gets extra), not simulation
+    # elimination order. With $0 extra, the smallest amortizing card can
+    # hit $0 first even when avalanche/credit-score would attack another.
+    priority_order = [
+        s.account.pk for s in _focus_order(opening_states, strategy, custom_order)
+    ]
     card_summaries = _build_card_summaries(
         cards,
         opening_states,
-        loop.payoff_order,
+        priority_order,
         today,
         loop.debt_free_date,
         strategy=strategy,
@@ -646,7 +652,7 @@ def simulate_household_debt(
                 (loop.non_amortizing_account_ids or []) + baseline_non_amortizing
             )
         ),
-        "payoff_order": loop.payoff_order,
+        "payoff_order": priority_order,
         "cards": card_summaries,
         "timeline": loop.timeline[:60],
         "milestones": milestones,
@@ -723,7 +729,7 @@ def _card_priority_reason(
     payoff_order_rank: int | None,
     opening: "CardState | None",
 ) -> dict[str, str] | None:
-    """Canonical prioritization explanation for mobile/web clients."""
+    """Explain why this card is ranked here for the selected strategy (not who hits $0 first)."""
     if payoff_order_rank is None or opening is None:
         return None
     if payoff_order_rank == 1:
