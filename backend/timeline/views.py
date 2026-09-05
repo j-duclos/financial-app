@@ -34,6 +34,7 @@ from .serializers import (
     ScenarioOneTimeEventSerializer,
     ScenarioAddedRecurringSerializer,
     ScenarioCategoryShockSerializer,
+    ScenarioGuidedStrategyWriteSerializer,
     StatementTransactionSerializer,
     ReconciliationMatchSerializer,
     UpcomingChargeNotificationSerializer,
@@ -502,6 +503,52 @@ class ScenarioViewSet(ModelViewSet):
         serializer.save(scenario=scenario)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["get", "put", "delete"], url_path="guided-strategy")
+    def guided_strategy(self, request, pk=None):
+        """Persisted guided What-If strategy for this scenario (create/replace/delete)."""
+        from .services.guided_strategy import (
+            delete_guided_strategy,
+            load_guided_strategy,
+            replace_guided_strategy,
+            serialize_guided_strategy,
+        )
+
+        scenario = self.get_object()
+        if request.method == "GET":
+            strategy = load_guided_strategy(scenario)
+            if strategy is None:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(serialize_guided_strategy(strategy))
+
+        if request.method == "DELETE":
+            strategy = load_guided_strategy(scenario)
+            if strategy is None:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            delete_guided_strategy(strategy)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = ScenarioGuidedStrategyWriteSerializer(
+            data=request.data,
+            context={"request": request, "scenario": scenario},
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        strategy = replace_guided_strategy(
+            scenario,
+            strategy_type=data["strategy_type"],
+            source_account=data["source_account"],
+            savings_account=data["savings_account"],
+            included_debt_accounts=list(data.get("included_debt_accounts") or []),
+            savings_transfer_rules=list(data.get("savings_transfer_rules") or []),
+            start_date=data["start_date"],
+            minimum_cash_buffer=data.get("minimum_cash_buffer", Decimal("0.00")),
+            allocation_percent=data.get("allocation_percent", Decimal("100.00")),
+            payoff_strategy=data.get("payoff_strategy") or "avalanche",
+            custom_debt_order=list(data.get("custom_debt_order") or []),
+            resume_savings_after_payoff=data.get("resume_savings_after_payoff", True),
+        )
+        return Response(serialize_guided_strategy(strategy))
+
     @action(detail=True, methods=["get"], url_path="changes")
     def changes(self, request, pk=None):
         """Aggregate scenario edits for mobile read path (one request vs four)."""
@@ -634,6 +681,9 @@ class ScenarioViewSet(ModelViewSet):
                 start_date=shock.start_date,
                 end_date=shock.end_date,
             )
+        from .services.guided_strategy import copy_guided_strategy
+
+        copy_guided_strategy(source, copy)
         serializer = ScenarioSerializer(copy, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

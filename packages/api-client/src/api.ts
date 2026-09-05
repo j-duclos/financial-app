@@ -31,6 +31,8 @@ import type {
   Scenario,
   ScenarioRuleOverride,
   ScenarioChangesResponse,
+  ScenarioGuidedStrategy,
+  ScenarioGuidedStrategyWritePayload,
   TimelineResponse,
   TimelineCalendarResponse,
   TimelineCalendarSummaryResponse,
@@ -1750,6 +1752,26 @@ export async function updateScenarioCategoryShock(
 
 export async function deleteScenarioCategoryShock(id: number): Promise<void> {
   await request(`/api/scenario-category-shocks/${id}/`, { method: "DELETE" });
+}
+
+export async function getScenarioGuidedStrategy(
+  scenarioId: number
+): Promise<ScenarioGuidedStrategy> {
+  return requestRequired(`/api/scenarios/${scenarioId}/guided-strategy/`);
+}
+
+export async function saveScenarioGuidedStrategy(
+  scenarioId: number,
+  payload: ScenarioGuidedStrategyWritePayload
+): Promise<ScenarioGuidedStrategy> {
+  return requestRequired(`/api/scenarios/${scenarioId}/guided-strategy/`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteScenarioGuidedStrategy(scenarioId: number): Promise<void> {
+  await request(`/api/scenarios/${scenarioId}/guided-strategy/`, { method: "DELETE" });
 }
 
 // Upcoming charge notifications (1 day before a rule charge is due)

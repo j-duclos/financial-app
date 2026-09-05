@@ -322,6 +322,117 @@ class ScenarioCategoryShock(models.Model):
         ordering = ["start_date", "id"]
 
 
+class ScenarioGuidedStrategy(models.Model):
+    """
+    Optional guided What-If strategy attached to a Scenario.
+
+    This is additional configuration, not a replacement for manual scenario
+    records (overrides, one-time events, added recurring, category shocks).
+    Phase 1 persists and validates the contract; simulation is Phase 2.
+    """
+
+    class StrategyType(models.TextChoices):
+        DEBT_FIRST_VS_SAVE_FIRST = "debt_first_vs_save_first", "Debt first vs. save first"
+
+    class PayoffStrategy(models.TextChoices):
+        AVALANCHE = "avalanche", "Avalanche"
+        SNOWBALL = "snowball", "Snowball"
+        UTILIZATION_TARGET = "utilization_target", "Utilization target"
+        CUSTOM = "custom", "Custom"
+
+    scenario = models.OneToOneField(
+        Scenario,
+        on_delete=models.CASCADE,
+        related_name="guided_strategy",
+    )
+    strategy_type = models.CharField(
+        max_length=64,
+        choices=StrategyType.choices,
+        default=StrategyType.DEBT_FIRST_VS_SAVE_FIRST,
+    )
+    source_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name="guided_strategies_as_source",
+        help_text="Cash/asset account whose surplus may be reallocated.",
+    )
+    savings_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name="guided_strategies_as_savings",
+        help_text="Savings/cash destination of the selected transfer rules.",
+    )
+    included_debt_accounts = models.ManyToManyField(
+        Account,
+        related_name="guided_strategies_as_debt",
+        blank=True,
+    )
+    savings_transfer_rules = models.ManyToManyField(
+        RecurringRule,
+        related_name="guided_strategies_as_savings_transfer",
+        blank=True,
+    )
+    start_date = models.DateField()
+    minimum_cash_buffer = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    allocation_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("100.00"),
+    )
+    payoff_strategy = models.CharField(
+        max_length=32,
+        choices=PayoffStrategy.choices,
+        default=PayoffStrategy.AVALANCHE,
+    )
+    resume_savings_after_payoff = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timeline_scenario_guided_strategy"
+
+
+class ScenarioGuidedDebtPriority(models.Model):
+    """Normalized custom payoff order for a guided strategy. Empty unless payoff_strategy is custom."""
+
+    guided_strategy = models.ForeignKey(
+        ScenarioGuidedStrategy,
+        on_delete=models.CASCADE,
+        related_name="debt_priorities",
+    )
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name="guided_strategy_debt_priorities",
+    )
+    priority = models.PositiveSmallIntegerField(
+        help_text="1-based payoff order. Lower values are paid first.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timeline_scenario_guided_debt_priority"
+        ordering = ["priority", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guided_strategy", "account"],
+                name="uniq_guided_strategy_debt_acct",
+            ),
+            models.UniqueConstraint(
+                fields=["guided_strategy", "priority"],
+                name="uniq_guided_strategy_debt_prio",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["guided_strategy", "priority"]),
+        ]
+
+
 class StatementTransaction(models.Model):
     """Imported bank statement line for manual reconciliation."""
 

@@ -113,6 +113,102 @@ def test_card_priority_reason_metadata(user, card_a, card_b):
     assert second["priority_reason"]["code"] == "next_in_plan"
 
 
+def _first_card(plan: dict) -> dict:
+    return next(c for c in plan["cards"] if c["payoff_order"] == 1)
+
+
+@pytest.mark.django_db
+def test_payoff_order_follows_strategy_not_who_clears_on_minimums(user, card_a, card_b):
+    """Avalanche vs snowball must differ when highest APR is not the smallest balance.
+
+    With $0 extra, simulation elimination follows minimums (usually the small card).
+    Pay-first ranking must still follow the selected strategy.
+    """
+    _debt(card_a, user, Decimal("2000"))
+    _debt(card_b, user, Decimal("300"))
+    avalanche = simulate_household_debt(
+        [card_a, card_b],
+        strategy="avalanche",
+        mode="aggressive",
+        extra_monthly=Decimal("0"),
+    )
+    snowball = simulate_household_debt(
+        [card_a, card_b],
+        strategy="snowball",
+        mode="aggressive",
+        extra_monthly=Decimal("0"),
+    )
+    av_first = _first_card(avalanche)
+    sn_first = _first_card(snowball)
+    assert av_first["account_id"] == card_a.id
+    assert av_first["priority_reason"]["code"] == "highest_apr"
+    assert sn_first["account_id"] == card_b.id
+    assert sn_first["priority_reason"]["code"] == "lowest_balance"
+    assert av_first["account_id"] != sn_first["account_id"]
+
+
+@pytest.mark.django_db
+def test_credit_score_pay_first_is_highest_utilization_not_smallest_amortizing(
+    user, household
+):
+    """Credit-score strategy must target max utilization even if that card does not amortize.
+
+    Mirrors the live mix: a small high-APR card that pays down on minimums vs a
+    maxed-out lower-APR card that does not.
+    """
+    care = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Care Credit",
+        credit_limit=Decimal("4800"),
+        apr=Decimal("32.99"),
+        minimum_payment_amount=Decimal("63"),
+    )
+    savor = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Savor",
+        credit_limit=Decimal("2000"),
+        apr=Decimal("28.24"),
+        minimum_payment_amount=Decimal("25"),
+    )
+    venture = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Venture",
+        credit_limit=Decimal("3000"),
+        apr=Decimal("28.24"),
+        minimum_payment_amount=Decimal("26"),
+    )
+    _debt(care, user, Decimal("1070.96"))
+    _debt(savor, user, Decimal("1968.31"))
+    _debt(venture, user, Decimal("3141.42"))
+    cards = [care, savor, venture]
+
+    avalanche = simulate_household_debt(
+        cards, strategy="avalanche", mode="aggressive", extra_monthly=Decimal("0")
+    )
+    snowball = simulate_household_debt(
+        cards, strategy="snowball", mode="aggressive", extra_monthly=Decimal("0")
+    )
+    credit_score = simulate_household_debt(
+        cards, strategy="utilization_target", mode="aggressive", extra_monthly=Decimal("0")
+    )
+
+    assert _first_card(avalanche)["account_id"] == care.id
+    assert _first_card(avalanche)["priority_reason"]["code"] == "highest_apr"
+    assert _first_card(snowball)["account_id"] == care.id
+    assert _first_card(snowball)["priority_reason"]["code"] == "lowest_balance"
+    assert _first_card(credit_score)["account_id"] == venture.id
+    assert _first_card(credit_score)["priority_reason"]["code"] == "highest_utilization"
+    assert "utilization" in _first_card(credit_score)["priority_reason"]["label"].lower()
+    assert Decimal(_first_card(credit_score)["utilization_percent"]) > Decimal(
+        _first_card(avalanche)["utilization_percent"]
+    )
+    rec_text = " ".join(r["message"] for r in credit_score["recommendations"])
+    assert "Venture" in rec_text
+
+
 @pytest.mark.django_db
 def test_empty_when_no_debt(user, card_a):
     plan = simulate_household_debt([card_a], strategy="avalanche", mode="survival")

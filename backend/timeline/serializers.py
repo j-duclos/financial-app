@@ -29,6 +29,7 @@ from .models import (
     ScenarioOneTimeEvent,
     ScenarioAddedRecurring,
     ScenarioCategoryShock,
+    ScenarioGuidedStrategy,
     StatementTransaction,
     ReconciliationMatch,
     UpcomingChargeNotification,
@@ -596,6 +597,87 @@ class ScenarioCategoryShockSerializer(serializers.ModelSerializer):
             households = get_households_for_user(req.user)
             self.fields["scenario"].queryset = Scenario.objects.filter(household__in=households)
             self.fields["category_id"].queryset = Category.objects.filter(household__in=households)
+
+
+class ScenarioGuidedStrategyWriteSerializer(serializers.Serializer):
+    """PUT payload for a scenario's guided strategy. Full replace, not partial."""
+
+    strategy_type = serializers.ChoiceField(
+        choices=ScenarioGuidedStrategy.StrategyType.choices,
+    )
+    source_account_id = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.none(), source="source_account"
+    )
+    savings_account_id = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.none(), source="savings_account"
+    )
+    included_debt_account_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.none(),
+        many=True,
+        source="included_debt_accounts",
+    )
+    savings_transfer_rule_ids = serializers.PrimaryKeyRelatedField(
+        queryset=RecurringRule.objects.none(),
+        many=True,
+        source="savings_transfer_rules",
+    )
+    start_date = serializers.DateField()
+    minimum_cash_buffer = serializers.DecimalField(
+        max_digits=15, decimal_places=2, required=False, default=Decimal("0.00")
+    )
+    allocation_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, default=Decimal("100.00")
+    )
+    payoff_strategy = serializers.CharField(required=False, default="avalanche")
+    custom_debt_order_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.none(),
+        many=True,
+        required=False,
+        default=list,
+        source="custom_debt_order",
+    )
+    resume_savings_after_payoff = serializers.BooleanField(required=False, default=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        req = self.context.get("request")
+        if req and req.user.is_authenticated:
+            households = get_households_for_user(req.user)
+            accts = Account.objects.filter(household__in=households)
+            rules = RecurringRule.objects.filter(household__in=households)
+            self._set_pk_queryset("source_account_id", accts)
+            self._set_pk_queryset("savings_account_id", accts)
+            self._set_pk_queryset("included_debt_account_ids", accts)
+            self._set_pk_queryset("custom_debt_order_ids", accts)
+            self._set_pk_queryset("savings_transfer_rule_ids", rules)
+
+    def _set_pk_queryset(self, field_name: str, queryset) -> None:
+        field = self.fields[field_name]
+        field.queryset = queryset
+        child = getattr(field, "child_relation", None)
+        if child is not None:
+            child.queryset = queryset
+
+    def validate(self, attrs):
+        scenario = self.context.get("scenario")
+        if scenario is None:
+            raise serializers.ValidationError({"scenario": "Scenario is required."})
+        from .services.guided_strategy import validate_guided_strategy_config
+
+        validate_guided_strategy_config(
+            scenario=scenario,
+            strategy_type=attrs["strategy_type"],
+            source_account=attrs["source_account"],
+            savings_account=attrs["savings_account"],
+            included_debt_accounts=list(attrs.get("included_debt_accounts") or []),
+            savings_transfer_rules=list(attrs.get("savings_transfer_rules") or []),
+            start_date=attrs.get("start_date"),
+            minimum_cash_buffer=Decimal(str(attrs.get("minimum_cash_buffer", Decimal("0.00")))),
+            allocation_percent=Decimal(str(attrs.get("allocation_percent", Decimal("100.00")))),
+            payoff_strategy=attrs.get("payoff_strategy") or "avalanche",
+            custom_debt_order=list(attrs.get("custom_debt_order") or []),
+        )
+        return attrs
 
 
 class StatementTransactionSerializer(serializers.ModelSerializer):
