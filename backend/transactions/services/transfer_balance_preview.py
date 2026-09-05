@@ -134,8 +134,8 @@ def preview_transfer_balances(
     transfer is replaced rather than double-counted.
     """
     amt = abs(_decimal(amount)).quantize(Decimal("0.01"))
-    if amt <= 0:
-        raise ValueError("Amount must be positive")
+    if amt < 0:
+        raise ValueError("Amount must be zero or greater")
 
     households = get_households_for_user(user)
     from_acc = Account.objects.filter(pk=from_account_id, household__in=households).first()
@@ -186,39 +186,46 @@ def preview_transfer_balances(
             )
         t_after_extract_before = time.perf_counter()
 
-        ephemeral = (
-            transfer_ephemeral_events(
-                from_account=from_acc,
-                to_account=to_acc,
-                amount=amt,
-                transfer_date=transfer_date,
+        if amt == 0:
+            # Before-only preview so destination owed can show before an amount is typed.
+            t_before_after = t_after_extract_before
+            t_after_after = t_after_extract_before
+            source_after = source_before
+            dest_after: Decimal | None = dest_before
+        else:
+            ephemeral = (
+                transfer_ephemeral_events(
+                    from_account=from_acc,
+                    to_account=to_acc,
+                    amount=amt,
+                    transfer_date=transfer_date,
+                )
+                if to_acc is not None
+                else []
             )
-            if to_acc is not None
-            else []
-        )
 
-        t_before_after = time.perf_counter()
-        rows_after = build_timeline(
-            user,
-            start,
-            end,
-            household_id=household_id,
-            as_of_date=as_of,
-            ephemeral_events=ephemeral or None,
-            projection_only=True,
-            caller="transfer_balance_preview_after",
-        )
-        t_after_after = time.perf_counter()
-
-        source_after = _signed_balance_through_date(
-            from_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
-        )
-
-        dest_after: Decimal | None = None
-        if to_acc is not None:
-            dest_after = _signed_balance_through_date(
-                to_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
+            t_before_after = time.perf_counter()
+            rows_after = build_timeline(
+                user,
+                start,
+                end,
+                household_id=household_id,
+                as_of_date=as_of,
+                ephemeral_events=ephemeral or None,
+                projection_only=True,
+                caller="transfer_balance_preview_after",
             )
+            t_after_after = time.perf_counter()
+
+            source_after = _signed_balance_through_date(
+                from_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
+            )
+
+            dest_after = None
+            if to_acc is not None:
+                dest_after = _signed_balance_through_date(
+                    to_acc, transfer_date, rows_after, exclude_transaction_ids=exclude
+                )
         t_after_extract = time.perf_counter()
 
     if logger.isEnabledFor(logging.DEBUG):

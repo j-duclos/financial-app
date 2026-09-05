@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { previewTransferBalances, type TransferBalancePreviewResponse } from "@budget-app/api-client";
+import { transferPreviewAmountPayload, transferPreviewAmountReady } from "../lib/transferPreviewAccounts";
 
 const DEFAULT_DEBOUNCE_MS = 400;
 
@@ -30,10 +31,14 @@ export function useTransferBalancePreview(input: {
   const debouncedAmount = useDebouncedPreviewValue(input.amount, debounceMs);
   const debouncedDate = useDebouncedPreviewValue(input.date, debounceMs);
 
-  const amountReady = useMemo(() => {
-    const raw = parseFloat(String(debouncedAmount).trim());
-    return Number.isFinite(raw) && raw !== 0;
-  }, [debouncedAmount]);
+  const amountReady = useMemo(
+    () => transferPreviewAmountReady(debouncedAmount),
+    [debouncedAmount]
+  );
+  const amountPayload = useMemo(
+    () => transferPreviewAmountPayload(debouncedAmount),
+    [debouncedAmount]
+  );
 
   const excludeKey = (input.excludeTransactionIds ?? []).slice().sort((a, b) => a - b).join(",");
 
@@ -51,14 +56,14 @@ export function useTransferBalancePreview(input: {
       input.fromAccountId,
       input.toAccountId,
       debouncedDate,
-      debouncedAmount.trim(),
+      amountPayload,
       excludeKey,
     ],
     queryFn: () =>
       previewTransferBalances({
         from_account_id: input.fromAccountId!,
         to_account_id: input.toAccountId!,
-        amount: debouncedAmount.trim(),
+        amount: amountPayload,
         date: debouncedDate,
         exclude_transaction_ids: input.excludeTransactionIds,
       }),

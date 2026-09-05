@@ -102,3 +102,20 @@ class TransferBalancePreviewTests(TestCase):
         )
         self.assertEqual(Transaction.objects.count(), txn_before)
         self.assertEqual(Transfer.objects.count(), transfer_before)
+
+    def test_zero_amount_preview_returns_credit_destination_owed_before(self):
+        card = Account.objects.create(
+            household=self.household,
+            name="Venture",
+            account_type=Account.AccountType.CREDIT,
+            starting_balance=Decimal("-250.00"),
+        )
+        result = preview_transfer_balances(
+            self.user,
+            from_account_id=self.checking.pk,
+            to_account_id=card.pk,
+            amount=Decimal("0"),
+            transfer_date=date.today(),
+        )
+        self.assertEqual(Decimal(result["destination_balance_owed_before"]), Decimal("250.00"))
+        self.assertEqual(result["destination_balance_after"], result["destination_balance_before"])

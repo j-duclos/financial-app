@@ -128,4 +128,22 @@ describe("configureApiClient unauthorized handling", () => {
     await expect(request("/api/profile/")).rejects.toBeInstanceOf(ApiError);
     expect(onUnauthorized).toHaveBeenCalledTimes(2);
   });
+
+  it("flattens nested errors objects from guided-strategy validation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(400, {
+        detail: "Guided strategy configuration is invalid.",
+        errors: {
+          source_account_id: "Source account must be an eligible cash/asset account.",
+          savings_transfer_rule_ids: ["Select at least one savings-transfer rule."],
+        },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(request("/api/scenarios/12/guided-strategy/")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("source_account_id"),
+    });
+  });
 });

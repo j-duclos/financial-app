@@ -96,6 +96,7 @@ import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
+import { transferPreviewAccountIds } from "../lib/transferPreviewAccounts";
 
 export type { TimeFilter, ForecastRange };
 
@@ -585,23 +586,19 @@ export default function Transactions() {
       ? inlineTransferToId
       : null;
 
-  const inlineTransferFromId = useMemo(() => {
+  const inlinePreviewIds = useMemo(() => {
     if (typeof accountId !== "number" || inlineTransferToId == null) return null;
-    const signedAmt = parseFloat(String(inlineRow.amount).trim());
-    const isOutflow = !Number.isNaN(signedAmt) && signedAmt < 0;
-    return isOutflow ? accountId : inlineTransferToId;
-  }, [accountId, inlineTransferToId, inlineRow.amount]);
-
-  const inlineTransferToIdForPreview = useMemo(() => {
-    if (typeof accountId !== "number" || inlineTransferToId == null) return null;
-    const signedAmt = parseFloat(String(inlineRow.amount).trim());
-    const isOutflow = !Number.isNaN(signedAmt) && signedAmt < 0;
-    return isOutflow ? inlineTransferToId : accountId;
-  }, [accountId, inlineTransferToId, inlineRow.amount]);
+    return transferPreviewAccountIds({
+      ledgerAccountId: accountId,
+      counterpartyAccountId: inlineTransferToId,
+      amount: inlineRow.amount,
+      creditCardPayment: selectedCategory?.name === "Credit Card Payment",
+    });
+  }, [accountId, inlineTransferToId, inlineRow.amount, selectedCategory?.name]);
 
   const inlineTransferPreview = useTransferBalancePreview({
-    fromAccountId: inlineTransferFromId,
-    toAccountId: inlineTransferToIdForPreview,
+    fromAccountId: inlinePreviewIds?.fromAccountId ?? null,
+    toAccountId: inlinePreviewIds?.toAccountId ?? null,
     amount: inlineRow.amount,
     date: inlineRow.date,
     enabled: isTransferCategory && inlineTransferToId != null && typeof accountId === "number",

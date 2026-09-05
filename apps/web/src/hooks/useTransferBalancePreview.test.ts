@@ -18,8 +18,7 @@ describe("useTransferBalancePreview", () => {
   });
 
   it("does not fire preview until required fields are valid", () => {
-    expect(source).toMatch(/amountReady/);
-    expect(source).toMatch(/raw !== 0/);
+    expect(source).toMatch(/transferPreviewAmountReady/);
     expect(source).toMatch(/input\.fromAccountId != null/);
     expect(source).toMatch(/input\.toAccountId != null/);
     expect(source).toMatch(/Boolean\(debouncedDate\)/);
@@ -27,7 +26,7 @@ describe("useTransferBalancePreview", () => {
 
   it("keys preview by debounced inputs so obsolete results are ignored", () => {
     expect(source).toMatch(/debouncedDate,/);
-    expect(source).toMatch(/debouncedAmount\.trim\(\)/);
+    expect(source).toMatch(/amountPayload/);
     expect(source).toMatch(/excludeKey/);
   });
 });

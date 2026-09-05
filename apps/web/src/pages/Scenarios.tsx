@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency } from "@budget-app/shared";
@@ -37,6 +37,7 @@ import {
   createScenarioAddedRecurring,
   deleteScenarioAddedRecurring,
   listAccounts,
+  deleteScenarioGuidedStrategy,
 } from "@budget-app/api-client";
 import { OPERATIONAL_ACCOUNTS_QUERY_KEY } from "../hooks/useOperationalAccounts";
 import {
@@ -64,6 +65,16 @@ import {
 } from "../lib/scenarioDebtPayment";
 import PayDownDebtModal from "../components/scenarios/PayDownDebtModal";
 import AddRecurringDebtPaymentModal from "../components/scenarios/AddRecurringDebtPaymentModal";
+import GuidedStrategyCard from "../components/scenarios/guided/GuidedStrategyCard";
+import GuidedStrategyWizard from "../components/scenarios/guided/GuidedStrategyWizard";
+import GuidedStrategyResults from "../components/scenarios/guided/GuidedStrategyResults";
+import { useScenarioGuidedStrategy } from "../hooks/useScenarioGuidedStrategy";
+import {
+  GUIDED_PLAN_CHANGE_TITLE,
+  comparisonMatchesGuidedStrategy,
+  guidedComparisonViewState,
+  planHasHypotheticalChanges,
+} from "../lib/guidedStrategyDisplay";
 import PlanningSubnav from "../components/PlanningSubnav";
 import { parsePositiveIntParam } from "../lib/whatIfContext";
 
@@ -96,6 +107,9 @@ export default function Scenarios() {
   const [incomeKindPickerOpen, setIncomeKindPickerOpen] = useState(false);
   const [expenseKindPickerOpen, setExpenseKindPickerOpen] = useState(false);
   const [newRecurringOpen, setNewRecurringOpen] = useState<NewRecurringDirection | null>(null);
+  const [guidedWizardOpen, setGuidedWizardOpen] = useState(false);
+  const [guidedDeletedNotice, setGuidedDeletedNotice] = useState(false);
+  const guidedResultsRef = useRef<HTMLDivElement | null>(null);
 
   const [formTemplate, setFormTemplate] = useState<ScenarioTemplateKey>("blank");
   const [formName, setFormName] = useState("");
@@ -115,6 +129,14 @@ export default function Scenarios() {
   const resolvedHousehold = formHouseholdId || defaultHousehold;
 
   const selectedScenario = scenarios.find((s: Scenario) => s.id === selectedScenarioId);
+
+  const {
+    data: guidedStrategy,
+    isFetched: guidedStrategyFetched,
+    isError: guidedStrategyQueryError,
+    error: guidedStrategyQueryErrorValue,
+  } = useScenarioGuidedStrategy(selectedScenarioId);
+  const guidedStrategyReady = !selectedScenarioId || guidedStrategyFetched || guidedStrategyQueryError;
 
   const modalNeedsRules = !!overrideModal || debtModalOpen;
   const modalNeedsCategories =
@@ -173,6 +195,10 @@ export default function Scenarios() {
     events: oneTimeEvents,
     shocks: categoryShocks,
     addedRecurring,
+    guidedStrategy:
+      guidedStrategy == null
+        ? null
+        : { id: guidedStrategy.id, updated_at: guidedStrategy.updated_at },
   });
 
   const changesReady =
@@ -201,14 +227,30 @@ export default function Scenarios() {
         household_id: defaultHousehold || undefined,
         signal,
       }),
-    enabled: !!selectedScenarioId && changesReady,
+    enabled: !!selectedScenarioId && changesReady && guidedStrategyReady,
     placeholderData: (previousData) => previousData,
   });
   const changesLoading = !!selectedScenarioId && !changesReady;
   const comparisonBelongsToSelection =
-    !comparison || !selectedScenarioId || comparison.scenario_id === selectedScenarioId;
+    !comparison ||
+    !selectedScenarioId ||
+    (comparison.scenario_id === selectedScenarioId &&
+      comparisonMatchesGuidedStrategy(comparison, guidedStrategy ?? null));
   const comparisonBusy =
-    comparisonLoading || comparisonFetching || changesLoading || !comparisonBelongsToSelection;
+    comparisonLoading ||
+    comparisonFetching ||
+    changesLoading ||
+    !guidedStrategyReady ||
+    !comparisonBelongsToSelection;
+  const guidedViewState = guidedComparisonViewState({
+    strategy: guidedStrategy,
+    strategyLoading: !!selectedScenarioId && !guidedStrategyReady,
+    comparison,
+    comparisonFetching:
+      comparisonLoading || comparisonFetching || changesLoading || !guidedStrategyReady,
+    comparisonError,
+    comparisonBelongsToScenario: !comparison || comparison.scenario_id === selectedScenarioId,
+  });
 
   useEffect(() => {
     if (selectedScenario?.horizon_months) {
@@ -252,6 +294,8 @@ export default function Scenarios() {
       setModalOpen(false);
       setSelectedScenarioId(s.id);
       setForecastPeriod(horizonMonthsToParam(s.horizon_months ?? 12));
+      setGuidedWizardOpen(false);
+      setGuidedDeletedNotice(false);
       resetCreateForm();
     },
   });
@@ -260,6 +304,8 @@ export default function Scenarios() {
     mutationFn: deleteScenario,
     onSuccess: () => {
       setSelectedScenarioId("");
+      setGuidedWizardOpen(false);
+      setGuidedDeletedNotice(false);
       invalidateScenario();
     },
   });
@@ -269,6 +315,17 @@ export default function Scenarios() {
     onSuccess: (s) => {
       invalidateScenario();
       setSelectedScenarioId(s.id);
+      setGuidedWizardOpen(false);
+      setGuidedDeletedNotice(false);
+    },
+  });
+
+  const deleteGuidedStrategyMu = useMutation({
+    mutationFn: (id: number) => deleteScenarioGuidedStrategy(id),
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData(whatIfWebQueryKeys.guidedStrategy(id), null);
+      void queryClient.invalidateQueries({ queryKey: whatIfWebQueryKeys.guidedStrategy(id) });
+      setGuidedDeletedNotice(true);
     },
   });
 
@@ -386,7 +443,11 @@ export default function Scenarios() {
               <span className="block text-gray-600 mb-1">What-if plan</span>
               <select
                 value={selectedScenarioId}
-                onChange={(e) => setSelectedScenarioId(e.target.value === "" ? "" : Number(e.target.value))}
+                onChange={(e) => {
+                  setSelectedScenarioId(e.target.value === "" ? "" : Number(e.target.value));
+                  setGuidedWizardOpen(false);
+                  setGuidedDeletedNotice(false);
+                }}
                 className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
               >
                 <option value="">—</option>
@@ -419,43 +480,115 @@ export default function Scenarios() {
             </button>
           </div>
 
-          {selectedScenarioId && (
-            <PlanAddToolbar
-              onAddIncome={() => setIncomeKindPickerOpen(true)}
-              onAddExpense={() => setExpenseKindPickerOpen(true)}
-              onPayDownDebt={() => {
-                setEditingEvent(null);
-                setEditingDebtOverride(null);
-                setDebtModalOpen(true);
-              }}
-              onAddRecurringDebtPayment={() => {
-                setEditingRecurringDebt(null);
-                setRecurringDebtModalOpen(true);
-              }}
-              onTransfer={() => setEventModal("transfer")}
-            />
-          )}
-
           {selectedScenarioId && selectedScenario && (
             <>
+              <GuidedStrategyCard
+                strategy={guidedStrategy}
+                loading={!guidedStrategyReady}
+                errorMessage={
+                  guidedStrategyQueryError
+                    ? guidedStrategyQueryErrorValue instanceof Error
+                      ? guidedStrategyQueryErrorValue.message
+                      : "Could not load the guided strategy."
+                    : deleteGuidedStrategyMu.isError
+                      ? deleteGuidedStrategyMu.error instanceof Error
+                        ? deleteGuidedStrategyMu.error.message
+                        : "Could not remove the guided strategy."
+                      : null
+                }
+                deletedNotice={guidedDeletedNotice}
+                onCompare={() => {
+                  setGuidedDeletedNotice(false);
+                  setGuidedWizardOpen(true);
+                }}
+                onViewComparison={() => {
+                  guidedResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onEdit={() => {
+                  setGuidedDeletedNotice(false);
+                  setGuidedWizardOpen(true);
+                }}
+                onRemove={() => {
+                  if (
+                    confirm(
+                      "Remove this Debt first vs. save first strategy? Your real plan stays unchanged."
+                    )
+                  ) {
+                    deleteGuidedStrategyMu.mutate(selectedScenarioId as number);
+                  }
+                }}
+              />
+
+              {guidedViewState !== "hidden" ? (
+                <div ref={guidedResultsRef}>
+                  <GuidedStrategyResults
+                    comparison={comparison}
+                    horizonMonths={comparisonPeriodMonths(comparison, horizonToMonths(forecastPeriod))}
+                    viewState={guidedViewState}
+                  />
+                </div>
+              ) : null}
+
+              {guidedViewState === "hidden" || guidedViewState === "ready" ? (
               <PlanSummaryCard
                 scenario={selectedScenario}
                 comparison={comparison}
                 planItems={planIncludes}
                 accounts={accounts as Account[]}
-                loading={comparisonBusy && !comparison}
+                loading={comparisonBusy && (!comparison || !comparisonBelongsToSelection)}
                 recalculating={
                   (comparisonFetching && !!comparison) || !comparisonBelongsToSelection
                 }
-                emptyScenario={planIncludes.length === 0 && changesReady}
+                emptyScenario={
+                  !planHasHypotheticalChanges(planIncludes.length, guidedStrategy) && changesReady
+                }
                 comparisonFailed={comparisonError}
                 horizonMonths={comparisonPeriodMonths(comparison, horizonToMonths(forecastPeriod))}
               />
+              ) : null}
               <ChangesInPlanSection
                 items={planIncludes}
+                guidedStrategy={guidedStrategy ?? null}
                 onEdit={handleEditPlanItem}
                 onRemove={handleRemovePlanItem}
+                onEditGuided={() => {
+                  setGuidedDeletedNotice(false);
+                  setGuidedWizardOpen(true);
+                }}
+                onRemoveGuided={() => {
+                  if (
+                    confirm(
+                      "Remove this Debt first vs. save first strategy? Your real plan stays unchanged."
+                    )
+                  ) {
+                    deleteGuidedStrategyMu.mutate(selectedScenarioId as number);
+                  }
+                }}
               />
+
+              <section className="mb-6" aria-labelledby="advanced-what-if-changes">
+                <h2 id="advanced-what-if-changes" className="text-sm font-medium text-gray-700 mb-1">
+                  Advanced changes
+                </h2>
+                <p className="text-xs text-gray-500 mb-2">
+                  Build your own income, expense, debt-payment, transfer, or recurring changes. These
+                  stay hypothetical in this plan.
+                </p>
+                <PlanAddToolbar
+                  onAddIncome={() => setIncomeKindPickerOpen(true)}
+                  onAddExpense={() => setExpenseKindPickerOpen(true)}
+                  onPayDownDebt={() => {
+                    setEditingEvent(null);
+                    setEditingDebtOverride(null);
+                    setDebtModalOpen(true);
+                  }}
+                  onAddRecurringDebtPayment={() => {
+                    setEditingRecurringDebt(null);
+                    setRecurringDebtModalOpen(true);
+                  }}
+                  onTransfer={() => setEventModal("transfer")}
+                />
+              </section>
 
               <OptionalDetailsSection
                 comparison={comparison}
@@ -475,6 +608,27 @@ export default function Scenarios() {
             </>
           )}
         </>
+      )}
+
+      {guidedWizardOpen && selectedScenarioId && (
+        <GuidedStrategyWizard
+          key={guidedStrategy?.id ?? "new"}
+          scenarioId={selectedScenarioId as number}
+          householdId={typeof defaultHousehold === "number" ? defaultHousehold : undefined}
+          existing={guidedStrategy ?? null}
+          onClose={() => setGuidedWizardOpen(false)}
+          onSaved={(saved) => {
+            queryClient.setQueryData(
+              whatIfWebQueryKeys.guidedStrategy(selectedScenarioId),
+              saved
+            );
+            void queryClient.invalidateQueries({
+              queryKey: whatIfWebQueryKeys.guidedStrategy(selectedScenarioId),
+            });
+            setGuidedWizardOpen(false);
+            setGuidedDeletedNotice(false);
+          }}
+        />
       )}
 
       {modalOpen && (
@@ -813,22 +967,58 @@ function PlanSummaryCard({
 
 function ChangesInPlanSection({
   items,
+  guidedStrategy,
   onEdit,
   onRemove,
+  onEditGuided,
+  onRemoveGuided,
 }: {
   items: ReturnType<typeof buildPlanIncludes>;
+  guidedStrategy: import("@budget-app/shared").ScenarioGuidedStrategy | null;
   onEdit: (item: ReturnType<typeof buildPlanIncludes>[number]) => void;
   onRemove: (item: ReturnType<typeof buildPlanIncludes>[number]) => void;
+  onEditGuided: () => void;
+  onRemoveGuided: () => void;
 }) {
+  const hasChanges = items.length > 0 || guidedStrategy != null;
   return (
     <div className="mb-6">
       <h3 className="font-medium text-gray-900 mb-3">Changes in this plan</h3>
-      {items.length === 0 ? (
+      {!hasChanges ? (
         <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-4">
           No changes yet — add income, expenses, or bill changes to see what happens.
         </p>
       ) : (
         <div className="space-y-2">
+          {guidedStrategy ? (
+            <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900">
+                  <span className="text-green-600 mr-1.5" aria-hidden>✓</span>
+                  {GUIDED_PLAN_CHANGE_TITLE}
+                </p>
+                <p className="text-xs text-gray-500 pl-5">
+                  Hypothetical only — does not change real transfers or card payments.
+                </p>
+              </div>
+              <div className="flex gap-3 shrink-0 pl-5 sm:pl-0">
+                <button
+                  type="button"
+                  onClick={onEditGuided}
+                  className="text-gray-500 hover:text-blue-700 text-xs font-medium"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={onRemoveGuided}
+                  className="text-gray-500 hover:text-red-700 text-xs font-medium"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : null}
           {items.map((item) => (
             <div
               key={item.id}
@@ -1207,7 +1397,7 @@ function PlanAddToolbar({
   onTransfer: () => void;
 }) {
   return (
-    <div className="mb-6">
+    <div>
       <p className="text-sm font-medium text-gray-700 mb-2">Add to this plan</p>
       <div className="flex flex-wrap gap-2">
         <button

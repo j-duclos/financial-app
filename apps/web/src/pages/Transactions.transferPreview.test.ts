@@ -32,7 +32,8 @@ describe("Transactions transfer preview", () => {
     expect(transactions).not.toMatch(/inlineBankTimelineForHint/);
     expect(transactions).not.toMatch(/inlineCardTimelineForHint/);
     expect(transactions).not.toMatch(/assetBalanceAsOfDateFromTimeline/);
-    expect(transactions).not.toMatch(/creditOwedAsOfDateFromTimeline/);
+    expect(transactions).toMatch(/transferPreviewAccountIds/);
+    expect(transactions).not.toMatch(/isOutflow \? accountId : inlineTransferToId/);
   });
 
   it("edit transfer still uses backend preview with exclusions", () => {
