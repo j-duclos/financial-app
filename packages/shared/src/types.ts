@@ -2603,15 +2603,31 @@ export interface DtiPurchaseEstimateResult {
   monthly: DtiProposedHousingBreakdown;
 }
 
-export interface DtiCalculationRequest {
+type DtiCalculationRequestBase = {
   household_id: number;
-  proposed_housing_mode?: DtiProposedHousingMode | null;
-  proposed_housing?: DtiProposedHousingInput | null;
-  proposed_purchase?: DtiProposedPurchaseInput | null;
   target_back_end_dti_percent?: string;
   target_front_end_dti_percent?: string | null;
   excluded_debt_item_ids?: number[];
-}
+};
+
+export type DtiMonthlyPaymentCalculationRequest = DtiCalculationRequestBase & {
+  proposed_housing_mode?: "monthly_payment" | null;
+  proposed_housing: DtiProposedHousingInput;
+  proposed_purchase?: null;
+};
+
+export type DtiPurchaseCalculationRequest = DtiCalculationRequestBase & {
+  proposed_housing_mode: "purchase";
+  proposed_purchase: DtiProposedPurchaseInput;
+  proposed_housing?: null;
+};
+
+/** Flexible calculate payload. Older clients may omit `proposed_housing_mode`. */
+export type DtiCalculationRequest = DtiCalculationRequestBase & {
+  proposed_housing_mode?: DtiProposedHousingMode | null;
+  proposed_housing?: DtiProposedHousingInput | null;
+  proposed_purchase?: DtiProposedPurchaseInput | null;
+};
 
 export interface DtiCalculationInputs {
   gross_monthly_income: string;

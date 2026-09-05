@@ -20,6 +20,16 @@ MONEY_ZERO = Decimal("0")
 PERCENT_MAX = Decimal("100")
 
 
+def _require_finite_decimal(value: Decimal, message: str) -> Decimal:
+    try:
+        amount = as_decimal(value)
+    except (ValueError, ArithmeticError):
+        raise serializers.ValidationError(message)
+    if amount.is_nan() or amount.is_infinite():
+        raise serializers.ValidationError(message)
+    return amount
+
+
 def _decimal_field(**kwargs):
     return serializers.DecimalField(
         max_digits=12, decimal_places=2, coerce_to_string=True, **kwargs
@@ -475,13 +485,13 @@ class ProposedPurchaseSerializer(serializers.Serializer):
     )
 
     def validate_purchase_price(self, value: Decimal) -> Decimal:
-        amount = as_decimal(value)
+        amount = _require_finite_decimal(value, "Enter a valid home purchase price.")
         if amount <= MONEY_ZERO:
             raise serializers.ValidationError("Home purchase price must be greater than zero.")
         return value
 
     def validate_annual_interest_rate(self, value: Decimal) -> Decimal:
-        rate = as_decimal(value)
+        rate = _require_finite_decimal(value, "Enter a valid annual interest rate.")
         if rate < MONEY_ZERO:
             raise serializers.ValidationError("Annual interest rate cannot be negative.")
         if rate > Decimal("50"):

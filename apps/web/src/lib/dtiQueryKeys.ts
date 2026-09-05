@@ -1,6 +1,8 @@
+import type { DtiProposedHousingInput, DtiProposedPurchaseInput } from "@budget-app/shared";
+
 export type DtiCalculationInputsKey = {
-  proposedHousing: Record<string, string> | null;
-  proposedPurchase: Record<string, string | number> | null;
+  proposedHousing: DtiProposedHousingInput | Record<string, string> | null;
+  proposedPurchase: DtiProposedPurchaseInput | Record<string, string | number> | null;
   proposedHousingMode: "monthly_payment" | "purchase" | null;
   excludedDebtItemIds: number[];
 };
@@ -16,10 +18,10 @@ export const dtiQueryKeys = {
 };
 
 export function dtiCalculationInputsKey(
-  proposedHousing: Record<string, string> | null,
+  proposedHousing: DtiCalculationInputsKey["proposedHousing"],
   excludedDebtItemIds: number[],
   extras?: {
-    proposedPurchase?: Record<string, string | number> | null;
+    proposedPurchase?: DtiCalculationInputsKey["proposedPurchase"];
     proposedHousingMode?: "monthly_payment" | "purchase" | null;
   }
 ): DtiCalculationInputsKey {

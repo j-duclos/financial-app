@@ -257,6 +257,59 @@ describe("DTI API client", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/affordability/dti/calculate/");
   });
 
+  it("POSTs a purchase estimate on the existing calculate endpoint", async () => {
+    const purchaseCalc = {
+      ...calculation,
+      proposed_housing_mode: "purchase" as const,
+      purchase_estimate: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        down_payment_amount: "14000.00",
+        down_payment_percent: "3.50",
+        loan_amount: "386000.00",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+        number_of_payments: 360,
+        monthly: {
+          principal_and_interest: "2439.78",
+          property_taxes: "208.33",
+          homeowners_insurance: "120.00",
+          mortgage_insurance: "180.00",
+          hoa_dues: "67.00",
+          other_required_housing_costs: "0.00",
+          total: "3015.11",
+        },
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, purchaseCalc));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await calculateDti({
+      household_id: 9,
+      proposed_housing_mode: "purchase",
+      proposed_purchase: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+      },
+    });
+    expect(result.purchase_estimate?.loan_amount).toBe("386000.00");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      household_id: 9,
+      proposed_housing_mode: "purchase",
+      proposed_purchase: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+      },
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/affordability/dti/calculate/");
+  });
+
   it("lists credit-card suggestions", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, [suggestion]));
     vi.stubGlobal("fetch", fetchMock);

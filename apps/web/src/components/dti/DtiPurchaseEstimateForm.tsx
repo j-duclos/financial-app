@@ -1,3 +1,4 @@
+import { formatCurrency } from "@budget-app/shared";
 import { DTI_LOAN_TERM_YEARS, type PurchaseEstimateDraft, type PurchaseEstimateDraftErrors } from "../../lib/dtiProposedHome";
 import { describedByIds, fieldClass, FieldError } from "./DtiModalFrame";
 
@@ -5,10 +6,17 @@ type Props = {
   draft: PurchaseEstimateDraft;
   errors: PurchaseEstimateDraftErrors;
   disabled?: boolean;
+  convertedDownPayment?: { amount: string; percent: string } | null;
   onChange: (draft: PurchaseEstimateDraft) => void;
 };
 
-export default function DtiPurchaseEstimateForm({ draft, errors, disabled, onChange }: Props) {
+export default function DtiPurchaseEstimateForm({
+  draft,
+  errors,
+  disabled,
+  convertedDownPayment,
+  onChange,
+}: Props) {
   const downPaymentLabel =
     draft.down_payment_type === "percent" ? "Down payment percentage" : "Down payment amount";
   const termIsCustom =
@@ -43,6 +51,7 @@ export default function DtiPurchaseEstimateForm({ draft, errors, disabled, onCha
             <input
               type="radio"
               name="dti-down-payment-type"
+              value="dollars"
               checked={draft.down_payment_type === "dollars"}
               onChange={() => onChange({ ...draft, down_payment_type: "dollars" })}
               disabled={disabled}
@@ -53,6 +62,7 @@ export default function DtiPurchaseEstimateForm({ draft, errors, disabled, onCha
             <input
               type="radio"
               name="dti-down-payment-type"
+              value="percent"
               checked={draft.down_payment_type === "percent"}
               onChange={() => onChange({ ...draft, down_payment_type: "percent" })}
               disabled={disabled}
@@ -82,6 +92,11 @@ export default function DtiPurchaseEstimateForm({ draft, errors, disabled, onCha
             ) : null}
           </div>
           <FieldError id="dti-down-payment-error" message={errors.down_payment_value} />
+          {convertedDownPayment ? (
+            <p className="mt-1 text-xs text-gray-600" data-testid="dti-down-payment-converted">
+              Down payment: {formatCurrency(convertedDownPayment.amount)} ({convertedDownPayment.percent}%)
+            </p>
+          ) : null}
         </div>
       </fieldset>
 

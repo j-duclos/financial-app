@@ -42,6 +42,30 @@ describe("purchase estimate draft", () => {
     const result = normalizePurchaseEstimateDraft(draft);
     expect(result.ok).toBe(false);
   });
+
+  it("allows a zero interest rate and a 100% down payment", () => {
+    const draft = emptyPurchaseEstimateDraft();
+    draft.purchase_price = "400000";
+    draft.down_payment_type = "percent";
+    draft.down_payment_value = "100";
+    draft.annual_interest_rate = "0";
+    draft.loan_term_years = "15";
+    const result = normalizePurchaseEstimateDraft(draft);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payload.annual_interest_rate).toBe("0.00");
+      expect(result.payload.down_payment_value).toBe("100.00");
+      expect(result.payload.loan_term_years).toBe(15);
+    }
+  });
+
+  it("rejects a down-payment percentage above 100", () => {
+    const draft = emptyPurchaseEstimateDraft();
+    draft.purchase_price = "400000";
+    draft.down_payment_type = "percent";
+    draft.down_payment_value = "101";
+    expect(normalizePurchaseEstimateDraft(draft).ok).toBe(false);
+  });
 });
 
 describe("monthly plausibility", () => {

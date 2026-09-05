@@ -254,8 +254,81 @@ def test_purchase_validation_rejects_invalid_and_conflicting_payloads(auth_clien
         format="json",
     )
     assert zero_price.status_code == 400
+
+    nan_price = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "purchase_price": "NaN"},
+        },
+        format="json",
+    )
+    assert nan_price.status_code == 400
+
+    infinite = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "annual_interest_rate": "Infinity"},
+        },
+        format="json",
+    )
+    assert infinite.status_code == 400
+
+    bad_term = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "loan_term_years": 0},
+        },
+        format="json",
+    )
+    assert bad_term.status_code == 400
+
     other = APIClient()
     assert other.post(CALC_URL, {"household_id": household.id}, format="json").status_code in (
         401,
         403,
     )
+
+
+def test_omitted_mode_with_purchase_payload_and_full_down_payment(auth_client, household):
+    _save_profile(auth_client, household)
+    _add_income(auth_client, household, "10400.00")
+    inferred = auth_client.post(
+        CALC_URL,
+        {"household_id": household.id, "proposed_purchase": PURCHASE},
+        format="json",
+    )
+    assert inferred.status_code == 200, inferred.content[:400]
+    assert inferred.json()["proposed_housing_mode"] == "purchase"
+    assert inferred.json()["purchase_estimate"]["loan_amount"] == "386000.00"
+
+    full_down = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "down_payment_value": "100.00"},
+        },
+        format="json",
+    )
+    assert full_down.status_code == 200
+    estimate = full_down.json()["purchase_estimate"]
+    assert estimate["loan_amount"] == "0.00"
+    assert estimate["monthly"]["principal_and_interest"] == "0.00"
+
+    zero_rate = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "annual_interest_rate": "0.00"},
+        },
+        format="json",
+    )
+    assert zero_rate.status_code == 200
+    assert zero_rate.json()["purchase_estimate"]["monthly"]["principal_and_interest"] == "1072.22"

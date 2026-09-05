@@ -11,11 +11,15 @@ import type {
   DtiProfile,
   DtiProfileWritePayload,
   DtiProposedHousingInput,
+  DtiPurchaseCalculationRequest,
+  DtiPurchaseEstimateResult,
 } from "./types";
 import {
   DTI_DEBT_TYPES,
+  DTI_DOWN_PAYMENT_TYPES,
   DTI_INCOME_TYPES,
   DTI_PAYMENT_SOURCES,
+  DTI_PROPOSED_HOUSING_MODES,
   DTI_STUDENT_LOAN_PAYMENT_METHODS,
   DTI_STUDENT_LOAN_STATUSES,
 } from "./types";
@@ -216,5 +220,50 @@ describe("DTI shared types", () => {
     expect(housing.principal_and_interest).toBe("2100.00");
     expect(response.current.front_end_dti_percent).toBeNull();
     expect(response.status).toBe("gross_income_required");
+  });
+
+  it("types purchase estimates separately from monthly housing components", () => {
+    expect(DTI_PROPOSED_HOUSING_MODES).toEqual(["monthly_payment", "purchase"]);
+    expect(DTI_DOWN_PAYMENT_TYPES).toEqual(["dollars", "percent"]);
+    const purchaseRequest: DtiPurchaseCalculationRequest = {
+      household_id: 1,
+      proposed_housing_mode: "purchase",
+      proposed_purchase: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+      },
+    };
+    const estimate: DtiPurchaseEstimateResult = {
+      purchase_price: "400000.00",
+      down_payment_type: "percent",
+      down_payment_value: "3.50",
+      down_payment_amount: "14000.00",
+      down_payment_percent: "3.50",
+      loan_amount: "386000.00",
+      annual_interest_rate: "6.50",
+      loan_term_years: 30,
+      number_of_payments: 360,
+      monthly: {
+        principal_and_interest: "2439.78",
+        property_taxes: "208.33",
+        homeowners_insurance: "120.00",
+        mortgage_insurance: "180.00",
+        hoa_dues: "67.00",
+        other_required_housing_costs: "0.00",
+        total: "3015.11",
+      },
+    };
+    expect(purchaseRequest.proposed_housing).toBeUndefined();
+    expect(typeof estimate.loan_amount).toBe("string");
+    expect(typeof estimate.monthly.total).toBe("string");
+    const monthlyRequest: DtiCalculationRequest = {
+      household_id: 1,
+      proposed_housing_mode: "monthly_payment",
+      proposed_housing: { principal_and_interest: "2130.00" },
+    };
+    expect(monthlyRequest.proposed_purchase).toBeUndefined();
   });
 });

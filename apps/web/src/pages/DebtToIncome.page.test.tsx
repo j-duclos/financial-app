@@ -233,6 +233,38 @@ const currentCalc = calculation();
 const proposedCalc = calculation({
   proposed: bucket("43.52", "49.25", "2887.00", "2600.00"),
 });
+const purchaseHousing = {
+  principal_and_interest: "2439.78",
+  property_taxes: "208.33",
+  homeowners_insurance: "120.00",
+  mortgage_insurance: "180.00",
+  hoa_dues: "67.00",
+  other_required_housing_costs: "0.00",
+  total: "3015.11",
+};
+const purchaseCalc = calculation({
+  proposed_housing_mode: "purchase",
+  purchase_estimate: {
+    purchase_price: "400000.00",
+    down_payment_type: "percent",
+    down_payment_value: "3.50",
+    down_payment_amount: "14000.00",
+    down_payment_percent: "3.50",
+    loan_amount: "386000.00",
+    annual_interest_rate: "6.50",
+    loan_term_years: 30,
+    number_of_payments: 360,
+    monthly: purchaseHousing,
+  },
+  proposed: {
+    front_end_dti_percent: "55.83",
+    back_end_dti_percent: "65.78",
+    total_monthly_obligations: "3552.11",
+    remaining_capacity_at_target: "0.00",
+    amount_over_target: "1608.11",
+    housing: purchaseHousing,
+  },
+});
 const combinedCurrentCalc = calculation({
   current: bucket("33.33", "38.43", "1925.00"),
   capacity: {
@@ -273,8 +305,11 @@ function mockHappyPath(options?: {
   api.calculateDti.mockImplementation(async (payload: DtiCalculationRequest) => {
     if (options?.calc) return options.calc;
     if (payload.excluded_debt_item_ids?.length) {
-      return payload.proposed_housing ? combinedProposedCalc : combinedCurrentCalc;
+      return payload.proposed_housing || payload.proposed_purchase
+        ? combinedProposedCalc
+        : combinedCurrentCalc;
     }
+    if (payload.proposed_purchase) return purchaseCalc;
     if (payload.proposed_housing) return proposedCalc;
     return currentCalc;
   });
@@ -658,5 +693,69 @@ describe("DebtToIncome page", () => {
     });
     expect(await screen.findAllByText("Federal student loans")).not.toHaveLength(0);
     expect(screen.getAllByText(/545\.29/).length).toBeGreaterThan(0);
+  });
+
+  it("shows both proposed-home modes and sends a purchase estimate to the existing calculate API", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "DTI summary" });
+    expect(screen.getByRole("heading", { name: "Test a Proposed Home" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Enter a Monthly Payment" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Estimate From a Home Purchase" })).toBeInTheDocument();
+    expect(screen.getByText("Current monthly housing payment")).toBeInTheDocument();
+    expect(
+      screen.getByText("Monthly housing payment available at your selected back-end DTI target")
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Estimate From a Home Purchase" }));
+    await user.type(screen.getByLabelText("Home purchase price"), "400000");
+    await user.click(screen.getByLabelText("Percent"));
+    await user.type(screen.getByLabelText("Down payment percentage"), "3.50");
+    await user.type(screen.getByLabelText("Annual interest rate"), "6.50");
+    await user.type(screen.getByLabelText("Estimated annual property taxes"), "2500");
+    await user.type(screen.getByLabelText("Estimated annual homeowners insurance"), "1440");
+    await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
+    await waitFor(() => {
+      expect(api.calculateDti).toHaveBeenCalledWith(
+        expect.objectContaining({
+          household_id: 1,
+          proposed_housing_mode: "purchase",
+          proposed_purchase: expect.objectContaining({
+            purchase_price: "400000.00",
+            down_payment_type: "percent",
+            down_payment_value: "3.50",
+            annual_interest_rate: "6.50",
+            loan_term_years: 30,
+            annual_property_taxes: "2500.00",
+            annual_homeowners_insurance: "1440.00",
+          }),
+        })
+      );
+    });
+    const purchaseCall = api.calculateDti.mock.calls.find(
+      (call) => call[0]?.proposed_housing_mode === "purchase"
+    );
+    expect(purchaseCall?.[0]?.proposed_housing).toBeUndefined();
+    expect(await screen.findByText("Estimated total monthly housing payment")).toBeInTheDocument();
+    expect(screen.getByTestId("dti-purchase-result")).toHaveTextContent("386,000.00");
+    expect(screen.getByTestId("dti-down-payment-converted")).toHaveTextContent("14,000.00");
+    expect(screen.getByText("55.83%")).toBeInTheDocument();
+    expect(screen.getByText("65.78%")).toBeInTheDocument();
+    expect(screen.getByText(/Based on a .* purchase price/)).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Model Auto loan as paid off" }));
+    expect(await screen.findByText("Proposed back-end DTI after selected payoffs")).toBeInTheDocument();
+  });
+
+  it("warns before applying an extreme monthly payment without rewriting the field", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "DTI summary" });
+    const field = screen.getByLabelText("Monthly principal and interest");
+    await user.type(field, "400000");
+    await user.click(screen.getByRole("button", { name: "Calculate Monthly DTI" }));
+    expect(screen.getByText(/unusually high for a monthly payment/)).toBeInTheDocument();
+    expect(field).toHaveValue("400000");
+    expect(api.calculateDti.mock.calls.some((call) => call[0]?.proposed_housing)).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(field).toHaveValue("400000");
   });
 });

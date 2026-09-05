@@ -3,7 +3,6 @@ import { formatCurrency } from "@budget-app/shared";
 import type { DtiProposedHousingInput, DtiProposedPurchaseInput, DtiPurchaseEstimateResult } from "@budget-app/shared";
 import {
   normalizeProposedHousingDraft,
-  sumProposedHousingDraft,
   type ProposedHousingDraft,
 } from "../../lib/dtiForm";
 import {
@@ -21,7 +20,7 @@ import {
 } from "../../lib/dtiProposedHome";
 import DtiMonthlyPaymentForm from "./DtiMonthlyPaymentForm";
 import DtiPurchaseEstimateForm from "./DtiPurchaseEstimateForm";
-import DtiPurchaseEstimateResult from "./DtiPurchaseEstimateResult";
+import PurchaseEstimateResult from "./DtiPurchaseEstimateResult";
 
 type Props = {
   monthlyDraft: ProposedHousingDraft;
@@ -137,16 +136,23 @@ export default function DtiProposedHomePanel({
               <input
                 type="radio"
                 name="dti-proposed-home-mode"
+                value={option.mode}
                 className="mt-1"
                 checked={selected}
+                aria-label={option.name}
+                aria-describedby={`dti-mode-${option.mode}-help`}
                 onChange={() => onSelectMode(option.mode)}
               />
               <span>
                 <span className="block font-medium text-gray-900">
                   {option.name}
-                  {selected ? <span className="ml-2 text-xs font-semibold text-blue-800">Selected</span> : null}
+                  {selected ? (
+                    <span className="ml-2 text-xs font-semibold text-blue-800">Selected</span>
+                  ) : null}
                 </span>
-                <span className="block text-xs text-gray-600 mt-0.5">{option.help}</span>
+                <span id={`dti-mode-${option.mode}-help`} className="block text-xs text-gray-600 mt-0.5">
+                  {option.help}
+                </span>
               </span>
             </label>
           );
@@ -192,6 +198,14 @@ export default function DtiProposedHomePanel({
           draft={purchaseDraft}
           errors={purchaseErrors}
           disabled={proposedBusy}
+          convertedDownPayment={
+            purchaseEstimate
+              ? {
+                  amount: purchaseEstimate.down_payment_amount,
+                  percent: purchaseEstimate.down_payment_percent,
+                }
+              : null
+          }
           onChange={onPurchaseDraftChange}
         />
       )}
@@ -219,7 +233,7 @@ export default function DtiProposedHomePanel({
         </p>
       ) : null}
       {selectedMode === "purchase" && purchaseEstimate && applied?.mode === "purchase" && !proposedBusy ? (
-        <DtiPurchaseEstimateResult estimate={purchaseEstimate} />
+        <PurchaseEstimateResult estimate={purchaseEstimate} />
       ) : null}
 
       <div className="flex flex-wrap gap-2">

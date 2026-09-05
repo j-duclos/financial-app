@@ -70,8 +70,37 @@ describe("dtiForm calculate request", () => {
       excludedDebtItemIds: [12, 4, 12],
     });
     expect(request.excluded_debt_item_ids).toEqual([4, 12]);
+    expect(request.proposed_housing_mode).toBe("monthly_payment");
     expect(request.proposed_housing?.principal_and_interest).toBe("2100.00");
     expect(request.proposed_housing?.hoa_dues).toBe("0.00");
+    expect(request.proposed_purchase).toBeUndefined();
+  });
+
+  it("sends a purchase estimate without monthly housing components", () => {
+    const request = buildDtiCalculationRequest({
+      householdId: 9,
+      proposedHousing: null,
+      proposedHousingMode: "purchase",
+      proposedPurchase: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+      },
+      excludedDebtItemIds: [],
+    });
+    expect(request).toEqual({
+      household_id: 9,
+      proposed_housing_mode: "purchase",
+      proposed_purchase: {
+        purchase_price: "400000.00",
+        down_payment_type: "percent",
+        down_payment_value: "3.50",
+        annual_interest_rate: "6.50",
+        loan_term_years: 30,
+      },
+    });
   });
 
   it("toggles payoff selection without mutating saved debt flags", () => {
@@ -285,6 +314,20 @@ describe("dtiQueryKeys", () => {
     expect(baseline).not.toEqual(combined);
     expect(dtiQueryKeys.profile(1)).toEqual(["dti", "profile", 1]);
   });
+
+  it("keeps a purchase estimate distinct from a monthly payment with the same numeric strings", () => {
+    const monthly = dtiCalculationInputsKey(
+      { principal_and_interest: "400000.00" },
+      []
+    );
+    const purchase = dtiCalculationInputsKey(null, [], {
+      proposedHousingMode: "purchase",
+      proposedPurchase: { purchase_price: "400000.00", loan_term_years: 30 },
+    });
+    expect(monthly).not.toEqual(purchase);
+    expect(monthly.proposedHousingMode).toBe("monthly_payment");
+    expect(purchase.proposedHousingMode).toBe("purchase");
+  });
 });
 
 describe("percent input", () => {
@@ -403,6 +446,9 @@ describe("production DTI sources", () => {
       resolve(here, "dtiDisplay.ts"),
       resolve(here, "../pages/DebtToIncome.tsx"),
       resolve(here, "../components/dti/DtiDebtFormModal.tsx"),
+      resolve(here, "../components/dti/DtiProposedHomePanel.tsx"),
+      resolve(here, "../components/dti/DtiPurchaseEstimateForm.tsx"),
+      resolve(here, "dtiProposedHome.ts"),
     ];
     for (const file of files) {
       const src = readFileSync(file, "utf8");
@@ -415,6 +461,10 @@ describe("production DTI sources", () => {
     expect(page).not.toContain("0.005");
     expect(page).not.toContain("non_housing_monthly_debt *");
     expect(page).not.toMatch(/back_end.*=.*housing.*\+/);
+    const purchaseUi = readFileSync(resolve(here, "../components/dti/DtiPurchaseEstimateForm.tsx"), "utf8");
+    expect(purchaseUi).not.toMatch(/monthly_rate/);
+    expect(purchaseUi).not.toMatch(/number_of_payments/);
+    expect(purchaseUi).not.toMatch(/\(1 \+ /);
   });
 });
 
