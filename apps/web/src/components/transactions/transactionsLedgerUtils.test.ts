@@ -212,6 +212,72 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(future[0].type).toBe("recurring");
   });
 
+  it("shows posted future transactions even when the projection timeline omitted them", () => {
+    const today = "2026-09-04";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [],
+      [
+        {
+          date: "2026-10-05",
+          description: "OpenAI",
+          account_id: 1,
+          amount: "-21.84",
+          type: "OUTFLOW",
+          status: "planned",
+          source: "rule",
+          rule_id: 9,
+          transaction_id: 501,
+          balance_after: "1656.94",
+        } as TimelineRow,
+        {
+          date: "2026-10-06",
+          description: "Move to savings",
+          account_id: 1,
+          amount: "-1690.00",
+          type: "OUTFLOW",
+          status: "planned",
+          source: "rule",
+          rule_id: 10,
+          transaction_id: 502,
+          balance_after: "-33.06",
+        } as TimelineRow,
+      ],
+      today,
+      1678.78,
+      false,
+      {
+        todayBalanceOverride: 1678.78,
+        futurePostedTransactions: [
+          {
+            id: 9001,
+            date: "2026-10-05",
+            payee: "Bill 1",
+            amount: "-850.00",
+            direction: "OUTFLOW",
+            source: "ACTUAL",
+            status: "CLEARED",
+          } as never,
+          {
+            id: 9002,
+            date: "2026-10-05",
+            payee: "Bill 2",
+            amount: "-850.00",
+            direction: "OUTFLOW",
+            source: "ACTUAL",
+            status: "CLEARED",
+          } as never,
+        ],
+      }
+    );
+    const future = splitLedgerSections(rows).future;
+    const payees = future.map((r) =>
+      r.type === "transaction" ? r.txn.payee : r.row.description
+    );
+    expect(payees).toEqual(["OpenAI", "Bill 1", "Bill 2", "Move to savings"]);
+    const savings = future[future.length - 1];
+    expect(savings.balance).toBeCloseTo(-1733.06, 2);
+  });
+
   it("computes past balance from opening + amount even when API running_balance is stale", () => {
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [
