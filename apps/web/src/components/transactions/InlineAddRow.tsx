@@ -177,12 +177,12 @@ export default function InlineAddRow({
           {inlinePayToCardAccountId != null && (
             <span>
               Owed on card (as of {formatDateDisplay(form.date)}):{" "}
-              {inlineTransferPreviewLoading ? (
-                "Loading…"
-              ) : inlineOwedAsOfPaymentDate != null ? (
+              {Number.isFinite(inlineOwedAsOfPaymentDate) ? (
                 <strong className="text-red-700 tabular-nums">
-                  {formatCurrency(String(inlineOwedAsOfPaymentDate), cardCurrency ?? currency)}
+                  {formatCurrency(inlineOwedAsOfPaymentDate as number, cardCurrency ?? currency)}
                 </strong>
+              ) : inlineTransferPreviewLoading ? (
+                "Loading…"
               ) : (
                 "—"
               )}

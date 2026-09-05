@@ -1,9 +1,27 @@
 import { describe, expect, it } from "vitest";
+import type { Account } from "@budget-app/shared";
 import {
   transferPreviewAccountIds,
   transferPreviewAmountPayload,
   transferPreviewAmountReady,
+  destinationCardOwedAmount,
 } from "./transferPreviewAccounts";
+
+function creditCard(overrides: Partial<Account> = {}): Account {
+  return {
+    id: 33,
+    household: { id: 1, name: "Home", created_at: "", updated_at: "" },
+    account_type: "CREDIT",
+    role: "other",
+    name: "Venture",
+    institution: "Capital One",
+    currency: "USD",
+    is_active: true,
+    created_at: "",
+    updated_at: "",
+    ...overrides,
+  } as Account;
+}
 
 describe("transferPreviewAccountIds", () => {
   it("keeps a credit-card Payment to destination even when amount is empty or zero", () => {
@@ -74,5 +92,52 @@ describe("transferPreviewAmountReady", () => {
     expect(transferPreviewAmountReady("-300")).toBe(true);
     expect(transferPreviewAmountReady("abc")).toBe(false);
     expect(transferPreviewAmountPayload("")).toBe("0");
+  });
+});
+
+describe("destinationCardOwedAmount", () => {
+  it("shows preview owed including zero instead of a missing dash", () => {
+    expect(
+      destinationCardOwedAmount({
+        previewOwedBefore: "412.18",
+        destinationAccount: null,
+      })
+    ).toBe(412.18);
+    expect(
+      destinationCardOwedAmount({
+        previewOwedBefore: "0.00",
+        destinationAccount: null,
+      })
+    ).toBe(0);
+  });
+
+  it("prefers preview owed over the selected card's stored balance", () => {
+    expect(
+      destinationCardOwedAmount({
+        previewOwedBefore: "90.00",
+        destinationAccount: creditCard({ balance_owed: "1883.44" }),
+      })
+    ).toBe(90);
+  });
+
+  it("uses the selected card's API owed amount when preview has not returned", () => {
+    expect(
+      destinationCardOwedAmount({
+        destinationAccount: creditCard({ balance_owed: "1883.44" }),
+      })
+    ).toBe(1883.44);
+  });
+
+  it("uses current_balance and signed starting_balance when owed is omitted", () => {
+    expect(
+      destinationCardOwedAmount({
+        destinationAccount: creditCard({ current_balance: "412.00" }),
+      })
+    ).toBe(412);
+    expect(
+      destinationCardOwedAmount({
+        destinationAccount: creditCard({ starting_balance: "-250.00" }),
+      })
+    ).toBe(250);
   });
 });
