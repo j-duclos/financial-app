@@ -52,6 +52,15 @@ import type {
   DashboardDebtSummary,
   CreditCardInterestReport,
   UpcomingChargeNotification,
+  DtiProfile,
+  DtiProfileWritePayload,
+  DtiIncomeSource,
+  DtiIncomeSourceWritePayload,
+  DtiDebtItem,
+  DtiDebtItemWritePayload,
+  DtiCalculationRequest,
+  DtiCalculationResponse,
+  DtiCreditCardSuggestion,
 } from "@budget-app/shared";
 import { request, requestRequired } from "./config";
 
@@ -509,6 +518,94 @@ export async function getDebtPayoffPlan(
 
 export async function getDebtDashboardSummary(): Promise<DashboardDebtSummary> {
   return requestRequired("/api/credit-cards/dashboard/");
+}
+
+export async function getDtiProfile(householdId: number): Promise<DtiProfile> {
+  return requestRequired("/api/affordability/dti/profile/", {
+    params: { household_id: String(householdId) },
+  });
+}
+
+export async function saveDtiProfile(
+  householdId: number,
+  payload: DtiProfileWritePayload
+): Promise<DtiProfile> {
+  return requestRequired("/api/affordability/dti/profile/", {
+    method: "PUT",
+    params: { household_id: String(householdId) },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listDtiIncomeSources(householdId: number): Promise<DtiIncomeSource[]> {
+  return requestRequired("/api/affordability/dti/income-sources/", {
+    params: { household_id: String(householdId) },
+  });
+}
+
+export async function createDtiIncomeSource(
+  payload: DtiIncomeSourceWritePayload
+): Promise<DtiIncomeSource> {
+  return requestRequired("/api/affordability/dti/income-sources/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDtiIncomeSource(
+  id: number,
+  payload: Partial<DtiIncomeSourceWritePayload>
+): Promise<DtiIncomeSource> {
+  return requestRequired(`/api/affordability/dti/income-sources/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDtiIncomeSource(id: number): Promise<void> {
+  await request(`/api/affordability/dti/income-sources/${id}/`, { method: "DELETE" });
+}
+
+export async function listDtiDebtItems(householdId: number): Promise<DtiDebtItem[]> {
+  return requestRequired("/api/affordability/dti/debt-items/", {
+    params: { household_id: String(householdId) },
+  });
+}
+
+export async function createDtiDebtItem(payload: DtiDebtItemWritePayload): Promise<DtiDebtItem> {
+  return requestRequired("/api/affordability/dti/debt-items/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDtiDebtItem(
+  id: number,
+  payload: Partial<DtiDebtItemWritePayload>
+): Promise<DtiDebtItem> {
+  return requestRequired(`/api/affordability/dti/debt-items/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDtiDebtItem(id: number): Promise<void> {
+  await request(`/api/affordability/dti/debt-items/${id}/`, { method: "DELETE" });
+}
+
+export async function calculateDti(payload: DtiCalculationRequest): Promise<DtiCalculationResponse> {
+  return requestRequired("/api/affordability/dti/calculate/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listDtiCreditCardSuggestions(
+  householdId: number
+): Promise<DtiCreditCardSuggestion[]> {
+  return requestRequired("/api/affordability/dti/credit-card-suggestions/", {
+    params: { household_id: String(householdId) },
+  });
 }
 
 export async function getAccountPayoffCompare(

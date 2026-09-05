@@ -5,6 +5,7 @@ import {
   transferPreviewAmountPayload,
   transferPreviewAmountReady,
   destinationCardOwedAmount,
+  projectedCardOwedFromPreview,
 } from "./transferPreviewAccounts";
 
 function creditCard(overrides: Partial<Account> = {}): Account {
@@ -139,5 +140,21 @@ describe("destinationCardOwedAmount", () => {
         destinationAccount: creditCard({ starting_balance: "-250.00" }),
       })
     ).toBe(250);
+  });
+});
+
+describe("projectedCardOwedFromPreview", () => {
+  it("does not use the selected card's current or starting balance", () => {
+    expect(
+      projectedCardOwedFromPreview({
+        previewOwedBefore: null,
+        previewDestSignedBefore: null,
+      })
+    ).toBeNull();
+    expect(
+      projectedCardOwedFromPreview({
+        previewOwedBefore: "90.00",
+      })
+    ).toBe(90);
   });
 });

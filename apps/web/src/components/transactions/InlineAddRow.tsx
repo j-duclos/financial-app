@@ -6,6 +6,10 @@ import {
   LEDGER_TABLE_GRID,
   LedgerColumnHeader,
 } from "./ledgerTableLayout";
+import type {
+  ProjectedPreviewView,
+  ProjectedTransferBalancesView,
+} from "../../lib/projectedBalancePreview";
 
 export type InlineAddForm = {
   date: string;
@@ -30,12 +34,11 @@ type Props = {
   isPending: boolean;
   currency: string;
   inlinePayToCardAccountId: number | null;
-  inlineTransferPreviewLoading: boolean;
-  inlineOwedAsOfPaymentDate: number | null;
+  inlineCardPreviewView: ProjectedPreviewView;
+  inlineBankPreviewView: ProjectedTransferBalancesView;
+  onRetryPreview: () => void;
   inlineBankTransferDestId: number | null;
   inlineDestPickAccount: Account | null | undefined;
-  inlineBankDestBalanceBefore: number | null;
-  inlineBankDestBalanceAfter: number | null;
   cardCurrency?: string;
 };
 
@@ -51,12 +54,11 @@ export default function InlineAddRow({
   isPending,
   currency,
   inlinePayToCardAccountId,
-  inlineTransferPreviewLoading,
-  inlineOwedAsOfPaymentDate,
+  inlineCardPreviewView,
+  inlineBankPreviewView,
+  onRetryPreview,
   inlineBankTransferDestId,
   inlineDestPickAccount,
-  inlineBankDestBalanceBefore,
-  inlineBankDestBalanceAfter,
   cardCurrency,
 }: Props) {
   const payeeRef = useRef<HTMLInputElement>(null);
@@ -177,39 +179,55 @@ export default function InlineAddRow({
           {inlinePayToCardAccountId != null && (
             <span>
               Owed on card (as of {formatDateDisplay(form.date)}):{" "}
-              {Number.isFinite(inlineOwedAsOfPaymentDate) ? (
+              {inlineCardPreviewView.kind === "ready" ? (
                 <strong className="text-red-700 tabular-nums">
-                  {formatCurrency(inlineOwedAsOfPaymentDate as number, cardCurrency ?? currency)}
+                  {formatCurrency(inlineCardPreviewView.amount, cardCurrency ?? currency)}
                 </strong>
-              ) : inlineTransferPreviewLoading ? (
-                "Loading…"
-              ) : (
-                "—"
-              )}
+              ) : inlineCardPreviewView.kind === "loading" ? (
+                "Calculating projected balance…"
+              ) : inlineCardPreviewView.kind === "error" ? (
+                <>
+                  {inlineCardPreviewView.message}{" "}
+                  <button
+                    type="button"
+                    onClick={onRetryPreview}
+                    className="underline text-blue-700"
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : null}
             </span>
           )}
           {inlineBankTransferDestId != null && (
             <span>
               {inlineDestPickAccount?.name ?? "Account"}:{" "}
-              {inlineTransferPreviewLoading ? (
-                "Loading…"
-              ) : (
+              {inlineBankPreviewView.kind === "loading" ? (
+                "Calculating projected balance…"
+              ) : inlineBankPreviewView.kind === "error" ? (
                 <>
-                  {inlineBankDestBalanceBefore != null
-                    ? formatCurrency(
-                        String(inlineBankDestBalanceBefore),
-                        inlineDestPickAccount?.currency ?? currency
-                      )
-                    : "—"}
-                  {" → "}
-                  {inlineBankDestBalanceAfter != null
-                    ? formatCurrency(
-                        String(inlineBankDestBalanceAfter),
-                        inlineDestPickAccount?.currency ?? currency
-                      )
-                    : "—"}
+                  {inlineBankPreviewView.message}{" "}
+                  <button
+                    type="button"
+                    onClick={onRetryPreview}
+                    className="underline text-blue-700"
+                  >
+                    Retry
+                  </button>
                 </>
-              )}
+              ) : inlineBankPreviewView.kind === "ready" ? (
+                <>
+                  {formatCurrency(
+                    inlineBankPreviewView.before,
+                    inlineDestPickAccount?.currency ?? currency
+                  )}
+                  {" → "}
+                  {formatCurrency(
+                    inlineBankPreviewView.after,
+                    inlineDestPickAccount?.currency ?? currency
+                  )}
+                </>
+              ) : null}
             </span>
           )}
         </div>

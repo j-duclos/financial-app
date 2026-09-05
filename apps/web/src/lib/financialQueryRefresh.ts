@@ -106,6 +106,7 @@ export function refreshAfterTransactionEdit(
     void queryClient.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
     void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }
+  void queryClient.refetchQueries({ queryKey: ["transactions", "future-posted"], type: "active" });
 }
 
 export function flushFinancialRefresh(queryClient: QueryClient): void {

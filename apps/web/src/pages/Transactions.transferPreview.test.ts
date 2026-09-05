@@ -33,8 +33,9 @@ describe("Transactions transfer preview", () => {
     expect(transactions).not.toMatch(/inlineCardTimelineForHint/);
     expect(transactions).not.toMatch(/assetBalanceAsOfDateFromTimeline/);
     expect(transactions).toMatch(/transferPreviewAccountIds/);
-    expect(transactions).toMatch(/destinationCardOwedAmount/);
-    expect(transactions).toMatch(/getAccount\(inlinePayToCardAccountId/);
+    expect(transactions).toMatch(/projectedPreviewViewState/);
+    expect(transactions).not.toMatch(/destinationCardOwedAmount/);
+    expect(transactions).not.toMatch(/getAccount\(inlinePayToCardAccountId/);
     expect(transactions).not.toMatch(/isOutflow \? accountId : inlineTransferToId/);
   });
 
@@ -46,9 +47,12 @@ describe("Transactions transfer preview", () => {
     expect(transactions).not.toMatch(/editCardTimelineForHint/);
   });
 
-  it("InlineAddRow shows loading/unavailable from preview hook, not timeline hints", () => {
-    expect(inlineAddRow).toMatch(/inlineTransferPreviewLoading/);
+  it("shows calculating/error for dated previews instead of a current-balance fallback", () => {
+    expect(inlineAddRow).toMatch(/Calculating projected balance/);
+    expect(inlineAddRow).toMatch(/Retry/);
     expect(inlineAddRow).not.toMatch(/inlineCardTimelineLoading/);
     expect(inlineAddRow).not.toMatch(/inlineBankDestTimelineLoading/);
+    expect(transactions).toMatch(/Calculating projected balance/);
+    expect(transactions).toMatch(/editTransferPreview\.refetch/);
   });
 });

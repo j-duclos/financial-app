@@ -5,7 +5,23 @@ import { transferPreviewAmountPayload, transferPreviewAmountReady } from "../lib
 
 const DEFAULT_DEBOUNCE_MS = 400;
 
-function useDebouncedPreviewValue(value: string, delayMs: number): string {
+function previewKey(input: {
+  fromAccountId: number | null;
+  toAccountId: number | null;
+  amount: string;
+  date: string;
+  excludeKey: string;
+}): string {
+  return [
+    input.fromAccountId ?? "",
+    input.toAccountId ?? "",
+    input.date,
+    transferPreviewAmountPayload(input.amount),
+    input.excludeKey,
+  ].join("|");
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(value), delayMs);
@@ -21,32 +37,42 @@ export function useTransferBalancePreview(input: {
   date: string;
   excludeTransactionIds?: number[];
   enabled?: boolean;
-  /** Debounce preview API inputs only — not the saved form value. */
+  /** Debounce preview API requests only — displayed results clear immediately. */
   debounceMs?: number;
 }): {
   data: TransferBalancePreviewResponse | undefined;
   isFetching: boolean;
+  isError: boolean;
+  errorMessage: string | null;
+  queryMatchesLiveInputs: boolean;
+  refetch: () => void;
 } {
   const debounceMs = input.debounceMs ?? DEFAULT_DEBOUNCE_MS;
-  const debouncedAmount = useDebouncedPreviewValue(input.amount, debounceMs);
-  const debouncedDate = useDebouncedPreviewValue(input.date, debounceMs);
+  const excludeKey = (input.excludeTransactionIds ?? []).slice().sort((a, b) => a - b).join(",");
+  const liveKey = previewKey({
+    fromAccountId: input.fromAccountId,
+    toAccountId: input.toAccountId,
+    amount: input.amount,
+    date: input.date,
+    excludeKey,
+  });
+  const debouncedKey = useDebouncedValue(liveKey, debounceMs);
+  const queryMatchesLiveInputs = liveKey === debouncedKey;
 
   const amountReady = useMemo(
-    () => transferPreviewAmountReady(debouncedAmount),
-    [debouncedAmount]
+    () => transferPreviewAmountReady(input.amount),
+    [input.amount]
   );
   const amountPayload = useMemo(
-    () => transferPreviewAmountPayload(debouncedAmount),
-    [debouncedAmount]
+    () => transferPreviewAmountPayload(input.amount),
+    [input.amount]
   );
 
-  const excludeKey = (input.excludeTransactionIds ?? []).slice().sort((a, b) => a - b).join(",");
-
-  const enabled =
+  const fieldsReady =
     (input.enabled ?? true) &&
     input.fromAccountId != null &&
     input.toAccountId != null &&
-    Boolean(debouncedDate) &&
+    Boolean(input.date) &&
     amountReady;
 
   const query = useQuery({
@@ -55,7 +81,7 @@ export function useTransferBalancePreview(input: {
       "transfer-preview",
       input.fromAccountId,
       input.toAccountId,
-      debouncedDate,
+      input.date,
       amountPayload,
       excludeKey,
     ],
@@ -64,13 +90,27 @@ export function useTransferBalancePreview(input: {
         from_account_id: input.fromAccountId!,
         to_account_id: input.toAccountId!,
         amount: amountPayload,
-        date: debouncedDate,
+        date: input.date,
         exclude_transaction_ids: input.excludeTransactionIds,
       }),
-    enabled,
+    enabled: fieldsReady && queryMatchesLiveInputs,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
+    placeholderData: undefined,
+    retry: 1,
   });
 
-  return { data: query.data, isFetching: query.isFetching };
+  const errorMessage =
+    query.error instanceof Error ? query.error.message : query.isError ? "Could not calculate projected balance." : null;
+
+  return {
+    data: queryMatchesLiveInputs ? query.data : undefined,
+    isFetching: Boolean(fieldsReady && (!queryMatchesLiveInputs || query.isFetching || query.isPending)),
+    isError: queryMatchesLiveInputs && query.isError,
+    errorMessage: queryMatchesLiveInputs ? errorMessage : null,
+    queryMatchesLiveInputs,
+    refetch: () => {
+      void query.refetch();
+    },
+  };
 }
