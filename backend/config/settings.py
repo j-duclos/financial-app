@@ -338,6 +338,7 @@ CORS_ALLOWED_ORIGINS = _csv_env(
 )
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["content-type", "authorization", "accept"]
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 
 # Stripe billing — keys are optional at startup so local/dev can run without Checkout.
 # Billing endpoints fail safely (HTTP 503) if invoked without the required secrets.

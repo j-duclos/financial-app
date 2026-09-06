@@ -68,7 +68,7 @@ import type {
   CheckoutSessionResponse,
   PortalSessionResponse,
 } from "@budget-app/shared";
-import { request, requestRequired } from "./config";
+import { downloadAuthenticatedFile, request, requestRequired } from "./config";
 
 export interface PaginatedResponse<T> {
   count: number;
@@ -237,6 +237,54 @@ export async function changeEmail(body: {
   current_password: string;
 }): Promise<{ detail: string; email: string; email_verified: boolean }> {
   return requestRequired("/api/profile/change-email/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export type DeleteAccountPreflight = {
+  can_delete: boolean;
+  blocking_reasons: Array<{
+    code: string;
+    household_id?: number;
+    household_name?: string;
+    detail?: string;
+  }>;
+  active_subscription: boolean;
+  has_email: boolean;
+  email_verified: boolean;
+  households: Array<{
+    household_id: number;
+    household_name: string;
+    user_role: string;
+    member_count: number;
+    owner_count: number;
+    exclusive: boolean;
+  }>;
+};
+
+export async function downloadProfileExport(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  return downloadAuthenticatedFile("/api/profile/export-data/", `financial-app-export-${today}.json`);
+}
+
+export async function downloadTransactionsCsv(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  return downloadAuthenticatedFile(
+    "/api/profile/export-transactions.csv",
+    `financial-app-transactions-${today}.csv`
+  );
+}
+
+export async function getDeleteAccountPreflight(): Promise<DeleteAccountPreflight> {
+  return requestRequired("/api/profile/delete-account/preflight/");
+}
+
+export async function deleteUserAccount(body: {
+  current_password: string;
+  confirmation: string;
+}): Promise<{ detail: string }> {
+  return requestRequired("/api/profile/delete-account/", {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
@@ -8,6 +8,14 @@ export default function Login() {
   const [error, setError] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const notice =
+    location.state &&
+    typeof location.state === "object" &&
+    "message" in location.state &&
+    typeof (location.state as { message?: unknown }).message === "string"
+      ? (location.state as { message: string }).message
+      : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,6 +32,11 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
         <h1 className="text-2xl font-bold text-center">Budget App</h1>
+        {notice ? (
+          <p className="text-sm text-green-700 text-center" role="status">
+            {notice}
+          </p>
+        ) : null}
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <div>

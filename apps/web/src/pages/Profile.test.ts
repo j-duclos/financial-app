@@ -13,12 +13,13 @@ describe("Profile page", () => {
     expect(profileSource).toMatch(/export default function Profile/);
   });
 
-  it("groups Profile, Defaults, Security, and Plan & Billing", () => {
+  it("groups Profile, Defaults, Security, Plan & Billing, and account lifecycle", () => {
     expect(profileSource).toMatch(/>Profile</);
     expect(profileSource).toMatch(/>Defaults</);
     expect(profileSource).toMatch(/>Security</);
     expect(profileSource).toMatch(/PlanBillingSection/);
     expect(profileSource).toMatch(/PlanBadge/);
+    expect(profileSource).toMatch(/AccountLifecycleSection/);
     expect(profileSource).not.toMatch(/>Account</);
   });
 

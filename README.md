@@ -667,7 +667,7 @@ Chart of accounts for labeling transactions.
 
 #### Profile (`/profile`)
 
-User settings: display name, phone (Plaid SMS), default household/account, password.
+User settings: display name, phone (Plaid SMS), default household/account, password, data export, and account deletion. See `backend/core/ACCOUNT_LIFECYCLE.md` for export and deletion/retention behavior.
 
 #### Auth and Plaid
 

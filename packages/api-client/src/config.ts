@@ -45,6 +45,52 @@ export function getAuthHeader(): Record<string, string> | undefined {
   return undefined;
 }
 
+function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) return decodeURIComponent(star[1]);
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const plain = /filename=([^;]+)/i.exec(header);
+  if (plain?.[1]) return plain[1].trim();
+  return fallback;
+}
+
+export async function downloadAuthenticatedFile(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      ...(getAuthHeader() ?? {}),
+      Accept: "application/json, text/csv",
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 401 && !isPublicAuthPath(path)) {
+      notifyUnauthorized();
+    }
+    const text = await res.text();
+    let message = text || res.statusText;
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+        message = parsed.detail;
+      }
+    } catch {
+      /* keep raw body */
+    }
+    throw new ApiError(res.status, message);
+  }
+  const blob = await res.blob();
+  const name = filenameFromDisposition(res.headers.get("Content-Disposition"), fallbackName);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function isPublicAuthPath(path: string): boolean {
   return (
     path.includes("/api/auth/token/") ||

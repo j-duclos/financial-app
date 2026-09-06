@@ -61,7 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(ACCESS_KEY);
     localStorage.removeItem(REFRESH_KEY);
     setAuth({ access: null, refresh: null, user: null, loading: false });
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   useEffect(() => {
     const fromEnv =

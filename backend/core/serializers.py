@@ -198,6 +198,11 @@ class ChangeEmailSerializer(serializers.Serializer):
         return email
 
 
+class DeleteAccountSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    confirmation = serializers.CharField(write_only=True)
+
+
 class VerifyEmailSerializer(serializers.Serializer):
     token = serializers.CharField()
 

@@ -1,4 +1,4 @@
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 
 from rest_framework import status
 from rest_framework.decorators import action
@@ -14,6 +14,7 @@ from .permissions import IsHouseholdMember
 from .serializers import (
     ChangeEmailSerializer,
     ChangePasswordSerializer,
+    DeleteAccountSerializer,
     ForgotPasswordSerializer,
     HouseholdSerializer,
     HouseholdDetailSerializer,
@@ -287,6 +288,76 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.save(update_fields=["password"])
         return Response({"detail": "Password updated."})
+
+
+class ExportDataView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.account_lifecycle import export_user_data_json_bytes
+
+        body, filename = export_user_data_json_bytes(request.user)
+        response = HttpResponse(body, content_type="application/json")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+class ExportTransactionsCsvView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.account_lifecycle import export_transactions_csv_bytes
+
+        body, filename = export_transactions_csv_bytes(request.user)
+        response = HttpResponse(body, content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+class DeleteAccountPreflightView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.account_lifecycle import build_deletion_preflight
+
+        return Response(build_deletion_preflight(request.user))
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.account_lifecycle import (
+            AccountDeletionBlocked,
+            AccountDeletionError,
+            delete_user_account,
+        )
+
+        serializer = DeleteAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            delete_user_account(
+                request.user,
+                current_password=serializer.validated_data["current_password"],
+                confirmation=serializer.validated_data["confirmation"],
+            )
+        except AccountDeletionBlocked as exc:
+            return Response(
+                {
+                    "detail": "Transfer household ownership before deleting your account.",
+                    "blocking_reasons": exc.reasons,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        except AccountDeletionError as exc:
+            code = exc.code
+            http_status = status.HTTP_400_BAD_REQUEST
+            if code == "email_verification_required":
+                http_status = status.HTTP_403_FORBIDDEN
+            elif code in ("stripe_cancellation_failed", "plaid_revocation_failed", "deletion_failed"):
+                http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+            return Response({"detail": exc.detail, "code": code}, status=http_status)
+        return Response({"detail": "Your account has been deleted."})
 
 
 class HouseholdViewSet(ModelViewSet):

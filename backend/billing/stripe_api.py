@@ -51,6 +51,12 @@ def retrieve_subscription(subscription_id: str) -> Any:
     return stripe.Subscription.retrieve(subscription_id)
 
 
+def cancel_subscription(subscription_id: str) -> Any:
+    """Immediately cancel a Stripe Subscription. Does not delete the Customer."""
+    _configure()
+    return stripe.Subscription.cancel(subscription_id)
+
+
 def create_checkout_session(**kwargs: Any) -> Any:
     _configure()
     return stripe.checkout.Session.create(**kwargs)

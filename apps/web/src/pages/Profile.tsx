@@ -13,6 +13,7 @@ import { useBillingStatus } from "../hooks/useBillingStatus";
 import PlanBillingSection from "../components/billing/PlanBillingSection";
 import PlanBadge from "../components/billing/PlanBadge";
 import ChangeEmailSection from "../components/ChangeEmailSection";
+import AccountLifecycleSection from "../components/AccountLifecycleSection";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
@@ -427,6 +428,9 @@ export default function Profile() {
             </button>
           </form>
         </section>
+      </div>
+      <div className="mt-6">
+        <AccountLifecycleSection />
       </div>
     </div>
   );
