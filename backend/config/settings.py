@@ -128,6 +128,7 @@ INSTALLED_APPS = [
     "credit_cards",
     "recommendations",
     "affordability",
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -332,6 +333,17 @@ CORS_ALLOWED_ORIGINS = _csv_env(
 )
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["content-type", "authorization", "accept"]
+
+# Stripe billing — keys are optional at startup so local/dev can run without Checkout.
+# Billing endpoints fail safely (HTTP 503) if invoked without the required secrets.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+STRIPE_PREMIUM_PRICE_ID = os.environ.get("STRIPE_PREMIUM_PRICE_ID", "").strip()
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "").strip()
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "").strip()
+BILLING_SUCCESS_URL = os.environ.get("BILLING_SUCCESS_URL", "").strip()
+BILLING_CANCEL_URL = os.environ.get("BILLING_CANCEL_URL", "").strip()
+BILLING_PORTAL_RETURN_URL = os.environ.get("BILLING_PORTAL_RETURN_URL", "").strip()
 
 # drf-spectacular
 SPECTACULAR_SETTINGS = {

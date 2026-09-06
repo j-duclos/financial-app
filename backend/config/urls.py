@@ -20,7 +20,7 @@ from django.urls import path, include, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from core.spa import serve_frontend
-from core.views import DatabaseInfoView, health
+from core.views import health
 from timeline.views import TimelineView, TimelineCalendarView
 
 urlpatterns = [
@@ -28,7 +28,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
-    path("api/db-info/", DatabaseInfoView.as_view(), name="db_info"),
     path("api/timeline/", TimelineView.as_view(), name="timeline"),
     path("api/timeline/calendar/", TimelineCalendarView.as_view(), name="timeline-calendar"),
     path("api/", include("timeline.urls")),
@@ -45,6 +44,7 @@ urlpatterns = [
     path("api/affordability/", include("affordability.urls")),
     path("api/", include("goals.urls")),
     path("api/", include("plaid_link.urls")),
+    path("api/billing/", include("billing.urls")),
 ]
 
 if settings.SERVE_REACT_APP:

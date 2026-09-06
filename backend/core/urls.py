@@ -7,7 +7,6 @@ from .views import (
     ProfileView,
     ChangePasswordView,
     HouseholdViewSet,
-    DatabaseInfoView,
     TokenObtainPairViewNoAuth,
 )
 from timeline.views import TimelineView
@@ -16,7 +15,6 @@ router = DefaultRouter()
 router.register("households", HouseholdViewSet, basename="household")
 
 urlpatterns = [
-    path("db-info/", DatabaseInfoView.as_view(), name="db_info"),
     path("auth/register/", RegisterView.as_view(), name="register"),
     path("auth/token/", TokenObtainPairViewNoAuth.as_view(), name="token_obtain_pair"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

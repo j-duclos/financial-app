@@ -169,6 +169,37 @@ cd backend && python manage.py redis_verify
 
 On **Render**: Dashboard → **New → Key Value** (Starter) → copy **Internal Redis URL** → Web Service → Environment → `REDIS_URL` → redeploy. Verify: `GET /health/` should show `"timeline_cache_enabled": true`.
 
+### Stripe billing
+
+Paid access is a **Premium** monthly subscription (planned retail price **$7.99/month**). The Stripe Price ID is **not** hard-coded — set `STRIPE_PREMIUM_PRICE_ID` from the Dashboard. **FREE** users do not need a Stripe Customer.
+
+| Variable | Required to charge | Notes |
+|----------|--------------------|--------|
+| `STRIPE_SECRET_KEY` | Yes | Secret key (`sk_test_…` locally, `sk_live_…` in production). Never commit. |
+| `STRIPE_WEBHOOK_SECRET` | Yes | Signing secret from the webhook endpoint (`whsec_…`). |
+| `STRIPE_PREMIUM_PRICE_ID` | Yes | Price ID for the Premium monthly price (`price_…`). |
+| `STRIPE_PUBLISHABLE_KEY` | No | Optional; Checkout Sessions are created by the backend. |
+| `FRONTEND_ORIGIN` | Production if not on Render | Origin for Checkout success/cancel and Customer Portal return URLs. Defaults to `RENDER_EXTERNAL_URL` on Render, `http://localhost:5173` when `DEBUG=True`. |
+
+**How it works**
+
+- **Checkout** (`POST /api/billing/create-checkout-session/`) creates the Stripe subscription. The backend selects `STRIPE_PREMIUM_PRICE_ID`; the client cannot submit a Price ID.
+- **Webhooks** (`POST /api/billing/webhook/`) are the **authoritative** source of paid entitlement. Reaching a Checkout success URL does **not** grant Premium.
+- **Customer Portal** (`POST /api/billing/create-portal-session/`) lets an existing customer update payment methods, view invoices, and cancel.
+- Status: `GET /api/billing/status/` (JWT). Stripe secrets are never returned.
+
+Local webhook forwarding (Stripe CLI):
+
+```bash
+stripe listen --forward-to localhost:8000/api/billing/webhook/
+```
+
+Copy the printed `whsec_…` into `backend/.env` as `STRIPE_WEBHOOK_SECRET` and restart Django. Trigger a test subscription in the Stripe Dashboard or with `stripe trigger checkout.session.completed`.
+
+Production webhook URL: `https://<your-app>.onrender.com/api/billing/webhook/` (no JWT). Subscribe at least to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, and `invoice.paid`.
+
+The app starts without Stripe configured. Checkout/Portal/webhook calls return HTTP 503 until the required variables are set.
+
 > **Tip:** With `frontend_dist` in the repo, http://localhost:8000/ also serves the React build from Django. Day-to-day UI work still uses **:5173** (Vite) for hot reload.
 
 
@@ -280,6 +311,7 @@ Optional: limit to one household: `--household_id=1`
 | Category model + seed | `backend/categories/models.py`, `backend/categories/signals.py`, `backend/categories/management/commands/seed_categories.py` |
 | Permissions | `backend/core/permissions.py` |
 | Auth (JWT + register) | `backend/core/views.py`, `backend/core/urls.py` |
+| Billing / Stripe | `backend/billing/` |
 | Insights | `backend/insights/views.py` |
 | **React web UI** | `apps/web/src/pages/`, `apps/web/src/components/`, `apps/web/src/App.tsx` |
 | Vite config (dev proxy, build) | `apps/web/vite.config.ts` |
@@ -682,16 +714,3 @@ Supporting code: `hooks/`, `lib/` (display helpers), `packages/api-client/` (typ
 | Reconcile | Does the app match my bank statement? |
 | Categories | What labels do I use for income and expenses? |
 | Profile | What are my defaults and account settings? |
-
-
-
-
-
-
-Main   [Checking]                       [Critical]
-Projected negative: Aug 27                       >
-Add $1406.40 before Aug 27
-
-Care Credit  [Credit]                   [Critical]
-Utilization: 22%                                 >
-Pay $590.96 to reach your 10% target

@@ -2745,3 +2745,24 @@ export interface DtiCalculationResponse {
   disclaimer: string;
 }
 
+/** Billing plan stored by the backend (Stripe-synchronized). */
+export type BillingPlan = "FREE" | "PREMIUM";
+
+export interface BillingStatus {
+  plan: BillingPlan;
+  is_premium: boolean;
+  status: string;
+  cancel_at_period_end: boolean;
+  current_period_end: string | null;
+  has_stripe_customer: boolean;
+}
+
+export interface CheckoutSessionResponse {
+  url: string;
+  session_id: string;
+}
+
+export interface PortalSessionResponse {
+  url: string;
+}
+

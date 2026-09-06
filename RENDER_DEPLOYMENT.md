@@ -100,6 +100,11 @@ Set these in the Web Service → **Environment**:
 | `PLAID_ENABLE_LIABILITIES` | `false` | Set `true` only after Plaid has approved/enabled the Liabilities product for this environment. Credit-card minimum sync stays off until then. |
 | `MINIMUM_PAYMENT_FRESHNESS_DAYS` | `45` | Days before an institution-reported minimum is labeled stale. Must be an integer ≥ 1. |
 | `PLAID_WEBHOOK_URL` | *(optional)* | Public HTTPS URL, e.g. `https://<api-host>/api/plaid/webhooks/liabilities/`. Leave unset to keep the webhook route inert. Do not commit a real URL. |
+| `STRIPE_SECRET_KEY` | `sk_live_…` / `sk_test_…` | Required to create Checkout and Portal sessions. App starts without it; billing endpoints return 503. Never commit. |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` | Webhook signing secret. Required to accept `/api/billing/webhook/`. |
+| `STRIPE_PREMIUM_PRICE_ID` | `price_…` | Stripe Price ID for Premium monthly. Do **not** hard-code in application logic. |
+| `STRIPE_PUBLISHABLE_KEY` | `pk_…` | Optional; Checkout is created on the server. |
+| `FRONTEND_ORIGIN` | `https://<your-app>.onrender.com` | Optional when `RENDER_EXTERNAL_URL` is set. Used for Checkout success/cancel and Customer Portal return URLs. |
 
 Example block (replace placeholders):
 
@@ -117,7 +122,23 @@ PLAID_TOKEN_FERNET_KEY=<from: python manage.py plaid_fernet_key_for_render>
 PLAID_ENABLE_LIABILITIES=false
 MINIMUM_PAYMENT_FRESHNESS_DAYS=45
 # PLAID_WEBHOOK_URL=https://<your-api-host>/api/plaid/webhooks/liabilities/
+# STRIPE_SECRET_KEY=sk_live_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# STRIPE_PREMIUM_PRICE_ID=price_...
+# FRONTEND_ORIGIN=https://financial-app-1-tu0l.onrender.com
 ```
+
+### Stripe Dashboard (production)
+
+1. Create a **Product** (e.g. Premium) with a **recurring monthly** price. Planned retail price is $7.99/month; the app uses whatever Price ID you set in `STRIPE_PREMIUM_PRICE_ID`.
+2. Copy the Price ID (`price_…`) into the Web Service env var `STRIPE_PREMIUM_PRICE_ID`.
+3. Add a webhook endpoint: `https://<your-app>.onrender.com/api/billing/webhook/`
+4. Subscribe to: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.paid`.
+5. Copy the endpoint signing secret into `STRIPE_WEBHOOK_SECRET`.
+6. Enable the **Customer Portal** in Stripe Dashboard (payment method update, invoices, cancel).
+7. Set `STRIPE_SECRET_KEY` to the **live** secret when you are ready to charge.
+
+Stripe webhooks are the **authoritative** source of Premium entitlement. A Checkout success URL redirect does not grant access by itself.
 
 After import from local SQLite/`data.json`, bank sync fails until `PLAID_TOKEN_FERNET_KEY` matches the export machine. Check `/api/plaid/meta/` → `plaid_token_fernet_key_set` must be `true`. If decrypt still fails, re-link banks on Render instead.
 

@@ -64,6 +64,9 @@ import type {
   PlaidLiabilitySyncResult,
   PlaidHouseholdLiabilitySyncResult,
   MinimumPaymentMode,
+  BillingStatus,
+  CheckoutSessionResponse,
+  PortalSessionResponse,
 } from "@budget-app/shared";
 import { request, requestRequired } from "./config";
 
@@ -138,6 +141,24 @@ export async function refreshToken(refresh: string): Promise<{ access: string }>
   return requestRequired("/api/auth/refresh/", {
     method: "POST",
     body: JSON.stringify({ refresh }),
+  });
+}
+
+export async function getBillingStatus(): Promise<BillingStatus> {
+  return requestRequired("/api/billing/status/");
+}
+
+export async function createCheckoutSession(): Promise<CheckoutSessionResponse> {
+  return requestRequired("/api/billing/create-checkout-session/", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function createPortalSession(): Promise<PortalSessionResponse> {
+  return requestRequired("/api/billing/create-portal-session/", {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

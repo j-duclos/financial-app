@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.http import JsonResponse
 
 from rest_framework import status
@@ -46,25 +45,6 @@ def health(request):
         if not ok:
             payload["status"] = "degraded"
     return JsonResponse(payload)
-
-
-class DatabaseInfoView(APIView):
-    """Return which database the running backend is using. No auth required."""
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        db = settings.DATABASES["default"]
-        engine = db.get("ENGINE", "")
-        name = db.get("NAME", "")
-        if "sqlite" in engine:
-            return Response({"database": "sqlite", "path": str(name)})
-        return Response({
-            "database": "postgres",
-            "name": name,
-            "host": db.get("HOST", ""),
-            "port": db.get("PORT", ""),
-            "user": db.get("USER", ""),
-        })
 
 
 class TokenObtainPairViewNoAuth(TokenObtainPairView):
