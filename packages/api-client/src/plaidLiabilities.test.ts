@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { syncHouseholdLiabilities, syncPlaidItemLiabilities } from "./api";
+import {
+  createPlaidUpdateModeLinkToken,
+  syncHouseholdLiabilities,
+  syncPlaidItemLiabilities,
+} from "./api";
 import { configureApiClient } from "./config";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -56,5 +60,18 @@ describe("Plaid liabilities API client", () => {
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain("/api/plaid/sync-liabilities/");
     expect(url).toContain("household=9");
+  });
+
+  it("posts redirect_uri when creating an update-mode link token", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { link_token: "link-update", update_mode: true }));
+    const result = await createPlaidUpdateModeLinkToken(12, {
+      redirect_uri: "https://example.test/plaid/oauth-return",
+    });
+    expect(result.update_mode).toBe(true);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/plaid/items/12/link-token-update/");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      redirect_uri: "https://example.test/plaid/oauth-return",
+    });
   });
 });

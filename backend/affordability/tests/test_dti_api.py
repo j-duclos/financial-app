@@ -103,6 +103,19 @@ def _add_debt(client, household, **fields):
     return client.post(DEBT_URL, payload, format="json")
 
 
+def _credit_card_purchase(account, amount: str = "250.00"):
+    from datetime import date
+
+    return Transaction.objects.create(
+        account=account,
+        date=date.today(),
+        payee="Purchase",
+        amount=-Decimal(amount),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+    )
+
+
 def test_profile_created_and_retrieved(auth_client, household):
     get_unsaved = auth_client.get(PROFILE_URL, {"household_id": household.id})
     assert get_unsaved.status_code == 200
@@ -493,8 +506,10 @@ def test_credit_card_suggestions_skip_linked_and_inactive(
         household=household,
         account_type=Account.AccountType.CREDIT,
         name="Backup card",
+        current_balance=Decimal("250.00"),
         minimum_payment_amount=Decimal("25.00"),
     )
+    _credit_card_purchase(extra, "250.00")
     archived = Account.objects.create(
         household=household,
         account_type=Account.AccountType.CREDIT,
@@ -518,6 +533,29 @@ def test_credit_card_suggestions_skip_linked_and_inactive(
     assert credit_card.id not in ids
     assert archived.id not in ids
     assert checking.id not in ids
+
+
+def test_credit_card_suggestions_omit_zero_balance_cards(auth_client, household):
+    paid_off = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Paid-off card",
+        current_balance=Decimal("0.00"),
+        minimum_payment_amount=Decimal("25.00"),
+    )
+    owed = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CREDIT,
+        name="Active card",
+        current_balance=Decimal("200.00"),
+        minimum_payment_amount=Decimal("15.00"),
+    )
+    _credit_card_purchase(owed, "200.00")
+    res = auth_client.get(SUGGEST_URL, {"household_id": household.id})
+    assert res.status_code == 200
+    ids = [row["account_id"] for row in res.json()]
+    assert owed.id in ids
+    assert paid_off.id not in ids
 
 
 def test_credit_card_suggestions_use_ledger_owed_not_stale_current_balance(

@@ -13,6 +13,13 @@ from affordability.services.dti import (
     serialize_debt_item,
     snapshot_from_account,
 )
+from affordability.services.mortgage import (
+    LOAN_ESTIMATE_FHA,
+    LOAN_ESTIMATE_FIXED_RATE_MANUAL,
+    MAX_ANNUAL_INTEREST_RATE,
+    MAX_LOAN_TERM_YEARS,
+    MIN_LOAN_TERM_YEARS,
+)
 from core.models import Household
 from core.utils import get_households_for_user
 
@@ -466,12 +473,25 @@ class ProposedHousingSerializer(serializers.Serializer):
     )
 
 
+INTEREST_RATE_REQUIRED_MESSAGE = "Enter the estimated annual interest rate."
+
+
 class ProposedPurchaseSerializer(serializers.Serializer):
     purchase_price = _decimal_field(min_value=MONEY_ZERO)
     down_payment_type = serializers.ChoiceField(choices=["dollars", "percent"])
     down_payment_value = _decimal_field(min_value=MONEY_ZERO)
-    annual_interest_rate = _percent_field(min_value=MONEY_ZERO)
-    loan_term_years = serializers.IntegerField(min_value=1, max_value=50)
+    annual_interest_rate = _percent_field(
+        min_value=MONEY_ZERO,
+        required=True,
+        error_messages={
+            "required": INTEREST_RATE_REQUIRED_MESSAGE,
+            "null": INTEREST_RATE_REQUIRED_MESSAGE,
+            "invalid": "Enter a valid annual interest rate.",
+        },
+    )
+    loan_term_years = serializers.IntegerField(
+        min_value=MIN_LOAN_TERM_YEARS, max_value=MAX_LOAN_TERM_YEARS
+    )
     annual_property_taxes = _decimal_field(min_value=MONEY_ZERO, required=False, default=MONEY_ZERO)
     annual_homeowners_insurance = _decimal_field(
         min_value=MONEY_ZERO, required=False, default=MONEY_ZERO
@@ -483,6 +503,21 @@ class ProposedPurchaseSerializer(serializers.Serializer):
     other_required_monthly_housing_costs = _decimal_field(
         min_value=MONEY_ZERO, required=False, default=MONEY_ZERO
     )
+    loan_estimate_type = serializers.ChoiceField(
+        choices=[LOAN_ESTIMATE_FHA, LOAN_ESTIMATE_FIXED_RATE_MANUAL],
+        required=False,
+        default=LOAN_ESTIMATE_FIXED_RATE_MANUAL,
+    )
+    finance_upfront_mip = serializers.BooleanField(required=False, default=True)
+
+    def to_internal_value(self, data):
+        incoming = data if isinstance(data, dict) else {}
+        rate = incoming.get("annual_interest_rate", serializers.empty)
+        if rate is serializers.empty or rate is None or (isinstance(rate, str) and rate.strip() == ""):
+            raise serializers.ValidationError(
+                {"annual_interest_rate": INTEREST_RATE_REQUIRED_MESSAGE}
+            )
+        return super().to_internal_value(data)
 
     def validate_purchase_price(self, value: Decimal) -> Decimal:
         amount = _require_finite_decimal(value, "Enter a valid home purchase price.")
@@ -494,8 +529,17 @@ class ProposedPurchaseSerializer(serializers.Serializer):
         rate = _require_finite_decimal(value, "Enter a valid annual interest rate.")
         if rate < MONEY_ZERO:
             raise serializers.ValidationError("Annual interest rate cannot be negative.")
-        if rate > Decimal("50"):
-            raise serializers.ValidationError("Annual interest rate cannot be greater than 50.")
+        if rate > MAX_ANNUAL_INTEREST_RATE:
+            raise serializers.ValidationError(
+                f"Annual interest rate cannot be greater than {MAX_ANNUAL_INTEREST_RATE}."
+            )
+        return value
+
+    def validate_loan_term_years(self, value: int) -> int:
+        if value < MIN_LOAN_TERM_YEARS or value > MAX_LOAN_TERM_YEARS:
+            raise serializers.ValidationError(
+                f"Loan term must be a whole number of years from {MIN_LOAN_TERM_YEARS} to {MAX_LOAN_TERM_YEARS}."
+            )
         return value
 
     def validate(self, attrs):
@@ -523,6 +567,22 @@ class ProposedPurchaseSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"down_payment_value": "Estimated loan amount cannot be negative."}
             )
+        loan_type = attrs.get("loan_estimate_type") or LOAN_ESTIMATE_FIXED_RATE_MANUAL
+        attrs["loan_estimate_type"] = loan_type
+        monthly_mi = as_decimal(attrs.get("monthly_mortgage_insurance"), MONEY_ZERO)
+        if loan_type == LOAN_ESTIMATE_FHA and monthly_mi > MONEY_ZERO:
+            raise serializers.ValidationError(
+                {
+                    "monthly_mortgage_insurance": (
+                        "FHA estimates use calculated MIP. Do not send a separate monthly "
+                        "mortgage-insurance amount."
+                    )
+                }
+            )
+        if loan_type != LOAN_ESTIMATE_FHA:
+            attrs["finance_upfront_mip"] = False
+        elif "finance_upfront_mip" not in attrs:
+            attrs["finance_upfront_mip"] = True
         return attrs
 
 
@@ -656,4 +716,6 @@ def purchase_estimate_from_validated(data: dict):
         other_required_monthly_housing_costs=as_decimal(
             data.get("other_required_monthly_housing_costs"), ZERO
         ),
+        loan_estimate_type=data.get("loan_estimate_type") or LOAN_ESTIMATE_FIXED_RATE_MANUAL,
+        finance_upfront_mip=bool(data.get("finance_upfront_mip", True)),
     )

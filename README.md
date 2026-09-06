@@ -129,6 +129,16 @@ npm run tunnel
 
 Production Plaid setup: `RENDER_DEPLOYMENT.md`.
 
+**Credit-card minimum payments (Plaid Liabilities):** off by default. Copy these into `backend/.env` (Docker reads that file):
+
+```env
+PLAID_ENABLE_LIABILITIES=false
+MINIMUM_PAYMENT_FRESHNESS_DAYS=45
+# PLAID_WEBHOOK_URL=https://<your-api-host>/api/plaid/webhooks/liabilities/
+```
+
+Set `PLAID_ENABLE_LIABILITIES=true` only after Plaid has approved and enabled the Liabilities product for this environment. Until then, enter card minimums manually. An invalid `MINIMUM_PAYMENT_FRESHNESS_DAYS` value (non-integer or less than 1) raises a configuration error at Django startup instead of failing later.
+
 https://dashboard.plaid.com/developers/api
 
 ### Day-to-day (hot reload)

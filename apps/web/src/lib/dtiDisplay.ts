@@ -9,6 +9,7 @@ import type {
   DtiStudentLoanPaymentMethod,
   DtiStudentLoanStatus,
 } from "@budget-app/shared";
+import { formatDateDisplay } from "./dateDisplay";
 import { parseMoneyToCents, parsePercentToHundredths, centsToMoney } from "./dtiForm";
 
 export const DTI_PLANNING_DISCLAIMER =
@@ -96,6 +97,7 @@ export function formatLinkedMinimumLine(account: {
   minimum_payment_amount: string | null;
   minimum_payment_source?: string | null;
   minimum_payment_freshness?: string | null;
+  provider_minimum_payment_observed_at?: string | null;
 }): string {
   const amount = account.minimum_payment_amount;
   const source = account.minimum_payment_source;
@@ -114,6 +116,19 @@ export function formatLinkedMinimumLine(account: {
     return `${money}/month — synced from institution`;
   }
   return `${money}/month`;
+}
+
+export function linkedMinimumSourceLabel(source: string | null | undefined): string | null {
+  if (source === "plaid") return "Source: Institution reported";
+  if (source === "manual") return "Source: Manual";
+  return null;
+}
+
+export function linkedMinimumLastCheckedLabel(observedAt: string | null | undefined): string | null {
+  if (!observedAt) return null;
+  const formatted = formatDateDisplay(observedAt);
+  if (!formatted || formatted === "—") return null;
+  return `Last checked: ${formatted}`;
 }
 
 export function debtRowView(row: DtiDebtItem) {
@@ -137,6 +152,12 @@ export function debtRowView(row: DtiDebtItem) {
     planningEstimate: fhaEstimate,
     linkedAccountLabel: row.linked_account
       ? row.linked_account.effective_display_name || row.linked_account.name
+      : null,
+    linkedSourceLabel: row.linked_account
+      ? linkedMinimumSourceLabel(row.linked_account.minimum_payment_source)
+      : null,
+    lastCheckedLabel: row.linked_account
+      ? linkedMinimumLastCheckedLabel(row.linked_account.provider_minimum_payment_observed_at)
       : null,
     linkedMinimumLine: row.linked_account ? formatLinkedMinimumLine(row.linked_account) : null,
     monthsRemainingLabel:

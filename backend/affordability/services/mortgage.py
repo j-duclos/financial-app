@@ -25,6 +25,7 @@ from affordability.services.dti import (
     quantize_money,
     quantize_percent,
 )
+from affordability.services.fha_mip import estimate_fha_mip
 
 MORTGAGE_INTERMEDIATE_PRECISION = 28
 MONTHS_PER_YEAR = 12
@@ -39,6 +40,10 @@ DOWN_PAYMENT_DOLLARS = "dollars"
 DOWN_PAYMENT_PERCENT = "percent"
 PROPOSED_HOUSING_MODE_MONTHLY = "monthly_payment"
 PROPOSED_HOUSING_MODE_PURCHASE = "purchase"
+LOAN_ESTIMATE_FHA = "fha"
+LOAN_ESTIMATE_FIXED_RATE_MANUAL = "fixed_rate_manual"
+MORTGAGE_INSURANCE_SOURCE_MANUAL = "manual"
+MORTGAGE_INSURANCE_SOURCE_FHA_MIP = "fha_mip"
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,19 @@ class PurchaseEstimate:
     loan_term_years: int
     number_of_payments: int
     monthly: ProposedHousingInput
+    loan_estimate_type: str = LOAN_ESTIMATE_FIXED_RATE_MANUAL
+    base_loan_amount: Decimal = ZERO
+    total_financed_loan_amount: Decimal = ZERO
+    finance_upfront_mip: bool | None = None
+    upfront_mip_rate: Decimal | None = None
+    upfront_mip_amount: Decimal | None = None
+    annual_mip_rate: Decimal | None = None
+    estimated_monthly_mip: Decimal | None = None
+    annual_mip_duration: str | None = None
+    monthly_mip_method: str | None = None
+    mip_source_label: str | None = None
+    mip_source_url: str | None = None
+    mortgage_insurance_source: str = MORTGAGE_INSURANCE_SOURCE_MANUAL
 
     def to_dict(self) -> dict:
         return {
@@ -65,10 +83,29 @@ class PurchaseEstimate:
             ),
             "down_payment_amount": money_str(self.down_payment_amount),
             "down_payment_percent": percent_str(self.down_payment_percent) or "0.00",
+            "base_loan_amount": money_str(self.base_loan_amount),
             "loan_amount": money_str(self.loan_amount),
+            "total_financed_loan_amount": money_str(self.total_financed_loan_amount),
             "annual_interest_rate": percent_str(self.annual_interest_rate) or "0.00",
             "loan_term_years": self.loan_term_years,
             "number_of_payments": self.number_of_payments,
+            "loan_estimate_type": self.loan_estimate_type,
+            "finance_upfront_mip": self.finance_upfront_mip,
+            "upfront_mip_rate": percent_str(self.upfront_mip_rate),
+            "upfront_mip_amount": (
+                money_str(self.upfront_mip_amount) if self.upfront_mip_amount is not None else None
+            ),
+            "annual_mip_rate": percent_str(self.annual_mip_rate),
+            "estimated_monthly_mip": (
+                money_str(self.estimated_monthly_mip)
+                if self.estimated_monthly_mip is not None
+                else None
+            ),
+            "annual_mip_duration": self.annual_mip_duration,
+            "monthly_mip_method": self.monthly_mip_method,
+            "mip_source_label": self.mip_source_label,
+            "mip_source_url": self.mip_source_url,
+            "mortgage_insurance_source": self.mortgage_insurance_source,
             "monthly": self.monthly.to_dict(),
         }
 
@@ -120,6 +157,8 @@ def estimate_purchase_housing(
     monthly_mortgage_insurance: Decimal = ZERO,
     monthly_hoa_dues: Decimal = ZERO,
     other_required_monthly_housing_costs: Decimal = ZERO,
+    loan_estimate_type: str = LOAN_ESTIMATE_FIXED_RATE_MANUAL,
+    finance_upfront_mip: bool = True,
 ) -> PurchaseEstimate:
     price = quantize_money(purchase_price)
     value = as_decimal(down_payment_value)
@@ -130,18 +169,58 @@ def estimate_purchase_housing(
     else:
         amount = quantize_money(value)
         percent = quantize_percent((amount / price) * HUNDRED) if price > ZERO else ZERO
-    loan_amount = quantize_money(price - amount)
-    if loan_amount < ZERO:
-        loan_amount = ZERO
+    base_loan_amount = quantize_money(price - amount)
+    if base_loan_amount < ZERO:
+        base_loan_amount = ZERO
     n = int(loan_term_years) * MONTHS_PER_YEAR
+    type_key = (loan_estimate_type or LOAN_ESTIMATE_FIXED_RATE_MANUAL).strip()
+    if type_key not in (LOAN_ESTIMATE_FHA, LOAN_ESTIMATE_FIXED_RATE_MANUAL):
+        type_key = LOAN_ESTIMATE_FIXED_RATE_MANUAL
+
+    financed_loan = base_loan_amount
+    monthly_mi = quantize_money(monthly_mortgage_insurance)
+    finance_flag: bool | None = None
+    upfront_rate = None
+    upfront_amount = None
+    annual_mip_rate = None
+    estimated_monthly_mip = None
+    annual_mip_duration = None
+    monthly_mip_method = None
+    mip_source_label = None
+    mip_source_url = None
+    mi_source = MORTGAGE_INSURANCE_SOURCE_MANUAL
+
+    if type_key == LOAN_ESTIMATE_FHA:
+        mip = estimate_fha_mip(
+            purchase_price=price,
+            base_loan_amount=base_loan_amount,
+            loan_term_years=int(loan_term_years),
+        )
+        finance_flag = bool(finance_upfront_mip)
+        financed_loan = (
+            quantize_money(base_loan_amount + mip.upfront_mip_amount)
+            if finance_flag
+            else base_loan_amount
+        )
+        monthly_mi = mip.estimated_monthly_mip
+        upfront_rate = mip.upfront_mip_rate_percent
+        upfront_amount = mip.upfront_mip_amount
+        annual_mip_rate = mip.annual_mip_rate_percent
+        estimated_monthly_mip = mip.estimated_monthly_mip
+        annual_mip_duration = mip.annual_mip_duration
+        monthly_mip_method = mip.monthly_mip_method
+        mip_source_label = mip.source_label
+        mip_source_url = mip.source_url
+        mi_source = MORTGAGE_INSURANCE_SOURCE_FHA_MIP
+
     principal_and_interest = monthly_principal_and_interest(
-        loan_amount, annual_interest_rate, n
+        financed_loan, annual_interest_rate, n
     )
     monthly = ProposedHousingInput(
         principal_and_interest=principal_and_interest,
         property_taxes=monthly_from_annual(annual_property_taxes),
         homeowners_insurance=monthly_from_annual(annual_homeowners_insurance),
-        mortgage_insurance=quantize_money(monthly_mortgage_insurance),
+        mortgage_insurance=monthly_mi,
         hoa_dues=quantize_money(monthly_hoa_dues),
         other_required_housing_costs=quantize_money(other_required_monthly_housing_costs),
     )
@@ -153,9 +232,22 @@ def estimate_purchase_housing(
         ),
         down_payment_amount=amount,
         down_payment_percent=percent,
-        loan_amount=loan_amount,
+        loan_amount=financed_loan,
         annual_interest_rate=quantize_percent(annual_interest_rate),
         loan_term_years=int(loan_term_years),
         number_of_payments=n,
         monthly=monthly,
+        loan_estimate_type=type_key,
+        base_loan_amount=base_loan_amount,
+        total_financed_loan_amount=financed_loan,
+        finance_upfront_mip=finance_flag,
+        upfront_mip_rate=upfront_rate,
+        upfront_mip_amount=upfront_amount,
+        annual_mip_rate=annual_mip_rate,
+        estimated_monthly_mip=estimated_monthly_mip,
+        annual_mip_duration=annual_mip_duration,
+        monthly_mip_method=monthly_mip_method,
+        mip_source_label=mip_source_label,
+        mip_source_url=mip_source_url,
+        mortgage_insurance_source=mi_source,
     )

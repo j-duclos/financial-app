@@ -122,9 +122,9 @@ describe("DtiProposedHomePanel", () => {
     expect(screen.getByLabelText("Home purchase price")).toBeInTheDocument();
     expect(screen.getByLabelText("Annual interest rate")).toBeInTheDocument();
     expect(screen.getByLabelText("Loan term")).toBeInTheDocument();
-    expect(screen.getByLabelText("Estimated annual property taxes")).toBeInTheDocument();
-    expect(screen.getByLabelText("Estimated annual homeowners insurance")).toBeInTheDocument();
-    expect(screen.getByLabelText("Estimated monthly mortgage insurance")).toBeInTheDocument();
+    expect(screen.getByLabelText("Annual property taxes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Annual homeowners insurance")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monthly mortgage insurance")).toBeInTheDocument();
     expect(screen.getByLabelText("Monthly HOA dues")).toBeInTheDocument();
     expect(screen.getByLabelText("Other required monthly housing costs")).toBeInTheDocument();
     expect(screen.queryByLabelText("Monthly principal and interest")).not.toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("DtiProposedHomePanel", () => {
     await user.click(screen.getByLabelText("Percent"));
     await user.type(screen.getByLabelText("Down payment percentage"), "3.50");
     await user.type(screen.getByLabelText("Annual interest rate"), "6.50");
-    await user.type(screen.getByLabelText("Estimated annual property taxes"), "2500");
+    await user.type(screen.getByLabelText("Annual property taxes"), "2500");
     await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
     expect(onApplyPurchase).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -165,6 +165,7 @@ describe("DtiProposedHomePanel", () => {
         annual_interest_rate: "6.50",
         loan_term_years: 30,
         annual_property_taxes: "2500.00",
+        loan_estimate_type: "fixed_rate_manual",
       })
     );
     expect(onApplyPurchase.mock.calls[0][0].principal_and_interest).toBeUndefined();
@@ -180,6 +181,7 @@ describe("DtiProposedHomePanel", () => {
     expect(screen.getByTestId("dti-purchase-result")).toHaveTextContent("386,000.00");
     expect(screen.getByTestId("dti-down-payment-converted")).toHaveTextContent("14,000.00");
     expect(screen.getByTestId("dti-down-payment-converted")).toHaveTextContent("3.50%");
+    expect(screen.getByTestId("dti-submitted-interest-rate")).toHaveTextContent("6.50%");
     expect(screen.getByTestId("dti-purchase-result")).toHaveTextContent("2,439.78");
     expect(screen.getByText(/planning estimate for a fixed-rate loan/i)).toBeInTheDocument();
     expect(screen.queryByText(/loan quote/i)).not.toBeInTheDocument();
@@ -237,13 +239,22 @@ describe("DtiProposedHomePanel", () => {
 
   it("associates purchase field errors with aria-describedby", async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    const onApplyPurchase = vi.fn();
+    render(<Harness onApplyPurchase={onApplyPurchase} />);
     await user.click(screen.getByRole("radio", { name: "Estimate From a Home Purchase" }));
     await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
     const price = screen.getByLabelText("Home purchase price");
     expect(price).toHaveAttribute("aria-invalid", "true");
     expect(price.getAttribute("aria-describedby")).toContain("dti-purchase-price-error");
     expect(document.getElementById("dti-purchase-price-error")).toHaveTextContent(/greater than zero/);
+    const rate = screen.getByLabelText("Annual interest rate");
+    expect(rate).toHaveAttribute("aria-invalid", "true");
+    expect(rate.getAttribute("aria-describedby")).toContain("dti-interest-rate-error");
+    expect(document.getElementById("dti-interest-rate-error")).toHaveTextContent(
+      "Enter the estimated annual interest rate."
+    );
+    expect(onApplyPurchase).not.toHaveBeenCalled();
+    expect(rate).not.toHaveAttribute("placeholder");
   });
 
   it("keeps entered purchase values when the calculation fails", async () => {
@@ -252,5 +263,46 @@ describe("DtiProposedHomePanel", () => {
     await user.click(screen.getByRole("radio", { name: "Estimate From a Home Purchase" }));
     await user.type(screen.getByLabelText("Home purchase price"), "400000");
     expect(screen.getByLabelText("Home purchase price")).toHaveValue("400000");
+  });
+
+  it("collapses completed purchase assumptions and restores them on edit", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("radio", { name: "Estimate From a Home Purchase" }));
+    await user.type(screen.getByLabelText("Home purchase price"), "400000");
+    await user.click(screen.getByLabelText("Percent"));
+    await user.type(screen.getByLabelText("Down payment percentage"), "3.50");
+    await user.type(screen.getByLabelText("Annual interest rate"), "6.50");
+    await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
+    expect(screen.getByTestId("dti-purchase-collapsed")).toHaveTextContent("6.50% interest");
+    expect(screen.getByTestId("dti-purchase-collapsed")).toHaveTextContent("Fixed-rate with manual insurance");
+    expect(screen.queryByLabelText("Home purchase price")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit purchase assumptions" }));
+    expect(screen.getByLabelText("Home purchase price")).toHaveValue("400000");
+    expect(screen.getByLabelText("Annual interest rate")).toHaveValue("6.50");
+  });
+
+  it("hides the manual mortgage-insurance field in FHA mode", async () => {
+    const user = userEvent.setup();
+    const onApplyPurchase = vi.fn();
+    render(<Harness onApplyPurchase={onApplyPurchase} />);
+    await user.click(screen.getByRole("radio", { name: "Estimate From a Home Purchase" }));
+    expect(screen.getByLabelText("Monthly mortgage insurance")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "FHA" }));
+    expect(screen.queryByLabelText("Monthly mortgage insurance")).not.toBeInTheDocument();
+    expect(screen.getByText(/Finance FHA upfront MIP/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Home purchase price"), "400000");
+    await user.click(screen.getByLabelText("Percent"));
+    await user.type(screen.getByLabelText("Down payment percentage"), "3.50");
+    await user.type(screen.getByLabelText("Annual interest rate"), "6.50");
+    await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
+    expect(onApplyPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loan_estimate_type: "fha",
+        finance_upfront_mip: true,
+        monthly_mortgage_insurance: "0.00",
+        annual_interest_rate: "6.50",
+      })
+    );
   });
 });

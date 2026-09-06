@@ -48,3 +48,5 @@ services:
       REDIS_URL: redis://redis:6379/0
       GUNICORN_TIMEOUT: "240"
       GUNICORN_WORKERS: "2"
+      # Plaid Liabilities flags are read from backend/.env (see root .env.example).
+      # Default: PLAID_ENABLE_LIABILITIES=false, MINIMUM_PAYMENT_FRESHNESS_DAYS=45.

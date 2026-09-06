@@ -209,6 +209,9 @@ describe("dtiDisplay", () => {
         account_type: "CREDIT",
         status: "active",
         minimum_payment_amount: "125.00",
+        minimum_payment_source: "plaid",
+        minimum_payment_freshness: "fresh",
+        provider_minimum_payment_observed_at: "2026-09-05T20:00:00Z",
       },
       included: true,
       months_remaining: 18,
@@ -223,6 +226,8 @@ describe("dtiDisplay", () => {
     expect(view.showLinkedMinimumSync).toBe(true);
     expect(view.monthsRemainingLabel).toBe("18 months remaining");
     expect(view.linkedAccountLabel).toBe("Everyday Visa");
+    expect(view.linkedSourceLabel).toBe("Source: Institution reported");
+    expect(view.lastCheckedLabel).toBe("Last checked: 09-05-26");
   });
 
   it("presents FHA student loans by backend effective payment and calculation source", () => {
@@ -327,6 +332,18 @@ describe("dtiQueryKeys", () => {
     expect(monthly).not.toEqual(purchase);
     expect(monthly.proposedHousingMode).toBe("monthly_payment");
     expect(purchase.proposedHousingMode).toBe("purchase");
+  });
+
+  it("keeps purchase calculations distinct when the interest rate changes", () => {
+    const six = dtiCalculationInputsKey(null, [], {
+      proposedHousingMode: "purchase",
+      proposedPurchase: { purchase_price: "400000.00", annual_interest_rate: "6.50", loan_term_years: 30 },
+    });
+    const seven = dtiCalculationInputsKey(null, [], {
+      proposedHousingMode: "purchase",
+      proposedPurchase: { purchase_price: "400000.00", annual_interest_rate: "7.00", loan_term_years: 30 },
+    });
+    expect(six).not.toEqual(seven);
   });
 });
 
@@ -465,6 +482,7 @@ describe("production DTI sources", () => {
     expect(purchaseUi).not.toMatch(/monthly_rate/);
     expect(purchaseUi).not.toMatch(/number_of_payments/);
     expect(purchaseUi).not.toMatch(/\(1 \+ /);
+    expect(purchaseUi).not.toContain('placeholder="6.50"');
   });
 });
 

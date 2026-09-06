@@ -60,6 +60,70 @@ def test_zero_interest_divides_loan_by_payment_count():
     assert estimate.monthly.principal_and_interest == Decimal("1072.22")
 
 
+def test_generic_example_principal_and_interest_before_insurance():
+    estimate = _purchase(
+        annual_homeowners_insurance=Decimal("1500.00"),
+        monthly_mortgage_insurance=Decimal("0.00"),
+    )
+    assert estimate.base_loan_amount == Decimal("386000.00")
+    assert estimate.loan_amount == Decimal("386000.00")
+    assert estimate.monthly.principal_and_interest == Decimal("2439.78")
+    assert estimate.monthly.property_taxes == Decimal("208.33")
+    assert estimate.monthly.homeowners_insurance == Decimal("125.00")
+    assert estimate.monthly.hoa_dues == Decimal("67.00")
+    assert estimate.monthly.mortgage_insurance == Decimal("0.00")
+    assert estimate.monthly.total == Decimal("2840.11")
+
+
+def test_fha_financed_upfront_mip_increases_amortized_loan():
+    estimate = _purchase(
+        annual_homeowners_insurance=Decimal("1500.00"),
+        monthly_mortgage_insurance=Decimal("999.00"),
+        loan_estimate_type="fha",
+        finance_upfront_mip=True,
+    )
+    assert estimate.loan_estimate_type == "fha"
+    assert estimate.base_loan_amount == Decimal("386000.00")
+    assert estimate.upfront_mip_amount == Decimal("6755.00")
+    assert estimate.total_financed_loan_amount == Decimal("392755.00")
+    assert estimate.loan_amount == Decimal("392755.00")
+    assert estimate.monthly.principal_and_interest == monthly_principal_and_interest(
+        Decimal("392755.00"), Decimal("6.50"), 360
+    )
+    assert estimate.monthly.principal_and_interest != Decimal("2439.78")
+    assert estimate.estimated_monthly_mip == Decimal("176.92")
+    assert estimate.monthly.mortgage_insurance == Decimal("176.92")
+    assert estimate.monthly.mortgage_insurance != Decimal("999.00")
+    payload = estimate.to_dict()
+    assert payload["annual_interest_rate"] == "6.50"
+    assert payload["mortgage_insurance_source"] == "fha_mip"
+
+
+def test_fha_upfront_mip_paid_at_closing_does_not_increase_amortized_balance():
+    financed = _purchase(loan_estimate_type="fha", finance_upfront_mip=True)
+    closing = _purchase(loan_estimate_type="fha", finance_upfront_mip=False)
+    assert closing.base_loan_amount == Decimal("386000.00")
+    assert closing.upfront_mip_amount == Decimal("6755.00")
+    assert closing.total_financed_loan_amount == Decimal("386000.00")
+    assert closing.loan_amount == Decimal("386000.00")
+    assert closing.monthly.principal_and_interest == Decimal("2439.78")
+    assert closing.monthly.mortgage_insurance == Decimal("176.92")
+    assert financed.loan_amount > closing.loan_amount
+    assert financed.monthly.principal_and_interest > closing.monthly.principal_and_interest
+
+
+def test_manual_mode_does_not_apply_fha_mip():
+    estimate = _purchase(
+        monthly_mortgage_insurance=Decimal("180.00"),
+        loan_estimate_type="fixed_rate_manual",
+    )
+    assert estimate.loan_amount == Decimal("386000.00")
+    assert estimate.monthly.mortgage_insurance == Decimal("180.00")
+    assert estimate.estimated_monthly_mip is None
+    assert estimate.upfront_mip_amount is None
+    assert estimate.mortgage_insurance_source == "manual"
+
+
 def test_fifteen_year_term_differs_from_thirty_year_term():
     thirty = _purchase(loan_term_years=30)
     fifteen = _purchase(loan_term_years=15)

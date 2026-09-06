@@ -97,6 +97,9 @@ Set these in the Web Service → **Environment**:
 | `NODE_VERSION` | `20` | **Required** so `build.sh` can run `npm` (Render Python services) |
 | `PLAID_REDIRECT_URI` | `https://<your-app>.onrender.com/plaid/oauth-return` | Same host as the Web Service |
 | `PLAID_TOKEN_FERNET_KEY` | *(required after `loaddata`)* | Must match the machine that exported `data.json` — run `python manage.py plaid_fernet_key_for_render` locally and paste the line |
+| `PLAID_ENABLE_LIABILITIES` | `false` | Set `true` only after Plaid has approved/enabled the Liabilities product for this environment. Credit-card minimum sync stays off until then. |
+| `MINIMUM_PAYMENT_FRESHNESS_DAYS` | `45` | Days before an institution-reported minimum is labeled stale. Must be an integer ≥ 1. |
+| `PLAID_WEBHOOK_URL` | *(optional)* | Public HTTPS URL, e.g. `https://<api-host>/api/plaid/webhooks/liabilities/`. Leave unset to keep the webhook route inert. Do not commit a real URL. |
 
 Example block (replace placeholders):
 
@@ -111,6 +114,9 @@ PLAID_PRODUCTION_SECRET=your_production_secret
 PLAID_ENV=production
 PLAID_REDIRECT_URI=https://financial-app-1-tu0l.onrender.com/plaid/oauth-return
 PLAID_TOKEN_FERNET_KEY=<from: python manage.py plaid_fernet_key_for_render>
+PLAID_ENABLE_LIABILITIES=false
+MINIMUM_PAYMENT_FRESHNESS_DAYS=45
+# PLAID_WEBHOOK_URL=https://<your-api-host>/api/plaid/webhooks/liabilities/
 ```
 
 After import from local SQLite/`data.json`, bank sync fails until `PLAID_TOKEN_FERNET_KEY` matches the export machine. Check `/api/plaid/meta/` → `plaid_token_fernet_key_set` must be `true`. If decrypt still fails, re-link banks on Render instead.
@@ -169,6 +175,7 @@ Note the static site URL: `https://budget-app-web.onrender.com`.
    No query string. Path must be `/plaid/oauth-return` (legacy `/transactions` or `/accounts` still work if allowlisted).
 
 3. For **Chase** / live banks: `PLAID_ENV=production`, production secret, OAuth institution registration approved in Plaid.
+4. **Liabilities (credit-card minimums):** request and enable the Liabilities product in the Plaid Dashboard for this environment before setting `PLAID_ENABLE_LIABILITIES=true`. Until then, keep the flag `false` and enter minimums manually. Existing bank connections can add Liabilities consent in-app via **Enable credit-card minimum updates** (Plaid Link update mode) — do not ask users to disconnect and reconnect.
 
 ---
 
@@ -263,6 +270,8 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 - [ ] `ALLOWED_HOSTS` — your `*.onrender.com` API hostname (`.onrender.com` is always permitted)
 - [ ] `CSRF_TRUSTED_ORIGINS` — `https://<api-host>,https://<static-site-host>` (no trailing slashes)
 - [ ] Plaid: `PLAID_CLIENT_ID`, `PLAID_ENV`, matching secret, `PLAID_REDIRECT_URI=https://<web-service>/plaid/oauth-return`
+- [ ] Plaid Liabilities: keep `PLAID_ENABLE_LIABILITIES=false` until the product is approved; then set `true` and optionally `PLAID_WEBHOOK_URL=https://<api-host>/api/plaid/webhooks/liabilities/`
+- [ ] `MINIMUM_PAYMENT_FRESHNESS_DAYS=45` (or another integer ≥ 1)
 - [ ] Build logs show `Frontend copied to backend/frontend_dist`
 
 ### Frontend Static Site (optional split deploy)

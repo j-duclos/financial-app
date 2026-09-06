@@ -320,3 +320,125 @@ def test_transaction_sync_continues_when_liabilities_fail(plaid_setup):
         result = maybe_sync(item, force=True)
     assert result["status"] == "failed"
     assert "transaction" in result["message"].lower()
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=True)
+@pytest.mark.django_db(transaction=True)
+def test_two_cards_on_one_item_invalidate_financial_cache_once(plaid_setup):
+    item, _card_a, _card_b, _checking = plaid_setup
+    client = _mock_client(
+        [_liability("plaid-a", 86.0), _liability("plaid-b", 72.0, 800.0)],
+        accounts=[_account_base("plaid-a"), _account_base("plaid-b")],
+    )
+    with patch("common.services.cache.invalidate_financial_cache_for_household") as mock_inv:
+        sync_credit_card_liabilities_for_item(item, client=client)
+    mock_inv.assert_called_once_with(item.household_id)
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=True)
+@pytest.mark.django_db
+def test_unauthorized_user_cannot_sync_other_household(plaid_setup):
+    item, _a, _b, _c = plaid_setup
+    other = User.objects.create_user(username="other-hh", password="p1")
+    other_hh = Household.objects.create(name="Other HH")
+    HouseholdMembership.objects.create(
+        household=other_hh, user=other, role=HouseholdMembership.Role.OWNER
+    )
+    client = APIClient()
+    client.force_authenticate(user=other)
+    with patch("plaid_link.views.plaid_configured", return_value=True):
+        response = client.post(f"/api/plaid/sync-liabilities/?household={item.household_id}")
+    assert response.status_code == 403
+
+
+@override_settings(PLAID_WEBHOOK_URL="")
+@pytest.mark.django_db
+def test_liabilities_webhook_is_inert_when_url_unset():
+    client = APIClient()
+    response = client.post(
+        "/api/plaid/webhooks/liabilities/",
+        {"webhook_type": "LIABILITIES", "webhook_code": "DEFAULT_UPDATE", "item_id": "item-x"},
+        format="json",
+    )
+    assert response.status_code == 404
+
+
+@override_settings(
+    PLAID_ENABLE_LIABILITIES=True,
+    PLAID_WEBHOOK_URL="https://example.test/api/plaid/webhooks/liabilities/",
+)
+@pytest.mark.django_db
+def test_liabilities_webhook_syncs_known_item_without_creating_transactions(plaid_setup):
+    from transactions.models import Transaction
+
+    item, card_a, _card_b, _checking = plaid_setup
+    before = Transaction.objects.count()
+    client = _mock_client(
+        [_liability("plaid-a", 86.0)],
+        accounts=[_account_base("plaid-a")],
+    )
+    api = APIClient()
+    with patch("plaid_link.liabilities.get_plaid_client", return_value=client):
+        response = api.post(
+            "/api/plaid/webhooks/liabilities/",
+            {
+                "webhook_type": "LIABILITIES",
+                "webhook_code": "DEFAULT_UPDATE",
+                "item_id": item.item_id,
+            },
+            format="json",
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    card_a.refresh_from_db()
+    assert card_a.minimum_payment_amount == Decimal("86.00")
+    assert Transaction.objects.count() == before
+    client.liabilities_get.assert_called_once()
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=True, PLAID_ENV="sandbox")
+def test_update_mode_link_token_requests_additional_liabilities_consent():
+    from plaid_link.services import create_link_token
+
+    captured = {}
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    api = MagicMock()
+    api.link_token_create.return_value = SimpleNamespace(link_token="link-update-token")
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            access_token="access-sandbox-token",
+            link_redirect_uri="https://example.test/plaid/oauth-return",
+        )
+    assert token == "link-update-token"
+    assert captured["access_token"] == "access-sandbox-token"
+    assert "products" not in captured
+    consented = captured.get("additional_consented_products") or []
+    assert any("liabilities" in str(product).lower() for product in consented)
+    assert captured["redirect_uri"] == "https://example.test/plaid/oauth-return"
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=True, PLAID_ENV="sandbox")
+@pytest.mark.django_db
+def test_link_token_update_endpoint_accepts_redirect_uri(plaid_setup, auth_client):
+    item, _a, _b, _c = plaid_setup
+    with (
+        patch("plaid_link.views.plaid_configured", return_value=True),
+        patch("plaid_link.views.create_link_token", return_value="link-update-token") as mock_create,
+    ):
+        response = auth_client.post(
+            f"/api/plaid/items/{item.pk}/link-token-update/",
+            {"redirect_uri": "https://example.test/plaid/oauth-return"},
+            format="json",
+        )
+    assert response.status_code == 200
+    assert response.json()["update_mode"] is True
+    assert mock_create.call_args.kwargs["access_token"]
+    assert mock_create.call_args.kwargs["link_redirect_uri"] == "https://example.test/plaid/oauth-return"

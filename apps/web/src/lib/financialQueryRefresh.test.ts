@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { UTILIZATION_PREFERENCE_QUERY_PREFIXES } from "./financialQueryRefresh";
+import { UTILIZATION_PREFERENCE_QUERY_PREFIXES, FINANCIAL_QUERY_PREFIXES } from "./financialQueryRefresh";
 
 const source = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "financialQueryRefresh.ts"),
@@ -22,6 +22,19 @@ describe("financialQueryRefresh utilization preference", () => {
     expect(keys).toContain("account-payoff");
     expect(source).toMatch(/invalidateUtilizationPreferenceQueries/);
     expect(accountsSource).toMatch(/invalidateUtilizationPreferenceQueries\(queryClient\)/);
+  });
+
+  it("includes dti and debt-plan so minimum-payment changes refetch DTI and Payment Planner", () => {
+    const keys = FINANCIAL_QUERY_PREFIXES.map((k) => k[0]);
+    expect(keys).toContain("dti");
+    expect(keys).toContain("debt-plan");
+    expect(keys).toContain("accounts");
+    expect(accountsSource).toMatch(/queryKey: \["dti"\]/);
+    expect(accountsSource).toMatch(/queryKey: \["debt-plan"\]/);
+    expect(accountsSource).toMatch(/Refresh card minimums/);
+    expect(accountsSource).toMatch(/syncHouseholdLiabilities/);
+    expect(accountsSource).toMatch(/PlaidLiabilitiesUpdateButton/);
+    expect(accountsSource).toMatch(/requestId !== liabilityRequestSeq\.current/);
   });
 
   it("includes account-payoff in financial mutation prefixes", () => {

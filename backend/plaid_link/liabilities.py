@@ -196,8 +196,13 @@ def sync_credit_card_liabilities_for_item(
     plaid_item: PlaidItem,
     *,
     client=None,
+    invalidate: bool = True,
 ) -> dict[str, Any]:
-    """Fetch credit liabilities once for this Item and apply the canonical minimum policy."""
+    """Fetch credit liabilities once for this Item and apply the canonical minimum policy.
+
+    Household-level refresh passes ``invalidate=False`` and invalidates once after
+    every Item in the household has committed.
+    """
     started = time.monotonic()
     observed_at = timezone.now()
     result = LiabilitySyncResult(
@@ -288,6 +293,7 @@ def sync_credit_card_liabilities_for_item(
                 observed_at=observed_at,
                 current_owed=account.current_balance,
                 currency_ok=_currency_ok(account, iso),
+                invalidate=False,
             )
             if applied.get("warning"):
                 result.warnings.append(applied["warning"])
@@ -321,7 +327,21 @@ def sync_credit_card_liabilities_for_item(
             result.accounts_unchanged += 1
 
     _record_item_status(plaid_item, result, links, started)
+    if invalidate and result.accounts_updated > 0:
+        _invalidate_household_once(plaid_item.household_id)
     return result.to_dict()
+
+
+def _invalidate_household_once(household_id: int) -> None:
+    from common.services.cache import invalidate_financial_cache_for_household
+
+    def _run() -> None:
+        invalidate_financial_cache_for_household(household_id)
+
+    if transaction.get_connection().in_atomic_block:
+        transaction.on_commit(_run)
+    else:
+        _run()
 
 
 def _record_item_status(
@@ -389,9 +409,23 @@ def sync_credit_card_liabilities_for_household(household_id: int) -> dict[str, A
         .prefetch_related("linked_accounts__account")
         .order_by("pk")
     )
-    results = [sync_credit_card_liabilities_for_item(item) for item in items]
+    results = [sync_credit_card_liabilities_for_item(item, invalidate=False) for item in items]
+    success_count = sum(1 for row in results if row.get("status") == STATUS_SUCCESS)
+    reauth_count = sum(1 for row in results if row.get("status") == STATUS_REAUTH)
+    failed_count = sum(
+        1
+        for row in results
+        if row.get("status") in (STATUS_FAILED, STATUS_PRODUCT_NOT_ENABLED, STATUS_DISABLED)
+    )
+    accounts_updated = sum(int(row.get("accounts_updated") or 0) for row in results)
+    if accounts_updated > 0:
+        _invalidate_household_once(household_id)
     return {
         "household_id": household_id,
         "items": results,
         "item_count": len(results),
+        "success_count": success_count,
+        "reauthorization_required_count": reauth_count,
+        "failed_count": failed_count,
+        "accounts_updated": accounts_updated,
     }

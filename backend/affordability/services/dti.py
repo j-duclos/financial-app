@@ -929,10 +929,19 @@ def serialize_debt_item(item: DebtInput) -> dict:
 
 def serialize_dti_result(result: DtiCalculationResult) -> dict:
     proposed_payload = None
+    proposed_equation = None
     if result.proposed is not None and result.proposed_housing is not None:
         proposed_payload = result.proposed.to_dict(
             include_housing_breakdown=result.proposed_housing.to_dict()
         )
+        proposed_equation = {
+            "estimated_housing_payment": money_str(result.proposed_housing.total),
+            "other_included_monthly_debt": money_str(result.non_housing_monthly_debt),
+            "total_proposed_obligations": money_str(result.proposed.total_monthly_obligations),
+            "gross_monthly_income": money_str(result.gross_monthly_income),
+            "proposed_front_end_dti_percent": percent_str(result.proposed.front_end_dti_percent),
+            "proposed_back_end_dti_percent": percent_str(result.proposed.back_end_dti_percent),
+        }
     return {
         "household_id": result.household_id,
         "status": result.status,
@@ -949,6 +958,7 @@ def serialize_dti_result(result: DtiCalculationResult) -> dict:
         },
         "current": result.current.to_dict(),
         "proposed": proposed_payload,
+        "proposed_equation": proposed_equation,
         "capacity": {
             "target_total_obligation_capacity": money_str(
                 result.target_total_obligation_capacity
@@ -1087,6 +1097,7 @@ def suggestions_from_accounts(accounts) -> list[CreditCardSuggestion]:
     """Suggestion balances match the Accounts page: ledger owed, not the stored snapshot.
 
     Does not change DTI formulas. The calculate path still avoids the ledger.
+    Zero-balance and paid-off cards are omitted from active suggestions.
     """
     from accounts.services.balances import (
         bulk_signed_ledger_balances,
@@ -1095,13 +1106,14 @@ def suggestions_from_accounts(accounts) -> list[CreditCardSuggestion]:
 
     account_list = list(accounts)
     signed = bulk_signed_ledger_balances(account_list) if account_list else {}
-    return [
+    suggestions = [
         suggestion_from_account(
             account,
             current_balance=credit_owed_from_signed_balance(signed.get(account.pk, ZERO)),
         )
         for account in account_list
     ]
+    return [item for item in suggestions if item.current_balance > ZERO]
 
 
 def load_dti_records(household) -> tuple[ProfileInput, list[IncomeInput], list[DebtInput], list[CreditCardSuggestion]]:
@@ -1137,5 +1149,9 @@ def load_dti_records(household) -> tuple[ProfileInput, list[IncomeInput], list[D
         .exclude(id__in=linked_ids)
         .order_by("position", "name", "id")
     )
-    suggestions = [suggestion_from_account(account) for account in suggestion_qs]
+    suggestions = [
+        suggestion_from_account(account)
+        for account in suggestion_qs
+        if as_decimal(account.current_balance) > ZERO
+    ]
     return profile, income_sources, debt_items, suggestions

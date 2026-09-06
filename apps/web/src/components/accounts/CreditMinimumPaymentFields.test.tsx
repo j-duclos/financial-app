@@ -110,7 +110,7 @@ describe("CreditMinimumPaymentFields", () => {
         onManualAmountChange={vi.fn()}
       />
     );
-    expect(screen.getByText(/Last provider minimum: \$86\.00/i)).toBeInTheDocument();
+    expect(screen.getByText(/Last institution-reported minimum: \$86\.00/i)).toBeInTheDocument();
     expect(screen.getByText(/Manual fallback: \$100\.00/i)).toBeInTheDocument();
     await user.click(screen.getByLabelText("Enter manually"));
     rerender(
@@ -130,6 +130,125 @@ describe("CreditMinimumPaymentFields", () => {
     );
     expect(screen.getByLabelText("Manual minimum payment")).toHaveValue(100);
     expect(screen.getByText(/Last institution value: \$86\.00/i)).toBeInTheDocument();
+  });
+
+  it("shows last checked, statement date, and due date when the institution reported them", () => {
+    render(
+      <CreditMinimumPaymentFields
+        account={card({
+          provider_minimum_payment_statement_date: "2026-08-22",
+          provider_minimum_payment_due_date: "2026-09-18",
+        })}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText(/Last checked:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Statement date:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Due date:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Effective monthly payment:/i)).toBeInTheDocument();
+  });
+
+  it("disables refresh while loading and shows success, partial-success, and failure copy", () => {
+    const { rerender } = render(
+      <CreditMinimumPaymentFields
+        account={card()}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+        onRefresh={vi.fn()}
+        refreshing
+      />
+    );
+    expect(screen.getByRole("button", { name: /refreshing/i })).toBeDisabled();
+    rerender(
+      <CreditMinimumPaymentFields
+        account={card()}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+        onRefresh={vi.fn()}
+        refreshFeedback="Updated 2 card minimums."
+      />
+    );
+    expect(screen.getByText("Updated 2 card minimums.")).toBeInTheDocument();
+    rerender(
+      <CreditMinimumPaymentFields
+        account={card()}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+        onRefresh={vi.fn()}
+        refreshFeedback="Updated 1 card minimum. 1 card had no institution liability."
+      />
+    );
+    expect(screen.getByText(/no institution liability/i)).toBeInTheDocument();
+    rerender(
+      <CreditMinimumPaymentFields
+        account={card()}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+        onRefresh={vi.fn()}
+        refreshError="Could not refresh credit-card minimums from the institution."
+      />
+    );
+    expect(screen.getByText(/could not refresh credit-card minimums from the institution/i)).toBeInTheDocument();
+    expect(screen.queryByText("Updated 2 card minimums.")).not.toBeInTheDocument();
+  });
+
+  it("renders an update-consent action for existing connections that need Liabilities access", () => {
+    render(
+      <CreditMinimumPaymentFields
+        account={card({ minimum_payment_freshness: "reauthorization_required" })}
+        mode="automatic"
+        manualAmount=""
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+        consentAction={<button type="button">Enable credit-card minimum updates</button>}
+      />
+    );
+    expect(screen.getByRole("button", { name: /enable credit-card minimum updates/i })).toBeInTheDocument();
+    expect(screen.getByText(/Reauthorization required/i)).toBeInTheDocument();
+  });
+
+  it("explains when the Liabilities product is not enabled", () => {
+    render(
+      <CreditMinimumPaymentFields
+        account={card({ minimum_payment_freshness: "product_not_enabled" })}
+        mode="automatic"
+        manualAmount=""
+        onModeChange={vi.fn()}
+        onManualAmountChange={vi.fn()}
+      />
+    );
+    expect(screen.getAllByText(/Liabilities product is not enabled/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/not enabled in this environment/i)).toBeInTheDocument();
+  });
+
+  it("keeps minimum-payment radios keyboard accessible", async () => {
+    const user = userEvent.setup();
+    const onModeChange = vi.fn();
+    render(
+      <CreditMinimumPaymentFields
+        account={card()}
+        mode="automatic"
+        manualAmount="100.00"
+        onModeChange={onModeChange}
+        onManualAmountChange={vi.fn()}
+      />
+    );
+    const manual = screen.getByLabelText("Enter manually");
+    manual.focus();
+    expect(manual).toHaveFocus();
+    await user.keyboard(" ");
+    expect(onModeChange).toHaveBeenCalledWith("manual");
   });
 
   it("explains unsupported and reauthorization statuses", () => {

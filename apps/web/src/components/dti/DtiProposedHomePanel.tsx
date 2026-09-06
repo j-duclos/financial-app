@@ -11,7 +11,7 @@ import {
   MONTHLY_PAYMENT_MODE_NAME,
   PURCHASE_MODE_HELP,
   PURCHASE_MODE_NAME,
-  emptyPurchaseEstimateDraft,
+  collapsedPurchaseAssumptionLines,
   isImplausibleMonthlyHousing,
   normalizePurchaseEstimateDraft,
   type AppliedProposedHome,
@@ -31,6 +31,7 @@ type Props = {
   proposedError: boolean;
   proposedHousingTotal?: string | null;
   purchaseEstimate: DtiPurchaseEstimateResult | null;
+  purchaseAssumptionsStale?: boolean;
   grossMonthlyIncome?: string | null;
   enteredMonthlyTotal: string;
   onMonthlyDraftChange: (draft: ProposedHousingDraft) => void;
@@ -52,6 +53,7 @@ export default function DtiProposedHomePanel({
   proposedError,
   proposedHousingTotal,
   purchaseEstimate,
+  purchaseAssumptionsStale = false,
   grossMonthlyIncome,
   enteredMonthlyTotal,
   onMonthlyDraftChange,
@@ -67,6 +69,9 @@ export default function DtiProposedHomePanel({
   const [purchaseErrors, setPurchaseErrors] = useState<PurchaseEstimateDraftErrors>({});
   const [extremeOpen, setExtremeOpen] = useState(false);
   const [pendingMonthly, setPendingMonthly] = useState<DtiProposedHousingInput | null>(null);
+  const [purchaseFormOpen, setPurchaseFormOpen] = useState(applied?.mode !== "purchase");
+  const showPurchaseForm =
+    selectedMode !== "purchase" ? false : purchaseFormOpen || proposedError;
 
   function applyMonthly(payload: DtiProposedHousingInput, confirmed: boolean) {
     if (!confirmed && isImplausibleMonthlyHousing(payload, grossMonthlyIncome)) {
@@ -93,14 +98,24 @@ export default function DtiProposedHomePanel({
     const result = normalizePurchaseEstimateDraft(purchaseDraft);
     if (!result.ok) {
       setPurchaseErrors(result.errors);
+      setPurchaseFormOpen(true);
       return;
     }
     setPurchaseErrors({});
+    setPurchaseFormOpen(false);
     onApplyPurchase(result.payload);
   }
 
+  const collapsedLines = collapsedPurchaseAssumptionLines(purchaseEstimate, purchaseDraft);
+  const showPurchaseResult =
+    selectedMode === "purchase" &&
+    purchaseEstimate &&
+    applied?.mode === "purchase" &&
+    !proposedBusy &&
+    !purchaseAssumptionsStale;
+
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+    <section className="rounded-lg border border-gray-200 bg-white p-4 space-y-3 min-w-0">
       <h2 className="text-base font-semibold text-gray-900">Test a Proposed Home</h2>
       <p className="text-sm text-gray-600">
         Choose how you want to estimate the proposed monthly housing payment. The result replaces your
@@ -194,20 +209,34 @@ export default function DtiProposedHomePanel({
           ) : null}
         </>
       ) : (
-        <DtiPurchaseEstimateForm
-          draft={purchaseDraft}
-          errors={purchaseErrors}
-          disabled={proposedBusy}
-          convertedDownPayment={
-            purchaseEstimate
-              ? {
-                  amount: purchaseEstimate.down_payment_amount,
-                  percent: purchaseEstimate.down_payment_percent,
-                }
-              : null
-          }
-          onChange={onPurchaseDraftChange}
-        />
+        <>
+          {!showPurchaseForm ? (
+            <div
+              className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-2"
+              data-testid="dti-purchase-collapsed"
+            >
+              <ul className="text-sm text-gray-800 space-y-0.5">
+                {collapsedLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                className="text-sm font-medium text-blue-700 hover:underline min-h-[44px]"
+                onClick={() => setPurchaseFormOpen(true)}
+              >
+                Edit purchase assumptions
+              </button>
+            </div>
+          ) : (
+            <DtiPurchaseEstimateForm
+              draft={purchaseDraft}
+              errors={purchaseErrors}
+              disabled={proposedBusy}
+              onChange={onPurchaseDraftChange}
+            />
+          )}
+        </>
       )}
 
       {proposedBusy ? (
@@ -232,8 +261,13 @@ export default function DtiProposedHomePanel({
           Estimated total monthly housing payment: {formatCurrency(proposedHousingTotal)}
         </p>
       ) : null}
-      {selectedMode === "purchase" && purchaseEstimate && applied?.mode === "purchase" && !proposedBusy ? (
+      {showPurchaseResult && purchaseEstimate ? (
         <PurchaseEstimateResult estimate={purchaseEstimate} />
+      ) : null}
+      {selectedMode === "purchase" && purchaseAssumptionsStale && applied?.mode === "purchase" ? (
+        <p className="text-sm text-amber-900" data-testid="dti-purchase-stale">
+          Purchase assumptions have changed. Estimate Purchase DTI to update the result.
+        </p>
       ) : null}
 
       <div className="flex flex-wrap gap-2">
@@ -274,6 +308,7 @@ export default function DtiProposedHomePanel({
               type="button"
               onClick={() => {
                 setPurchaseErrors({});
+                setPurchaseFormOpen(true);
                 onClearPurchase();
               }}
               className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 min-h-[44px]"
@@ -286,5 +321,3 @@ export default function DtiProposedHomePanel({
     </section>
   );
 }
-
-export { emptyPurchaseEstimateDraft };

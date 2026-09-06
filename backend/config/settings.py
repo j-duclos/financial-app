@@ -28,6 +28,24 @@ def _env_bool(name: str, *, default: bool) -> bool:
     return os.environ[name].lower() in ("true", "1", "yes")
 
 
+def _env_positive_int(name: str, *, default: int) -> int:
+    """Parse a required-positive integer env var with a clear configuration error."""
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(
+            f"{name} must be a positive integer number of days. Got {raw!r}."
+        ) from exc
+    if value < 1:
+        raise ImproperlyConfigured(
+            f"{name} must be at least 1 day. Got {value}."
+        )
+    return value
+
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_DEV_SECRET)
 # Local dev: DEBUG True by default. Render sets RENDER=true → DEBUG False unless DEBUG= is explicit.
 DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
@@ -36,9 +54,10 @@ DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
 ENABLE_PERF_LOGS = _env_bool("ENABLE_PERF_LOGS", default=_ON_RENDER)
 
 # Credit-card minimum payments from Plaid Liabilities. Off until the Dashboard product is enabled.
+# Set PLAID_ENABLE_LIABILITIES=true only after Plaid has approved/enabled Liabilities for this env.
 PLAID_ENABLE_LIABILITIES = _env_bool("PLAID_ENABLE_LIABILITIES", default=False)
 PLAID_WEBHOOK_URL = os.environ.get("PLAID_WEBHOOK_URL", "").strip()
-MINIMUM_PAYMENT_FRESHNESS_DAYS = int(os.environ.get("MINIMUM_PAYMENT_FRESHNESS_DAYS", "45"))
+MINIMUM_PAYMENT_FRESHNESS_DAYS = _env_positive_int("MINIMUM_PAYMENT_FRESHNESS_DAYS", default=45)
 
 if not DEBUG and SECRET_KEY == _INSECURE_DEV_SECRET:
     raise ImproperlyConfigured(

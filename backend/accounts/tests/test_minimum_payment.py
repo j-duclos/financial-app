@@ -171,6 +171,29 @@ def test_stale_provider_value_remains_usable(credit_card, settings):
 
 
 @pytest.mark.django_db
+def test_stale_provider_is_preferred_over_different_manual_in_automatic_mode(credit_card, settings):
+    """Automatic mode: a stale but still-usable institution minimum stays effective.
+
+    Manual is retained as fallback only; staleness is a warning, not a switch.
+    """
+    settings.MINIMUM_PAYMENT_FRESHNESS_DAYS = 45
+    apply_user_minimum_settings(
+        credit_card, mode=MODE_AUTOMATIC, manual_amount=Decimal("100.00"), set_manual=True
+    )
+    observed = timezone.now() - timedelta(days=60)
+    apply_plaid_credit_liability(
+        credit_card, _liability(minimum_payment_amount=86.0), observed_at=observed
+    )
+    credit_card.refresh_from_db()
+    resolved = resolve_effective_minimum_payment(credit_card)
+    assert resolved.amount == Decimal("86.00")
+    assert resolved.source == SOURCE_PLAID
+    assert resolved.freshness == "stale"
+    assert credit_card.manual_minimum_payment_amount == Decimal("100.00")
+    assert resolved.warning_code == "provider_minimum_stale"
+
+
+@pytest.mark.django_db
 @pytest.mark.django_db(transaction=True)
 def test_metadata_change_without_effective_change_skips_financial_invalidation(credit_card):
     apply_plaid_credit_liability(

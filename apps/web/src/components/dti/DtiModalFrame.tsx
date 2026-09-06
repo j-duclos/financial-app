@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import HoverTooltip from "../HoverTooltip";
 
 type Props = {
   title: string;
@@ -158,4 +159,18 @@ export function describedByIds(
 ): string | undefined {
   const ids = [error ? errorId : null, hintId ?? null].filter(Boolean);
   return ids.length ? ids.join(" ") : undefined;
+}
+
+export function FieldInfo({ label }: { label: string }) {
+  return (
+    <HoverTooltip label={label}>
+      <button
+        type="button"
+        className="ml-1 inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-xs font-medium text-gray-600"
+        aria-label={label}
+      >
+        i
+      </button>
+    </HoverTooltip>
+  );
 }

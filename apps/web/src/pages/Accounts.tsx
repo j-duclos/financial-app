@@ -19,9 +19,11 @@ import {
   clearAllAccountTransactionsPreview,
   clearAllAccountTransactions,
   syncPlaidItemLiabilities,
+  syncHouseholdLiabilities,
 } from "@budget-app/api-client";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import { CreditMinimumPaymentFields } from "../components/accounts/CreditMinimumPaymentFields";
+import { PlaidLiabilitiesUpdateButton } from "../components/accounts/PlaidLiabilitiesUpdateButton";
 import { ACCOUNT_ROLE_OPTIONS, getAccountRoleMeta } from "../lib/accountRoles";
 import {
   DEFAULT_PASSIVE_FORECAST_DAYS,
@@ -43,6 +45,7 @@ import {
 } from "../lib/accountPageSummary";
 import { computePortfolioSummary } from "../lib/portfolioSummary";
 import { invalidateUtilizationPreferenceQueries } from "../lib/financialQueryRefresh";
+import { householdLiabilityFeedback, itemLiabilityFeedback } from "../lib/liabilitySyncFeedback";
 import { useAccountOrganizationPreferences } from "../hooks/useAccountOrganizationPreferences";
 import AccountOrganizationToolbar from "../components/accounts/AccountOrganizationToolbar";
 import AccountGroupSection from "../components/accounts/AccountGroupSection";
@@ -73,6 +76,10 @@ export default function Accounts() {
   const [editing, setEditing] = useState<Account | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [liabilityRefreshError, setLiabilityRefreshError] = useState<string | null>(null);
+  const [liabilityRefreshFeedback, setLiabilityRefreshFeedback] = useState<string | null>(null);
+  const [householdRefreshFeedback, setHouseholdRefreshFeedback] = useState<string | null>(null);
+  const [householdRefreshError, setHouseholdRefreshError] = useState<string | null>(null);
+  const liabilityRequestSeq = useRef(0);
   const [forecastDays, setForecastDays] = useState<PassiveForecastDays>(
     DEFAULT_PASSIVE_FORECAST_DAYS
   );
@@ -311,6 +318,8 @@ export default function Accounts() {
     profile?.default_household ??
     households?.[0]?.id ??
     accounts[0]?.household?.id;
+  const modalAccount =
+    editing && editingAccount?.id === editing.id ? editingAccount : editing;
 
   const allowManualOrder =
     orgPrefs.sortBy === "custom" || orgPrefs.groupBy === "custom";
@@ -337,6 +346,7 @@ export default function Accounts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["dti"] });
+      queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
       setModalOpen(false);
       roleManuallySetRef.current = false;
       setForm(emptyFormState());
@@ -350,6 +360,7 @@ export default function Accounts() {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["account", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["dti"] });
+      queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
       invalidateUtilizationPreferenceQueries(queryClient);
       setModalOpen(false);
       setEditing(null);
@@ -358,14 +369,52 @@ export default function Accounts() {
     onError: (err: Error) => setSubmitError(err.message || "Failed to update account"),
   });
   const refreshLiabilitiesMu = useMutation({
-    mutationFn: (itemId: number) => syncPlaidItemLiabilities(itemId),
-    onSuccess: () => {
+    mutationFn: async (itemId: number) => {
+      const requestId = ++liabilityRequestSeq.current;
+      const result = await syncPlaidItemLiabilities(itemId);
+      return { requestId, result };
+    },
+    onSuccess: ({ requestId, result }) => {
+      if (requestId !== liabilityRequestSeq.current) return;
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["dti"] });
       queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
-      setLiabilityRefreshError(null);
+      const feedback = itemLiabilityFeedback(result);
+      if (feedback.tone === "success") {
+        setLiabilityRefreshError(null);
+        setLiabilityRefreshFeedback(feedback.message);
+      } else if (feedback.tone === "partial") {
+        setLiabilityRefreshError(null);
+        setLiabilityRefreshFeedback(feedback.message);
+      } else {
+        setLiabilityRefreshFeedback(null);
+        setLiabilityRefreshError(feedback.message);
+      }
     },
     onError: (err: Error) => setLiabilityRefreshError(err.message || "Could not refresh the institution minimum."),
+  });
+  const refreshHouseholdLiabilitiesMu = useMutation({
+    mutationFn: async (hid: number) => {
+      const requestId = ++liabilityRequestSeq.current;
+      const result = await syncHouseholdLiabilities(hid);
+      return { requestId, result };
+    },
+    onSuccess: ({ requestId, result }) => {
+      if (requestId !== liabilityRequestSeq.current) return;
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["dti"] });
+      queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
+      const feedback = householdLiabilityFeedback(result);
+      if (feedback.tone === "failure") {
+        setHouseholdRefreshFeedback(null);
+        setHouseholdRefreshError(feedback.message);
+      } else {
+        setHouseholdRefreshError(null);
+        setHouseholdRefreshFeedback(feedback.message);
+      }
+    },
+    onError: (err: Error) =>
+      setHouseholdRefreshError(err.message || "Could not refresh credit-card minimums."),
   });
   const [lifecycleTarget, setLifecycleTarget] = useState<Account | null>(null);
   const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null);
@@ -461,6 +510,8 @@ export default function Accounts() {
     roleManuallySetRef.current = false;
     setForm(emptyFormState());
     setSubmitError(null);
+    setLiabilityRefreshError(null);
+    setLiabilityRefreshFeedback(null);
     setNewHouseholdName("");
     setModalOpen(true);
   }
@@ -468,6 +519,8 @@ export default function Accounts() {
     setEditing(acc);
     roleManuallySetRef.current = true;
     setSubmitError(null);
+    setLiabilityRefreshError(null);
+    setLiabilityRefreshFeedback(null);
     setModalOpen(true);
     queryClient.invalidateQueries({ queryKey: ["account", acc.id] });
     setForm(formFromAccount(acc));
@@ -711,8 +764,30 @@ export default function Accounts() {
   return (
     <div className={PAGE_SHELL_PY} data-testid="accounts-page">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1 w-full">
+        <div className="min-w-0 flex-1 w-full space-y-2">
           <PlaidConnectBar householdId={householdId ?? null} />
+          {householdId != null ? (
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                className="self-start rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-800 min-h-[44px] disabled:opacity-50"
+                onClick={() => refreshHouseholdLiabilitiesMu.mutate(householdId)}
+                disabled={refreshHouseholdLiabilitiesMu.isPending || refreshLiabilitiesMu.isPending}
+              >
+                {refreshHouseholdLiabilitiesMu.isPending ? "Refreshing card minimums…" : "Refresh card minimums"}
+              </button>
+              {householdRefreshFeedback ? (
+                <p className="text-sm text-gray-700" aria-live="polite">
+                  {householdRefreshFeedback}
+                </p>
+              ) : null}
+              {householdRefreshError ? (
+                <p className="text-sm text-red-700" role="alert">
+                  {householdRefreshError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <button
           type="button"
@@ -1459,7 +1534,7 @@ export default function Accounts() {
                     />
                   </div>
                   <CreditMinimumPaymentFields
-                    account={editing}
+                    account={modalAccount}
                     mode={form.minimum_payment_mode}
                     manualAmount={form.minimum_payment_amount}
                     onModeChange={(mode) => setForm((f) => ({ ...f, minimum_payment_mode: mode }))}
@@ -1467,12 +1542,37 @@ export default function Accounts() {
                       setForm((f) => ({ ...f, minimum_payment_amount: value }))
                     }
                     onRefresh={
-                      editing?.plaid_item_id
-                        ? () => refreshLiabilitiesMu.mutate(editing.plaid_item_id as number)
+                      modalAccount?.plaid_item_id
+                        ? () => refreshLiabilitiesMu.mutate(modalAccount.plaid_item_id as number)
                         : undefined
                     }
-                    refreshing={refreshLiabilitiesMu.isPending}
+                    refreshing={refreshLiabilitiesMu.isPending || refreshHouseholdLiabilitiesMu.isPending}
                     refreshError={liabilityRefreshError}
+                    refreshFeedback={liabilityRefreshFeedback}
+                    consentAction={
+                      modalAccount?.plaid_item_id &&
+                      modalAccount.minimum_payment_freshness !== "unsupported" &&
+                      modalAccount.minimum_payment_freshness !== "product_not_enabled" &&
+                      (modalAccount.minimum_payment_freshness === "reauthorization_required" ||
+                        Boolean(liabilityRefreshError?.toLowerCase().includes("consent")))
+                        ? (
+                            <PlaidLiabilitiesUpdateButton
+                              itemId={modalAccount.plaid_item_id}
+                              disabled={refreshLiabilitiesMu.isPending || refreshHouseholdLiabilitiesMu.isPending}
+                              onComplete={async () => {
+                                await queryClient.invalidateQueries({ queryKey: ["accounts"] });
+                                await queryClient.invalidateQueries({ queryKey: ["account", modalAccount.id] });
+                                await queryClient.invalidateQueries({ queryKey: ["dti"] });
+                                await queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
+                                setLiabilityRefreshError(null);
+                                setLiabilityRefreshFeedback(
+                                  "Credit-card minimum updates were enabled."
+                                );
+                              }}
+                            />
+                          )
+                        : null
+                    }
                   />
                   <div className="flex items-center gap-2">
                     <input

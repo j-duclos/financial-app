@@ -99,6 +99,7 @@ const visaCard: DtiDebtItem = {
     minimum_payment_amount: "125.00",
     minimum_payment_source: "plaid",
     minimum_payment_freshness: "fresh",
+    provider_minimum_payment_observed_at: "2026-09-05T20:00:00Z",
   },
   included: true,
   months_remaining: null,
@@ -232,6 +233,14 @@ function calculation(overrides: Partial<DtiCalculationResponse> = {}): DtiCalcul
 const currentCalc = calculation();
 const proposedCalc = calculation({
   proposed: bucket("43.52", "49.25", "2887.00", "2600.00"),
+  proposed_equation: {
+    estimated_housing_payment: "2600.00",
+    other_included_monthly_debt: "537.00",
+    total_proposed_obligations: "2887.00",
+    gross_monthly_income: "5400.00",
+    proposed_front_end_dti_percent: "43.52",
+    proposed_back_end_dti_percent: "49.25",
+  },
 });
 const purchaseHousing = {
   principal_and_interest: "2439.78",
@@ -254,6 +263,9 @@ const purchaseCalc = calculation({
     annual_interest_rate: "6.50",
     loan_term_years: 30,
     number_of_payments: 360,
+    loan_estimate_type: "fixed_rate_manual",
+    base_loan_amount: "386000.00",
+    total_financed_loan_amount: "386000.00",
     monthly: purchaseHousing,
   },
   proposed: {
@@ -263,6 +275,14 @@ const purchaseCalc = calculation({
     remaining_capacity_at_target: "0.00",
     amount_over_target: "1608.11",
     housing: purchaseHousing,
+  },
+  proposed_equation: {
+    estimated_housing_payment: "3015.11",
+    other_included_monthly_debt: "537.00",
+    total_proposed_obligations: "3552.11",
+    gross_monthly_income: "5400.00",
+    proposed_front_end_dti_percent: "55.83",
+    proposed_back_end_dti_percent: "65.78",
   },
 });
 const combinedCurrentCalc = calculation({
@@ -411,6 +431,10 @@ describe("DebtToIncome page", () => {
     expect(screen.getByText("46.03% → 49.25%")).toBeInTheDocument();
     expect(screen.getByText("Proposed back-end DTI vs your selected target")).toBeInTheDocument();
     expect(screen.getByText("Proposed home")).toBeInTheDocument();
+    expect(screen.getByText("Increase in back-end DTI")).toBeInTheDocument();
+    expect(screen.getByText("Proposed monthly housing payment")).toBeInTheDocument();
+    expect(screen.getByTestId("dti-proposed-equation")).toHaveTextContent("2,600.00");
+    expect(screen.getByTestId("dti-proposed-equation")).toHaveTextContent("proposed back-end DTI");
     await user.click(screen.getByRole("button", { name: "Clear Monthly Estimate" }));
     expect(await screen.findByText("Current back-end DTI vs your selected target")).toBeInTheDocument();
     expect(screen.queryByText("Proposed back-end DTI vs your selected target")).not.toBeInTheDocument();
@@ -486,12 +510,15 @@ describe("DebtToIncome page", () => {
     expect(screen.queryByText(/\$40\.00/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/Synced from account minimum/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/synced from institution/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Source: Institution reported/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Last checked:/).length).toBeGreaterThan(0);
   });
 
   it("requires confirmation before creating a suggested card", async () => {
     const user = userEvent.setup();
     mockHappyPath({ suggestions: [usableSuggestion] });
     renderPage();
+    await user.click(await screen.findByRole("button", { name: /1 credit card is not included in DTI/i }));
     await user.click((await screen.findAllByRole("button", { name: "Add to DTI" }))[0]);
     expect(api.createDtiDebtItem).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("dialog", { name: "Add debt obligation" });
@@ -502,6 +529,7 @@ describe("DebtToIncome page", () => {
     const user = userEvent.setup();
     mockHappyPath({ suggestions: [unusableSuggestion] });
     renderPage();
+    await user.click(await screen.findByRole("button", { name: /1 credit card is not included in DTI/i }));
     await user.click((await screen.findAllByRole("button", { name: "Add to DTI" }))[0]);
     expect(
       await screen.findByText(/This card has no usable minimum payment/)
@@ -555,6 +583,7 @@ describe("DebtToIncome page", () => {
     expect(await screen.findByRole("heading", { name: "DTI summary" })).toBeInTheDocument();
     expect(screen.getByText("Could not load credit-card suggestions.")).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Retry" }).at(-1)!);
+    await user.click(await screen.findByRole("button", { name: /1 credit card is not included in DTI/i }));
     expect(await screen.findByText("Store card")).toBeInTheDocument();
   });
 
@@ -711,8 +740,8 @@ describe("DebtToIncome page", () => {
     await user.click(screen.getByLabelText("Percent"));
     await user.type(screen.getByLabelText("Down payment percentage"), "3.50");
     await user.type(screen.getByLabelText("Annual interest rate"), "6.50");
-    await user.type(screen.getByLabelText("Estimated annual property taxes"), "2500");
-    await user.type(screen.getByLabelText("Estimated annual homeowners insurance"), "1440");
+    await user.type(screen.getByLabelText("Annual property taxes"), "2500");
+    await user.type(screen.getByLabelText("Annual homeowners insurance"), "1440");
     await user.click(screen.getByRole("button", { name: "Estimate Purchase DTI" }));
     await waitFor(() => {
       expect(api.calculateDti).toHaveBeenCalledWith(
@@ -727,6 +756,7 @@ describe("DebtToIncome page", () => {
             loan_term_years: 30,
             annual_property_taxes: "2500.00",
             annual_homeowners_insurance: "1440.00",
+            loan_estimate_type: "fixed_rate_manual",
           }),
         })
       );
@@ -735,14 +765,28 @@ describe("DebtToIncome page", () => {
       (call) => call[0]?.proposed_housing_mode === "purchase"
     );
     expect(purchaseCall?.[0]?.proposed_housing).toBeUndefined();
-    expect(await screen.findByText("Estimated total monthly housing payment")).toBeInTheDocument();
+    expect(await screen.findByText("Proposed monthly housing payment")).toBeInTheDocument();
     expect(screen.getByTestId("dti-purchase-result")).toHaveTextContent("386,000.00");
+    expect(screen.getByTestId("dti-submitted-interest-rate")).toHaveTextContent("6.50%");
     expect(screen.getByTestId("dti-down-payment-converted")).toHaveTextContent("14,000.00");
-    expect(screen.getByText("55.83%")).toBeInTheDocument();
-    expect(screen.getByText("65.78%")).toBeInTheDocument();
+    expect(screen.getAllByText(/55\.83%/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/65\.78%/).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("dti-proposed-equation")).toHaveTextContent("proposed back-end DTI");
     expect(screen.getByText(/Based on a .* purchase price/)).toBeInTheDocument();
+    expect(screen.getByTestId("dti-main-column")).toContainElement(
+      screen.getByRole("heading", { name: "Income used" })
+    );
+    expect(
+      within(screen.getByTestId("dti-calculator-column")).queryByRole("heading", { name: "Income used" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("dti-purchase-collapsed")).toHaveTextContent("6.50% interest");
     await user.click(screen.getByRole("checkbox", { name: "Model Auto loan as paid off" }));
     expect(await screen.findByText("Proposed back-end DTI after selected payoffs")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit purchase assumptions" }));
+    expect(screen.getByLabelText("Home purchase price")).toHaveValue("400000");
+    await user.type(screen.getByLabelText("Annual interest rate"), "1");
+    expect(screen.queryByText("65.78%")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dti-proposed-stale")).toBeInTheDocument();
   });
 
   it("warns before applying an extreme monthly payment without rewriting the field", async () => {
@@ -757,5 +801,36 @@ describe("DebtToIncome page", () => {
     expect(api.calculateDti.mock.calls.some((call) => call[0]?.proposed_housing)).toBe(false);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(field).toHaveValue("400000");
+  });
+
+  it("places income and debts in the main column independent of calculator height", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "DTI summary" });
+    const main = screen.getByTestId("dti-main-column");
+    const calculator = screen.getByTestId("dti-calculator-column");
+    expect(within(main).getByRole("heading", { name: "Income used" })).toBeInTheDocument();
+    expect(within(main).getByRole("heading", { name: "Monthly debt obligations" })).toBeInTheDocument();
+    expect(within(calculator).queryByRole("heading", { name: "Income used" })).not.toBeInTheDocument();
+    expect(main.compareDocumentPosition(calculator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("omits zero-balance cards from active credit-card suggestions", async () => {
+    mockHappyPath({
+      suggestions: [
+        usableSuggestion,
+        {
+          ...usableSuggestion,
+          account_id: 99,
+          name: "Paid-off card",
+          effective_display_name: "Paid-off card",
+          current_balance: "0.00",
+        },
+      ],
+    });
+    renderPage();
+    expect(
+      await screen.findByRole("button", { name: /1 credit card is not included in DTI/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Paid-off card")).not.toBeInTheDocument();
   });
 });

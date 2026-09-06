@@ -332,3 +332,162 @@ def test_omitted_mode_with_purchase_payload_and_full_down_payment(auth_client, h
     )
     assert zero_rate.status_code == 200
     assert zero_rate.json()["purchase_estimate"]["monthly"]["principal_and_interest"] == "1072.22"
+    assert zero_rate.json()["purchase_estimate"]["annual_interest_rate"] == "0.00"
+
+
+def test_blank_interest_rate_cannot_produce_zero_interest_estimate(auth_client, household):
+    _save_profile(auth_client, household)
+    missing_rate = {key: value for key, value in PURCHASE.items() if key != "annual_interest_rate"}
+    missing = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": missing_rate,
+        },
+        format="json",
+    )
+    assert missing.status_code == 400
+    assert "Enter the estimated annual interest rate." in str(missing.json())
+
+    blank = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**PURCHASE, "annual_interest_rate": ""},
+        },
+        format="json",
+    )
+    assert blank.status_code == 400
+    assert "Enter the estimated annual interest rate." in str(blank.json())
+
+
+def test_omitted_loan_estimate_type_defaults_to_fixed_rate_manual(auth_client, household):
+    _save_profile(auth_client, household)
+    _add_income(auth_client, household, "10400.00")
+    calc = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": PURCHASE,
+        },
+        format="json",
+    )
+    assert calc.status_code == 200
+    estimate = calc.json()["purchase_estimate"]
+    assert estimate["loan_estimate_type"] == "fixed_rate_manual"
+    assert estimate["loan_amount"] == "386000.00"
+    assert estimate["monthly"]["mortgage_insurance"] == "180.00"
+    assert estimate["estimated_monthly_mip"] is None
+
+
+def test_generic_example_proposed_dti_and_equation(auth_client, household):
+    _save_profile(auth_client, household, current_housing_payment="1800.00")
+    _add_income(auth_client, household, "10500.00")
+    _add_debt(auth_client, household, monthly_payment="1646.42")
+    payload = {
+        "purchase_price": "400000.00",
+        "down_payment_type": "percent",
+        "down_payment_value": "3.50",
+        "annual_interest_rate": "6.50",
+        "loan_term_years": 30,
+        "annual_property_taxes": "2500.00",
+        "annual_homeowners_insurance": "1500.00",
+        "monthly_hoa_dues": "67.00",
+        "loan_estimate_type": "fixed_rate_manual",
+    }
+    calc = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": payload,
+        },
+        format="json",
+    )
+    assert calc.status_code == 200, calc.content[:500]
+    data = calc.json()
+    estimate = data["purchase_estimate"]
+    assert estimate["annual_interest_rate"] == "6.50"
+    assert estimate["base_loan_amount"] == "386000.00"
+    assert estimate["monthly"]["principal_and_interest"] == "2439.78"
+    assert estimate["monthly"]["property_taxes"] == "208.33"
+    assert estimate["monthly"]["homeowners_insurance"] == "125.00"
+    assert estimate["monthly"]["hoa_dues"] == "67.00"
+    assert estimate["monthly"]["mortgage_insurance"] == "0.00"
+    assert estimate["monthly"]["total"] == "2840.11"
+    assert data["proposed"]["front_end_dti_percent"] == "27.05"
+    assert data["proposed"]["back_end_dti_percent"] == "42.73"
+    equation = data["proposed_equation"]
+    assert equation["estimated_housing_payment"] == "2840.11"
+    assert equation["other_included_monthly_debt"] == "1646.42"
+    assert equation["total_proposed_obligations"] == "4486.53"
+    assert equation["gross_monthly_income"] == "10500.00"
+    assert equation["proposed_front_end_dti_percent"] == "27.05"
+    assert equation["proposed_back_end_dti_percent"] == "42.73"
+    assert Decimal(equation["total_proposed_obligations"]) == Decimal(
+        equation["estimated_housing_payment"]
+    ) + Decimal(equation["other_included_monthly_debt"])
+    none = auth_client.post(CALC_URL, {"household_id": household.id}, format="json").json()
+    assert none["current"]["back_end_dti_percent"] == data["current"]["back_end_dti_percent"]
+    assert Decimal(data["proposed"]["housing"]["total"]) != Decimal("1800.00") + Decimal("2840.11")
+
+
+def test_fha_purchase_finances_upfront_mip_and_includes_monthly_mip_once(auth_client, household):
+    from affordability.services.mortgage import monthly_principal_and_interest
+
+    _save_profile(auth_client, household)
+    _add_income(auth_client, household, "10500.00")
+    _add_debt(auth_client, household, monthly_payment="1646.42")
+    payload = {
+        "purchase_price": "400000.00",
+        "down_payment_type": "percent",
+        "down_payment_value": "3.50",
+        "annual_interest_rate": "6.50",
+        "loan_term_years": 30,
+        "annual_property_taxes": "2500.00",
+        "annual_homeowners_insurance": "1500.00",
+        "monthly_hoa_dues": "67.00",
+        "loan_estimate_type": "fha",
+        "finance_upfront_mip": True,
+    }
+    calc = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": payload,
+        },
+        format="json",
+    )
+    assert calc.status_code == 200, calc.content[:500]
+    estimate = calc.json()["purchase_estimate"]
+    expected_pi = monthly_principal_and_interest(Decimal("392755.00"), Decimal("6.50"), 360)
+    assert estimate["upfront_mip_amount"] == "6755.00"
+    assert estimate["total_financed_loan_amount"] == "392755.00"
+    assert estimate["estimated_monthly_mip"] == "176.92"
+    assert estimate["monthly"]["mortgage_insurance"] == "176.92"
+    assert estimate["monthly"]["principal_and_interest"] == str(expected_pi)
+    housing_total = Decimal(estimate["monthly"]["total"])
+    mi_count = Decimal(estimate["monthly"]["mortgage_insurance"])
+    without_mi = housing_total - mi_count
+    assert without_mi == (
+        Decimal(estimate["monthly"]["principal_and_interest"])
+        + Decimal(estimate["monthly"]["property_taxes"])
+        + Decimal(estimate["monthly"]["homeowners_insurance"])
+        + Decimal(estimate["monthly"]["hoa_dues"])
+        + Decimal(estimate["monthly"]["other_required_housing_costs"])
+    )
+    mixed = auth_client.post(
+        CALC_URL,
+        {
+            "household_id": household.id,
+            "proposed_housing_mode": "purchase",
+            "proposed_purchase": {**payload, "monthly_mortgage_insurance": "180.00"},
+        },
+        format="json",
+    )
+    assert mixed.status_code == 400
+    assert "monthly_mortgage_insurance" in str(mixed.json())

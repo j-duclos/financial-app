@@ -43,12 +43,13 @@ describe("Debt-to-Income architecture", () => {
     expect(page).not.toMatch(/getTimeline|listTransactions|getDebtPayoffPlan|listScenarios/);
   });
 
-  it("does not reimplement DTI formulas or hard-code lender programs", () => {
+  it("does not reimplement DTI formulas or imply loan approval", () => {
     expect(helpers).not.toMatch(/front_end.*=.*housing.*\/.*income/i);
     expect(helpers).not.toMatch(/back_end.*=.*\+.*debt.*\/.*income/i);
     expect(helpers).not.toMatch(/\/ income \* 100/);
     expect(helpers).not.toMatch(
-      /FHA|conventional|USDA|\bVA\b|You qualify|Approved|Denied|Lender limit|Safe mortgage|Maximum mortgage approval/
+      /You qualify|Approved|Denied|Lender limit|Safe mortgage|Maximum mortgage approval/
     );
+    expect(helpers).not.toMatch(/Automatically apply FHA|treat all student loans as FHA/i);
   });
 });

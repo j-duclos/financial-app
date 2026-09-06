@@ -34,6 +34,7 @@ from .services import (
     create_link_token,
     disconnect_plaid_linked_account,
     exchange_public_token,
+    normalize_browser_plaid_redirect_uri,
     remove_plaid_item_from_plaid,
     resolve_plaid_link_redirect_uri,
     should_skip_plaid_item_sync,
@@ -229,9 +230,17 @@ class PlaidItemViewSet(
             )
         try:
             access_token = decrypt_plaid_access_token(item.access_token_cipher)
+            rid = ""
+            raw_redirect = request.data.get("redirect_uri") if isinstance(request.data, dict) else None
+            if raw_redirect:
+                try:
+                    rid = normalize_browser_plaid_redirect_uri(str(raw_redirect).strip())
+                except RuntimeError as e:
+                    return Response({"redirect_uri": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
             link_token = create_link_token(
                 client_user_id=f"user-{request.user.pk}-hh-{item.household_id}-item-{item.pk}",
                 access_token=access_token,
+                link_redirect_uri=rid or None,
             )
         except PlaidTokenDecryptError as e:
             return Response(
@@ -312,7 +321,13 @@ class PlaidSyncLiabilitiesAllView(APIView):
 
 
 class PlaidLiabilitiesWebhookView(APIView):
-    """Plaid LIABILITIES / DEFAULT_UPDATE receiver. Does not invent webhook event names."""
+    """Plaid LIABILITIES / DEFAULT_UPDATE receiver.
+
+    Security matches the project's other Plaid public endpoints: the route is
+    inert unless ``PLAID_WEBHOOK_URL`` is configured, then only the documented
+    LIABILITIES/DEFAULT_UPDATE payload with a known Item is processed. There is
+    no additional Plaid webhook-JWT verifier elsewhere in this repository.
+    """
 
     permission_classes = [AllowAny]
     authentication_classes = []

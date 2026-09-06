@@ -28,7 +28,7 @@ from django.core.cache import cache
 from accounts.models import Account
 from accounts.services.account_health import _target_utilization_percent
 from accounts.services.account_health_constants import DEFAULT_TARGET_UTILIZATION_PERCENT
-from accounts.services.credit_card import ledger_owed_balance
+from accounts.services.minimum_payment import resolve_effective_minimum_payment
 from common.services.cache import (
     DEBT_PAYOFF_PROJECTION_CACHE_SECONDS,
     get_debt_payoff_projection_cache_key,
@@ -148,7 +148,8 @@ def _owed_from_inputs(
 
 
 def _minimum_payment(card: Account, balance: Decimal) -> Decimal:
-    configured = Decimal(str(card.minimum_payment_amount or 0))
+    resolved = resolve_effective_minimum_payment(card)
+    configured = resolved.amount if resolved.amount is not None else Decimal("0")
     if configured > 0 and balance > 0:
         return _quantize(min(configured, balance))
     return Decimal("0")

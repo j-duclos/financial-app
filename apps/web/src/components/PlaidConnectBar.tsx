@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { usePlaidLink } from "react-plaid-link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getPlaidRedirectUri } from "../lib/plaidRedirectUri";
+import { clearPendingUpdateMode, readPendingUpdateMode } from "../lib/plaidUpdateModeSession";
 import {
   formatPlaidSyncSummary,
   invalidateQueriesAfterPlaidSync,
@@ -20,6 +21,7 @@ import {
   resetPlaidItemSyncCursor,
   syncAllPlaidItems,
   syncPlaidItem,
+  syncPlaidItemLiabilities,
 } from "@budget-app/api-client";
 
 /** Survives full-page OAuth return (Chase, etc.). */
@@ -71,7 +73,6 @@ type PlaidExitError = { error_message?: string; error_code?: string; display_mes
 function PlaidLinkHost({
   linkToken,
   receivedRedirectUri,
-  householdId,
   onExchangeSuccess,
   onSessionEnd,
   onLinkUiError,
@@ -174,6 +175,7 @@ export function PlaidConnectBar({
   const [linkToken, setLinkToken] = useState<string | null>(null);
   /** Set only when completing Plaid OAuth return (same link_token as before redirect). */
   const [receivedRedirectUri, setReceivedRedirectUri] = useState<string | null>(null);
+  const [updateModeItemId, setUpdateModeItemId] = useState<number | null>(null);
   const [plaidError, setPlaidError] = useState<string | null>(null);
   const [fetchingLink, setFetchingLink] = useState(false);
   const [syncingItemId, setSyncingItemId] = useState<number | null>(null);
@@ -190,7 +192,8 @@ export function PlaidConnectBar({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (!params.has("oauth_state_id")) return;
-    const stored = readPendingLinkToken();
+    const pendingUpdate = readPendingUpdateMode();
+    const stored = pendingUpdate?.token || readPendingLinkToken();
     if (!stored) {
       setPlaidError(
         "Bank sign-in could not resume (missing session). Close this and use Connect bank again."
@@ -200,6 +203,7 @@ export function PlaidConnectBar({
     }
     setPlaidError(null);
     setLinkToken(stored);
+    if (pendingUpdate) setUpdateModeItemId(pendingUpdate.itemId);
     setReceivedRedirectUri(window.location.href);
   }, []);
 
@@ -382,6 +386,28 @@ export function PlaidConnectBar({
 
   const onSuccess = useCallback(
     async (publicToken: string) => {
+      if (updateModeItemId != null) {
+        setPlaidError(null);
+        try {
+          await syncPlaidItemLiabilities(updateModeItemId);
+          setLinkToken(null);
+          setReceivedRedirectUri(null);
+          setUpdateModeItemId(null);
+          clearPendingUpdateMode();
+          stripOAuthParamsFromLocation();
+          setStatusLine("Credit-card minimum updates enabled. Refreshing accounts…");
+          await queryClient.invalidateQueries({ queryKey: ["accounts"] });
+          await queryClient.invalidateQueries({ queryKey: ["dti"] });
+          await queryClient.invalidateQueries({ queryKey: ["debt-plan"] });
+          await queryClient.invalidateQueries({ queryKey: ["plaid-items"] });
+          if (redirectAfterLink) {
+            navigate(redirectAfterLink, { replace: true });
+          }
+        } catch (e) {
+          setPlaidError(formatPlaidError(e));
+        }
+        return;
+      }
       if (householdId == null) {
         setPlaidError(
           "Bank linked, but the page is still loading your household. Refresh this page once—your bank should stay connected."
@@ -409,13 +435,15 @@ export function PlaidConnectBar({
         setPlaidError(formatPlaidError(e));
       }
     },
-    [householdId, queryClient, redirectAfterLink, navigate, runImportAll]
+    [householdId, queryClient, redirectAfterLink, navigate, runImportAll, updateModeItemId]
   );
 
   const closeLinkSession = useCallback(() => {
     setLinkToken(null);
     setReceivedRedirectUri(null);
+    setUpdateModeItemId(null);
     clearPendingLinkToken();
+    clearPendingUpdateMode();
     stripOAuthParamsFromLocation();
   }, []);
 
@@ -424,6 +452,8 @@ export function PlaidConnectBar({
     setPlaidError(null);
     setFetchingLink(true);
     try {
+      clearPendingUpdateMode();
+      setUpdateModeItemId(null);
       const redirect_uri = getPlaidRedirectUri();
       const { link_token } = await createPlaidLinkToken(householdId, { redirect_uri });
       persistPendingLinkToken(link_token);

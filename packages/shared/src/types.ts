@@ -67,6 +67,10 @@ export interface PlaidHouseholdLiabilitySyncResult {
   household_id: number;
   items: PlaidLiabilitySyncResult[];
   item_count: number;
+  success_count?: number;
+  reauthorization_required_count?: number;
+  failed_count?: number;
+  accounts_updated?: number;
 }
 
 /** Category types */
@@ -2577,6 +2581,9 @@ export type DtiProposedHousingMode = (typeof DTI_PROPOSED_HOUSING_MODES)[number]
 export const DTI_DOWN_PAYMENT_TYPES = ["dollars", "percent"] as const;
 export type DtiDownPaymentType = (typeof DTI_DOWN_PAYMENT_TYPES)[number];
 
+export const DTI_LOAN_ESTIMATE_TYPES = ["fha", "fixed_rate_manual"] as const;
+export type DtiLoanEstimateType = (typeof DTI_LOAN_ESTIMATE_TYPES)[number];
+
 export interface DtiProposedPurchaseInput {
   purchase_price: string;
   down_payment_type: DtiDownPaymentType;
@@ -2588,6 +2595,8 @@ export interface DtiProposedPurchaseInput {
   monthly_mortgage_insurance?: string;
   monthly_hoa_dues?: string;
   other_required_monthly_housing_costs?: string;
+  loan_estimate_type?: DtiLoanEstimateType;
+  finance_upfront_mip?: boolean;
 }
 
 export interface DtiPurchaseEstimateResult {
@@ -2601,6 +2610,28 @@ export interface DtiPurchaseEstimateResult {
   loan_term_years: number;
   number_of_payments: number;
   monthly: DtiProposedHousingBreakdown;
+  loan_estimate_type?: DtiLoanEstimateType | string;
+  base_loan_amount?: string;
+  total_financed_loan_amount?: string;
+  finance_upfront_mip?: boolean | null;
+  upfront_mip_rate?: string | null;
+  upfront_mip_amount?: string | null;
+  annual_mip_rate?: string | null;
+  estimated_monthly_mip?: string | null;
+  annual_mip_duration?: string | null;
+  monthly_mip_method?: string | null;
+  mip_source_label?: string | null;
+  mip_source_url?: string | null;
+  mortgage_insurance_source?: string | null;
+}
+
+export interface DtiProposedEquation {
+  estimated_housing_payment: string;
+  other_included_monthly_debt: string;
+  total_proposed_obligations: string;
+  gross_monthly_income: string;
+  proposed_front_end_dti_percent: string | null;
+  proposed_back_end_dti_percent: string | null;
 }
 
 type DtiCalculationRequestBase = {
@@ -2680,6 +2711,7 @@ export interface DtiCalculationResponse {
   inputs: DtiCalculationInputs;
   current: DtiBucketResult;
   proposed: DtiBucketResult | null;
+  proposed_equation?: DtiProposedEquation | null;
   proposed_housing_mode?: DtiProposedHousingMode | null;
   purchase_estimate?: DtiPurchaseEstimateResult | null;
   capacity: DtiCapacityResult;

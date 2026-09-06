@@ -76,6 +76,13 @@ def freshness_period() -> timedelta:
     return timedelta(days=max(1, days))
 
 
+# Automatic-mode freshness rule (one policy for every consumer):
+# A still-usable institution minimum remains the effective amount even when stale.
+# Manual is a fallback only when the provider value is missing or unusable
+# (null, or $0 while the card still has a balance). Stale is a warning, not a
+# switch to manual. Do not estimate an issuer minimum from balance.
+
+
 def is_provider_zero_usable(
     *,
     provider_minimum: Decimal | None,
@@ -261,7 +268,7 @@ def persist_resolved_minimum(
     Account.objects.filter(pk=account.pk).update(**updates)
     for key, value in updates.items():
         setattr(account, key, value)
-    should_invalidate = changed if invalidate is None else invalidate
+    should_invalidate = changed and (True if invalidate is None else bool(invalidate))
     if should_invalidate:
         household_id = account.household_id
 
@@ -304,6 +311,7 @@ def apply_plaid_credit_liability(
     observed_at: datetime,
     current_owed: Decimal | None = None,
     currency_ok: bool = True,
+    invalidate: bool = True,
 ) -> dict[str, Any]:
     """Store provider fields from a Plaid CreditCardLiability and resolve effective min.
 
@@ -389,7 +397,9 @@ def apply_plaid_credit_liability(
             setattr(account, key, value)
 
     resolved = resolve_effective_minimum_payment(account, current_owed=current_owed, now=observed_at)
-    changed = persist_resolved_minimum(account, resolved, extra_updates=extra)
+    changed = persist_resolved_minimum(
+        account, resolved, extra_updates=extra, invalidate=invalidate
+    )
     return {
         "account_id": account.id,
         "updated": True,

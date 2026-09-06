@@ -35,7 +35,9 @@ import PlanningSubnav from "../components/PlanningSubnav";
 import DtiDebtFormModal, { type DtiDebtFormPrefill } from "../components/dti/DtiDebtFormModal";
 import DtiIncomeFormModal from "../components/dti/DtiIncomeFormModal";
 import DtiProfileFormModal from "../components/dti/DtiProfileFormModal";
+import DtiProposedEquation from "../components/dti/DtiProposedEquation";
 import DtiProposedHomePanel from "../components/dti/DtiProposedHomePanel";
+import DtiCreditCardSuggestions from "../components/dti/DtiCreditCardSuggestions";
 import { useDefaultHouseholdId } from "../hooks/useDefaultHouseholdId";
 import {
   DTI_PLANNING_DISCLAIMER,
@@ -53,6 +55,7 @@ import {
 import {
   buildDtiCalculationRequest,
   emptyProposedHousingDraft,
+  normalizeProposedHousingDraft,
   proposedHousingPayloadForRequest,
   subtractMoneyStrings,
   suggestionPrefill,
@@ -62,6 +65,7 @@ import {
 } from "../lib/dtiForm";
 import {
   emptyPurchaseEstimateDraft,
+  purchaseDraftMatchesApplied,
   purchaseEstimateSummary,
   type AppliedProposedHome,
   type PurchaseEstimateDraft,
@@ -298,10 +302,30 @@ export default function DebtToIncome() {
   const loadError =
     profileQuery.isError || incomeQuery.isError || debtQuery.isError || currentQuery.isError;
   const showPercents = calc?.status === "calculated";
-  const proposedBusy = Boolean(appliedProposed) && proposedQuery.isFetching;
+  const proposedInputsStale = Boolean(
+    appliedProposed &&
+      (appliedProposed.mode === "purchase"
+        ? !purchaseDraftMatchesApplied(purchaseDraft, appliedProposed.purchase)
+        : (() => {
+            const result = normalizeProposedHousingDraft(monthlyDraft);
+            return (
+              !result.ok ||
+              JSON.stringify(result.payload) !== JSON.stringify(appliedProposed.housing)
+            );
+          })())
+  );
+  const proposedBusy = Boolean(appliedProposed) && proposedQuery.isFetching && !proposedInputsStale;
   const proposedResult =
-    appliedProposed && proposedQuery.data?.proposed && !proposedBusy
+    appliedProposed && proposedQuery.data?.proposed && !proposedBusy && !proposedInputsStale
       ? proposedQuery.data.proposed
+      : null;
+  const purchaseEstimate =
+    appliedProposed?.mode === "purchase" && !proposedBusy && !proposedInputsStale
+      ? proposedQuery.data?.purchase_estimate ?? null
+      : null;
+  const proposedEquation =
+    appliedProposed && proposedQuery.data?.proposed_equation && !proposedBusy && !proposedInputsStale
+      ? proposedQuery.data.proposed_equation
       : null;
   const proposedMode = Boolean(proposedResult);
   const meterBackPercent = proposedMode
@@ -375,7 +399,7 @@ export default function DebtToIncome() {
   }
 
   return (
-    <div className={`${PAGE_SHELL_PY} space-y-6`}>
+    <div className={`${PAGE_SHELL_PY} space-y-6 overflow-x-hidden`}>
       <header className="space-y-2">
         <h1 className="text-lg font-semibold text-gray-900">Debt-to-Income</h1>
         <p className="text-sm text-gray-600">
@@ -436,12 +460,11 @@ export default function DebtToIncome() {
             </section>
           ) : null}
 
-          <div className="xl:grid xl:grid-cols-3 xl:gap-4 space-y-4 xl:space-y-0">
-            <section className="xl:col-span-2 space-y-4">
-              <h2 className="text-base font-semibold text-gray-900">DTI summary</h2>
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-gray-800">Current plan</h3>
-                <div className={METRIC_TILE_GRID_3}>
+          <section className="space-y-4">
+            <h2 className="text-base font-semibold text-gray-900">DTI summary</h2>
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-gray-800">Current plan</h3>
+              <div className={METRIC_TILE_GRID_3}>
                 <DashboardMetricTile
                   label="Gross monthly income"
                   value={formatDtiMoney(calc.inputs.gross_monthly_income)}
@@ -471,131 +494,131 @@ export default function DebtToIncome() {
                   value={showPercents ? formatDtiPercent(calc.current.back_end_dti_percent) : "Not available"}
                   subtitle="Housing plus other debt payments ÷ gross monthly income"
                 />
-                </div>
               </div>
-              {proposedBusy ? (
-                <p className="text-sm text-gray-600" aria-live="polite">
-                  Updating proposed home calculation…
-                </p>
-              ) : null}
-              {proposedResult ? (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Proposed home</h3>
-                  <p className="text-sm text-gray-600">
-                    {appliedProposed?.mode === "purchase" && proposedQuery.data?.purchase_estimate
-                      ? purchaseEstimateSummary(proposedQuery.data.purchase_estimate)
-                      : "Based on the monthly housing-payment components you entered."}
-                  </p>
-                  <div className={METRIC_TILE_GRID_4}>
-                  <DashboardMetricTile
-                    label="Estimated total monthly housing payment"
-                    value={formatDtiMoney(proposedResult.housing?.total)}
-                  />
-                  <DashboardMetricTile
-                    label="Proposed front-end DTI"
-                    help="Proposed housing payment ÷ gross monthly income"
-                    value={showPercents ? formatDtiPercent(proposedResult.front_end_dti_percent) : "Not available"}
-                  />
-                  <DashboardMetricTile
-                    label="Proposed back-end DTI"
-                    help="Proposed housing plus other debt payments ÷ gross monthly income"
-                    value={showPercents ? formatDtiPercent(proposedResult.back_end_dti_percent) : "Not available"}
-                  />
-                  <DashboardMetricTile
-                    label="Change from current back-end DTI"
-                    value={backendChange.label}
-                    subtitle={backendChange.subtitle ?? undefined}
-                  />
-                  </div>
-                </div>
-              ) : null}
+            </div>
+            {!proposedMode ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <TargetMeter
-                  label={
-                    proposedMode
-                      ? "Proposed back-end DTI vs your selected target"
-                      : "Current back-end DTI vs your selected target"
-                  }
+                  label="Current back-end DTI vs your selected target"
                   actual={meterBackPercent}
                   target={calc.inputs.target_back_end_dti_percent}
                   comparison={backComparison}
                 />
                 {calc.inputs.target_front_end_dti_percent ? (
                   <TargetMeter
-                    label={
-                      proposedMode
-                        ? "Proposed front-end DTI vs your selected target"
-                        : "Current front-end DTI vs your selected target"
-                    }
+                    label="Current front-end DTI vs your selected target"
                     actual={meterFrontPercent}
                     target={calc.inputs.target_front_end_dti_percent}
                     comparison={frontComparison}
                   />
                 ) : null}
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    profileSaveMu.reset();
-                    setProfileModalOpen(true);
-                  }}
-                  className="text-sm font-medium text-blue-700 hover:underline min-h-[44px]"
-                >
-                  Edit housing and targets
-                </button>
-              </div>
-              {warnings.housing.map((warning) => (
-                <p
-                  key={warning.code}
-                  className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2"
-                >
-                  {warning.message}
-                </p>
-              ))}
-              <section className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 space-y-2">
-                <h3 className="text-sm font-semibold text-indigo-950">
-                  Monthly housing payment available at your selected back-end DTI target
-                </h3>
-                <p className="text-2xl font-bold tabular-nums text-indigo-950">
-                  {formatDtiMoney(capacity)}
-                </p>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  profileSaveMu.reset();
+                  setProfileModalOpen(true);
+                }}
+                className="text-sm font-medium text-blue-700 hover:underline min-h-[44px]"
+              >
+                Edit housing and targets
+              </button>
+            </div>
+            {warnings.housing.map((warning) => (
+              <p
+                key={warning.code}
+                className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2"
+              >
+                {warning.message}
+              </p>
+            ))}
+            <section className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 space-y-2">
+              <h3 className="text-sm font-semibold text-indigo-950">
+                Monthly housing payment available at your selected back-end DTI target
+              </h3>
+              <p className="text-2xl font-bold tabular-nums text-indigo-950">
+                {formatDtiMoney(capacity)}
+              </p>
+              <p className="text-sm text-indigo-900">
+                This is the estimated total monthly housing payment that fits within your selected DTI
+                target after included monthly debts. It is not a home price or loan approval.
+              </p>
+              {capacity && isZeroMoney(capacity) ? (
                 <p className="text-sm text-indigo-900">
-                  This is the estimated total monthly housing payment that fits within your selected DTI
-                  target after included monthly debts. It is not a home price or loan approval.
+                  Existing monthly debt uses all of the capacity at your selected target, so there is
+                  no remaining estimated housing payment at that target.
                 </p>
-                {capacity && isZeroMoney(capacity) ? (
-                  <p className="text-sm text-indigo-900">
-                    Existing monthly debt uses all of the capacity at your selected target, so there is
-                    no remaining estimated housing payment at that target.
-                  </p>
-                ) : null}
-              </section>
+              ) : null}
             </section>
+          </section>
 
-            <DtiProposedHomePanel
-              monthlyDraft={monthlyDraft}
-              purchaseDraft={purchaseDraft}
-              selectedMode={selectedProposedMode}
-              applied={appliedProposed}
-              proposedBusy={proposedBusy}
-              proposedError={Boolean(appliedProposed && proposedQuery.isError)}
-              proposedHousingTotal={proposedResult?.housing?.total ?? null}
-              purchaseEstimate={proposedQuery.data?.purchase_estimate ?? null}
-              grossMonthlyIncome={calc.inputs.gross_monthly_income}
-              enteredMonthlyTotal={enteredProposedTotal}
-              onMonthlyDraftChange={setMonthlyDraft}
-              onPurchaseDraftChange={setPurchaseDraft}
-              onSelectMode={setSelectedProposedMode}
-              onApplyMonthly={applyMonthlyHousing}
-              onApplyPurchase={applyPurchaseHousing}
-              onClearMonthly={clearMonthlyEstimate}
-              onClearPurchase={clearPurchaseEstimate}
-              onRetryProposed={() => {
-                void proposedQuery.refetch();
-              }}
-            />
-          </div>
+          <div
+            className="lg:grid lg:grid-cols-3 lg:gap-4 lg:items-start space-y-4 lg:space-y-0"
+            data-testid="dti-content-layout"
+          >
+            <div
+              data-testid="dti-main-column"
+              className="lg:col-span-2 space-y-4 min-w-0 order-2 lg:order-1"
+            >
+              {proposedBusy ? (
+                <p className="text-sm text-gray-600" aria-live="polite">
+                  Updating proposed home calculation…
+                </p>
+              ) : null}
+              {proposedInputsStale && appliedProposed ? (
+                <p className="text-sm text-amber-900" data-testid="dti-proposed-stale">
+                  Proposed-home inputs have changed. Recalculate to update proposed DTI.
+                </p>
+              ) : null}
+              {proposedResult ? (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-800">Proposed home</h3>
+                  <p className="text-sm text-gray-600">
+                    {appliedProposed?.mode === "purchase" && purchaseEstimate
+                      ? purchaseEstimateSummary(purchaseEstimate)
+                      : "Based on the monthly housing-payment components you entered."}
+                  </p>
+                  <div className={METRIC_TILE_GRID_4}>
+                    <DashboardMetricTile
+                      label="Current back-end DTI"
+                      value={showPercents ? formatDtiPercent(calc.current.back_end_dti_percent) : "Not available"}
+                    />
+                    <DashboardMetricTile
+                      label="Proposed back-end DTI"
+                      help="Proposed housing plus other debt payments ÷ gross monthly income"
+                      value={showPercents ? formatDtiPercent(proposedResult.back_end_dti_percent) : "Not available"}
+                    />
+                    <DashboardMetricTile
+                      label="Increase in back-end DTI"
+                      value={backendChange.label}
+                      subtitle={backendChange.subtitle ?? undefined}
+                    />
+                    <DashboardMetricTile
+                      label="Proposed monthly housing payment"
+                      value={formatDtiMoney(proposedResult.housing?.total)}
+                    />
+                  </div>
+                  {proposedEquation ? <DtiProposedEquation equation={proposedEquation} /> : null}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <TargetMeter
+                      label="Proposed back-end DTI vs your selected target"
+                      actual={meterBackPercent}
+                      target={calc.inputs.target_back_end_dti_percent}
+                      comparison={backComparison}
+                    />
+                    {calc.inputs.target_front_end_dti_percent ? (
+                      <TargetMeter
+                        label="Proposed front-end DTI vs your selected target"
+                        actual={meterFrontPercent}
+                        target={calc.inputs.target_front_end_dti_percent}
+                        comparison={frontComparison}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
           <section className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -683,50 +706,14 @@ export default function DebtToIncome() {
             ) : null}
           </section>
 
-          {suggestionQuery.isError ? (
-            <section className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 space-y-2">
-              <h2 className="text-base font-semibold text-gray-900">Credit cards not yet included</h2>
-              <MutationAlert
-                message="Could not load credit-card suggestions."
-                onRetry={() => {
-                  void suggestionQuery.refetch();
-                }}
-              />
-            </section>
-          ) : suggestions.length > 0 ? (
-            <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-3">
-              <h2 className="text-base font-semibold text-gray-900">Credit cards not yet included</h2>
-              <p className="text-sm text-gray-600">
-                These active cards are suggestions only. Nothing is added until you confirm.
-              </p>
-              <ul className="space-y-2">
-                {suggestions.map((card) => (
-                  <li
-                    key={card.account_id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white border border-blue-100 px-3 py-2"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900">{card.effective_display_name}</p>
-                      <p className="text-sm text-gray-600">
-                        Balance {formatCurrency(card.current_balance)} · Minimum{" "}
-                        {card.minimum_payment_amount
-                          ? formatCurrency(card.minimum_payment_amount)
-                          : "Not available"}
-                        {card.minimum_payment_usable ? "" : " · minimum not usable"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => addSuggestedCard(card)}
-                      className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 min-h-[44px]"
-                    >
-                      Add to DTI
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+          <DtiCreditCardSuggestions
+            suggestions={suggestions}
+            loadError={suggestionQuery.isError}
+            onRetry={() => {
+              void suggestionQuery.refetch();
+            }}
+            onAdd={addSuggestedCard}
+          />
 
           <section className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -800,12 +787,19 @@ export default function DebtToIncome() {
                         ) : null}
                       </div>
                       <p className="text-sm text-gray-800">
-                        Effective monthly payment {view.effectivePaymentLabel}
+                        Effective monthly payment: {view.effectivePaymentLabel}
                       </p>
                       <p className="text-sm text-gray-600">{view.paymentSource}</p>
+                      {view.linkedSourceLabel ? (
+                        <p className="text-sm text-gray-600">{view.linkedSourceLabel}</p>
+                      ) : null}
+                      {view.lastCheckedLabel ? (
+                        <p className="text-sm text-gray-600">{view.lastCheckedLabel}</p>
+                      ) : null}
                       {view.showLinkedMinimumSync ? (
                         <p className="text-xs text-gray-500">
-                          Synced from account minimum. Updates when the linked account minimum changes.
+                          {view.linkedMinimumLine ??
+                            "Synced from account minimum. Updates when the linked account minimum changes."}
                         </p>
                       ) : null}
                       {view.linkedAccountLabel ? (
@@ -1101,6 +1095,39 @@ export default function DebtToIncome() {
               </ul>
             ) : null}
           </section>
+            </div>
+
+            <div
+              data-testid="dti-calculator-column"
+              className="order-1 lg:order-2 min-w-0 lg:sticky lg:top-20 lg:z-10 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
+            >
+              <DtiProposedHomePanel
+                monthlyDraft={monthlyDraft}
+                purchaseDraft={purchaseDraft}
+                selectedMode={selectedProposedMode}
+                applied={appliedProposed}
+                proposedBusy={proposedBusy}
+                proposedError={Boolean(appliedProposed && proposedQuery.isError)}
+                proposedHousingTotal={proposedResult?.housing?.total ?? null}
+                purchaseEstimate={purchaseEstimate}
+                purchaseAssumptionsStale={
+                  appliedProposed?.mode === "purchase" ? proposedInputsStale : false
+                }
+                grossMonthlyIncome={calc.inputs.gross_monthly_income}
+                enteredMonthlyTotal={enteredProposedTotal}
+                onMonthlyDraftChange={setMonthlyDraft}
+                onPurchaseDraftChange={setPurchaseDraft}
+                onSelectMode={setSelectedProposedMode}
+                onApplyMonthly={applyMonthlyHousing}
+                onApplyPurchase={applyPurchaseHousing}
+                onClearMonthly={clearMonthlyEstimate}
+                onClearPurchase={clearPurchaseEstimate}
+                onRetryProposed={() => {
+                  void proposedQuery.refetch();
+                }}
+              />
+            </div>
+          </div>
         </>
       ) : null}
 
@@ -1265,6 +1292,12 @@ function DebtTableRow({
       <td className="px-3 py-2">{view.effectivePaymentLabel}</td>
       <td className="px-3 py-2">
         {view.paymentSource}
+        {view.linkedSourceLabel ? (
+          <span className="block text-xs text-gray-500">{view.linkedSourceLabel}</span>
+        ) : null}
+        {view.lastCheckedLabel ? (
+          <span className="block text-xs text-gray-500">{view.lastCheckedLabel}</span>
+        ) : null}
         {view.planningEstimate ? (
           <span className="block text-xs text-gray-500">
             {view.calculationSourceLabel}. Planning estimate only.

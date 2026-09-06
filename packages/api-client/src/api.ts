@@ -1018,10 +1018,14 @@ export async function syncHouseholdLiabilities(
 }
 
 export async function createPlaidUpdateModeLinkToken(
-  itemId: number
+  itemId: number,
+  options?: { redirect_uri?: string }
 ): Promise<{ link_token: string; update_mode: boolean }> {
   return requestRequired(`/api/plaid/items/${itemId}/link-token-update/`, {
     method: "POST",
+    body: JSON.stringify({
+      ...(options?.redirect_uri ? { redirect_uri: options.redirect_uri } : {}),
+    }),
   });
 }
 

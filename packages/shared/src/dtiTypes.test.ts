@@ -18,6 +18,7 @@ import {
   DTI_DEBT_TYPES,
   DTI_DOWN_PAYMENT_TYPES,
   DTI_INCOME_TYPES,
+  DTI_LOAN_ESTIMATE_TYPES,
   DTI_PAYMENT_SOURCES,
   DTI_PROPOSED_HOUSING_MODES,
   DTI_STUDENT_LOAN_PAYMENT_METHODS,
@@ -225,6 +226,7 @@ describe("DTI shared types", () => {
   it("types purchase estimates separately from monthly housing components", () => {
     expect(DTI_PROPOSED_HOUSING_MODES).toEqual(["monthly_payment", "purchase"]);
     expect(DTI_DOWN_PAYMENT_TYPES).toEqual(["dollars", "percent"]);
+    expect(DTI_LOAN_ESTIMATE_TYPES).toEqual(["fha", "fixed_rate_manual"]);
     const purchaseRequest: DtiPurchaseCalculationRequest = {
       household_id: 1,
       proposed_housing_mode: "purchase",
@@ -246,6 +248,7 @@ describe("DTI shared types", () => {
       annual_interest_rate: "6.50",
       loan_term_years: 30,
       number_of_payments: 360,
+      loan_estimate_type: "fixed_rate_manual",
       monthly: {
         principal_and_interest: "2439.78",
         property_taxes: "208.33",

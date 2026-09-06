@@ -32,6 +32,12 @@ export function formatMinimumPaymentSourceLine(account: {
   if (freshness === "unsupported") {
     return `${money}/month — institution does not provide this value`;
   }
+  if (freshness === "product_not_enabled") {
+    return `${money}/month — liabilities product is not enabled`;
+  }
+  if (freshness === "sync_failed") {
+    return `${money}/month — last refresh failed`;
+  }
   if (source === "plaid") {
     return `${money}/month — synced from institution`;
   }
@@ -79,14 +85,14 @@ export function freshnessLabel(freshness: MinimumPaymentFreshness | null | undef
     case "sync_failed":
       return "Sync failed";
     case "product_not_enabled":
-      return "Institution product not enabled";
+      return "Liabilities product is not enabled";
     default:
       return "Unknown";
   }
 }
 
 export function sourceLabel(source: MinimumPaymentSource | null | undefined): string {
-  if (source === "plaid") return "Institution";
+  if (source === "plaid") return "Institution reported";
   if (source === "manual") return "Manual";
   return "None";
 }

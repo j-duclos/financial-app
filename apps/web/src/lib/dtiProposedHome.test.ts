@@ -43,7 +43,20 @@ describe("purchase estimate draft", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("allows a zero interest rate and a 100% down payment", () => {
+  it("rejects a blank interest rate instead of sending zero", () => {
+    const draft = emptyPurchaseEstimateDraft();
+    draft.purchase_price = "400000";
+    draft.down_payment_type = "percent";
+    draft.down_payment_value = "3.50";
+    draft.annual_interest_rate = "";
+    const result = normalizePurchaseEstimateDraft(draft);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.annual_interest_rate).toBe("Enter the estimated annual interest rate.");
+    }
+  });
+
+  it("keeps an explicit zero interest rate", () => {
     const draft = emptyPurchaseEstimateDraft();
     draft.purchase_price = "400000";
     draft.down_payment_type = "percent";
@@ -54,6 +67,7 @@ describe("purchase estimate draft", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.payload.annual_interest_rate).toBe("0.00");
+      expect(result.payload.loan_estimate_type).toBe("fixed_rate_manual");
       expect(result.payload.down_payment_value).toBe("100.00");
       expect(result.payload.loan_term_years).toBe(15);
     }

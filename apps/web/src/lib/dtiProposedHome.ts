@@ -1,5 +1,6 @@
 import type {
   DtiDownPaymentType,
+  DtiLoanEstimateType,
   DtiProposedHousingInput,
   DtiProposedHousingMode,
   DtiProposedPurchaseInput,
@@ -32,6 +33,15 @@ export const PURCHASE_MODE_HELP =
 
 export const EXTREME_MONTHLY_WARNING =
   "This appears unusually high for a monthly payment. Did you mean to use “Estimate From a Home Purchase” and enter a purchase price?";
+
+export const INTEREST_RATE_REQUIRED_MESSAGE = "Enter the estimated annual interest rate.";
+export const LOAN_ESTIMATE_FHA: DtiLoanEstimateType = "fha";
+export const LOAN_ESTIMATE_FIXED_RATE_MANUAL: DtiLoanEstimateType = "fixed_rate_manual";
+
+export const LOAN_ESTIMATE_TYPE_LABELS: Record<DtiLoanEstimateType, string> = {
+  fha: "FHA",
+  fixed_rate_manual: "Fixed-rate mortgage with manually entered insurance",
+};
 
 export type MonthlyPaymentField = keyof ProposedHousingDraft;
 
@@ -77,6 +87,8 @@ export type PurchaseEstimateDraft = {
   monthly_mortgage_insurance: string;
   monthly_hoa_dues: string;
   other_required_monthly_housing_costs: string;
+  loan_estimate_type: DtiLoanEstimateType;
+  finance_upfront_mip: boolean;
 };
 
 export type PurchaseEstimateDraftErrors = Partial<Record<keyof PurchaseEstimateDraft, string>>;
@@ -94,6 +106,8 @@ export function emptyPurchaseEstimateDraft(): PurchaseEstimateDraft {
     monthly_mortgage_insurance: "",
     monthly_hoa_dues: "",
     other_required_monthly_housing_costs: "",
+    loan_estimate_type: LOAN_ESTIMATE_FIXED_RATE_MANUAL,
+    finance_upfront_mip: true,
   };
 }
 
@@ -139,6 +153,14 @@ function normalizeBoundedPercent(
   return { ok: true, value: centsToMoney(hundredths) };
 }
 
+export function normalizeInterestRate(
+  raw: string
+): { ok: true; value: string } | { ok: false; error: string } {
+  const trimmed = raw.trim().replace(/%/g, "");
+  if (trimmed === "") return { ok: false, error: INTEREST_RATE_REQUIRED_MESSAGE };
+  return normalizeBoundedPercent(trimmed, 50);
+}
+
 export function normalizePurchaseEstimateDraft(
   draft: PurchaseEstimateDraft
 ):
@@ -160,10 +182,7 @@ export function normalizePurchaseEstimateDraft(
     if (!amount.ok) errors.down_payment_value = amount.error;
     else downPaymentValue = amount.value;
   }
-  const rate = normalizeBoundedPercent(
-    draft.annual_interest_rate.trim() === "" ? "0" : draft.annual_interest_rate,
-    50
-  );
+  const rate = normalizeInterestRate(draft.annual_interest_rate);
   if (!rate.ok) errors.annual_interest_rate = rate.error;
   const termRaw = draft.loan_term_years.trim();
   const term = Number(termRaw);
@@ -187,7 +206,12 @@ export function normalizePurchaseEstimateDraft(
       errors.down_payment_value = "Down payment cannot exceed the home purchase price.";
     }
   }
+  const loanType = draft.loan_estimate_type || LOAN_ESTIMATE_FIXED_RATE_MANUAL;
+  if (loanType !== LOAN_ESTIMATE_FHA && loanType !== LOAN_ESTIMATE_FIXED_RATE_MANUAL) {
+    errors.loan_estimate_type = "Select a loan estimate type.";
+  }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
+  const isFha = loanType === LOAN_ESTIMATE_FHA;
   return {
     ok: true,
     payload: {
@@ -198,17 +222,62 @@ export function normalizePurchaseEstimateDraft(
       loan_term_years: term,
       annual_property_taxes: annualTaxes.ok ? annualTaxes.value : MONEY_ZERO,
       annual_homeowners_insurance: annualInsurance.ok ? annualInsurance.value : MONEY_ZERO,
-      monthly_mortgage_insurance: mi.ok ? mi.value : MONEY_ZERO,
+      monthly_mortgage_insurance: isFha ? MONEY_ZERO : mi.ok ? mi.value : MONEY_ZERO,
       monthly_hoa_dues: hoa.ok ? hoa.value : MONEY_ZERO,
       other_required_monthly_housing_costs: other.ok ? other.value : MONEY_ZERO,
+      loan_estimate_type: loanType,
+      finance_upfront_mip: isFha ? draft.finance_upfront_mip : false,
     },
   };
+}
+
+export function purchaseDraftMatchesApplied(
+  draft: PurchaseEstimateDraft,
+  applied: DtiProposedPurchaseInput
+): boolean {
+  const result = normalizePurchaseEstimateDraft(draft);
+  if (!result.ok) return false;
+  return JSON.stringify(result.payload) === JSON.stringify(applied);
 }
 
 export function purchaseEstimateSummary(estimate: DtiPurchaseEstimateResult): string {
   return `Based on a ${formatCurrency(estimate.purchase_price)} purchase price, ${formatCurrency(estimate.down_payment_amount)} down payment, ${estimate.annual_interest_rate}% annual interest rate, and ${estimate.loan_term_years}-year fixed-rate term.`;
 }
 
+export function collapsedPurchaseAssumptionLines(
+  estimate: DtiPurchaseEstimateResult | null,
+  draft: PurchaseEstimateDraft
+): string[] {
+  const price = estimate?.purchase_price ?? (draft.purchase_price.trim() || null);
+  const rate = estimate?.annual_interest_rate ?? (draft.annual_interest_rate.trim() || null);
+  const term = estimate?.loan_term_years ?? Number(draft.loan_term_years);
+  const type = (estimate?.loan_estimate_type ?? draft.loan_estimate_type) as DtiLoanEstimateType;
+  const downPercent = estimate?.down_payment_percent;
+  const downAmount = estimate?.down_payment_amount;
+  const lines: string[] = [];
+  if (price) lines.push(`${formatCurrency(price)} home`);
+  if (downPercent) {
+    lines.push(`${downPercent}% down`);
+  } else if (downAmount) {
+    lines.push(`${formatCurrency(downAmount)} down`);
+  } else if (draft.down_payment_value.trim()) {
+    lines.push(
+      draft.down_payment_type === "percent"
+        ? `${draft.down_payment_value}% down`
+        : `${formatCurrency(draft.down_payment_value)} down`
+    );
+  }
+  if (rate) lines.push(`${rate}% interest`);
+  if (Number.isFinite(term) && term > 0) lines.push(`${term}-year term`);
+  lines.push(type === LOAN_ESTIMATE_FHA ? "FHA estimate" : "Fixed-rate with manual insurance");
+  return lines;
+}
+
 export function appliedProposedMode(applied: AppliedProposedHome | null): DtiProposedHousingMode | null {
   return applied?.mode ?? null;
+}
+
+export function isPositiveBalanceSuggestion(balance: string | null | undefined): boolean {
+  const cents = parseMoneyToCents(balance ?? "");
+  return cents != null && cents > 0;
 }

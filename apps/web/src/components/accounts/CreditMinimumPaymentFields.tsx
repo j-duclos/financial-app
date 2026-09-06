@@ -1,6 +1,14 @@
 import type { Account } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
+import type { ReactNode } from "react";
+import { formatDateDisplay } from "../../lib/dateDisplay";
 import { freshnessLabel, formatMinimumPaymentSourceLine, providerDiffersFromManual } from "../../lib/minimumPaymentDisplay";
+
+function formatObservedLabel(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const formatted = formatDateDisplay(iso);
+  return formatted === "—" ? null : formatted;
+}
 
 export function CreditMinimumPaymentFields({
   account,
@@ -11,6 +19,8 @@ export function CreditMinimumPaymentFields({
   onRefresh,
   refreshing = false,
   refreshError = null,
+  refreshFeedback = null,
+  consentAction = null,
 }: {
   account: Account | null;
   mode: "automatic" | "manual";
@@ -20,6 +30,8 @@ export function CreditMinimumPaymentFields({
   onRefresh?: () => void;
   refreshing?: boolean;
   refreshError?: string | null;
+  refreshFeedback?: string | null;
+  consentAction?: ReactNode;
 }) {
   const canRefresh = Boolean(account?.plaid_item_id) && mode === "automatic";
   const effective = account?.effective_minimum_payment_amount ?? account?.minimum_payment_amount;
@@ -55,16 +67,16 @@ export function CreditMinimumPaymentFields({
       {mode === "automatic" ? (
         <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 space-y-1">
           <p>{account ? formatMinimumPaymentSourceLine(account) : "No provider value yet."}</p>
-          {effective != null ? <p>Current effective minimum: {formatCurrency(effective)}</p> : null}
-          {provider != null ? <p>Last provider minimum: {formatCurrency(provider)}</p> : null}
+          {effective != null ? <p>Effective monthly payment: {formatCurrency(effective)}</p> : null}
+          {provider != null ? <p>Last institution-reported minimum: {formatCurrency(provider)}</p> : null}
           {account?.provider_minimum_payment_statement_date ? (
-            <p>Statement date: {account.provider_minimum_payment_statement_date}</p>
+            <p>Statement date: {formatDateDisplay(account.provider_minimum_payment_statement_date)}</p>
           ) : null}
           {account?.provider_minimum_payment_due_date ? (
-            <p>Due date: {account.provider_minimum_payment_due_date}</p>
+            <p>Due date: {formatDateDisplay(account.provider_minimum_payment_due_date)}</p>
           ) : null}
-          {account?.provider_minimum_payment_observed_at ? (
-            <p>Last refreshed: {account.provider_minimum_payment_observed_at}</p>
+          {formatObservedLabel(account?.provider_minimum_payment_observed_at) ? (
+            <p>Last checked: {formatObservedLabel(account?.provider_minimum_payment_observed_at)}</p>
           ) : null}
           <p>Status: {freshnessLabel(account?.minimum_payment_freshness)}</p>
           {account?.manual_minimum_payment_amount ? (
@@ -73,16 +85,28 @@ export function CreditMinimumPaymentFields({
           {account?.minimum_payment_warning ? (
             <p className="text-amber-800">{account.minimum_payment_warning}</p>
           ) : null}
-          {canRefresh ? (
+          {account?.minimum_payment_freshness === "unsupported" ? (
+            <p className="text-sm text-gray-700">
+              This institution does not provide credit-card minimums. Enter a manual minimum instead.
+            </p>
+          ) : null}
+          {account?.minimum_payment_freshness === "product_not_enabled" ? (
+            <p className="text-sm text-gray-700">
+              Plaid Liabilities is not enabled in this environment. Manual minimums still work.
+            </p>
+          ) : null}
+          {consentAction}
+          {canRefresh && account?.minimum_payment_freshness !== "unsupported" ? (
             <button
               type="button"
-              className="mt-2 rounded border border-gray-300 bg-white px-3 py-1 text-sm"
+              className="mt-2 rounded border border-gray-300 bg-white px-3 py-1 text-sm min-h-[44px]"
               onClick={onRefresh}
               disabled={refreshing}
             >
               {refreshing ? "Refreshing…" : "Refresh from institution"}
             </button>
           ) : null}
+          {refreshFeedback ? <p className="text-sm text-gray-800">{refreshFeedback}</p> : null}
           {refreshError ? <p className="text-red-700">{refreshError}</p> : null}
         </div>
       ) : (
