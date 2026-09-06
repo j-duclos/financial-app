@@ -38,6 +38,8 @@ describe("launch entitlements", () => {
 
   it("limits Free forecast options to 90 days", () => {
     expect(forecastOptionsForPlan(freeStatus)).toEqual([30, 60, 90]);
+    expect(forecastOptionsForPlan(freeStatus)).not.toContain(180);
+    expect(forecastOptionsForPlan(freeStatus)).not.toContain(365);
   });
 
   it("markets automatic bank syncing without promising unlimited institutions", () => {

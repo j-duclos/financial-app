@@ -141,7 +141,10 @@ def count_manual_accounts(user) -> int:
 def count_recurring_rules(user) -> int:
     from timeline.models import RecurringRule
 
-    return RecurringRule.objects.filter(household__in=_households(user)).count()
+    return RecurringRule.objects.filter(
+        household__in=_households(user),
+        active=True,
+    ).count()
 
 
 def count_goals(user) -> int:
@@ -218,7 +221,7 @@ def require_manual_account_slot(user) -> None:
 
 
 def require_recurring_rule_slot(user) -> None:
-    require_within_limit(user, FEATURE_RECURRING_RULES, noun="recurring rules")
+    require_within_limit(user, FEATURE_RECURRING_RULES, noun="active recurring rules")
 
 
 def require_goal_slot(user) -> None:

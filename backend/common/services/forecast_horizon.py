@@ -24,6 +24,27 @@ MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS = 365
 EXTENDED_CASH_RISK_DAYS = 180
 
 
+def _explicit_forecast_param(request) -> str | None:
+    raw = request.query_params.get("forecast_days")
+    if raw is not None and raw != "":
+        return raw
+    raw = request.query_params.get("days")
+    if raw is not None and raw != "":
+        return raw
+    return None
+
+
+def _clamp_passive_forecast_days(request, days: int) -> int:
+    """Downgraded stored/default windows may fall back; do not 403 page loads."""
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return days
+    from billing.entitlements import max_forecast_days_for_user
+
+    max_days = max_forecast_days_for_user(user)
+    return days if days <= max_days else max_days
+
+
 def parse_forecast_days_param(
     request,
     *,
@@ -35,12 +56,14 @@ def parse_forecast_days_param(
 
     Passive endpoints default to 30. Extended values are accepted only
     when explicitly passed and ``allow_extended`` is True.
+
+    An explicit, valid horizon above the caller's plan limit raises
+    ``EntitlementDenied``. Missing params clamp to the plan maximum so
+    a saved Premium window does not break Free page loads after downgrade.
     """
-    raw = request.query_params.get("forecast_days")
-    if raw is None or raw == "":
-        raw = request.query_params.get("days")
-    if raw is None or raw == "":
-        return normalize_forecast_days(default)
+    raw = _explicit_forecast_param(request)
+    if raw is None:
+        return _clamp_passive_forecast_days(request, normalize_forecast_days(default))
     try:
         days = normalize_forecast_days(int(raw))
     except (TypeError, ValueError) as exc:
@@ -54,11 +77,9 @@ def parse_forecast_days_param(
         )
     user = getattr(request, "user", None)
     if user is not None and getattr(user, "is_authenticated", False):
-        from billing.entitlements import max_forecast_days_for_user
+        from billing.entitlements import require_forecast_days_allowed
 
-        max_days = max_forecast_days_for_user(user)
-        if days > max_days:
-            return max_days
+        require_forecast_days_allowed(user, days)
     return days
 
 

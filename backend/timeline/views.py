@@ -137,7 +137,8 @@ class RecurringRuleViewSet(ModelViewSet):
     def perform_create(self, serializer):
         from billing.entitlements import require_recurring_rule_slot
 
-        require_recurring_rule_slot(self.request.user)
+        if serializer.validated_data.get("active", True):
+            require_recurring_rule_slot(self.request.user)
         rule = serializer.save()
         if not rule.active:
             pause_recurring_rule(rule)
@@ -152,6 +153,11 @@ class RecurringRuleViewSet(ModelViewSet):
         partial = kwargs.pop("partial", False)
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        will_be_active = serializer.validated_data.get("active", was_active)
+        if not was_active and will_be_active:
+            from billing.entitlements import require_recurring_rule_slot
+
+            require_recurring_rule_slot(request.user)
         serializer.save()
         instance = serializer.instance
         cutoff = serializer.materialize_cutoff
@@ -287,6 +293,10 @@ class RecurringRuleViewSet(ModelViewSet):
     @action(detail=True, methods=["post"])
     def resume(self, request, pk=None):
         rule = self.get_object()
+        if not rule.active:
+            from billing.entitlements import require_recurring_rule_slot
+
+            require_recurring_rule_slot(request.user)
         resume_recurring_rule(rule)
         rule.refresh_from_db()
         refresh_rule_materialization(request.user, rule)

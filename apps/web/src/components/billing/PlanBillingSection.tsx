@@ -141,7 +141,7 @@ export default function PlanBillingSection() {
         <>
           <p className="text-sm text-gray-600">
             Track up to {FREE_PLAN_LIMITS.manual_accounts} manually managed accounts, unlimited
-            manual transactions, {FREE_PLAN_LIMITS.recurring_rules} recurring rules,{" "}
+            manual transactions, {FREE_PLAN_LIMITS.recurring_rules} active recurring rules,{" "}
             {FREE_PLAN_LIMITS.goals} goals, and a {FREE_PLAN_LIMITS.operational_forecast_days}-day
             forecast. Upgrade for automatic bank syncing and longer planning.
           </p>

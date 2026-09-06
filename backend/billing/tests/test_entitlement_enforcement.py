@@ -12,8 +12,10 @@ from billing.entitlements import PLAID_PREMIUM_DETAIL, PLAID_SYNC_PAUSED_DETAIL
 from billing.models import BillingSubscription
 from billing.services import downgrade_to_free
 from billing.tests.helpers import grant_premium
+from core.models import UserProfile
 from goals.models import FinancialGoal
 from plaid_link.models import PlaidItem, PlaidLinkedAccount
+from timeline.models import RecurringRule
 from transactions.models import Transaction
 
 pytestmark = pytest.mark.django_db
@@ -176,7 +178,175 @@ def test_free_user_recurring_rule_limit(authenticated_client, household, account
     assert r.json()["code"] == "plan_limit_reached"
 
 
-def test_free_user_goal_limit(authenticated_client, household):
+def _make_rule(household, account, name, *, active=True):
+    return RecurringRule.objects.create(
+        household=household,
+        name=name,
+        account=account,
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("10.00"),
+        currency="USD",
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        day_of_month=1,
+        start_date=date(2026, 1, 1),
+        active=active,
+    )
+
+
+def test_inactive_recurring_rules_do_not_consume_quota(authenticated_client, household, account):
+    for i in range(10):
+        _make_rule(household, account, f"Active {i}", active=True)
+    for i in range(5):
+        _make_rule(household, account, f"Idle {i}", active=False)
+    cat = Category.objects.create(
+        household=household,
+        name="Entitlement Extra Bills",
+        category_type=Category.CategoryType.EXPENSE,
+        sort_order=91,
+    )
+    r = authenticated_client.post(
+        "/api/rules/",
+        {
+            "household": household.id,
+            "name": "Inactive extra",
+            "account_id": account.id,
+            "category_id": cat.id,
+            "direction": "EXPENSE",
+            "amount": "10.00",
+            "currency": "USD",
+            "frequency": "MONTHLY_DAY",
+            "interval": 1,
+            "day_of_month": 1,
+            "start_date": "2026-01-01",
+            "active": False,
+        },
+        format="json",
+    )
+    assert r.status_code == 201, r.data
+
+
+def test_nine_active_and_inactive_can_create_one_active(
+    authenticated_client, household, account
+):
+    for i in range(9):
+        _make_rule(household, account, f"Active {i}", active=True)
+    for i in range(5):
+        _make_rule(household, account, f"Idle {i}", active=False)
+    cat = Category.objects.create(
+        household=household,
+        name="Entitlement Extra Bills",
+        category_type=Category.CategoryType.EXPENSE,
+        sort_order=91,
+    )
+    r = authenticated_client.post(
+        "/api/rules/",
+        {
+            "household": household.id,
+            "name": "Tenth active",
+            "account_id": account.id,
+            "category_id": cat.id,
+            "direction": "EXPENSE",
+            "amount": "10.00",
+            "currency": "USD",
+            "frequency": "MONTHLY_DAY",
+            "interval": 1,
+            "day_of_month": 1,
+            "start_date": "2026-01-01",
+            "active": True,
+        },
+        format="json",
+    )
+    assert r.status_code == 201, r.data
+
+
+def test_disabling_active_rule_frees_quota_slot(authenticated_client, household, account):
+    rules = [_make_rule(household, account, f"Active {i}", active=True) for i in range(10)]
+    extra = _make_rule(household, account, "Waiting", active=False)
+    r = authenticated_client.patch(
+        f"/api/rules/{rules[0].id}/",
+        {"active": False},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    r = authenticated_client.patch(
+        f"/api/rules/{extra.id}/",
+        {"active": True},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+
+def test_rule_activation_denied_at_quota(authenticated_client, household, account):
+    for i in range(10):
+        _make_rule(household, account, f"Active {i}", active=True)
+    idle = _make_rule(household, account, "Idle", active=False)
+    r = authenticated_client.patch(
+        f"/api/rules/{idle.id}/",
+        {"active": True},
+        format="json",
+    )
+    assert r.status_code == 403
+    body = r.json()
+    assert body["code"] == "plan_limit_reached"
+    assert body["feature"] == "recurring_rules"
+    idle.refresh_from_db()
+    assert idle.active is False
+
+
+def test_active_to_active_edit_does_not_consume_extra_slot(
+    authenticated_client, household, account
+):
+    rules = [_make_rule(household, account, f"Active {i}", active=True) for i in range(10)]
+    r = authenticated_client.patch(
+        f"/api/rules/{rules[0].id}/",
+        {"name": "Still active", "active": True},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    rules[0].refresh_from_db()
+    assert rules[0].active is True
+    assert rules[0].name == "Still active"
+
+
+def test_inactive_to_inactive_edit_remains_allowed(authenticated_client, household, account):
+    for i in range(10):
+        _make_rule(household, account, f"Active {i}", active=True)
+    idle = _make_rule(household, account, "Idle", active=False)
+    r = authenticated_client.patch(
+        f"/api/rules/{idle.id}/",
+        {"name": "Still idle", "active": False},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    idle.refresh_from_db()
+    assert idle.active is False
+    assert idle.name == "Still idle"
+
+
+def test_active_to_inactive_edit_is_allowed(authenticated_client, household, account):
+    rules = [_make_rule(household, account, f"Active {i}", active=True) for i in range(10)]
+    r = authenticated_client.patch(
+        f"/api/rules/{rules[0].id}/",
+        {"active": False},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    rules[0].refresh_from_db()
+    assert rules[0].active is False
+
+
+def test_resume_endpoint_enforces_active_quota(authenticated_client, household, account):
+    for i in range(10):
+        _make_rule(household, account, f"Active {i}", active=True)
+    idle = _make_rule(household, account, "Idle", active=False)
+    r = authenticated_client.post(f"/api/rules/{idle.id}/resume/")
+    assert r.status_code == 403
+    body = r.json()
+    assert body["code"] == "plan_limit_reached"
+    assert body["feature"] == "recurring_rules"
+    idle.refresh_from_db()
+    assert idle.active is False
     payload = {
         "household": household.id,
         "name": "Goal",
@@ -233,3 +403,66 @@ def test_premium_user_can_create_plaid_link_token(authenticated_client, user, ho
         )
     assert r.status_code == 200
     assert r.json()["link_token"] == "link-sandbox-token"
+
+
+def _assert_forecast_premium_required(response):
+    assert response.status_code == 403
+    body = response.json()
+    assert body["code"] == "premium_required"
+    assert body["feature"] == "operational_forecast_days"
+    assert body["upgrade_required"] is True
+    assert body["limit"] == 90
+    return body
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_free_explicit_180_forecast_is_forbidden(mock_summary, authenticated_client):
+    r = authenticated_client.get("/api/insights/dashboard/summary/?forecast_days=180")
+    _assert_forecast_premium_required(r)
+    mock_summary.assert_not_called()
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_free_explicit_365_forecast_is_forbidden(mock_summary, authenticated_client):
+    r = authenticated_client.get("/api/insights/dashboard/summary/?days=365")
+    _assert_forecast_premium_required(r)
+    mock_summary.assert_not_called()
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_free_explicit_90_forecast_is_allowed(mock_summary, authenticated_client):
+    r = authenticated_client.get("/api/insights/dashboard/summary/?forecast_days=90")
+    assert r.status_code == 200
+    mock_summary.assert_called_once()
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_premium_explicit_180_and_365_forecast_are_allowed(mock_summary, authenticated_client, user):
+    grant_premium(user)
+    r = authenticated_client.get("/api/insights/dashboard/summary/?forecast_days=180")
+    assert r.status_code == 200
+    r = authenticated_client.get("/api/insights/dashboard/summary/?forecast_days=365")
+    assert r.status_code == 200
+    assert mock_summary.call_count == 2
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_invalid_forecast_window_is_validation_error(mock_summary, authenticated_client):
+    r = authenticated_client.get("/api/insights/dashboard/summary/?forecast_days=45")
+    assert r.status_code == 400
+    assert "Forecast Window" in r.json()["detail"]
+    mock_summary.assert_not_called()
+
+
+@patch("insights.views.build_dashboard_summary", return_value={"ok": True})
+def test_downgrade_passive_dashboard_does_not_error(
+    mock_summary, authenticated_client, user
+):
+    billing = grant_premium(user)
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    UserProfile.objects.filter(pk=profile.pk).update(default_forecast_days=180)
+    downgrade_to_free(billing, status="canceled")
+    r = authenticated_client.get("/api/insights/dashboard/summary/")
+    assert r.status_code == 200
+    mock_summary.assert_called_once()
+    assert mock_summary.call_args.kwargs["days"] == 30

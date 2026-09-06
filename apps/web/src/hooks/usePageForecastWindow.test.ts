@@ -25,4 +25,10 @@ describe("usePageForecastWindow", () => {
     expect(source).toMatch(/isFetched \|\| isError/);
     expect(source).toMatch(/ready/);
   });
+
+  it("clamps a saved Forecast Window that exceeds the current plan", () => {
+    expect(source).toMatch(/forecastOptionsForPlan/);
+    expect(source).toMatch(/allowed\.includes\(savedDefault\)/);
+    expect(source).toMatch(/allowed\.includes\(requested\)/);
+  });
 });

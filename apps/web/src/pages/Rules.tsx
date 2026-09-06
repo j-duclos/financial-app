@@ -475,7 +475,7 @@ export default function Rules() {
       {rulesLimited ? (
         <div className="mb-4">
           <PremiumUpgradePrompt
-            title="The Free plan includes up to 10 recurring rules."
+            title="The Free plan includes up to 10 active recurring rules."
             description="Upgrade to Premium for unlimited recurring automation."
             onUpgrade={startCheckout}
             busy={checkoutBusy}
