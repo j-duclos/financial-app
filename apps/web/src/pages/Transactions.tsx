@@ -24,6 +24,9 @@ import {
   ApiError,
   type PayoffProjection,
 } from "@budget-app/api-client";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { forecastOptionsForPlan } from "../lib/entitlements";
+import { FORECAST_WINDOW_LABELS } from "../lib/forecastWindow";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
 import PastSection from "../components/transactions/PastSection";
@@ -138,7 +141,9 @@ export default function Transactions() {
     ready: forecastReady,
     profile,
   } = usePageForecastWindow();
+  const { billing } = useBillingStatus();
   const forecastRange = daysToForecastRange(forecastDays);
+  const forecastDayOptions = forecastOptionsForPlan(billing);
   /** Default OFF — reconciled history is loaded only when the user asks. */
   const [showReconciled, setShowReconciled] = useState(false);
   const hideReconciledPast = !showReconciled;
@@ -1888,10 +1893,11 @@ export default function Transactions() {
               className="w-full sm:w-auto rounded border border-gray-300 px-3 py-1.5 text-sm"
               disabled={!forecastReady}
             >
-              <option value="30d">30 days</option>
-              <option value="60d">60 days</option>
-              <option value="90d">90 days</option>
-              <option value="6m">6 months</option>
+              {forecastDayOptions.map((d) => (
+                <option key={d} value={daysToForecastRange(d)}>
+                  {FORECAST_WINDOW_LABELS[d]}
+                </option>
+              ))}
             </select>
           </div>
           <div className="w-full sm:w-auto sm:min-w-[12rem]">

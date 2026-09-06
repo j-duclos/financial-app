@@ -41,12 +41,14 @@ from .services import (
     sync_all_plaid_items_for_user,
     sync_transactions_for_item,
 )
+from billing.entitlements import require_plaid_bank_sync
 
 
 class PlaidLinkTokenView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        require_plaid_bank_sync(request.user)
         ser = PlaidLinkTokenRequestSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
         if not plaid_configured():
@@ -91,6 +93,7 @@ class PlaidExchangeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        require_plaid_bank_sync(request.user)
         ser = PlaidExchangeRequestSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
         if not plaid_configured():
@@ -161,6 +164,7 @@ class PlaidItemViewSet(
     @action(detail=True, methods=["post"], url_path="sync")
     def sync(self, request, pk=None):
         item = self.get_object()
+        require_plaid_bank_sync(request.user, sync=True)
         if not plaid_configured():
             return Response(
                 {
@@ -199,6 +203,7 @@ class PlaidItemViewSet(
     @action(detail=True, methods=["post"], url_path="sync-liabilities")
     def sync_liabilities(self, request, pk=None):
         item = self.get_object()
+        require_plaid_bank_sync(request.user, sync=True)
         if not plaid_configured():
             return Response(
                 {
@@ -220,6 +225,7 @@ class PlaidItemViewSet(
     def link_token_update(self, request, pk=None):
         """Create a Link token in update mode to add Liabilities consent for an existing Item."""
         item = self.get_object()
+        require_plaid_bank_sync(request.user)
         if not plaid_configured():
             return Response(
                 {
@@ -266,6 +272,7 @@ class PlaidSyncAllView(APIView):
     permission_classes = [IsAuthenticated, IsHouseholdMember]
 
     def post(self, request):
+        require_plaid_bank_sync(request.user, sync=True)
         if not plaid_configured():
             return Response(
                 {
@@ -301,6 +308,7 @@ class PlaidSyncLiabilitiesAllView(APIView):
     permission_classes = [IsAuthenticated, IsHouseholdMember]
 
     def post(self, request):
+        require_plaid_bank_sync(request.user, sync=True)
         if not plaid_configured():
             return Response(
                 {
@@ -346,6 +354,10 @@ class PlaidLiabilitiesWebhookView(APIView):
         item = PlaidItem.objects.filter(item_id=item_id).first()
         if item is None:
             return Response({"status": "ignored"})
+        from billing.entitlements import household_has_premium_member
+
+        if not household_has_premium_member(item.household):
+            return Response({"status": "ignored", "reason": "premium_required"})
         try:
             sync_credit_card_liabilities_for_item(item)
         except Exception:

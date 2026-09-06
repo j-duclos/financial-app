@@ -5,6 +5,8 @@ import {
   normalizeOperationalForecastDays,
   type OperationalForecastDays,
 } from "../lib/forecastWindow";
+import { forecastOptionsForPlan } from "../lib/entitlements";
+import { useBillingStatus } from "./useBillingStatus";
 
 /**
  * Page-local Forecast Window initialized from the saved Settings default.
@@ -12,18 +14,27 @@ import {
  */
 export function usePageForecastWindow() {
   const { data: profile, isFetched, isError, isPending } = useProfileQuery();
+  const { billing } = useBillingStatus();
   const [override, setOverride] = useState<OperationalForecastDays | null>(null);
   const ready = isFetched || isError;
+  const allowed = forecastOptionsForPlan(billing);
   const savedDefault = ready
     ? normalizeOperationalForecastDays(profile?.default_forecast_days)
     : DEFAULT_OPERATIONAL_FORECAST_DAYS;
-  const forecastDays = override ?? savedDefault;
+  const clampedSaved = allowed.includes(savedDefault)
+    ? savedDefault
+    : (allowed[allowed.length - 1] ?? DEFAULT_OPERATIONAL_FORECAST_DAYS);
+  const requested = override ?? savedDefault;
+  const forecastDays = allowed.includes(requested)
+    ? requested
+    : (allowed[allowed.length - 1] ?? DEFAULT_OPERATIONAL_FORECAST_DAYS);
 
   return {
     forecastDays,
-    savedDefault,
+    savedDefault: clampedSaved,
     setForecastDays: (days: OperationalForecastDays) => {
-      setOverride(normalizeOperationalForecastDays(days));
+      const next = normalizeOperationalForecastDays(days);
+      setOverride(allowed.includes(next) ? next : clampedSaved);
     },
     ready,
     profileLoading: isPending && !isFetched,

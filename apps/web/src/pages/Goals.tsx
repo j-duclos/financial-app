@@ -28,6 +28,10 @@ import {
   invalidateGoalLifecycleQueries,
 } from "../lib/goalQueryInvalidation";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { atPlanLimit } from "../lib/entitlements";
+import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
 import GoalFormModal, { type GoalFormValues } from "../components/goals/GoalFormModal";
 import GoalsSummaryBar from "../components/goals/GoalsSummaryBar";
 import PlanningSubnav from "../components/PlanningSubnav";
@@ -64,6 +68,9 @@ function buildPayload(householdId: number, values: GoalFormValues) {
 }
 
 export default function Goals() {
+  const { billing } = useBillingStatus();
+  const goalsLimited = atPlanLimit(billing, "goals");
+  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<FinancialGoal | null>(null);
@@ -220,13 +227,25 @@ export default function Goals() {
           </p>
           <button
             type="button"
-            onClick={() => setSearchParams({ new: "1" })}
+            onClick={() => {
+              if (goalsLimited) return;
+              setSearchParams({ new: "1" });
+            }}
             className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
             Add goal
           </button>
         </div>
       </div>
+      {goalsLimited ? (
+        <PremiumUpgradePrompt
+          title="The Free plan includes up to 2 goals."
+          description="Upgrade to Premium for unlimited goals."
+          onUpgrade={startCheckout}
+          busy={checkoutBusy}
+          error={checkoutError}
+        />
+      ) : null}
 
       {isLoading && <p className="text-sm text-gray-500">Loading goals…</p>}
 
@@ -238,7 +257,10 @@ export default function Goals() {
           </p>
           <button
             type="button"
-            onClick={() => setSearchParams({ new: "1" })}
+            onClick={() => {
+              if (goalsLimited) return;
+              setSearchParams({ new: "1" });
+            }}
             className="text-blue-600 hover:underline text-sm font-medium"
           >
             Add goal

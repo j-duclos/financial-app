@@ -23,6 +23,15 @@ import {
   syncPlaidItem,
   syncPlaidItemLiabilities,
 } from "@budget-app/api-client";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { canUsePlaidBankSync } from "../lib/entitlements";
+import {
+  PLAID_PREMIUM_DESCRIPTION,
+  PLAID_PREMIUM_MESSAGE,
+  PLAID_SYNC_PAUSED_MESSAGE,
+} from "../lib/billing";
+import PremiumUpgradePrompt from "./billing/PremiumUpgradePrompt";
 
 /** Survives full-page OAuth return (Chase, etc.). */
 const PLAID_LINK_TOKEN_SESSION_KEY = "budget-app.plaid.link_token_pending";
@@ -172,6 +181,9 @@ export function PlaidConnectBar({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { billing } = useBillingStatus();
+  const plaidAllowed = canUsePlaidBankSync(billing);
+  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
   const [linkToken, setLinkToken] = useState<string | null>(null);
   /** Set only when completing Plaid OAuth return (same link_token as before redirect). */
   const [receivedRedirectUri, setReceivedRedirectUri] = useState<string | null>(null);
@@ -253,6 +265,7 @@ export function PlaidConnectBar({
 
   const runImportAll = useCallback(
     async (opts?: { force?: boolean }) => {
+      if (!plaidAllowed) return;
       if (householdId == null) return;
       setPlaidError(null);
       setSyncingAll(true);
@@ -272,11 +285,12 @@ export function PlaidConnectBar({
         setSyncingAll(false);
       }
     },
-    [applySyncStatus, householdId, queryClient]
+    [applySyncStatus, householdId, plaidAllowed, queryClient]
   );
 
   const runImport = useCallback(
     async (itemId: number, linkedAccountId: number) => {
+      if (!plaidAllowed) return;
       setPlaidError(null);
       setSyncingItemId(itemId);
       setSyncingLinkedId(linkedAccountId);
@@ -300,11 +314,12 @@ export function PlaidConnectBar({
         setSyncingLinkedId(null);
       }
     },
-    [applySyncStatus, queryClient]
+    [applySyncStatus, plaidAllowed, queryClient]
   );
 
   const runReloadHistory = useCallback(
     async (itemId: number, bank: string) => {
+      if (!plaidAllowed) return;
       if (
         !window.confirm(
           `Reload all posted transactions for ${bank}? This re-downloads history from Plaid (can take a minute). Use this if imports ran but your checking account stayed empty.`
@@ -332,7 +347,7 @@ export function PlaidConnectBar({
         setSyncingItemId(null);
       }
     },
-    [applySyncStatus, queryClient]
+    [applySyncStatus, plaidAllowed, queryClient]
   );
 
   const runRemoveLogin = useCallback(
@@ -425,9 +440,11 @@ export function PlaidConnectBar({
         await queryClient.invalidateQueries({ queryKey: ["accounts"] });
         await queryClient.invalidateQueries({ queryKey: ["plaid-items"] });
         markPlaidAutoSyncAttempt();
-        void runImportAll({ force: true }).catch(() => {
-          /* runImportAll sets plaidError */
-        });
+        if (plaidAllowed) {
+          void runImportAll({ force: true }).catch(() => {
+            /* runImportAll sets plaidError */
+          });
+        }
         if (redirectAfterLink) {
           navigate(redirectAfterLink, { replace: true });
         }
@@ -435,7 +452,7 @@ export function PlaidConnectBar({
         setPlaidError(formatPlaidError(e));
       }
     },
-    [householdId, queryClient, redirectAfterLink, navigate, runImportAll, updateModeItemId]
+    [householdId, queryClient, redirectAfterLink, navigate, runImportAll, updateModeItemId, plaidAllowed]
   );
 
   const closeLinkSession = useCallback(() => {
@@ -448,6 +465,7 @@ export function PlaidConnectBar({
   }, []);
 
   const startLink = async () => {
+    if (!plaidAllowed) return;
     if (householdId == null || fetchingLink) return;
     setPlaidError(null);
     setFetchingLink(true);
@@ -574,15 +592,26 @@ export function PlaidConnectBar({
             <span className="text-sm font-semibold text-slate-800">Bank connections (Plaid)</span>
             <span className="text-xs text-slate-500 truncate">{summaryHint}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => void startLink()}
-            disabled={fetchingLink || busy}
-            className="shrink-0 rounded-md border border-slate-400 bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-sm hover:bg-slate-100 disabled:opacity-60"
-          >
-            {fetchingLink ? "Starting…" : "Link a bank"}
-          </button>
-          {items.length > 0 ? (
+          {plaidAllowed ? (
+            <button
+              type="button"
+              onClick={() => void startLink()}
+              disabled={fetchingLink || busy}
+              className="shrink-0 rounded-md border border-slate-400 bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-sm hover:bg-slate-100 disabled:opacity-60"
+            >
+              {fetchingLink ? "Starting…" : "Link a bank"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startCheckout}
+              disabled={checkoutBusy}
+              className="shrink-0 rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
+            >
+              {checkoutBusy ? "Opening checkout…" : "Upgrade to Premium"}
+            </button>
+          )}
+          {plaidAllowed && items.length > 0 ? (
             <button
               type="button"
               onClick={() => void runImportAll({ force: true })}
@@ -603,6 +632,15 @@ export function PlaidConnectBar({
         >
           <div className="overflow-hidden min-h-0">
             <div className="px-3 py-2 space-y-3 max-h-[min(20rem,50vh)] overflow-y-auto">
+          {!plaidAllowed ? (
+            <PremiumUpgradePrompt
+              title={items.length > 0 ? PLAID_SYNC_PAUSED_MESSAGE : PLAID_PREMIUM_MESSAGE}
+              description={PLAID_PREMIUM_DESCRIPTION}
+              onUpgrade={startCheckout}
+              busy={checkoutBusy}
+              error={checkoutError}
+            />
+          ) : null}
           {plaidCredentialsMissing ? (
             <p className="text-xs text-red-800" role="alert">
               Plaid is not configured on the server — Import and Link will not work until API keys are set.
@@ -624,7 +662,7 @@ export function PlaidConnectBar({
                       <span className="text-sm font-semibold text-slate-800">{bank}</span>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || !plaidAllowed}
                         className="text-xs font-medium text-slate-600 hover:underline disabled:opacity-50"
                         onClick={() => void runReloadHistory(it.id, bank)}
                       >
@@ -663,7 +701,7 @@ export function PlaidConnectBar({
                               <span className="flex shrink-0 gap-2">
                                 <button
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || !plaidAllowed}
                                   className="text-sm font-medium text-emerald-800 hover:underline disabled:opacity-50"
                                   onClick={() => void runImport(it.id, la.id)}
                                 >

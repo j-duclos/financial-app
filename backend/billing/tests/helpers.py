@@ -14,6 +14,18 @@ STRIPE_TEST_SETTINGS = dict(
 stripe_configured = override_settings(**STRIPE_TEST_SETTINGS)
 
 
+def grant_premium(user):
+    from billing.models import BillingSubscription
+    from billing.services import get_or_create_billing_subscription
+
+    billing = get_or_create_billing_subscription(user)
+    billing.status = "active"
+    billing.plan = BillingSubscription.Plan.PREMIUM
+    billing.stripe_customer_id = billing.stripe_customer_id or "cus_test"
+    billing.save()
+    return billing
+
+
 def fake_event(event_id: str, event_type: str, data_object, *, livemode: bool = False):
     return {
         "id": event_id,

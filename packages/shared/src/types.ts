@@ -2755,6 +2755,30 @@ export interface BillingStatus {
   cancel_at_period_end: boolean;
   current_period_end: string | null;
   has_stripe_customer: boolean;
+  entitlements?: BillingEntitlements;
+}
+
+export interface BillingPlanLimits {
+  linked_institutions: number | null;
+  manual_accounts: number | null;
+  recurring_rules: number | null;
+  operational_forecast_days: number;
+  goals: number | null;
+}
+
+export interface BillingPlanUsage {
+  linked_institutions: number;
+  manual_accounts: number;
+  recurring_rules: number;
+  goals: number;
+}
+
+export interface BillingEntitlements {
+  plan: BillingPlan;
+  is_premium: boolean;
+  plaid_bank_sync: boolean;
+  limits: BillingPlanLimits;
+  usage: BillingPlanUsage;
 }
 
 export interface CheckoutSessionResponse {

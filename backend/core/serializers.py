@@ -58,6 +58,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"Default Forecast Window must be one of {sorted(OPERATIONAL_FORECAST_WINDOW_DAYS)}."
             )
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request is not None else None
+        if user is not None and getattr(user, "is_authenticated", False):
+            from billing.entitlements import require_forecast_days_allowed
+
+            require_forecast_days_allowed(user, days)
         return days
 
     def to_representation(self, instance):

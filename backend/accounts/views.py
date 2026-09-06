@@ -318,6 +318,12 @@ class AccountViewSet(ModelViewSet):
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
+    def perform_create(self, serializer):
+        from billing.entitlements import require_manual_account_slot
+
+        require_manual_account_slot(self.request.user)
+        serializer.save()
+
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
         response["Cache-Control"] = "no-store, no-cache, must-revalidate"

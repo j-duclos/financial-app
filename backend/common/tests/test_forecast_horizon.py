@@ -60,6 +60,7 @@ class TestNormalizeOperationalForecastDays:
         assert normalize_operational_forecast_days(60) == 60
         assert normalize_operational_forecast_days(90) == 90
         assert normalize_operational_forecast_days(180) == 180
+        assert normalize_operational_forecast_days(365) == 365
 
 
 def test_extended_cash_risk_horizon_is_six_months():

@@ -16,7 +16,7 @@ from accounts.services.available_to_spend import (
 PASSIVE_FORECAST_DAYS = frozenset({7, 14, 30})
 ADVANCED_FORECAST_DAYS = frozenset({60, 90, 180, 365})
 # Saved Settings default + Dashboard / Action Center / Transactions selectors.
-OPERATIONAL_FORECAST_WINDOW_DAYS = frozenset({30, 60, 90, 180})
+OPERATIONAL_FORECAST_WINDOW_DAYS = frozenset({30, 60, 90, 180, 365})
 PASSIVE_DEFAULT_FORECAST_DAYS = DEFAULT_FORECAST_DAYS  # 30
 ADVANCED_DEFAULT_FORECAST_DAYS = 90
 MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS = 365
@@ -52,6 +52,13 @@ def parse_forecast_days_param(
             f"Forecast Window {days} days requires an advanced forecasting endpoint. "
             f"Use one of {sorted(PASSIVE_FORECAST_DAYS)}."
         )
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        from billing.entitlements import max_forecast_days_for_user
+
+        max_days = max_forecast_days_for_user(user)
+        if days > max_days:
+            return max_days
     return days
 
 

@@ -56,6 +56,10 @@ import AccountLifecycleModal, {
 } from "../components/accounts/AccountLifecycleModal";
 import ActionToast from "../components/quickActions/ActionToast";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { atPlanLimit, canUsePlaidBankSync } from "../lib/entitlements";
+import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
 import QuickTransactionModal from "../components/quickActions/QuickTransactionModal";
 import QuickRecurringModal from "../components/quickActions/QuickRecurringModal";
 import AccountForecastPanel from "../components/quickActions/AccountForecastPanel";
@@ -71,6 +75,11 @@ function formatBillingCycleEndPreview(closingDay: string): string {
 
 export default function Accounts() {
   const navigate = useNavigate();
+  const { billing } = useBillingStatus();
+  const accountsLimited = atPlanLimit(billing, "manual_accounts");
+  const plaidAllowed = canUsePlaidBankSync(billing);
+  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
+  const [showAccountUpgrade, setShowAccountUpgrade] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -506,6 +515,10 @@ export default function Accounts() {
   });
 
   function openCreate() {
+    if (accountsLimited) {
+      setShowAccountUpgrade(true);
+      return;
+    }
     setEditing(null);
     roleManuallySetRef.current = false;
     setForm(emptyFormState());
@@ -766,7 +779,7 @@ export default function Accounts() {
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1 w-full space-y-2">
           <PlaidConnectBar householdId={householdId ?? null} />
-          {householdId != null ? (
+          {householdId != null && plaidAllowed ? (
             <div className="flex flex-col gap-1">
               <button
                 type="button"
@@ -797,6 +810,17 @@ export default function Accounts() {
           Add account
         </button>
       </div>
+      {showAccountUpgrade || accountsLimited ? (
+        <div className="mb-4">
+          <PremiumUpgradePrompt
+            title="The Free plan includes up to 3 manually managed accounts."
+            description="Upgrade to Premium for unlimited accounts and automatic bank syncing."
+            onUpgrade={startCheckout}
+            busy={checkoutBusy}
+            error={checkoutError}
+          />
+        </div>
+      ) : null}
       <AccountOrganizationToolbar
         forecastDays={forecastDays}
         onForecastDaysChange={setForecastDays}
@@ -1542,7 +1566,7 @@ export default function Accounts() {
                       setForm((f) => ({ ...f, minimum_payment_amount: value }))
                     }
                     onRefresh={
-                      modalAccount?.plaid_item_id
+                      plaidAllowed && modalAccount?.plaid_item_id
                         ? () => refreshLiabilitiesMu.mutate(modalAccount.plaid_item_id as number)
                         : undefined
                     }
@@ -1550,6 +1574,7 @@ export default function Accounts() {
                     refreshError={liabilityRefreshError}
                     refreshFeedback={liabilityRefreshFeedback}
                     consentAction={
+                      plaidAllowed &&
                       modalAccount?.plaid_item_id &&
                       modalAccount.minimum_payment_freshness !== "unsupported" &&
                       modalAccount.minimum_payment_freshness !== "product_not_enabled" &&

@@ -78,7 +78,7 @@ export function timelineRangeForFilter(filter: TimeFilter): { start: string; end
 export const PROJECTION_HINT_HISTORY_DAYS = 120;
 
 /** Forecast window for Upcoming Transactions — independent of history range. */
-export type ForecastRange = "30d" | "60d" | "90d" | "6m";
+export type ForecastRange = "30d" | "60d" | "90d" | "6m" | "12m";
 
 export const DEFAULT_FORECAST_RANGE: ForecastRange = "30d";
 
@@ -95,6 +95,8 @@ export function forecastRangeLabel(range: ForecastRange): string {
       return "90 days";
     case "6m":
       return "6 months";
+    case "12m":
+      return "1 year";
   }
 }
 
@@ -102,6 +104,7 @@ export function forecastRangeToDays(range: ForecastRange): OperationalForecastDa
   if (range === "30d") return 30;
   if (range === "60d") return 60;
   if (range === "90d") return 90;
+  if (range === "12m") return 365;
   return 180;
 }
 
@@ -109,6 +112,7 @@ export function daysToForecastRange(days: number): ForecastRange {
   if (days === 60) return "60d";
   if (days === 90) return "90d";
   if (days === 180) return "6m";
+  if (days === 365) return "12m";
   return "30d";
 }
 

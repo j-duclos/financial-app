@@ -25,6 +25,9 @@ User = get_user_model()
 
 @pytest.fixture
 def auth_client(user):
+    from billing.tests.helpers import grant_premium
+
+    grant_premium(user)
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -368,8 +371,11 @@ def test_liabilities_webhook_is_inert_when_url_unset():
     PLAID_WEBHOOK_URL="https://example.test/api/plaid/webhooks/liabilities/",
 )
 @pytest.mark.django_db
-def test_liabilities_webhook_syncs_known_item_without_creating_transactions(plaid_setup):
+def test_liabilities_webhook_syncs_known_item_without_creating_transactions(plaid_setup, user):
+    from billing.tests.helpers import grant_premium
     from transactions.models import Transaction
+
+    grant_premium(user)
 
     item, card_a, _card_b, _checking = plaid_setup
     before = Transaction.objects.count()

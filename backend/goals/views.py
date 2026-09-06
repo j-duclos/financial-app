@@ -36,6 +36,12 @@ class FinancialGoalViewSet(ModelViewSet):
             .order_by("priority", "-created_at")
         )
 
+    def perform_create(self, serializer):
+        from billing.entitlements import require_goal_slot
+
+        require_goal_slot(self.request.user)
+        serializer.save()
+
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         qs = self.get_queryset().filter(
@@ -70,6 +76,9 @@ class FinancialGoalViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="duplicate")
     def duplicate(self, request, pk=None):
+        from billing.entitlements import require_goal_slot
+
+        require_goal_slot(request.user)
         goal = self.get_object()
         copy = FinancialGoal.objects.create(
             household=goal.household,
@@ -201,6 +210,12 @@ class GoalBucketViewSet(ModelViewSet):
             .order_by("priority", "-created_at")
         )
 
+    def perform_create(self, serializer):
+        from billing.entitlements import require_goal_slot
+
+        require_goal_slot(self.request.user)
+        serializer.save()
+
     def list(self, request, *args, **kwargs):
         from datetime import date as date_cls
 
@@ -295,6 +310,9 @@ class GoalBucketViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="duplicate")
     def duplicate(self, request, pk=None):
+        from billing.entitlements import require_goal_slot
+
+        require_goal_slot(request.user)
         bucket = self.get_object()
         copy = GoalBucket.objects.create(
             household=bucket.household,

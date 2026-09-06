@@ -45,6 +45,9 @@ class TestPlaidSyncThrottle(TestCase):
             mask="1234",
             account=self.acc,
         )
+        from billing.tests.helpers import grant_premium
+
+        grant_premium(self.user)
 
     def test_should_skip_recent_sync(self):
         self.assertTrue(should_skip_plaid_item_sync(self.item, force=False))
@@ -83,6 +86,9 @@ class TestPlaidSyncAllView(TestCase):
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+        from billing.tests.helpers import grant_premium
+
+        grant_premium(self.user)
 
     @patch("plaid_link.views.plaid_configured", return_value=True)
     @patch("plaid_link.views.sync_all_plaid_items_for_user", return_value={"items": [], "totals": {"added": 0, "modified": 0, "removed": 0, "merged": 0, "skipped_items": 0, "synced_items": 0, "failed_items": 0}})

@@ -135,6 +135,9 @@ class RecurringRuleViewSet(ModelViewSet):
         )
 
     def perform_create(self, serializer):
+        from billing.entitlements import require_recurring_rule_slot
+
+        require_recurring_rule_slot(self.request.user)
         rule = serializer.save()
         if not rule.active:
             pause_recurring_rule(rule)

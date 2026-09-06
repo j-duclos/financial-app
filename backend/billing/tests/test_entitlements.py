@@ -19,7 +19,14 @@ def test_new_user_is_free(user):
     assert get_user_plan(user) == BillingSubscription.Plan.FREE
     assert user_has_premium(user) is False
     entitlements = get_entitlements(user)
-    assert entitlements == {"plan": "FREE", "is_premium": False}
+    assert entitlements["plan"] == "FREE"
+    assert entitlements["is_premium"] is False
+    assert entitlements["plaid_bank_sync"] is False
+    assert entitlements["limits"]["linked_institutions"] == 0
+    assert entitlements["limits"]["manual_accounts"] == 3
+    assert entitlements["limits"]["recurring_rules"] == 10
+    assert entitlements["limits"]["operational_forecast_days"] == 90
+    assert entitlements["limits"]["goals"] == 2
 
 
 @pytest.mark.django_db
@@ -53,7 +60,15 @@ def test_active_subscription_grants_premium(user):
     billing.stripe_subscription_id = "sub_1"
     billing.save()
     assert user_has_premium(user) is True
-    assert get_entitlements(user) == {"plan": "PREMIUM", "is_premium": True}
+    entitlements = get_entitlements(user)
+    assert entitlements["plan"] == "PREMIUM"
+    assert entitlements["is_premium"] is True
+    assert entitlements["plaid_bank_sync"] is True
+    assert entitlements["limits"]["linked_institutions"] is None
+    assert entitlements["limits"]["manual_accounts"] is None
+    assert entitlements["limits"]["recurring_rules"] is None
+    assert entitlements["limits"]["operational_forecast_days"] == 365
+    assert entitlements["limits"]["goals"] is None
 
 
 @pytest.mark.django_db

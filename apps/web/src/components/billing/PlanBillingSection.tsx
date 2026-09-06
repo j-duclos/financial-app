@@ -6,6 +6,7 @@ import {
   BILLING_STATUS_QUERY_KEY,
   PREMIUM_BENEFITS,
   PREMIUM_MONTHLY_PRICE_DISPLAY,
+  FREE_PLAN_LIMITS,
 } from "../../lib/billing";
 import {
   billingActionErrorMessage,
@@ -139,8 +140,10 @@ export default function PlanBillingSection() {
       {!isPremium ? (
         <>
           <p className="text-sm text-gray-600">
-            Track accounts, transactions, and a standard forecast at no cost. Upgrade anytime for
-            bank connections and a longer planning horizon.
+            Track up to {FREE_PLAN_LIMITS.manual_accounts} manually managed accounts, unlimited
+            manual transactions, {FREE_PLAN_LIMITS.recurring_rules} recurring rules,{" "}
+            {FREE_PLAN_LIMITS.goals} goals, and a {FREE_PLAN_LIMITS.operational_forecast_days}-day
+            forecast. Upgrade for automatic bank syncing and longer planning.
           </p>
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

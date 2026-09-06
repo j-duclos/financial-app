@@ -96,6 +96,7 @@ def sync_all_plaid_items_for_user(
     Skips logins synced within PLAID_SYNC_MIN_INTERVAL_SECONDS unless force=True.
     """
     from core.utils import get_households_for_user
+    from billing.entitlements import user_may_use_plaid_sync
 
     households = get_households_for_user(user)
     if household_id is not None:
@@ -116,6 +117,27 @@ def sync_all_plaid_items_for_user(
         "synced_items": 0,
         "failed_items": 0,
     }
+
+    if not user_may_use_plaid_sync(user):
+        for item in items:
+            if not item.linked_accounts.exists():
+                continue
+            label = (item.institution_name or "Bank").strip() or "Bank"
+            item_results.append(
+                {
+                    "id": item.id,
+                    "institution_name": label,
+                    "skipped": True,
+                    "reason": "premium_required",
+                }
+            )
+            totals["skipped_items"] += 1
+        return {
+            "items": item_results,
+            "totals": totals,
+            "sync_paused": True,
+            "reason": "premium_required",
+        }
 
     for item in items:
         label = (item.institution_name or "Bank").strip() or "Bank"

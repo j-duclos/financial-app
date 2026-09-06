@@ -18,10 +18,10 @@ import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaul
 import { PROFILE_QUERY_KEY, useProfileQuery } from "../lib/profileQuery";
 import {
   FORECAST_WINDOW_LABELS,
-  OPERATIONAL_FORECAST_DAY_OPTIONS,
   normalizeOperationalForecastDays,
   type OperationalForecastDays,
 } from "../lib/forecastWindow";
+import { forecastOptionsForPlan } from "../lib/entitlements";
 import {
   clientPasswordErrors,
   passwordApiFieldErrors,
@@ -136,7 +136,7 @@ export default function Profile() {
         phone_e164: phoneInput.trim() || null,
         default_household: defaultHousehold === "" ? null : Number(defaultHousehold),
         default_account: defaultAccount === "" ? null : Number(defaultAccount),
-        default_forecast_days: defaultForecastDays,
+        default_forecast_days: forecastValue,
       }),
     onSuccess: async (saved) => {
       setProfileMessage({ type: "ok", text: "Profile saved." });
@@ -199,6 +199,11 @@ export default function Profile() {
     setPwdFieldErrors({});
     changePasswordMu.mutate();
   }
+
+  const forecastChoices = forecastOptionsForPlan(billing);
+  const forecastValue = forecastChoices.includes(defaultForecastDays)
+    ? defaultForecastDays
+    : (forecastChoices[forecastChoices.length - 1] ?? 30);
 
   if (profileLoading || !profile) {
     return (
@@ -343,14 +348,14 @@ export default function Profile() {
               </label>
               <select
                 id="profile-forecast-window"
-                value={defaultForecastDays}
+                value={forecastValue}
                 onChange={(e) =>
                   setDefaultForecastDays(Number(e.target.value) as OperationalForecastDays)
                 }
                 className={inputClass}
                 data-testid="default-forecast-window"
               >
-                {OPERATIONAL_FORECAST_DAY_OPTIONS.map((d) => (
+                {forecastOptionsForPlan(billing).map((d) => (
                   <option key={d} value={d}>
                     {FORECAST_WINDOW_LABELS[d]}
                   </option>

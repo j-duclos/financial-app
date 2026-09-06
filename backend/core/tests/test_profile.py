@@ -170,7 +170,7 @@ def test_username_is_not_writable(authenticated_client, user):
     assert r.json()["username"] == "testuser"
 
 
-@pytest.mark.parametrize("days", [30, 60, 90, 180])
+@pytest.mark.parametrize("days", [30, 60, 90])
 def test_patch_default_forecast_days_allowed(authenticated_client, user, days):
     r = authenticated_client.patch(
         "/api/profile/", {"default_forecast_days": days}, format="json"
@@ -195,3 +195,27 @@ def test_legacy_profile_without_saved_forecast_defaults_to_30(authenticated_clie
     r = authenticated_client.get("/api/profile/")
     assert r.status_code == 200
     assert r.json()["default_forecast_days"] == 30
+
+
+@pytest.mark.django_db
+def test_free_user_cannot_save_180_day_default_forecast(authenticated_client, user):
+    r = authenticated_client.patch(
+        "/api/profile/", {"default_forecast_days": 180}, format="json"
+    )
+    assert r.status_code == 403
+    body = r.json()
+    assert body["code"] == "premium_required"
+    assert body["feature"] == "operational_forecast_days"
+    assert body["upgrade_required"] is True
+
+
+@pytest.mark.django_db
+def test_premium_user_can_save_365_day_default_forecast(authenticated_client, user):
+    from billing.tests.helpers import grant_premium
+
+    grant_premium(user)
+    r = authenticated_client.patch(
+        "/api/profile/", {"default_forecast_days": 365}, format="json"
+    )
+    assert r.status_code == 200
+    assert r.json()["default_forecast_days"] == 365

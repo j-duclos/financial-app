@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getPlaidMeta, syncAllPlaidItems } from "@budget-app/api-client";
 import { useAuth } from "../context/AuthContext";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { canUsePlaidBankSync } from "../lib/entitlements";
 import {
   canRunPlaidAutoSync,
   dispatchPlaidAutoSyncEvent,
@@ -18,6 +20,7 @@ import {
  */
 export function usePlaidAutoSync() {
   const { auth } = useAuth();
+  const { billing } = useBillingStatus();
   const queryClient = useQueryClient();
   const inFlightRef = useRef(false);
 
@@ -25,6 +28,7 @@ export function usePlaidAutoSync() {
     async (reason: "app_open" | "tab_visible") => {
       if (inFlightRef.current) return;
       if (!canRunPlaidAutoSync()) return;
+      if (!canUsePlaidBankSync(billing)) return;
 
       inFlightRef.current = true;
       markPlaidAutoSyncAttempt();
@@ -49,7 +53,7 @@ export function usePlaidAutoSync() {
         inFlightRef.current = false;
       }
     },
-    [queryClient]
+    [billing, queryClient]
   );
 
   useEffect(() => {

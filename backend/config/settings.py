@@ -296,6 +296,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": int(os.environ.get("PAGE_SIZE", "20")),
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "billing.exception_handler.billing_exception_handler",
 }
 
 # Simple JWT

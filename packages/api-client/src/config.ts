@@ -180,11 +180,23 @@ async function requestInner<T>(
   if (!res.ok) {
     const text = await res.text();
     let detail: string;
+    let extras: {
+      code?: string;
+      feature?: string;
+      upgradeRequired?: boolean;
+      limit?: number;
+    } = {};
     try {
       const j = JSON.parse(text) as Record<string, unknown> & {
         detail?: unknown;
         message?: string;
         redirect_uri_sent?: string;
+      };
+      extras = {
+        code: typeof j.code === "string" ? j.code : undefined,
+        feature: typeof j.feature === "string" ? j.feature : undefined,
+        upgradeRequired: j.upgrade_required === true,
+        limit: typeof j.limit === "number" ? j.limit : undefined,
       };
       const detailStr =
         typeof j.detail === "string"
@@ -199,7 +211,17 @@ async function requestInner<T>(
         else if (typeof val === "string") fieldParts.push(`${fieldKey}: ${val}`);
       };
       for (const [key, val] of Object.entries(j)) {
-        if (key === "detail" || key === "message" || key === "redirect_uri_sent") continue;
+        if (
+          key === "detail" ||
+          key === "message" ||
+          key === "redirect_uri_sent" ||
+          key === "code" ||
+          key === "feature" ||
+          key === "upgrade_required" ||
+          key === "limit"
+        ) {
+          continue;
+        }
         if (key === "errors" && val && typeof val === "object" && !Array.isArray(val)) {
           for (const [fk, fv] of Object.entries(val as Record<string, unknown>)) {
             pushField(fk, fv);
@@ -217,7 +239,7 @@ async function requestInner<T>(
     } catch {
       detail = text;
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, extras);
   }
   if ((init.method ?? "").toUpperCase() === "DELETE" && res.status !== 204) {
     throw new ApiError(res.status, "Delete must return 204; got " + res.status + " — is VITE_API_URL pointing at the backend?");
@@ -238,9 +260,26 @@ export async function requestRequired<T>(
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  feature?: string;
+  upgradeRequired?: boolean;
+  limit?: number;
+  constructor(
+    status: number,
+    message: string,
+    extras?: {
+      code?: string;
+      feature?: string;
+      upgradeRequired?: boolean;
+      limit?: number;
+    }
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = extras?.code;
+    this.feature = extras?.feature;
+    this.upgradeRequired = extras?.upgradeRequired;
+    this.limit = extras?.limit;
   }
 }

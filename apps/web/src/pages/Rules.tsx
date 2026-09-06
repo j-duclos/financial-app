@@ -29,6 +29,10 @@ import {
   type RuleSectionKey,
 } from "../lib/ruleCashFlow";
 import { AUTOMATION_NAV_LABEL, AUTOMATION_PAGE_INTRO } from "../lib/automationDisplay";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { atPlanLimit } from "../lib/entitlements";
+import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
 
 const FREQUENCY_LABELS: Record<RecurringRuleFrequency, string> = {
   WEEKLY: "Weekly",
@@ -118,6 +122,9 @@ function cadenceSummary(rule: RecurringRule): string {
 }
 
 export default function Rules() {
+  const { billing } = useBillingStatus();
+  const rulesLimited = atPlanLimit(billing, "recurring_rules");
+  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const openedEditFromUrlRef = useRef<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -278,6 +285,7 @@ export default function Rules() {
   }
 
   function openCreate() {
+    if (rulesLimited) return;
     resetForm();
     setForm((f) => ({ ...f, household: householdId || 0 }));
     setEditing(null);
@@ -464,6 +472,17 @@ export default function Rules() {
           </button>
         </div>
       </div>
+      {rulesLimited ? (
+        <div className="mb-4">
+          <PremiumUpgradePrompt
+            title="The Free plan includes up to 10 recurring rules."
+            description="Upgrade to Premium for unlimited recurring automation."
+            onUpgrade={startCheckout}
+            busy={checkoutBusy}
+            error={checkoutError}
+          />
+        </div>
+      ) : null}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <table className="min-w-full w-full table-fixed divide-y divide-gray-200">
           <thead className="bg-gray-50">

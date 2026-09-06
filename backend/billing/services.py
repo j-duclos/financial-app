@@ -78,12 +78,9 @@ def user_has_premium(user) -> bool:
 
 
 def get_entitlements(user) -> dict[str, Any]:
-    """Phase 1 entitlement payload. Feature limits are added in a later phase."""
-    is_premium = user_has_premium(user)
-    return {
-        "plan": BillingSubscription.Plan.PREMIUM if is_premium else BillingSubscription.Plan.FREE,
-        "is_premium": is_premium,
-    }
+    from billing.entitlements import build_entitlement_payload
+
+    return build_entitlement_payload(user)
 
 
 def get_billing_status_payload(user) -> dict[str, Any]:
@@ -97,6 +94,7 @@ def get_billing_status_payload(user) -> dict[str, Any]:
         "cancel_at_period_end": bool(billing.cancel_at_period_end),
         "current_period_end": period_end.isoformat() if period_end else None,
         "has_stripe_customer": bool(billing.stripe_customer_id),
+        "entitlements": get_entitlements(user),
     }
 
 
