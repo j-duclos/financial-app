@@ -5,11 +5,13 @@ import {
   ACCESS_UNTIL_PERIOD_END_MESSAGE,
   ALREADY_PREMIUM_MESSAGE,
   BILLING_UNAVAILABLE_MESSAGE,
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
   PREMIUM_MONTHLY_PRICE_DISPLAY,
 } from "./billing";
 import {
   billingActionErrorMessage,
   billingStatusLabel,
+  isEmailVerificationRequiredError,
   planLabel,
   premiumPeriodCopy,
   subscriptionStatusLabel,
@@ -91,5 +93,10 @@ describe("billing display helpers", () => {
     expect(
       billingActionErrorMessage(new ApiError(503, "Set STRIPE_SECRET_KEY and STRIPE_PREMIUM_PRICE_ID."))
     ).toBe(BILLING_UNAVAILABLE_MESSAGE);
+    const unverified = new ApiError(403, "Verify your email before subscribing.", {
+      code: "email_verification_required",
+    });
+    expect(isEmailVerificationRequiredError(unverified)).toBe(true);
+    expect(billingActionErrorMessage(unverified)).toBe(EMAIL_VERIFICATION_REQUIRED_MESSAGE);
   });
 });

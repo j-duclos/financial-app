@@ -63,6 +63,19 @@ def send_verification_email(user) -> bool:
     return True
 
 
+def send_email_changed_notice(*, old_email: str, username: str) -> bool:
+    """Informational notice to the previous address. Must not block the change."""
+    email = normalize_email(old_email)
+    if not email:
+        return False
+    context = {"username": username}
+    text_body = render_to_string("core/email/email_changed.txt", context)
+    html_body = render_to_string("core/email/email_changed.html", context)
+    _send("Your Financial App email was changed", email, text_body, html_body)
+    logger.info("Email-changed notice sent user=%s", username)
+    return True
+
+
 def send_password_reset_email(user) -> bool:
     email = normalize_email(user.email)
     if not email:

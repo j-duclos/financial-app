@@ -42,7 +42,10 @@ class CreateCheckoutSessionView(APIView):
 
         if not is_email_verified(request.user):
             return Response(
-                {"detail": "Verify your email before subscribing."},
+                {
+                    "code": "email_verification_required",
+                    "detail": "Verify your email before subscribing.",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
         # Price IDs and user IDs from the client are ignored. The authenticated

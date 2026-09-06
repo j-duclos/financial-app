@@ -185,6 +185,19 @@ class ChangePasswordSerializer(serializers.Serializer):
         return data
 
 
+class ChangeEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True, allow_blank=False)
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate_email(self, value):
+        from core.email_identity import normalize_email
+
+        email = normalize_email(value)
+        if not email:
+            raise serializers.ValidationError("Email is required.")
+        return email
+
+
 class VerifyEmailSerializer(serializers.Serializer):
     token = serializers.CharField()
 

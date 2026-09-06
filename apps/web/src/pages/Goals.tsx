@@ -70,7 +70,7 @@ function buildPayload(householdId: number, values: GoalFormValues) {
 export default function Goals() {
   const { billing } = useBillingStatus();
   const goalsLimited = atPlanLimit(billing, "goals");
-  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<FinancialGoal | null>(null);
@@ -244,6 +244,7 @@ export default function Goals() {
           onUpgrade={startCheckout}
           busy={checkoutBusy}
           error={checkoutError}
+          verificationRequired={emailVerificationRequired}
         />
       ) : null}
 

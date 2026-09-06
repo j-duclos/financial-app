@@ -287,3 +287,95 @@ def test_profile_exposes_email_verification_state(authenticated_client, user):
     assert body["email"] == "profile@example.com"
     assert body["email_verified"] is False
     assert "password" not in body
+
+
+def test_change_email_requires_authentication(api_client):
+    cache.clear()
+    r = api_client.post(
+        "/api/profile/change-email/",
+        {"email": "new@example.com", "current_password": "testpass123"},
+        format="json",
+    )
+    assert r.status_code in (401, 403)
+
+
+def test_change_email_requires_correct_password(authenticated_client, user):
+    mail.outbox.clear()
+    r = authenticated_client.post(
+        "/api/profile/change-email/",
+        {"email": "new@example.com", "current_password": "wrong-password"},
+        format="json",
+    )
+    assert r.status_code == 400
+    assert "current_password" in r.json()
+    user.refresh_from_db()
+    assert user.email == ""
+    assert mail.outbox == []
+
+
+def test_change_email_rejects_duplicate_case_insensitively(authenticated_client, user):
+    User.objects.create_user(username="takenmail", email="Taken@Example.com", password="testpass123")
+    r = authenticated_client.post(
+        "/api/profile/change-email/",
+        {"email": "taken@example.com", "current_password": "testpass123"},
+        format="json",
+    )
+    assert r.status_code == 400
+    assert "email" in r.json()
+    user.refresh_from_db()
+    assert user.email == ""
+
+
+def test_legacy_blank_email_user_can_establish_email(authenticated_client, user):
+    mail.outbox.clear()
+    assert user.email == ""
+    r = authenticated_client.post(
+        "/api/profile/change-email/",
+        {"email": "First@Example.com", "current_password": "testpass123"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    assert r.json()["detail"] == "Email updated. Check your new email to verify it."
+    assert r.json()["email"] == "first@example.com"
+    assert r.json()["email_verified"] is False
+    user.refresh_from_db()
+    assert user.email == "first@example.com"
+    assert is_email_verified(user) is False
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == ["first@example.com"]
+    assert "/verify-email?" in mail.outbox[0].body
+
+
+def test_change_email_clears_verification_and_invalidates_old_token(authenticated_client, user):
+    mail.outbox.clear()
+    user.email = "old@example.com"
+    user.save(update_fields=["email"])
+    mark_email_verified(user)
+    old_token = make_verification_token(user)
+    assert is_email_verified(user) is True
+    r = authenticated_client.post(
+        "/api/profile/change-email/",
+        {"email": "new@example.com", "current_password": "testpass123"},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    user.refresh_from_db()
+    assert user.email == "new@example.com"
+    assert is_email_verified(user) is False
+    stale = authenticated_client.post("/api/auth/verify-email/", {"token": old_token}, format="json")
+    assert stale.status_code == 400
+    assert stale.json()["status"] == "invalid"
+    new_token = make_verification_token(user)
+    verified = authenticated_client.post(
+        "/api/auth/verify-email/", {"token": new_token}, format="json"
+    )
+    assert verified.status_code == 200
+    assert verified.json()["status"] == "verified"
+    user.refresh_from_db()
+    assert is_email_verified(user) is True
+    recipients = [msg.to[0] for msg in mail.outbox]
+    assert "new@example.com" in recipients
+    assert "old@example.com" in recipients
+    verify_bodies = [msg.body for msg in mail.outbox if "Verify your email" in msg.subject]
+    assert verify_bodies
+    assert "/verify-email?" in verify_bodies[0]

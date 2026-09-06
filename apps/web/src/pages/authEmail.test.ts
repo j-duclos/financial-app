@@ -27,6 +27,18 @@ const bannerSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../components/EmailVerificationBanner.tsx"),
   "utf8"
 );
+const resendSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../components/ResendVerificationButton.tsx"),
+  "utf8"
+);
+const changeEmailSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../components/ChangeEmailSection.tsx"),
+  "utf8"
+);
+const planBillingSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../components/billing/PlanBillingSection.tsx"),
+  "utf8"
+);
 const layoutSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../components/Layout.tsx"),
   "utf8"
@@ -79,7 +91,26 @@ describe("auth email UX", () => {
 
   it("shows a non-blocking unverified notice with resend", () => {
     expect(bannerSource).toMatch(/Verify your email to protect your account/);
-    expect(bannerSource).toMatch(/Resend verification email/);
+    expect(bannerSource).toMatch(/ResendVerificationButton/);
+    expect(resendSource).toMatch(/Resend verification email/);
     expect(layoutSource).toMatch(/EmailVerificationBanner/);
+  });
+
+  it("lets Settings change email and prompts blank-email users to add one", () => {
+    expect(changeEmailSource).toMatch(/Change email/);
+    expect(changeEmailSource).toMatch(/Add email/);
+    expect(changeEmailSource).toMatch(/Add an email address to protect and recover your account/);
+    expect(changeEmailSource).toMatch(/Email updated. Check your new address to verify it/);
+    expect(changeEmailSource).toMatch(/Verified/);
+    expect(changeEmailSource).toMatch(/Not verified/);
+    expect(changeEmailSource).toMatch(/New email/);
+    expect(changeEmailSource).toMatch(/Current password/);
+    expect(changeEmailSource).toMatch(/hasEmail && !verified/);
+  });
+
+  it("blocks unverified Premium checkout in Settings with resend", () => {
+    expect(planBillingSource).toMatch(/EMAIL_VERIFICATION_REQUIRED_MESSAGE/);
+    expect(planBillingSource).toMatch(/ResendVerificationButton/);
+    expect(planBillingSource).not.toMatch(/No user found/i);
   });
 });

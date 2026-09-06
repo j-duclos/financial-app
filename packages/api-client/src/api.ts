@@ -232,6 +232,16 @@ export async function changePassword(body: {
   });
 }
 
+export async function changeEmail(body: {
+  email: string;
+  current_password: string;
+}): Promise<{ detail: string; email: string; email_verified: boolean }> {
+  return requestRequired("/api/profile/change-email/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 // Households
 export async function listHouseholds(): Promise<Household[]> {
   const p = await requestRequired<PaginatedResponse<Household>>("/api/households/", { params: { page_size: "100" } });

@@ -43,5 +43,7 @@ export const CHECKOUT_CANCELED_MESSAGE =
 export const BILLING_UNAVAILABLE_MESSAGE =
   "Billing is temporarily unavailable. Please try again later.";
 export const ALREADY_PREMIUM_MESSAGE = "Your Premium subscription is already active.";
+export const EMAIL_VERIFICATION_REQUIRED_CODE = "email_verification_required";
+export const EMAIL_VERIFICATION_REQUIRED_MESSAGE = "Verify your email before subscribing.";
 export const ACCESS_UNTIL_PERIOD_END_MESSAGE =
   "Your Premium features remain available until the end of the current billing period.";

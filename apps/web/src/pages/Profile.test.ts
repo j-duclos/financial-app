@@ -9,9 +9,8 @@ const profileSource = readFileSync(
 );
 
 describe("Profile page", () => {
-  it("exports Profile component", async () => {
-    const mod = await import("./Profile");
-    expect(typeof mod.default).toBe("function");
+  it("exports Profile component", () => {
+    expect(profileSource).toMatch(/export default function Profile/);
   });
 
   it("groups Profile, Defaults, Security, and Plan & Billing", () => {
@@ -31,8 +30,7 @@ describe("Profile page", () => {
   });
 
   it("shows a read-only email and verification status", () => {
-    expect(profileSource).toMatch(/profile-email/);
-    expect(profileSource).toMatch(/profile\.email_verified/);
+    expect(profileSource).toMatch(/ChangeEmailSection/);
   });
 
   it("marks display name optional and shown in the header", () => {

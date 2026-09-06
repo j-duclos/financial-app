@@ -13,10 +13,12 @@ import { PREMIUM_MONTHLY_PRICE_DISPLAY } from "../../lib/billing";
 const api = vi.hoisted(() => {
   class MockApiError extends Error {
     status: number;
-    constructor(status: number, message: string) {
+    code?: string;
+    constructor(status: number, message: string, extras?: { code?: string }) {
       super(message);
       this.name = "ApiError";
       this.status = status;
+      this.code = extras?.code;
     }
   }
   return {
@@ -24,6 +26,7 @@ const api = vi.hoisted(() => {
     getBillingStatus: vi.fn(),
     createCheckoutSession: vi.fn(),
     createPortalSession: vi.fn(),
+    resendVerification: vi.fn(),
   };
 });
 
@@ -82,6 +85,8 @@ describe("PlanBillingSection", () => {
     api.getBillingStatus.mockReset();
     api.createCheckoutSession.mockReset();
     api.createPortalSession.mockReset();
+    api.resendVerification.mockReset();
+    api.resendVerification.mockResolvedValue({ detail: "Verification email sent." });
     navigation.redirectToExternalUrl.mockReset();
   });
 
@@ -218,5 +223,25 @@ describe("PlanBillingSection", () => {
       await screen.findByText("Billing is temporarily unavailable. Please try again later.")
     ).toBeInTheDocument();
     expect(screen.queryByText(/STRIPE_SECRET_KEY/)).not.toBeInTheDocument();
+  });
+
+  it("shows verification-required copy and resend instead of Stripe when email is unverified", async () => {
+    api.getBillingStatus.mockResolvedValue(freeStatus);
+    api.createCheckoutSession.mockRejectedValue(
+      new api.ApiError(403, "Verify your email before subscribing.", {
+        code: "email_verification_required",
+      })
+    );
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(await screen.findByRole("button", { name: "Upgrade to Premium" }));
+    expect(await screen.findByText("Verify your email before subscribing.")).toBeInTheDocument();
+    const resend = await screen.findByRole("button", { name: "Resend verification email" });
+    expect(resend).toBeEnabled();
+    expect(navigation.redirectToExternalUrl).not.toHaveBeenCalled();
+    await user.click(resend);
+    await waitFor(() => {
+      expect(api.resendVerification).toHaveBeenCalledTimes(1);
+    });
   });
 });

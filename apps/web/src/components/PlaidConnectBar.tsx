@@ -183,7 +183,7 @@ export function PlaidConnectBar({
   const queryClient = useQueryClient();
   const { billing } = useBillingStatus();
   const plaidAllowed = canUsePlaidBankSync(billing);
-  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
   const [linkToken, setLinkToken] = useState<string | null>(null);
   /** Set only when completing Plaid OAuth return (same link_token as before redirect). */
   const [receivedRedirectUri, setReceivedRedirectUri] = useState<string | null>(null);
@@ -639,6 +639,7 @@ export function PlaidConnectBar({
               onUpgrade={startCheckout}
               busy={checkoutBusy}
               error={checkoutError}
+              verificationRequired={emailVerificationRequired}
             />
           ) : null}
           {plaidCredentialsMissing ? (

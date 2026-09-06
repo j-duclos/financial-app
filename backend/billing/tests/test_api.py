@@ -87,9 +87,27 @@ def test_checkout_requires_authentication(api_client):
 
 @pytest.mark.django_db
 def test_checkout_requires_verified_email(authenticated_client, user):
-    r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
+    with patch("billing.views.create_premium_checkout_session") as mock_checkout:
+        r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
     assert r.status_code == 403
+    assert r.json()["code"] == "email_verification_required"
     assert r.json()["detail"] == "Verify your email before subscribing."
+    mock_checkout.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_checkout_unverified_does_not_create_stripe_customer(authenticated_client, user):
+    user.email = "unverified@example.com"
+    user.save(update_fields=["email"])
+    with (
+        patch("billing.services.create_customer") as mock_customer,
+        patch("billing.services.create_checkout_session") as mock_session,
+    ):
+        r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
+    assert r.status_code == 403
+    assert r.json()["code"] == "email_verification_required"
+    mock_customer.assert_not_called()
+    mock_session.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -228,3 +246,19 @@ def test_portal_uses_own_customer_not_request_body(authenticated_client, user):
     assert r.json()["url"] == "https://billing.stripe.com/p/session/mine"
     mock_portal.assert_called_once()
     assert mock_portal.call_args.kwargs["customer"] == "cus_mine"
+
+
+@pytest.mark.django_db
+@stripe_configured
+def test_portal_does_not_require_verified_email(authenticated_client, user):
+    user.email = "unverified-payer@example.com"
+    user.save(update_fields=["email"])
+    billing = get_or_create_billing_subscription(user)
+    billing.stripe_customer_id = "cus_existing"
+    billing.save()
+    with patch("billing.services.create_portal_session") as mock_portal:
+        mock_portal.return_value = MagicMock(url="https://billing.stripe.com/p/session/existing")
+        r = authenticated_client.post("/api/billing/create-portal-session/", {}, format="json")
+    assert r.status_code == 200
+    mock_portal.assert_called_once()
+    assert mock_portal.call_args.kwargs["customer"] == "cus_existing"

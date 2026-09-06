@@ -124,7 +124,7 @@ function cadenceSummary(rule: RecurringRule): string {
 export default function Rules() {
   const { billing } = useBillingStatus();
   const rulesLimited = atPlanLimit(billing, "recurring_rules");
-  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const openedEditFromUrlRef = useRef<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -480,6 +480,7 @@ export default function Rules() {
             onUpgrade={startCheckout}
             busy={checkoutBusy}
             error={checkoutError}
+            verificationRequired={emailVerificationRequired}
           />
         </div>
       ) : null}

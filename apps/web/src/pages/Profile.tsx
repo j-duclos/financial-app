@@ -12,6 +12,7 @@ import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { useBillingStatus } from "../hooks/useBillingStatus";
 import PlanBillingSection from "../components/billing/PlanBillingSection";
 import PlanBadge from "../components/billing/PlanBadge";
+import ChangeEmailSection from "../components/ChangeEmailSection";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
@@ -256,22 +257,7 @@ export default function Profile() {
                 Account identifier — cannot be changed.
               </p>
             </div>
-            <div>
-              <label htmlFor="profile-email" className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                id="profile-email"
-                type="email"
-                value={profile.email ?? ""}
-                readOnly
-                autoComplete="email"
-                className={readOnlyClass}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                {profile.email_verified ? "Verified." : "Verify your email to protect your account."}
-              </p>
-            </div>
+            <ChangeEmailSection />
             <div>
               <label htmlFor="profile-display-name" className="block text-sm font-medium text-gray-700">
                 Display name

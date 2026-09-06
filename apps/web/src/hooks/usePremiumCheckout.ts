@@ -2,7 +2,11 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, createCheckoutSession } from "@budget-app/api-client";
 import { ALREADY_PREMIUM_MESSAGE, BILLING_STATUS_QUERY_KEY } from "../lib/billing";
-import { billingActionErrorMessage, redirectToExternalUrl } from "../lib/billingDisplay";
+import {
+  billingActionErrorMessage,
+  isEmailVerificationRequiredError,
+  redirectToExternalUrl,
+} from "../lib/billingDisplay";
 import { useBillingStatus } from "./useBillingStatus";
 
 export function usePremiumCheckout() {
@@ -10,6 +14,7 @@ export function usePremiumCheckout() {
   const { refetch } = useBillingStatus();
   const [error, setError] = useState<string | null>(null);
   const [alreadyPremium, setAlreadyPremium] = useState(false);
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
 
   const checkoutMu = useMutation({
     mutationFn: () => createCheckoutSession(),
@@ -25,9 +30,16 @@ export function usePremiumCheckout() {
         await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
         await refetch();
         setAlreadyPremium(true);
+        setEmailVerificationRequired(false);
         setError(ALREADY_PREMIUM_MESSAGE);
         return;
       }
+      if (isEmailVerificationRequiredError(err)) {
+        setEmailVerificationRequired(true);
+        setError(billingActionErrorMessage(err));
+        return;
+      }
+      setEmailVerificationRequired(false);
       setError(billingActionErrorMessage(err));
     },
   });
@@ -36,10 +48,12 @@ export function usePremiumCheckout() {
     startCheckout: () => {
       setError(null);
       setAlreadyPremium(false);
+      setEmailVerificationRequired(false);
       checkoutMu.mutate();
     },
     checkoutBusy: checkoutMu.isPending,
     checkoutError: error,
     alreadyPremium,
+    emailVerificationRequired,
   };
 }

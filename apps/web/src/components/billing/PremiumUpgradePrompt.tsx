@@ -1,4 +1,5 @@
-import { PLAID_PREMIUM_MESSAGE } from "../../lib/billing";
+import { EMAIL_VERIFICATION_REQUIRED_MESSAGE, PLAID_PREMIUM_MESSAGE } from "../../lib/billing";
+import ResendVerificationButton from "../ResendVerificationButton";
 
 const primaryButtonClass =
   "inline-flex items-center justify-center py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500";
@@ -9,12 +10,14 @@ export default function PremiumUpgradePrompt({
   onUpgrade,
   busy = false,
   error,
+  verificationRequired = false,
 }: {
   title?: string;
   description?: string;
   onUpgrade: () => void;
   busy?: boolean;
   error?: string | null;
+  verificationRequired?: boolean;
 }) {
   return (
     <div
@@ -24,7 +27,14 @@ export default function PremiumUpgradePrompt({
     >
       <p className="text-sm font-medium text-gray-900">{title}</p>
       {description ? <p className="text-sm text-gray-700">{description}</p> : null}
-      {error ? (
+      {verificationRequired ? (
+        <div className="space-y-2" data-testid="checkout-email-verification-required">
+          <p className="text-sm text-red-700" role="alert">
+            {EMAIL_VERIFICATION_REQUIRED_MESSAGE}
+          </p>
+          <ResendVerificationButton />
+        </div>
+      ) : error ? (
         <p className="text-sm text-red-700" role="alert">
           {error}
         </p>

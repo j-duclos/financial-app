@@ -78,7 +78,7 @@ export default function Accounts() {
   const { billing } = useBillingStatus();
   const accountsLimited = atPlanLimit(billing, "manual_accounts");
   const plaidAllowed = canUsePlaidBankSync(billing);
-  const { startCheckout, checkoutBusy, checkoutError } = usePremiumCheckout();
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
   const [showAccountUpgrade, setShowAccountUpgrade] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [modalOpen, setModalOpen] = useState(false);
@@ -818,6 +818,7 @@ export default function Accounts() {
             onUpgrade={startCheckout}
             busy={checkoutBusy}
             error={checkoutError}
+            verificationRequired={emailVerificationRequired}
           />
         </div>
       ) : null}

@@ -12,6 +12,7 @@ import logging
 from .models import Household, HouseholdMembership
 from .permissions import IsHouseholdMember
 from .serializers import (
+    ChangeEmailSerializer,
     ChangePasswordSerializer,
     ForgotPasswordSerializer,
     HouseholdSerializer,
@@ -210,6 +211,63 @@ class ProfileView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class ChangeEmailView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get_throttles(self):
+        from core.throttles import AuthEmailUserThrottle
+
+        return [AuthEmailUserThrottle()]
+
+    def post(self, request):
+        from core.email_identity import (
+            assign_user_email,
+            email_taken,
+            is_email_verified,
+            normalize_email,
+        )
+        from core.mail import send_email_changed_notice, send_verification_email
+
+        serializer = ChangeEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if not request.user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {"current_password": ["Current password is incorrect."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        new_email = serializer.validated_data["email"]
+        old_email = normalize_email(request.user.email)
+        if new_email == old_email:
+            return Response(
+                {"email": ["That is already your current email address."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if email_taken(new_email, exclude_user_id=request.user.pk):
+            return Response(
+                {"email": ["An account with this email already exists."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        assign_user_email(request.user, new_email)
+        request.user.refresh_from_db(fields=["email"])
+        try:
+            send_verification_email(request.user)
+        except Exception:
+            logger.exception("Failed to send verification email after change user_id=%s", request.user.pk)
+        if old_email:
+            try:
+                send_email_changed_notice(old_email=old_email, username=request.user.get_username())
+            except Exception:
+                logger.exception("Failed to send email-changed notice user_id=%s", request.user.pk)
+        return Response(
+            {
+                "detail": "Email updated. Check your new email to verify it.",
+                "email": new_email,
+                "email_verified": is_email_verified(request.user),
+            }
+        )
 
 
 class ChangePasswordView(APIView):

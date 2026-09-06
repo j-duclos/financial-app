@@ -24,8 +24,14 @@ def is_email_verified(user) -> bool:
     email = normalize_email(getattr(user, "email", ""))
     if not email:
         return False
-    profile = get_user_profile(user)
-    return bool(profile and profile.email_verified_at)
+    from core.models import UserProfile
+
+    verified_at = (
+        UserProfile.objects.filter(user_id=user.pk)
+        .values_list("email_verified_at", flat=True)
+        .first()
+    )
+    return bool(verified_at)
 
 
 def email_taken(normalized_email: str, *, exclude_user_id: int | None = None) -> bool:
@@ -41,6 +47,24 @@ def find_users_by_email(normalized_email: str):
     if not normalized_email:
         return User.objects.none()
     return User.objects.filter(email__iexact=normalized_email).order_by("id")
+
+
+def clear_email_verified(user):
+    profile = get_user_profile(user)
+    if profile is None:
+        return None
+    if profile.email_verified_at is not None:
+        profile.email_verified_at = None
+        profile.save(update_fields=["email_verified_at", "updated_at"])
+    return profile
+
+
+def assign_user_email(user, normalized_email: str):
+    """Set User.email and clear verification. Caller must validate uniqueness."""
+    user.email = normalized_email
+    user.save(update_fields=["email"])
+    clear_email_verified(user)
+    return user
 
 
 def mark_email_verified(user, *, when=None):

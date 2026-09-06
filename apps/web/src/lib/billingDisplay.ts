@@ -5,6 +5,8 @@ import {
   ACCESS_UNTIL_PERIOD_END_MESSAGE,
   ALREADY_PREMIUM_MESSAGE,
   BILLING_UNAVAILABLE_MESSAGE,
+  EMAIL_VERIFICATION_REQUIRED_CODE,
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
 } from "./billing";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -62,9 +64,17 @@ export function premiumPeriodCopy(billing: BillingStatus): {
   };
 }
 
+export function isEmailVerificationRequiredError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { code?: string; status?: number; message?: string };
+  if (err.code === EMAIL_VERIFICATION_REQUIRED_CODE) return true;
+  return err.status === 403 && /verify your email before subscribing/i.test(err.message ?? "");
+}
+
 export function billingActionErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 409) return ALREADY_PREMIUM_MESSAGE;
+    if (isEmailVerificationRequiredError(error)) return EMAIL_VERIFICATION_REQUIRED_MESSAGE;
     const msg = error.message || "";
     if (
       error.status === 503 ||

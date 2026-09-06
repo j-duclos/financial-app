@@ -4,6 +4,7 @@ import { ApiError, createCheckoutSession, createPortalSession } from "@budget-ap
 import {
   ALREADY_PREMIUM_MESSAGE,
   BILLING_STATUS_QUERY_KEY,
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
   PREMIUM_BENEFITS,
   PREMIUM_MONTHLY_PRICE_DISPLAY,
   FREE_PLAN_LIMITS,
@@ -11,12 +12,14 @@ import {
 import {
   billingActionErrorMessage,
   billingStatusLabel,
+  isEmailVerificationRequiredError,
   premiumPeriodCopy,
   redirectToExternalUrl,
 } from "../../lib/billingDisplay";
 import { useBillingStatus } from "../../hooks/useBillingStatus";
 import BillingNotice from "./BillingNotice";
 import PlanBadge from "./PlanBadge";
+import ResendVerificationButton from "../ResendVerificationButton";
 
 const primaryButtonClass =
   "inline-flex items-center justify-center py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500";
@@ -29,6 +32,7 @@ export default function PlanBillingSection() {
   const [notice, setNotice] = useState<{ tone: "success" | "info" | "error"; text: string } | null>(
     null
   );
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
 
   const checkoutMu = useMutation({
     mutationFn: () => createCheckoutSession(),
@@ -46,9 +50,16 @@ export default function PlanBillingSection() {
       if (error instanceof ApiError && error.status === 409) {
         await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
         await refetch();
+        setEmailVerificationRequired(false);
         setNotice({ tone: "info", text: ALREADY_PREMIUM_MESSAGE });
         return;
       }
+      if (isEmailVerificationRequiredError(error)) {
+        setEmailVerificationRequired(true);
+        setNotice({ tone: "error", text: EMAIL_VERIFICATION_REQUIRED_MESSAGE });
+        return;
+      }
+      setEmailVerificationRequired(false);
       setNotice({ tone: "error", text: billingActionErrorMessage(error) });
     },
   });
@@ -163,11 +174,17 @@ export default function PlanBillingSection() {
               onClick={() => {
                 if (checkoutBusy) return;
                 setNotice(null);
+                setEmailVerificationRequired(false);
                 checkoutMu.mutate();
               }}
             >
               {checkoutBusy ? "Opening checkout…" : "Upgrade to Premium"}
             </button>
+            {emailVerificationRequired ? (
+              <div data-testid="checkout-email-verification-required">
+                <ResendVerificationButton />
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}
