@@ -32,3 +32,6 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     }
 }
+
+EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+FRONTEND_ORIGIN = "http://localhost:5173"

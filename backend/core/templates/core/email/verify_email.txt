@@ -1,0 +1,10 @@
+Verify your email
+
+Confirm this address to finish setting up your Financial App account.
+
+Verify email:
+{{ verify_url }}
+
+This link expires in {{ hours }} hours.
+
+If you didn't create this account, you can ignore this message.

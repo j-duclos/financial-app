@@ -62,6 +62,16 @@ class UserProfile(models.Model):
         ],
         help_text="Default Forecast Window for Dashboard, Action Center, and Transactions.",
     )
+    email_verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the user confirmed the email currently stored on Django User.",
+    )
+    email_verification_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time a verification email was sent. Used for UX, not as the token store.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

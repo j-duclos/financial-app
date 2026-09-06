@@ -8,6 +8,10 @@ from .views import (
     ChangePasswordView,
     HouseholdViewSet,
     TokenObtainPairViewNoAuth,
+    VerifyEmailView,
+    ResendVerificationView,
+    ForgotPasswordView,
+    ResetPasswordView,
 )
 from timeline.views import TimelineView
 
@@ -18,6 +22,10 @@ urlpatterns = [
     path("auth/register/", RegisterView.as_view(), name="register"),
     path("auth/token/", TokenObtainPairViewNoAuth.as_view(), name="token_obtain_pair"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),
+    path("auth/resend-verification/", ResendVerificationView.as_view(), name="resend-verification"),
+    path("auth/forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
+    path("auth/reset-password/", ResetPasswordView.as_view(), name="reset-password"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/change-password/", ChangePasswordView.as_view(), name="profile-change-password"),
     path("timeline/", TimelineView.as_view(), name="timeline"),

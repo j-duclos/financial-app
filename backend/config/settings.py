@@ -297,6 +297,10 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "billing.exception_handler.billing_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_email_anon": "5/hour",
+        "auth_email_user": "6/hour",
+    },
 }
 
 # Simple JWT
@@ -345,6 +349,20 @@ FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "").strip()
 BILLING_SUCCESS_URL = os.environ.get("BILLING_SUCCESS_URL", "").strip()
 BILLING_CANCEL_URL = os.environ.get("BILLING_CANCEL_URL", "").strip()
 BILLING_PORTAL_RETURN_URL = os.environ.get("BILLING_PORTAL_RETURN_URL", "").strip()
+
+# Email — console backend locally; set a real SMTP backend in production.
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+).strip()
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "").strip()
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587") or 587)
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "").strip()
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").strip().lower() in ("true", "1", "yes")
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "false").strip().lower() in ("true", "1", "yes")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@localhost").strip()
+EMAIL_VERIFICATION_MAX_AGE = int(os.environ.get("EMAIL_VERIFICATION_MAX_AGE", str(60 * 60 * 48)))
+PASSWORD_RESET_TIMEOUT = int(os.environ.get("PASSWORD_RESET_TIMEOUT", str(60 * 60 * 24 * 3)))
 
 # drf-spectacular
 SPECTACULAR_SETTINGS = {

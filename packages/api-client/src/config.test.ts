@@ -88,6 +88,16 @@ describe("configureApiClient unauthorized handling", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it("does not invoke onUnauthorized for public password-reset failure", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(empty401());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      request("/api/auth/forgot-password/", { method: "POST", body: "{}" })
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
   it("shares one refresh for concurrent 401s and notifies unauthorized once", async () => {
     let refreshCalls = 0;
     const fetchMock = vi.fn(async (url: string) => {

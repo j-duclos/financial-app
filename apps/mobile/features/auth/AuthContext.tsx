@@ -45,7 +45,7 @@ type AuthState = {
 type AuthContextValue = {
   auth: AuthState;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, email?: string) => Promise<void>;
+  register: (username: string, password: string, email: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
 };
@@ -235,9 +235,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const register = useCallback(
-    async (username: string, password: string, email?: string) => {
+    async (username: string, password: string, email: string) => {
       syncApiClient();
-      const res = await apiRegister({ username: username.trim(), password, email });
+      const res = await apiRegister({ username: username.trim(), password, email: email.trim() });
       await applySession(res.access, res.refresh);
     },
     [applySession, syncApiClient]

@@ -7,6 +7,7 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [checkEmail, setCheckEmail] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
 
@@ -14,11 +15,31 @@ export default function Register() {
     e.preventDefault();
     setError("");
     try {
-      await register(username, password, email || undefined);
-      navigate("/", { replace: true });
+      await register(username, password, email.trim());
+      setCheckEmail(true);
     } catch (err: unknown) {
       setError(err && typeof err === "object" && "message" in err ? String((err as Error).message) : "Registration failed");
     }
+  }
+
+  if (checkEmail) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
+          <h1 className="text-2xl font-bold text-center">Check your email</h1>
+          <p className="text-sm text-gray-700 text-center">
+            Check your email to verify your account.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/", { replace: true })}
+            className="w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Continue to app
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -35,15 +56,18 @@ export default function Register() {
               onChange={(e) => setUsername(e.target.value)}
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
               required
+              autoComplete="username"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email (optional)</label>
+            <label className="block text-sm font-medium text-gray-700">Email</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+              required
+              autoComplete="email"
             />
           </div>
           <div>
@@ -55,6 +79,7 @@ export default function Register() {
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
               required
               minLength={8}
+              autoComplete="new-password"
             />
           </div>
           <button type="submit" className="w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700">

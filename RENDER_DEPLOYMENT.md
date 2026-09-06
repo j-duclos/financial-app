@@ -104,7 +104,14 @@ Set these in the Web Service → **Environment**:
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` | Webhook signing secret. Required to accept `/api/billing/webhook/`. |
 | `STRIPE_PREMIUM_PRICE_ID` | `price_…` | Stripe Price ID for Premium monthly. Do **not** hard-code in application logic. |
 | `STRIPE_PUBLISHABLE_KEY` | `pk_…` | Optional; Checkout is created on the server. |
-| `FRONTEND_ORIGIN` | `https://<your-app>.onrender.com` | Optional when `RENDER_EXTERNAL_URL` is set. Used for Checkout success/cancel and Customer Portal return URLs. |
+| `FRONTEND_ORIGIN` | `https://<your-app>.onrender.com` | Optional when `RENDER_EXTERNAL_URL` is set. Used for Checkout return URLs and auth email links. |
+| `EMAIL_BACKEND` | `django.core.mail.backends.smtp.EmailBackend` | Local default is the console backend. Production needs a real transactional provider. |
+| `EMAIL_HOST` | SMTP host | Required for SMTP. |
+| `EMAIL_PORT` | `587` | Typical STARTTLS port. |
+| `EMAIL_HOST_USER` | SMTP username | Do not commit. |
+| `EMAIL_HOST_PASSWORD` | SMTP password | Do not commit. |
+| `EMAIL_USE_TLS` | `true` | Set `false` if using SSL on 465 with `EMAIL_USE_SSL`. |
+| `DEFAULT_FROM_EMAIL` | `noreply@yourdomain` | From address for verification and password reset. |
 
 Example block (replace placeholders):
 
@@ -126,6 +133,13 @@ MINIMUM_PAYMENT_FRESHNESS_DAYS=45
 # STRIPE_WEBHOOK_SECRET=whsec_...
 # STRIPE_PREMIUM_PRICE_ID=price_...
 # FRONTEND_ORIGIN=https://financial-app-1-tu0l.onrender.com
+# EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+# EMAIL_HOST=smtp.example.com
+# EMAIL_PORT=587
+# EMAIL_HOST_USER=
+# EMAIL_HOST_PASSWORD=
+# EMAIL_USE_TLS=true
+# DEFAULT_FROM_EMAIL=noreply@yourdomain
 ```
 
 ### Stripe Dashboard (production)

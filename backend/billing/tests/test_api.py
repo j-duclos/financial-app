@@ -7,8 +7,16 @@ from rest_framework.test import APIClient
 from billing.models import BillingSubscription
 from billing.services import get_or_create_billing_subscription
 from billing.tests.helpers import stripe_configured
+from core.email_identity import mark_email_verified
 
 User = get_user_model()
+
+
+def _verified(user, email="verified@example.com"):
+    user.email = email
+    user.save(update_fields=["email"])
+    mark_email_verified(user)
+    return user
 
 
 @pytest.mark.django_db
@@ -55,7 +63,7 @@ def test_status_endpoint_for_premium_user(authenticated_client, user):
 def test_register_does_not_require_stripe(api_client):
     r = api_client.post(
         "/api/auth/register/",
-        {"username": "newbillinguser", "password": "testpass123"},
+        {"username": "newbillinguser", "password": "testpass123", "email": "newbilling@example.com"},
         format="json",
     )
     assert r.status_code == 201
@@ -78,7 +86,15 @@ def test_checkout_requires_authentication(api_client):
 
 
 @pytest.mark.django_db
-def test_checkout_fails_safely_without_stripe_config(authenticated_client):
+def test_checkout_requires_verified_email(authenticated_client, user):
+    r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Verify your email before subscribing."
+
+
+@pytest.mark.django_db
+def test_checkout_fails_safely_without_stripe_config(authenticated_client, user):
+    _verified(user)
     r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
     assert r.status_code == 503
     assert "not configured" in r.json()["detail"].lower()
@@ -87,6 +103,7 @@ def test_checkout_fails_safely_without_stripe_config(authenticated_client):
 @pytest.mark.django_db
 @stripe_configured
 def test_checkout_uses_server_price_id_not_client_price(authenticated_client, user):
+    _verified(user)
     with (
         patch("billing.services.create_customer") as mock_customer,
         patch("billing.services.list_subscriptions") as mock_list,
@@ -117,6 +134,7 @@ def test_checkout_uses_server_price_id_not_client_price(authenticated_client, us
 @pytest.mark.django_db
 @stripe_configured
 def test_checkout_creates_then_reuses_stripe_customer(authenticated_client, user):
+    _verified(user)
     with (
         patch("billing.services.create_customer") as mock_customer,
         patch("billing.services.list_subscriptions") as mock_list,
@@ -138,6 +156,7 @@ def test_checkout_creates_then_reuses_stripe_customer(authenticated_client, user
 @pytest.mark.django_db
 @stripe_configured
 def test_checkout_rejects_duplicate_active_subscription(authenticated_client, user):
+    _verified(user)
     billing = get_or_create_billing_subscription(user)
     billing.status = "active"
     billing.plan = BillingSubscription.Plan.PREMIUM
@@ -154,6 +173,8 @@ def test_checkout_rejects_duplicate_active_subscription(authenticated_client, us
 @stripe_configured
 def test_checkout_rejects_live_stripe_subscription_if_local_state_lags(authenticated_client, user):
     from billing.tests.helpers import fake_subscription
+
+    _verified(user)
 
     billing = get_or_create_billing_subscription(user)
     billing.stripe_customer_id = "cus_live"

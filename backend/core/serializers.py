@@ -15,6 +15,8 @@ User = get_user_model()
 
 class UserProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(read_only=True, source="user.username")
+    email = serializers.EmailField(read_only=True, source="user.email")
+    email_verified = serializers.SerializerMethodField()
     phone_e164 = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, max_length=20
     )
@@ -25,13 +27,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "username",
+            "email",
+            "email_verified",
             "display_name",
             "phone_e164",
             "default_household",
             "default_account",
             "default_forecast_days",
         ]
-        read_only_fields = ["id", "username"]
+        read_only_fields = ["id", "username", "email", "email_verified"]
 
     def validate_phone_e164(self, value):
         if value is None:
@@ -100,6 +104,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             from accounts.models import Account
             self.fields["default_account"].queryset = Account.objects.filter(household__in=households)
 
+    def get_email_verified(self, obj) -> bool:
+        from core.email_identity import normalize_email
+
+        return bool(normalize_email(getattr(obj.user, "email", "")) and obj.email_verified_at)
+
 
 class HouseholdMembershipSerializer(serializers.ModelSerializer):
     class Meta:
@@ -121,13 +130,39 @@ class HouseholdDetailSerializer(HouseholdSerializer):
 
 class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
-    email = serializers.EmailField(allow_blank=True, required=False)
+    email = serializers.EmailField(required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_username(self, value):
+        username = (value or "").strip()
+        if not username:
+            raise serializers.ValidationError("Username is required.")
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("That username is already taken.")
+        return username
+
+    def validate_email(self, value):
+        from core.email_identity import email_taken, normalize_email
+
+        email = normalize_email(value)
+        if not email:
+            raise serializers.ValidationError("Email is required.")
+        if email_taken(email):
+            raise serializers.ValidationError("An account with this email already exists.")
+        return email
+
+    def validate(self, data):
+        user = User(username=data["username"], email=data["email"])
+        try:
+            validate_password(data["password"], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": list(exc.messages)}) from exc
+        return data
 
     def create(self, validated_data):
         return User.objects.create_user(
             username=validated_data["username"],
-            email=validated_data.get("email", ""),
+            email=validated_data["email"],
             password=validated_data["password"],
         )
 
@@ -145,6 +180,32 @@ class ChangePasswordSerializer(serializers.Serializer):
         user = self.context.get("user")
         try:
             validate_password(data["new_password"], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)}) from exc
+        return data
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, data):
+        if data["new_password"] != data["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "New passwords do not match."}
+            )
+        try:
+            validate_password(data["new_password"])
         except DjangoValidationError as exc:
             raise serializers.ValidationError({"new_password": list(exc.messages)}) from exc
         return data

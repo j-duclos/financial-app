@@ -79,7 +79,7 @@ export interface PaginatedResponse<T> {
 
 export interface RegisterBody {
   username: string;
-  email?: string;
+  email: string;
   password: string;
 }
 
@@ -144,6 +144,36 @@ export async function refreshToken(refresh: string): Promise<{ access: string }>
   });
 }
 
+export async function verifyEmail(token: string): Promise<{ status: string }> {
+  return requestRequired("/api/auth/verify-email/", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function resendVerification(): Promise<{ detail: string }> {
+  return requestRequired("/api/auth/resend-verification/", { method: "POST", body: JSON.stringify({}) });
+}
+
+export async function forgotPassword(email: string): Promise<{ detail: string }> {
+  return requestRequired("/api/auth/forgot-password/", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(body: {
+  uid: string;
+  token: string;
+  new_password: string;
+  new_password_confirm: string;
+}): Promise<{ detail: string }> {
+  return requestRequired("/api/auth/reset-password/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getBillingStatus(): Promise<BillingStatus> {
   return requestRequired("/api/billing/status/");
 }
@@ -165,6 +195,8 @@ export async function createPortalSession(): Promise<PortalSessionResponse> {
 export type UserProfile = {
   id: number;
   username: string;
+  email?: string;
+  email_verified?: boolean;
   display_name: string;
   /** E.164 mobile stored for Plaid Link ``user.phone_number`` (SMS eligibility). */
   phone_e164?: string;

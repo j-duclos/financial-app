@@ -46,7 +46,13 @@ export function getAuthHeader(): Record<string, string> | undefined {
 }
 
 function isPublicAuthPath(path: string): boolean {
-  return path.includes("/api/auth/token/") || path.includes("/api/auth/register/");
+  return (
+    path.includes("/api/auth/token/") ||
+    path.includes("/api/auth/register/") ||
+    path.includes("/api/auth/verify-email/") ||
+    path.includes("/api/auth/forgot-password/") ||
+    path.includes("/api/auth/reset-password/")
+  );
 }
 
 async function tryRefreshAccessToken(): Promise<boolean> {

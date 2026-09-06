@@ -38,6 +38,13 @@ class CreateCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from core.email_identity import is_email_verified
+
+        if not is_email_verified(request.user):
+            return Response(
+                {"detail": "Verify your email before subscribing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         # Price IDs and user IDs from the client are ignored. The authenticated
         # user and STRIPE_PREMIUM_PRICE_ID are the only inputs that matter.
         try:

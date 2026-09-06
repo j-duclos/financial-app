@@ -30,6 +30,11 @@ describe("Profile page", () => {
     expect(profileSource).not.toMatch(/setUsername/);
   });
 
+  it("shows a read-only email and verification status", () => {
+    expect(profileSource).toMatch(/profile-email/);
+    expect(profileSource).toMatch(/profile\.email_verified/);
+  });
+
   it("marks display name optional and shown in the header", () => {
     expect(profileSource).toMatch(/Shown in the header/);
     expect(profileSource).toMatch(/Optional/);

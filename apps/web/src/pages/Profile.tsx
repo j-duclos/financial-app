@@ -257,6 +257,22 @@ export default function Profile() {
               </p>
             </div>
             <div>
+              <label htmlFor="profile-email" className="block text-sm font-medium text-gray-700">
+                Email
+              </label>
+              <input
+                id="profile-email"
+                type="email"
+                value={profile.email ?? ""}
+                readOnly
+                autoComplete="email"
+                className={readOnlyClass}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                {profile.email_verified ? "Verified." : "Verify your email to protect your account."}
+              </p>
+            </div>
+            <div>
               <label htmlFor="profile-display-name" className="block text-sm font-medium text-gray-700">
                 Display name
               </label>

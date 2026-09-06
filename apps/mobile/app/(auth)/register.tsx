@@ -18,13 +18,13 @@ export default function RegisterScreen() {
   async function handleSubmit() {
     if (submitting) return;
     setError("");
-    if (!username.trim() || !password) {
-      setError("Username and password are required.");
+    if (!username.trim() || !email.trim() || !password) {
+      setError("Username, email, and password are required.");
       return;
     }
     setSubmitting(true);
     try {
-      await register(username, password, email.trim() || undefined);
+      await register(username, password, email.trim());
       router.replace("/(app)/(tabs)");
     } catch (e: unknown) {
       setError(describeApiError(e));
@@ -53,7 +53,7 @@ export default function RegisterScreen() {
           autoCorrect={false}
         />
         <TextField
-          label="Email (optional)"
+          label="Email"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"

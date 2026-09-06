@@ -30,7 +30,7 @@ type AuthState = {
 const AuthContext = createContext<{
   auth: AuthState;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, email?: string) => Promise<void>;
+  register: (username: string, password: string, email: string) => Promise<void>;
   logout: () => void;
   setTokens: (access: string, refresh: string) => void;
   /** Re-fetch profile so header display name updates after Profile page save. */
@@ -135,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (username: string, password: string, email?: string) => {
+    async (username: string, password: string, email: string) => {
       const res = await apiRegister({ username, password, email });
       setTokens(res.access, res.refresh);
       setAuth((prev) => ({ ...prev, user: res.user ?? { id: 0, username } }));

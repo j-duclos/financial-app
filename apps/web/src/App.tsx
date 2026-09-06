@@ -5,6 +5,9 @@ import { createAppQueryClient } from "./lib/queryClient";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
 import ActionCenter from "./pages/ActionCenter";
 import Dashboard from "./pages/Dashboard";
 import Goals from "./pages/Goals";
@@ -46,6 +49,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
       <Route
         path="/plaid/oauth-return"
         element={
