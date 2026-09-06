@@ -241,3 +241,39 @@ def test_unhandled_event_type_is_ignored(api_client):
     assert r.status_code == 200
     assert r.json()["status"] == "ignored"
     assert StripeWebhookEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
+@stripe_configured
+def test_webhook_failure_does_not_retain_event_as_processed(api_client, user):
+    """If apply_event_payload raises, the idempotency row must roll back so Stripe can retry."""
+    sub = fake_subscription(status="active", user_id=user.pk)
+    event = fake_event("evt_boom", "customer.subscription.created", sub)
+    with (
+        patch("billing.views.construct_webhook_event", return_value=event),
+        patch("billing.webhooks.apply_event_payload", side_effect=RuntimeError("sync failed")),
+    ):
+        first = api_client.post(
+            "/api/billing/webhook/",
+            data=b"{}",
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=valid",
+        )
+    assert first.status_code == 500
+    assert StripeWebhookEvent.objects.filter(stripe_event_id="evt_boom").count() == 0
+    assert not BillingSubscription.objects.filter(user=user, status="active").exists()
+
+    with patch("billing.views.construct_webhook_event", return_value=event):
+        second = api_client.post(
+            "/api/billing/webhook/",
+            data=b"{}",
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=valid",
+        )
+    assert second.status_code == 200
+    assert second.json()["status"] == "processed"
+    assert StripeWebhookEvent.objects.filter(stripe_event_id="evt_boom").count() == 1
+    billing = BillingSubscription.objects.get(user=user)
+    assert billing.plan == BillingSubscription.Plan.PREMIUM
+    assert billing.status == "active"
+    assert user_has_premium(user) is True

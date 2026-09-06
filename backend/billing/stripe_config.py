@@ -75,18 +75,18 @@ def checkout_success_url() -> str:
     explicit = (getattr(settings, "BILLING_SUCCESS_URL", "") or "").strip()
     if explicit:
         return explicit
-    return f"{get_frontend_origin()}/?billing=success&session_id={{CHECKOUT_SESSION_ID}}"
+    return f"{get_frontend_origin()}/profile?billing=success&session_id={{CHECKOUT_SESSION_ID}}"
 
 
 def checkout_cancel_url() -> str:
     explicit = (getattr(settings, "BILLING_CANCEL_URL", "") or "").strip()
     if explicit:
         return explicit
-    return f"{get_frontend_origin()}/?billing=canceled"
+    return f"{get_frontend_origin()}/profile?billing=canceled"
 
 
 def portal_return_url() -> str:
     explicit = (getattr(settings, "BILLING_PORTAL_RETURN_URL", "") or "").strip()
     if explicit:
         return explicit
-    return f"{get_frontend_origin()}/"
+    return f"{get_frontend_origin()}/profile"

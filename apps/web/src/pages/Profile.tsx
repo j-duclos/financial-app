@@ -9,6 +9,9 @@ import {
 import { getEffectiveDisplayName } from "@budget-app/shared";
 import { useAuth } from "../context/AuthContext";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import PlanBillingSection from "../components/billing/PlanBillingSection";
+import PlanBadge from "../components/billing/PlanBadge";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
@@ -90,6 +93,7 @@ export default function Profile() {
   const newPwdHelpId = useId();
 
   const { data: profile, isLoading: profileLoading } = useProfileQuery();
+  const { billing } = useBillingStatus();
   const { data: households } = useQuery({
     queryKey: ["households"],
     queryFn: listHouseholds,
@@ -206,12 +210,17 @@ export default function Profile() {
 
   return (
     <div className={PAGE_SHELL_PY_LOOSE}>
-      <div className="mb-4">
-        <h1 className="text-lg font-semibold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-600 mt-1">Profile and account defaults for this user.</p>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">Settings</h1>
+          <p className="text-sm text-gray-600 mt-1">Profile, billing, and account defaults for this user.</p>
+        </div>
+        {billing?.is_premium ? <PlanBadge plan="PREMIUM" /> : null}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <form onSubmit={handleSaveProfile} className="space-y-6 min-w-0">
+        <div className="space-y-6 min-w-0">
+          <PlanBillingSection />
+          <form onSubmit={handleSaveProfile} className="space-y-6 min-w-0">
           <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
             <h2 className="text-lg font-medium text-gray-900">Profile</h2>
             {profileMessage && (
@@ -354,12 +363,13 @@ export default function Profile() {
             <button
               type="submit"
               disabled={saveProfileMu.isPending}
-              className="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50"
+              className="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500"
             >
               {saveProfileMu.isPending ? "Saving…" : "Save profile"}
             </button>
           </section>
-        </form>
+          </form>
+        </div>
 
         <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4 min-w-0">
           <h2 className="text-lg font-medium text-gray-900">Security</h2>
@@ -404,7 +414,7 @@ export default function Profile() {
             <button
               type="submit"
               disabled={changePasswordMu.isPending}
-              className="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50"
+              className="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500"
             >
               {changePasswordMu.isPending ? "Updating…" : "Update password"}
             </button>

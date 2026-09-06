@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import NotificationsDropdown from "./NotificationsDropdown";
 import { PlaidAutoSync } from "./PlaidAutoSync";
 import AppNav from "./AppNav";
+import BillingReturnBanner from "./billing/BillingReturnBanner";
 
 export default function Layout() {
   const { auth, logout } = useAuth();
@@ -40,6 +41,7 @@ export default function Layout() {
         </div>
       </header>
       <main className="flex-1 w-full bg-gray-50">
+        <BillingReturnBanner />
         <Outlet />
       </main>
     </div>

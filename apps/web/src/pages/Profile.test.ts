@@ -14,10 +14,12 @@ describe("Profile page", () => {
     expect(typeof mod.default).toBe("function");
   });
 
-  it("groups Profile, Defaults, and Security", () => {
+  it("groups Profile, Defaults, Security, and Plan & Billing", () => {
     expect(profileSource).toMatch(/>Profile</);
     expect(profileSource).toMatch(/>Defaults</);
     expect(profileSource).toMatch(/>Security</);
+    expect(profileSource).toMatch(/PlanBillingSection/);
+    expect(profileSource).toMatch(/PlanBadge/);
     expect(profileSource).not.toMatch(/>Account</);
   });
 

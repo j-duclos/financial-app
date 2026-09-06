@@ -3,6 +3,7 @@ export {
   formatDateTimeDisplay,
   formatShortMonthDay,
   formatLongDate,
+  formatFullDate,
   formatMonthYear,
   formatHealthRiskDate,
   parseIsoDateParam,
