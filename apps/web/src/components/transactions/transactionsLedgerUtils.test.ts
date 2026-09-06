@@ -39,6 +39,7 @@ import {
   buildLedgerRowsFromPastAndUpcomingTimeline,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
+  maxIsoDate,
   timelineHasAccountRows,
   signedTimelineLedgerAmount,
 } from "./transactionsLedgerUtils";
@@ -118,20 +119,22 @@ describe("indexTimelineRowsByAccount", () => {
 describe("ledgerPastTransactionStart", () => {
   it("starts after closed reconcile period when statement was reconciled", () => {
     const periodEnd = "2026-06-02";
+    const { start: filterStart } = pastTransactionsRange("3m");
     const start = ledgerPastTransactionStart("3m", true, {
       min_start_date: "2026-05-05",
       last_reconcile_period_end: periodEnd,
     });
-    expect(start).toBe("2026-06-03");
+    expect(start).toBe(maxIsoDate(filterStart, addDaysToIsoDate(periodEnd, 1)));
   });
 
   it("includes same-day post-reconcile rows on period end", () => {
     const periodEnd = "2026-06-02";
+    const { start: filterStart } = pastTransactionsRange("3m");
     const start = ledgerPastTransactionStart("3m", true, {
       min_start_date: periodEnd,
       last_reconcile_period_end: periodEnd,
     });
-    expect(start).toBe(periodEnd);
+    expect(start).toBe(maxIsoDate(filterStart, periodEnd));
   });
 });
 

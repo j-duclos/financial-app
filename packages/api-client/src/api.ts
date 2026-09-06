@@ -211,6 +211,34 @@ export async function getProfile(): Promise<UserProfile> {
   return requestRequired("/api/profile/");
 }
 
+export type OnboardingStatus = {
+  completed: boolean;
+  dismissed: boolean;
+  show_welcome: boolean;
+  steps: {
+    account: boolean;
+    transaction: boolean;
+    recurring: boolean;
+    forecast_ready: boolean;
+  };
+  progress: {
+    completed_steps: number;
+    total_steps: number;
+  };
+};
+
+export async function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return requestRequired("/api/onboarding/status/");
+}
+
+export async function completeOnboarding(): Promise<OnboardingStatus> {
+  return requestRequired("/api/onboarding/complete/", { method: "POST", body: JSON.stringify({}) });
+}
+
+export async function dismissOnboarding(): Promise<OnboardingStatus> {
+  return requestRequired("/api/onboarding/dismiss/", { method: "POST", body: JSON.stringify({}) });
+}
+
 export async function updateProfile(data: {
   display_name?: string;
   phone_e164?: string | null;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import PublicScreen from "../components/legal/PublicScreen";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -29,7 +30,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
         <h1 className="text-2xl font-bold text-center">Budget App</h1>
         {notice ? (
@@ -72,6 +73,6 @@ export default function Login() {
           No account? <Link to="/register" className="text-blue-600 hover:underline">Sign up</Link>
         </p>
       </div>
-    </div>
+    </PublicScreen>
   );
 }

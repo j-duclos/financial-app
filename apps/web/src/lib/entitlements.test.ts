@@ -43,7 +43,7 @@ describe("launch entitlements", () => {
   });
 
   it("markets automatic bank syncing without promising unlimited institutions", () => {
-    expect(PLAID_PREMIUM_MESSAGE).toBe("Automatic bank syncing is a Premium feature.");
+    expect(PLAID_PREMIUM_MESSAGE).toBe("Automatic bank syncing is available with Premium.");
     expect(PREMIUM_BENEFITS.join(" ")).toMatch(/Automatic bank syncing/i);
     expect(PREMIUM_BENEFITS.join(" ")).not.toMatch(/unlimited bank/i);
   });

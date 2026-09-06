@@ -27,11 +27,11 @@ export const FREE_PLAN_LIMITS = {
 
 export const PREMIUM_PLAN_FORECAST_DAYS = 365;
 
-export const PLAID_PREMIUM_MESSAGE = "Automatic bank syncing is a Premium feature.";
+export const PLAID_PREMIUM_MESSAGE = "Automatic bank syncing is available with Premium.";
 export const PLAID_SYNC_PAUSED_MESSAGE =
   "Automatic bank syncing is paused because this account is on the Free plan.";
 export const PLAID_PREMIUM_DESCRIPTION =
-  "Connect your banks and automatically keep transactions up to date.";
+  "Save time with automatic bank syncing.";
 
 export const CHECKOUT_CONFIRMING_MESSAGE =
   "Payment received. Confirming your subscription…";

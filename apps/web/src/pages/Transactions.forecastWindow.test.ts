@@ -29,10 +29,8 @@ describe("Transactions Forecast Window", () => {
       source.indexOf(">Forecast Window<"),
       source.indexOf(">Account<")
     );
-    expect(forecastSelect).toMatch(/30 days/);
-    expect(forecastSelect).toMatch(/60 days/);
-    expect(forecastSelect).toMatch(/90 days/);
-    expect(forecastSelect).toMatch(/6 months/);
+    expect(forecastSelect).toMatch(/forecastDayOptions/);
+    expect(forecastSelect).toMatch(/FORECAST_WINDOW_LABELS/);
     expect(forecastSelect).not.toMatch(/12 months/);
   });
 });

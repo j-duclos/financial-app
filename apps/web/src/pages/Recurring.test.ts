@@ -68,4 +68,10 @@ describe("Recurring page", () => {
     expect(recurringSource).toMatch(/AUTOMATION_PATH/);
     expect(detailSource).toMatch(/Manage automation/);
   });
+
+  it("uses a first-run empty state instead of a blank filtered list", () => {
+    expect(recurringSource).toMatch(/No recurring income or bills yet/);
+    expect(recurringSource).toMatch(/Add income/);
+    expect(recurringSource).toMatch(/Add bill/);
+  });
 });

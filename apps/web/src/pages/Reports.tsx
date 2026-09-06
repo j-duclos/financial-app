@@ -22,6 +22,7 @@ import { partitionCategoryBreakdown } from "../lib/categoryBreakdownDisplay";
 import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_2, METRIC_TILE_GRID_3 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
+import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
 import {
   CategorySpendBarChart,
   GoalFundingChart,
@@ -702,6 +703,7 @@ export default function Reports() {
           <p className="text-sm text-gray-500 mt-1">
             Why it happened — trends for cash flow, spending, goals, and debt.
           </p>
+          <FinancialDisclaimer className="text-xs text-gray-500 mt-2" />
           {updatingPeriod ? (
             <p className="text-xs text-gray-400 mt-1">Updating {formatMonthLabel(month)}…</p>
           ) : null}

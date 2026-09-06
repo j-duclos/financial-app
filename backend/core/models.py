@@ -72,6 +72,16 @@ class UserProfile(models.Model):
         blank=True,
         help_text="Last time a verification email was sent. Used for UX, not as the token store.",
     )
+    onboarding_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When first-run onboarding was completed (automatically or explicitly).",
+    )
+    onboarding_dismissed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the user skipped the first-run welcome. Empty-state copy can still appear.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

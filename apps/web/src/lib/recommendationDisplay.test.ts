@@ -148,7 +148,7 @@ describe("recommendationDisplay", () => {
     expect(recommendationActionLabel("View goals", "/goals")).toBe("View goals");
   });
 
-  it("skips extra planner button when primary or secondary already opens planner", () => {
+  it("skips extra planner button when primary already opens planner", () => {
     const base = {
       id: "debt-1",
       severity: "warning" as const,
@@ -163,10 +163,11 @@ describe("recommendationDisplay", () => {
     expect(
       recommendationPayoffPlannerUrl({
         ...base,
+        type: "debt_payoff",
         primary_action_label: "Payoff planner",
         primary_action_url: "/credit-cards",
       })
-    ).toBeNull();
+    ).toBe("/credit-cards");
     expect(
       recommendationPayoffPlannerUrl({
         ...base,
@@ -177,7 +178,7 @@ describe("recommendationDisplay", () => {
         secondary_action_label: null,
         secondary_action_url: null,
       })
-    ).toBe("/credit-cards?account=3");
+    ).toBeNull();
   });
 
   it("prefers projected_improvement for impact line", () => {

@@ -99,6 +99,8 @@ describe("PlanBillingSection", () => {
     expect(screen.getByText("Premium")).toBeInTheDocument();
     expect(screen.getByText(PREMIUM_MONTHLY_PRICE_DISPLAY)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Upgrade to Premium" })).toBeEnabled();
+    expect(screen.getAllByRole("link", { name: "Terms of Service" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "Privacy Policy" }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Manage Billing" })).not.toBeInTheDocument();
   });
 

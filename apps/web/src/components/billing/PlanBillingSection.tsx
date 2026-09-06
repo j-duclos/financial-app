@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, createCheckoutSession, createPortalSession } from "@budget-app/api-client";
 import {
@@ -185,6 +186,19 @@ export default function PlanBillingSection() {
                 <ResendVerificationButton />
               </div>
             ) : null}
+            <p className="text-xs text-gray-500" data-testid="billing-legal-note">
+              Premium renews automatically until canceled. The price shown here and in Stripe
+              Checkout applies to that purchase. Manage or cancel in the billing portal after
+              checkout. See{" "}
+              <Link to="/terms" className="text-blue-700 hover:underline">
+                Terms of Service
+              </Link>
+              ,{" "}
+              <Link to="/privacy" className="text-blue-700 hover:underline">
+                Privacy Policy
+              </Link>
+              , and billing language in the Terms.
+            </p>
           </div>
         </>
       ) : null}
@@ -215,6 +229,18 @@ export default function PlanBillingSection() {
           </button>
         </div>
       ) : null}
+
+      <p className="text-xs text-gray-500" data-testid="billing-legal-links">
+        Billing and cancellation are described in the{" "}
+        <Link to="/terms" className="text-blue-700 hover:underline">
+          Terms of Service
+        </Link>
+        . See also the{" "}
+        <Link to="/privacy" className="text-blue-700 hover:underline">
+          Privacy Policy
+        </Link>
+        .
+      </p>
     </section>
   );
 }

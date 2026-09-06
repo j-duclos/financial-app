@@ -28,6 +28,7 @@ import {
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { RECURRING_SUMMARY } from "../lib/recurringTerminology";
 import SubscriptionIntelligencePanel from "../components/recurring/SubscriptionIntelligencePanel";
+import EmptyState from "../components/onboarding/EmptyState";
 import {
   AUTOMATION_NAV_LABEL,
   AUTOMATION_PATH,
@@ -248,16 +249,19 @@ export default function Recurring() {
   const listLoading = rulesQuery.isLoading || overviewQuery.isLoading;
   const summaryLoading = summaryQuery.isLoading || (summaryQuery.isFetching && !summaryQuery.data);
   const summaryFailed = summaryQuery.isError && !summaryQuery.data;
+  const hasRecurringRules = rules.length > 0;
 
   return (
     <div className={`${PAGE_SHELL_PY} space-y-3`}>
-      {summaryFailed ? (
-        <SummaryBarError onRetry={() => void summaryQuery.refetch()} />
-      ) : summaryLoading || !summary ? (
-        <SummaryBarSkeleton />
-      ) : (
-        <SummaryBar summary={summary} />
-      )}
+      {hasRecurringRules ? (
+        summaryFailed ? (
+          <SummaryBarError onRetry={() => void summaryQuery.refetch()} />
+        ) : summaryLoading || !summary ? (
+          <SummaryBarSkeleton />
+        ) : (
+          <SummaryBar summary={summary} />
+        )
+      ) : null}
 
       <SubscriptionIntelligencePanel
         data={subscriptionsQuery.data}
@@ -322,11 +326,33 @@ export default function Recurring() {
 
       {listLoading && <p className="text-sm text-gray-500">Loading recurring obligations…</p>}
 
-      {!listLoading && grouped.length === 0 && (
+      {!listLoading && !hasRecurringRules && (
+        <EmptyState
+          testId="recurring-empty-state"
+          title="No recurring income or bills yet"
+          description="Add your paycheck, rent, subscriptions, loan payments, and other repeating activity to make forecasts useful."
+          primaryAction={
+            accounts.length === 0
+              ? { label: "Add an account first", to: "/accounts?new=1" }
+              : { label: "Add income", to: "/automation?new=income" }
+          }
+          secondaryAction={
+            accounts.length === 0
+              ? undefined
+              : { label: "Add bill", to: "/automation?new=bill" }
+          }
+        >
+          <p className="text-xs text-gray-500">
+            Recurring income and bills let Financial App project future balances.
+          </p>
+        </EmptyState>
+      )}
+
+      {!listLoading && hasRecurringRules && grouped.length === 0 && (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
-          <p className="text-sm text-gray-600">No recurring rules match your filters.</p>
+          <p className="text-sm text-gray-600">No recurring items match your filters.</p>
           <Link to="/automation" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
-            Add a recurring rule
+            Manage income and bills
           </Link>
         </div>
       )}

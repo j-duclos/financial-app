@@ -59,7 +59,7 @@ describe("shared goal status", () => {
   it("prefers pace_status over on_track_status", () => {
     expect(
       dashboardGoalStatusDisplay({ pace_status: "ahead", on_track_status: "behind" })?.label
-    ).toBe("AHEAD");
+    ).toBe("Ahead");
   });
 });
 

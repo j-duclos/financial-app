@@ -20,6 +20,7 @@ import DashboardMetricTile from "../components/dashboard/DashboardMetricTile";
 import { METRIC_TILE_GRID_4 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import PlanningSubnav from "../components/PlanningSubnav";
+import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { whatIfDebtPath } from "../lib/whatIfContext";
 import {
@@ -212,6 +213,7 @@ export default function CreditCards() {
           <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
           <p className="text-sm text-gray-600">How should I eliminate debt?</p>
           <PlanningSubnav />
+          <FinancialDisclaimer />
         </div>
         <p className="text-sm text-gray-500 animate-pulse">Loading credit cards…</p>
       </div>
@@ -224,6 +226,7 @@ export default function CreditCards() {
         <div className="mb-4 space-y-2">
           <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
           <PlanningSubnav />
+          <FinancialDisclaimer />
         </div>
         <p className="text-sm text-red-600">Could not load credit cards.</p>
       </div>
@@ -237,6 +240,7 @@ export default function CreditCards() {
           <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
           <p className="text-sm text-gray-600">How should I eliminate debt?</p>
           <PlanningSubnav />
+          <FinancialDisclaimer />
         </div>
         <p className="text-gray-600 mb-3 text-sm">No credit cards yet.</p>
         <Link to="/accounts" className="text-blue-600 hover:underline">
@@ -284,6 +288,7 @@ export default function CreditCards() {
           </Link>
         </div>
         <PlanningSubnav />
+        <FinancialDisclaimer />
       </div>
       {plan && (
         <section className="rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-3 space-y-2">

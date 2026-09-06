@@ -48,6 +48,7 @@ def _env_positive_int(name: str, *, default: int) -> int:
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_DEV_SECRET)
 # Local dev: DEBUG True by default. Render sets RENDER=true → DEBUG False unless DEBUG= is explicit.
+# Keep DEBUG False in production so clients do not receive Python tracebacks.
 DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
 
 # Performance instrumentation ([PERF] logs) — on by default on Render; set ENABLE_PERF_LOGS=false to disable.
@@ -445,3 +446,7 @@ LOGGING = {
         },
     },
 }
+
+from config.sentry import init_sentry
+
+init_sentry()

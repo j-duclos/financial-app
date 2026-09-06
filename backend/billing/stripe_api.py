@@ -57,6 +57,33 @@ def cancel_subscription(subscription_id: str) -> Any:
     return stripe.Subscription.cancel(subscription_id)
 
 
+def invalid_request_error_types() -> tuple[type[BaseException], ...]:
+    types: list[type[BaseException]] = []
+    cls = getattr(stripe, "InvalidRequestError", None)
+    if isinstance(cls, type) and issubclass(cls, BaseException):
+        types.append(cls)
+    err_mod = getattr(stripe, "error", None)
+    if err_mod is not None:
+        cls = getattr(err_mod, "InvalidRequestError", None)
+        if isinstance(cls, type) and issubclass(cls, BaseException) and cls not in types:
+            types.append(cls)
+    return tuple(types)
+
+
+def is_definitively_nonbillable_subscription_error(exc: BaseException) -> bool:
+    """True when Stripe says this subscription cannot continue billing.
+
+    Fail closed: network, auth, and other Stripe/SDK errors return False.
+    """
+    types = invalid_request_error_types()
+    if not types or not isinstance(exc, types):
+        return False
+    code = str(getattr(exc, "code", "") or "").strip().lower()
+    if code == "resource_missing":
+        return True
+    return getattr(exc, "http_status", None) == 404
+
+
 def create_checkout_session(**kwargs: Any) -> Any:
     _configure()
     return stripe.checkout.Session.create(**kwargs)

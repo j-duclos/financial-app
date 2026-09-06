@@ -59,6 +59,9 @@ import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import { useBillingStatus } from "../hooks/useBillingStatus";
 import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
 import { atPlanLimit, canUsePlaidBankSync } from "../lib/entitlements";
+import { FREE_PLAN_LIMITS } from "../lib/billing";
+import { MANUAL_ACCOUNT_HELP } from "../lib/onboardingCopy";
+import EmptyState from "../components/onboarding/EmptyState";
 import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
 import QuickTransactionModal from "../components/quickActions/QuickTransactionModal";
 import QuickRecurringModal from "../components/quickActions/QuickRecurringModal";
@@ -528,6 +531,17 @@ export default function Accounts() {
     setNewHouseholdName("");
     setModalOpen(true);
   }
+
+  const consumedNewAccountRef = useRef(false);
+  useEffect(() => {
+    if (consumedNewAccountRef.current) return;
+    if (searchParams.get("new") !== "1") return;
+    consumedNewAccountRef.current = true;
+    openCreate();
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   function openEdit(acc: Account) {
     setEditing(acc);
     roleManuallySetRef.current = true;
@@ -922,13 +936,49 @@ export default function Accounts() {
       ) : null}
 
       {!accountsLoading && !accountsError && filteredAccounts.length === 0 ? (
+        accounts.length === 0 ? (
+          <EmptyState
+            testId="accounts-empty-state"
+            title="No accounts yet"
+            description="Add the checking, savings, or credit card accounts you want to track."
+            primaryAction={{
+              label: "Add account manually",
+              onClick: openCreate,
+            }}
+            secondaryAction={
+              plaidAllowed
+                ? {
+                    label: "Connect bank",
+                    onClick: () =>
+                      document.getElementById("plaid-connect-bar")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "center",
+                      }),
+                  }
+                : {
+                    label: "Upgrade for automatic bank syncing",
+                    to: "/profile",
+                  }
+            }
+          >
+            {plaidAllowed ? (
+              <p className="text-xs text-gray-500">
+                Connecting a bank is the fastest way to get started. You can also add accounts
+                manually.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Free accounts can track up to {FREE_PLAN_LIMITS.manual_accounts} manually managed
+                accounts. Automatic bank syncing is available with Premium.
+              </p>
+            )}
+          </EmptyState>
+        ) : (
         <div
           className="bg-white rounded-lg shadow border border-gray-200 p-8 text-center text-gray-600"
           data-testid="accounts-empty-state"
         >
-          {accounts.length === 0 ? (
-            <p>No accounts yet. Add your first account or link a bank.</p>
-          ) : attentionFilterActive ? (
+          {attentionFilterActive ? (
             <p>
               No accounts need attention right now.{" "}
               <button
@@ -954,6 +1004,7 @@ export default function Accounts() {
             </p>
           )}
         </div>
+        )
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
           {accountGroups.map((group) => (
@@ -1184,7 +1235,7 @@ export default function Accounts() {
             {!editing && householdId == null && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded">
                 <p className="text-sm text-amber-800 mb-3">
-                  Create a household first. Accounts must belong to a household.
+                  Create a household first so we can keep your accounts together.
                 </p>
                 <form onSubmit={handleCreateHousehold} className="flex gap-2">
                   <input
@@ -1359,6 +1410,7 @@ export default function Accounts() {
                   placeholder="0.00"
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
                 />
+                <p className="mt-1 text-xs text-gray-500">{MANUAL_ACCOUNT_HELP}</p>
               </div>
               {form.account_type === "SAVINGS" && (
                 <>

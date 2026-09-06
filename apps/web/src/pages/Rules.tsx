@@ -33,6 +33,7 @@ import { useBillingStatus } from "../hooks/useBillingStatus";
 import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
 import { atPlanLimit } from "../lib/entitlements";
 import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
+import { RECURRING_HELP } from "../lib/onboardingCopy";
 
 const FREQUENCY_LABELS: Record<RecurringRuleFrequency, string> = {
   WEEKLY: "Weekly",
@@ -127,6 +128,7 @@ export default function Rules() {
   const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const openedEditFromUrlRef = useRef<number | null>(null);
+  const openedNewFromUrlRef = useRef<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<RecurringRule | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -284,10 +286,15 @@ export default function Rules() {
     });
   }
 
-  function openCreate() {
+  function openCreate(preset?: { direction?: "INCOME" | "EXPENSE"; is_bill?: boolean }) {
     if (rulesLimited) return;
     resetForm();
-    setForm((f) => ({ ...f, household: householdId || 0 }));
+    setForm((f) => ({
+      ...f,
+      household: householdId || 0,
+      direction: preset?.direction ?? "EXPENSE",
+      is_bill: preset?.is_bill ?? false,
+    }));
     setEditing(null);
     setModalOpen(true);
   }
@@ -354,6 +361,23 @@ export default function Rules() {
     next.delete("edit");
     setSearchParams(next, { replace: true });
   }, [rules, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const neu = searchParams.get("new");
+    if (neu !== "income" && neu !== "bill") return;
+    if (openedNewFromUrlRef.current === neu) return;
+    openedNewFromUrlRef.current = neu;
+    if (!rulesLimited) {
+      openCreate(
+        neu === "income"
+          ? { direction: "INCOME", is_bill: false }
+          : { direction: "EXPENSE", is_bill: true }
+      );
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, rulesLimited]);
 
   function pauseRule(rule: RecurringRule) {
     if (getRuleLifecycleStatus(rule) !== "running") return;
@@ -602,7 +626,10 @@ export default function Rules() {
           </tbody>
         </table>
         {rules.length === 0 && (
-          <p className="px-4 py-8 text-center text-gray-500">No automation yet. Add one to project recurring income or expenses.</p>
+          <p className="px-4 py-8 text-center text-gray-500">
+            No repeating income or bills yet. Add your paycheck, rent, or subscriptions to project
+            future balances.
+          </p>
         )}
         {rules.length > 0 && filteredRules.length === 0 && (
           <p className="px-4 py-8 text-center text-gray-500">No automation matches &quot;{ruleSearch}&quot;.</p>
@@ -644,6 +671,7 @@ export default function Rules() {
                   className="mt-1 block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
                   required
                 />
+                <p className="mt-0.5 text-xs text-gray-500">{RECURRING_HELP}</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">From Account</label>

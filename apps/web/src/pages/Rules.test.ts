@@ -32,4 +32,8 @@ describe("Automation page", () => {
   it("centralizes recurring-rule mutation invalidation", () => {
     expect(rulesSource).toMatch(/invalidateRecurringRuleDependents/);
   });
+
+  it("opens create from ?new=income and ?new=bill", () => {
+    expect(rulesSource).toMatch(/neu !== "income" && neu !== "bill"/);
+  });
 });

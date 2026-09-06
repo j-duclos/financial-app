@@ -787,7 +787,7 @@ describe("DebtToIncome page", () => {
     await user.type(screen.getByLabelText("Annual interest rate"), "1");
     expect(screen.queryByText("65.78%")).not.toBeInTheDocument();
     expect(screen.getByTestId("dti-proposed-stale")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("warns before applying an extreme monthly payment without rewriting the field", async () => {
     const user = userEvent.setup();

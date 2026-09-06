@@ -22,6 +22,10 @@ removed with the User (CASCADE).
 Plaid: revoke via /item/remove only for Items on households that will be
 deleted (exclusive). Shared-household Items are left intact.
 
+Export includes household data the user can access (goals, reconciliation,
+bank-connection metadata, DTI, account relationships). It does not include
+Plaid tokens/ciphertext, Stripe IDs, or statement ``raw`` blobs.
+
 In-memory JSON export is used for expected household sizes. Backups and
 Stripe/Plaid vendor logs are not erased by this process.
 """
@@ -47,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 DELETE_CONFIRMATION_PHRASE = "DELETE"
 OWNER_TRANSFER_CODE = "household_owner_transfer_required"
 EMAIL_VERIFICATION_CODE = "email_verification_required"
@@ -109,6 +113,10 @@ def _serialize_user(user) -> dict:
         "email": user.email or "",
         "email_verified": is_email_verified(user),
         "display_name": getattr(profile, "display_name", "") or "",
+        "phone_e164": getattr(profile, "phone_e164", "") or "",
+        "default_household_id": getattr(profile, "default_household_id", None),
+        "default_account_id": getattr(profile, "default_account_id", None),
+        "default_forecast_days": getattr(profile, "default_forecast_days", None),
         "date_joined": _jsonable(getattr(user, "date_joined", None)),
     }
 
@@ -129,22 +137,27 @@ def export_user_data(user) -> dict:
     """Portable JSON payload of household data the user is authorized to access.
 
     Does not include password hashes, JWTs, Stripe secrets/IDs, Plaid access
-    tokens or ciphertext, or Django secret keys. Stripe customer/subscription
-    IDs are omitted (no user-portability need). Plaid institution names are
-    included; Item access tokens are not.
+    tokens or ciphertext, Plaid item/institution IDs, statement raw blobs,
+    or Django secret keys. Stripe customer/subscription IDs are omitted.
+    Bank-connection rows include institution name and sync timestamps only.
     """
     from accounts.models import Account
+    from accounts.relationship_models import AccountRelationship
+    from affordability.models import DtiDebtItem, DtiIncomeSource, DtiProfile
     from budgets.models import Budget, SpendingTarget
     from categories.models import Category
-    from goals.models import GoalBucket
-    from timeline.models import RecurringRule, Scenario
-    from transactions.models import Transaction
+    from goals.models import FinancialGoal, GoalBucket
+    from plaid_link.models import PlaidItem, PlaidLinkedAccount
+    from timeline.models import RecurringRule, RecurringRuleSkip, ReconciliationMatch, Scenario, StatementTransaction
+    from transactions.models import Reconciliation, ReconciliationEntry, Transaction, TransferGroup
 
     households = list(get_households_for_user(user).order_by("id"))
     hh_ids = [h.pk for h in households]
-    accounts = list(
-        Account.objects.filter(household_id__in=hh_ids).order_by("id")
-    )
+    role_by_hh = {
+        m.household_id: m.role
+        for m in HouseholdMembership.objects.filter(user=user, household_id__in=hh_ids)
+    }
+    accounts = list(Account.objects.filter(household_id__in=hh_ids).order_by("id"))
     account_ids = [a.pk for a in accounts]
     account_name = {a.pk: a.name for a in accounts}
     categories = list(Category.objects.filter(household_id__in=hh_ids).order_by("id"))
@@ -174,6 +187,31 @@ def export_user_data(user) -> dict:
             }
         )
 
+    recon_entries = {}
+    for entry in ReconciliationEntry.objects.filter(session__account_id__in=account_ids).iterator(
+        chunk_size=2000
+    ):
+        recon_entries.setdefault(entry.session_id, []).append(entry.transaction_id)
+
+    skip_dates = {}
+    for skip in RecurringRuleSkip.objects.filter(rule__household_id__in=hh_ids).only("rule_id", "date"):
+        skip_dates.setdefault(skip.rule_id, []).append(_jsonable(skip.date))
+
+    linked_by_item = {}
+    for link in PlaidLinkedAccount.objects.filter(item__household_id__in=hh_ids).select_related("item"):
+        linked_by_item.setdefault(link.item_id, []).append(
+            {
+                "account_id": link.account_id,
+                "account": account_name.get(link.account_id, ""),
+                "mask": link.mask or "",
+            }
+        )
+
+    matches = {
+        m.statement_txn_id: m
+        for m in ReconciliationMatch.objects.filter(statement_txn__household_id__in=hh_ids)
+    }
+
     return {
         "export_version": EXPORT_VERSION,
         "generated_at": timezone.now().isoformat(),
@@ -182,7 +220,10 @@ def export_user_data(user) -> dict:
             "Shared household data may include records created by other members."
         ),
         "user": _serialize_user(user),
-        "households": [{"id": h.pk, "name": h.name} for h in households],
+        "households": [
+            {"id": h.pk, "name": h.name, "role": role_by_hh.get(h.pk)}
+            for h in households
+        ],
         "accounts": [
             {
                 "id": a.pk,
@@ -193,10 +234,36 @@ def export_user_data(user) -> dict:
                 "role": a.role,
                 "status": a.status,
                 "currency": a.currency,
+                "institution": a.institution or "",
+                "last_four": a.last_four or "",
+                "purpose": a.purpose or "",
+                "notes": a.notes or "",
                 "starting_balance": _jsonable(a.starting_balance),
                 "current_balance": _jsonable(a.current_balance),
+                "credit_limit": _jsonable(a.credit_limit),
+                "apr": _jsonable(a.apr),
+                "statement_balance": _jsonable(a.statement_balance),
+                "last_statement_date": _jsonable(a.last_statement_date),
+                "next_payment_due_date": _jsonable(a.next_payment_due_date),
+                "minimum_payment_amount": _jsonable(a.minimum_payment_amount),
+                "autopay_enabled": bool(a.autopay_enabled),
+                "include_in_forecast": bool(a.include_in_forecast),
             }
             for a in accounts
+        ],
+        "account_relationships": [
+            {
+                "id": rel.pk,
+                "household_id": rel.household_id,
+                "source_account_id": rel.source_account_id,
+                "destination_account_id": rel.destination_account_id,
+                "relationship_type": rel.relationship_type,
+                "default_amount": _jsonable(rel.default_amount),
+                "frequency": rel.frequency,
+                "is_active": rel.is_active,
+                "notes": rel.notes or "",
+            }
+            for rel in AccountRelationship.objects.filter(household_id__in=hh_ids).order_by("id")
         ],
         "transactions": txn_rows,
         "recurring_rules": [
@@ -205,17 +272,40 @@ def export_user_data(user) -> dict:
                 "household_id": r.household_id,
                 "name": r.name,
                 "account_id": r.account_id,
+                "transfer_to_account_id": r.transfer_to_account_id,
+                "category_id": r.category_id,
                 "direction": r.direction,
                 "amount": _jsonable(r.amount),
                 "frequency": r.frequency,
+                "interval": r.interval,
                 "active": r.active,
+                "is_bill": r.is_bill,
                 "start_date": _jsonable(r.start_date),
                 "end_date": _jsonable(r.end_date),
                 "notes": r.notes or "",
+                "skipped_dates": skip_dates.get(r.pk, []),
             }
             for r in RecurringRule.objects.filter(household_id__in=hh_ids).order_by("id")
         ],
-        "goals": [
+        "financial_goals": [
+            {
+                "id": g.pk,
+                "household_id": g.household_id,
+                "name": g.name,
+                "goal_type": g.goal_type,
+                "status": g.status,
+                "target_amount": _jsonable(g.target_amount),
+                "current_amount": _jsonable(g.current_amount),
+                "target_date": _jsonable(g.target_date),
+                "linked_account_id": g.linked_account_id,
+                "linked_credit_account_id": g.linked_credit_account_id,
+                "monthly_contribution": _jsonable(g.monthly_contribution),
+                "priority": g.priority,
+                "notes": g.notes or "",
+            }
+            for g in FinancialGoal.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "goal_buckets": [
             {
                 "id": g.pk,
                 "household_id": g.household_id,
@@ -226,6 +316,7 @@ def export_user_data(user) -> dict:
                 "allocated_amount": _jsonable(g.allocated_amount),
                 "target_date": _jsonable(g.target_date),
                 "linked_account_id": g.linked_account_id,
+                "notes": g.notes or "",
             }
             for g in GoalBucket.objects.filter(household_id__in=hh_ids).order_by("id")
         ],
@@ -270,6 +361,99 @@ def export_user_data(user) -> dict:
                 "template": s.template,
             }
             for s in Scenario.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "transfer_groups": [
+            {
+                "id": tg.pk,
+                "household_id": tg.household_id,
+                "from_account_id": tg.from_account_id,
+                "to_account_id": tg.to_account_id,
+                "amount": _jsonable(tg.amount),
+                "scheduled_date": _jsonable(tg.scheduled_date),
+                "status": tg.status,
+                "notes": tg.notes or "",
+            }
+            for tg in TransferGroup.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "reconciliations": [
+            {
+                "id": rec.pk,
+                "account_id": rec.account_id,
+                "status": rec.status,
+                "period_start_date": _jsonable(rec.period_start_date),
+                "period_end_date": _jsonable(rec.period_end_date),
+                "bank_current_balance": _jsonable(rec.bank_current_balance),
+                "app_current_balance": _jsonable(rec.app_current_balance),
+                "last_reconciled_balance": _jsonable(rec.last_reconciled_balance),
+                "final_reconciled_balance": _jsonable(rec.final_reconciled_balance),
+                "difference": _jsonable(rec.difference),
+                "transaction_count": rec.transaction_count,
+                "notes": rec.notes or "",
+                "is_active": rec.is_active,
+                "completed_at": _jsonable(rec.completed_at),
+                "transaction_ids": recon_entries.get(rec.pk, []),
+            }
+            for rec in Reconciliation.objects.filter(account_id__in=account_ids).order_by("id")
+        ],
+        "statement_transactions": [
+            {
+                "id": st.pk,
+                "household_id": st.household_id,
+                "account_id": st.account_id,
+                "posted_date": _jsonable(st.posted_date),
+                "description": st.description,
+                "amount": _jsonable(st.amount),
+                "match_status": getattr(matches.get(st.pk), "status", None),
+                "matched_transaction_id": getattr(matches.get(st.pk), "matched_transaction_id", None),
+            }
+            for st in StatementTransaction.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "bank_connections": [
+            {
+                "household_id": item.household_id,
+                "institution_name": item.institution_name or "",
+                "created_at": _jsonable(item.created_at),
+                "last_sync_at": _jsonable(item.last_sync_at),
+                "linked_accounts": linked_by_item.get(item.pk, []),
+            }
+            for item in PlaidItem.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "dti_profiles": [
+            {
+                "household_id": p.household_id,
+                "target_back_end_dti_percent": _jsonable(p.target_back_end_dti_percent),
+                "target_front_end_dti_percent": _jsonable(p.target_front_end_dti_percent),
+                "current_housing_payment": _jsonable(p.current_housing_payment),
+                "current_housing_label": p.current_housing_label or "",
+                "include_current_housing_in_current_dti": p.include_current_housing_in_current_dti,
+            }
+            for p in DtiProfile.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "dti_income_sources": [
+            {
+                "id": src.pk,
+                "household_id": src.household_id,
+                "name": src.name,
+                "gross_monthly_amount": _jsonable(src.gross_monthly_amount),
+                "income_type": src.income_type,
+                "included": src.included,
+                "notes": src.notes or "",
+            }
+            for src in DtiIncomeSource.objects.filter(household_id__in=hh_ids).order_by("id")
+        ],
+        "dti_debt_items": [
+            {
+                "id": item.pk,
+                "household_id": item.household_id,
+                "name": item.name,
+                "debt_type": item.debt_type,
+                "monthly_payment": _jsonable(item.monthly_payment),
+                "outstanding_balance": _jsonable(item.outstanding_balance),
+                "linked_account_id": item.linked_account_id,
+                "included": item.included,
+                "notes": item.notes or "",
+            }
+            for item in DtiDebtItem.objects.filter(household_id__in=hh_ids).order_by("id")
         ],
         "billing": _serialize_billing(user),
     }
@@ -391,28 +575,45 @@ def validate_household_deletion(user) -> list[dict]:
     return preflight["households"]
 
 
+def _cancel_remote_subscription(subscription_id: str) -> None:
+    from billing.stripe_api import cancel_subscription, is_definitively_nonbillable_subscription_error
+
+    try:
+        cancel_subscription(subscription_id)
+    except Exception as exc:
+        if is_definitively_nonbillable_subscription_error(exc):
+            logger.info("Stripe subscription already non-billable")
+            return
+        raise
+
+
 def cancel_user_billing(user) -> None:
     """Cancel a live Stripe subscription immediately. Does not delete the Customer.
 
+    Remote cancellation runs only when local status currently grants paid access
+    (``subscription_grants_premium`` / active+trialing). A leftover
+    ``stripe_subscription_id`` on a Free/canceled row is not canceled.
+
     Stripe keeps its own payment records. Local billing rows are removed later
     with the User. If Stripe cancellation fails, the local account is left intact.
+    Already-deleted/not-found subscriptions are treated as non-billable.
     """
     from billing.exceptions import BillingConfigurationError
     from billing.services import (
         get_or_create_billing_subscription,
         subscription_grants_premium,
+        status_grants_premium,
         downgrade_to_free,
     )
-    from billing.stripe_api import cancel_subscription, list_subscriptions
+    from billing.stripe_api import is_definitively_nonbillable_subscription_error, list_subscriptions
 
     billing = get_or_create_billing_subscription(user)
-    sub_id = (billing.stripe_subscription_id or "").strip()
-    needs_remote = bool(sub_id) or subscription_grants_premium(billing)
-    if not needs_remote:
+    if not subscription_grants_premium(billing):
         return
+    sub_id = (billing.stripe_subscription_id or "").strip()
     try:
         if sub_id:
-            cancel_subscription(sub_id)
+            _cancel_remote_subscription(sub_id)
         elif billing.stripe_customer_id:
             listed = list_subscriptions(customer=billing.stripe_customer_id, limit=10)
             data = listed.get("data") if isinstance(listed, dict) else getattr(listed, "data", []) or []
@@ -420,15 +621,15 @@ def cancel_user_billing(user) -> None:
             for sub in data:
                 status = (sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", "")) or ""
                 sid = sub.get("id") if isinstance(sub, dict) else getattr(sub, "id", None)
-                if status.lower() in ("active", "trialing") and sid:
-                    cancel_subscription(str(sid))
+                if status_grants_premium(status) and sid:
+                    _cancel_remote_subscription(str(sid))
                     canceled_any = True
-            if subscription_grants_premium(billing) and not canceled_any and not sub_id:
+            if not canceled_any:
                 raise AccountDeletionError(
                     "We couldn't find a Stripe subscription to cancel. Your account was not deleted.",
                     code="stripe_cancellation_failed",
                 )
-        elif subscription_grants_premium(billing):
+        else:
             raise AccountDeletionError(
                 "Your subscription cannot be canceled automatically right now. Your account was not deleted.",
                 code="stripe_cancellation_failed",
@@ -442,11 +643,14 @@ def cancel_user_billing(user) -> None:
             code="stripe_cancellation_failed",
         ) from exc
     except Exception as exc:
-        logger.exception("Stripe subscription cancel failed user_id=%s", user.pk)
-        raise AccountDeletionError(
-            "We couldn't cancel your subscription. Your account was not deleted. Please try again.",
-            code="stripe_cancellation_failed",
-        ) from exc
+        if is_definitively_nonbillable_subscription_error(exc):
+            logger.info("Stripe subscription already non-billable user_id=%s", user.pk)
+        else:
+            logger.exception("Stripe subscription cancel failed user_id=%s", user.pk)
+            raise AccountDeletionError(
+                "We couldn't cancel your subscription. Your account was not deleted. Please try again.",
+                code="stripe_cancellation_failed",
+            ) from exc
     downgrade_to_free(billing, status="canceled")
 
 

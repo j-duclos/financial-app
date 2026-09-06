@@ -14,6 +14,7 @@ import PlanBillingSection from "../components/billing/PlanBillingSection";
 import PlanBadge from "../components/billing/PlanBadge";
 import ChangeEmailSection from "../components/ChangeEmailSection";
 import AccountLifecycleSection from "../components/AccountLifecycleSection";
+import LegalPolicyLinks from "../components/legal/LegalPolicyLinks";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
@@ -429,7 +430,17 @@ export default function Profile() {
           </form>
         </section>
       </div>
-      <div className="mt-6">
+      <div className="mt-6 space-y-6">
+        <section
+          className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-3"
+          data-testid="settings-legal-section"
+        >
+          <h2 className="text-lg font-medium text-gray-900">Legal</h2>
+          <p className="text-sm text-gray-600">
+            Privacy Policy and Terms of Service for this application.
+          </p>
+          <LegalPolicyLinks />
+        </section>
         <AccountLifecycleSection />
       </div>
     </div>

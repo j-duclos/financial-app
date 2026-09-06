@@ -112,6 +112,17 @@ Set these in the Web Service → **Environment**:
 | `EMAIL_HOST_PASSWORD` | SMTP password | Do not commit. |
 | `EMAIL_USE_TLS` | `true` | Set `false` if using SSL on 465 with `EMAIL_USE_SSL`. |
 | `DEFAULT_FROM_EMAIL` | `noreply@yourdomain` | From address for verification and password reset. |
+| `SENTRY_DSN` | *(from Sentry)* | Optional. Empty disables monitoring. Never commit. |
+| `SENTRY_ENVIRONMENT` | `production` | Optional. Defaults to `production` when `RENDER=true`. |
+| `SENTRY_RELEASE` | git SHA | Optional release label. |
+| `VITE_LEGAL_BUSINESS_NAME` | legal name | Build-time. Leave empty rather than inventing an LLC. |
+| `VITE_LEGAL_CONTACT_EMAIL` | privacy contact | Build-time. Leave empty for a generic beta placeholder. |
+| `VITE_LEGAL_STATE` | `Arizona` | Build-time governing-law state. |
+| `VITE_SENTRY_DSN` | *(from Sentry)* | Build-time browser DSN. Empty disables frontend monitoring. Never commit. |
+| `VITE_SENTRY_ENVIRONMENT` | `production` | Optional. |
+| `VITE_SENTRY_RELEASE` | git SHA | Optional. |
+
+See `LEGAL_AND_MONITORING.md`. Session Replay is disabled in code. Privacy/Terms are developer drafts and should be reviewed by counsel before a broad commercial launch.
 
 Example block (replace placeholders):
 
@@ -177,6 +188,9 @@ After the first deploy, open your Web Service URL (e.g. `https://budget-app-api.
 |----------|---------|
 | `VITE_API_URL` | `https://budget-app-api.onrender.com` |
 | `VITE_PLAID_REDIRECT_URI` | `https://budget-app-web.onrender.com/plaid/oauth-return` |
+| `VITE_LEGAL_BUSINESS_NAME` | *(optional legal name)* |
+| `VITE_LEGAL_CONTACT_EMAIL` | *(optional)* |
+| `VITE_SENTRY_DSN` | *(optional browser DSN)* |
 
 Example:
 

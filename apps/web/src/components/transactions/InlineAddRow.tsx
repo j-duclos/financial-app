@@ -10,6 +10,7 @@ import type {
   ProjectedPreviewView,
   ProjectedTransferBalancesView,
 } from "../../lib/projectedBalancePreview";
+import { FUTURE_TRANSACTION_HELP } from "../../lib/onboardingCopy";
 
 export type InlineAddForm = {
   date: string;
@@ -96,6 +97,7 @@ export default function InlineAddRow({
           <span aria-hidden />
           <input
             ref={payeeRef}
+            id="inline-add-payee"
             type="text"
             value={form.payee}
             onChange={(e) => onChange({ payee: e.target.value })}
@@ -172,6 +174,9 @@ export default function InlineAddRow({
             )}
           </div>
         </div>
+        <p className="px-4 py-1.5 text-xs text-gray-500 border-b border-blue-100 bg-blue-50/20">
+          {FUTURE_TRANSACTION_HELP}
+        </p>
       </form>
 
       {(inlinePayToCardAccountId != null || inlineBankTransferDestId != null) && (

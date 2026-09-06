@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import PublicScreen from "../components/legal/PublicScreen";
 
 export default function Register() {
   const [username, setUsername] = useState("");
@@ -24,7 +25,7 @@ export default function Register() {
 
   if (checkEmail) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <PublicScreen>
         <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
           <h1 className="text-2xl font-bold text-center">Check your email</h1>
           <p className="text-sm text-gray-700 text-center">
@@ -38,12 +39,12 @@ export default function Register() {
             Continue to app
           </button>
         </div>
-      </div>
+      </PublicScreen>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
         <h1 className="text-2xl font-bold text-center">Sign up</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -82,6 +83,17 @@ export default function Register() {
               autoComplete="new-password"
             />
           </div>
+          <p className="text-xs text-gray-600">
+            By creating an account, you agree to the{" "}
+            <Link to="/terms" className="text-blue-700 hover:underline">
+              Terms of Service
+            </Link>{" "}
+            and acknowledge the{" "}
+            <Link to="/privacy" className="text-blue-700 hover:underline">
+              Privacy Policy
+            </Link>
+            .
+          </p>
           <button type="submit" className="w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700">
             Sign up
           </button>
@@ -90,6 +102,6 @@ export default function Register() {
           Already have an account? <Link to="/login" className="text-blue-600 hover:underline">Log in</Link>
         </p>
       </div>
-    </div>
+    </PublicScreen>
   );
 }

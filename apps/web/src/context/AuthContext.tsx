@@ -16,6 +16,7 @@ import {
   getProfile,
 } from "@budget-app/api-client";
 import { PROFILE_QUERY_KEY } from "../lib/profileQuery";
+import { setMonitoringUser } from "../lib/monitoring";
 
 const ACCESS_KEY = "budget_access";
 const REFRESH_KEY = "budget_refresh";
@@ -62,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(REFRESH_KEY);
     setAuth({ access: null, refresh: null, user: null, loading: false });
     queryClient.clear();
+    setMonitoringUser(null);
   }, [queryClient]);
 
   useEffect(() => {
@@ -83,6 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (auth.user && auth.user.id > 0) {
+      setMonitoringUser(auth.user.id);
+    }
+  }, [auth.user]);
+
+  useEffect(() => {
     if (!auth.access && !auth.refresh) {
       setAuth((prev) => ({ ...prev, loading: false }));
       return;
@@ -94,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getProfile()
       .then((profile) => {
         queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
+        setMonitoringUser(profile.id);
         setAuth((prev) => ({
           ...prev,
           user: { id: profile.id, username: profileLabel(profile) },
@@ -108,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               try {
                 const profile = await getProfile();
                 queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
+                setMonitoringUser(profile.id);
                 setAuth((prev) => ({
                   ...prev,
                   user: { id: profile.id, username: profileLabel(profile) },
@@ -150,6 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const profile = await getProfile();
       queryClient.setQueryData(PROFILE_QUERY_KEY, profile);
+      setMonitoringUser(profile.id);
       setAuth((prev) => ({
         ...prev,
         user: { id: profile.id, username: profileLabel(profile) },

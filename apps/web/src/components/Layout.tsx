@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import NotificationsDropdown from "./NotificationsDropdown";
@@ -5,10 +6,17 @@ import { PlaidAutoSync } from "./PlaidAutoSync";
 import AppNav from "./AppNav";
 import BillingReturnBanner from "./billing/BillingReturnBanner";
 import EmailVerificationBanner from "./EmailVerificationBanner";
+import SiteFooter from "./legal/SiteFooter";
+import OnboardingWelcomeModal from "./onboarding/OnboardingWelcomeModal";
+import { useOnboardingActions, useOnboardingStatus } from "../hooks/useOnboardingStatus";
+import { shouldShowOnboardingWelcome } from "@budget-app/shared";
 
 export default function Layout() {
   const { auth, logout } = useAuth();
   const navigate = useNavigate();
+  const { status } = useOnboardingStatus();
+  const { dismissMu } = useOnboardingActions();
+  const [welcomeAcked, setWelcomeAcked] = useState(false);
 
   function handleLogout() {
     logout();
@@ -18,6 +26,12 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col">
       <PlaidAutoSync />
+      <OnboardingWelcomeModal
+        open={shouldShowOnboardingWelcome(status) && !welcomeAcked}
+        onGetStarted={() => setWelcomeAcked(true)}
+        onSkip={() => dismissMu.mutate()}
+        skipPending={dismissMu.isPending}
+      />
       <header className="flex-none sticky top-0 z-30 bg-white border-b border-gray-200">
         <div className="px-4 flex items-center justify-between gap-x-3 min-h-14 py-2">
           <AppNav />
@@ -46,6 +60,7 @@ export default function Layout() {
         <EmailVerificationBanner />
         <Outlet />
       </main>
+      <SiteFooter />
     </div>
   );
 }

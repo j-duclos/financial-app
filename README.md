@@ -200,6 +200,14 @@ Production webhook URL: `https://<your-app>.onrender.com/api/billing/webhook/` (
 
 The app starts without Stripe configured. Checkout/Portal/webhook calls return HTTP 503 until the required variables are set.
 
+### Legal pages and error monitoring
+
+Public `/privacy` and `/terms` pages, in-app legal links, and optional Sentry error monitoring are documented in [`LEGAL_AND_MONITORING.md`](LEGAL_AND_MONITORING.md).
+
+First-run web onboarding (welcome, checklist, empty states) is documented in [`ONBOARDING.md`](ONBOARDING.md). Mobile onboarding UI is a follow-up; the status API is already shared.
+
+Those policies are developer drafts for public beta and **should be reviewed by qualified legal counsel before a broad commercial launch**. Sentry is optional: leave `SENTRY_DSN` and `VITE_SENTRY_DSN` empty for local development. Session Replay is disabled.
+
 > **Tip:** With `frontend_dist` in the repo, http://localhost:8000/ also serves the React build from Django. Day-to-day UI work still uses **:5173** (Vite) for hot reload.
 
 
@@ -285,7 +293,21 @@ cd backend
 python3 -m pytest
 ```
 
-Pytest uses `config/settings_test.py` (SQLite in `backend/test_db.sqlite3`), not `DATABASE_URL` from `.env`, so tests do not run against Render Postgres.
+Pytest uses `config/settings_test.py` (SQLite in `backend/test_db.sqlite3` locally), not `DATABASE_URL` from `.env`, so tests do not run against Render Postgres. GitHub Actions CI uses a Postgres service (`USE_POSTGRES_FOR_TESTS=1`).
+
+Canonical financial-engine regression (required release gate):
+
+```bash
+cd backend
+python3 -m pytest -m ledger_regression
+# or
+python3 -m pytest common/tests/test_canonical_ledger_regression.py
+```
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) is the merge gate. Jobs:
+`backend-tests`, `web-tests`, `build-web`. Canonical `ledger_regression` is fail-closed.
+
+A full `pytest` currently includes unrelated pre-existing failures (debt planner, some dashboard/calendar tests). Those are out of scope for this gate; do not merge if `ledger_regression` is red.
 
 ### Upcoming charge notifications (daily job)
 
@@ -312,6 +334,10 @@ Optional: limit to one household: `--household_id=1`
 | Permissions | `backend/core/permissions.py` |
 | Auth (JWT + register) | `backend/core/views.py`, `backend/core/urls.py` |
 | Billing / Stripe | `backend/billing/` |
+| Legal + Sentry | `LEGAL_AND_MONITORING.md`, `apps/web/src/lib/legalConfig.ts`, `backend/config/sentry.py` |
+| First-run onboarding | `ONBOARDING.md`, `backend/core/onboarding.py`, `apps/web/src/components/onboarding/` |
+| Financial engine invariants | `docs/FINANCIAL_ENGINE_INVARIANTS.md`, `backend/common/tests/test_canonical_ledger_regression.py` |
+| Release checklist / CI | `docs/RELEASE_CHECKLIST.md`, `.github/workflows/ci.yml` |
 | Insights | `backend/insights/views.py` |
 | **React web UI** | `apps/web/src/pages/`, `apps/web/src/components/`, `apps/web/src/App.tsx` |
 | Vite config (dev proxy, build) | `apps/web/vite.config.ts` |

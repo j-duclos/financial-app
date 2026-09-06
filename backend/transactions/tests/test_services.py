@@ -277,11 +277,10 @@ class TestDeleteRuleTransferPair(TestCase):
         self.savings = Account.objects.create(
             household=self.h, account_type=Account.AccountType.SAVINGS, name="Chase Savings", currency="USD"
         )
-        self.cat = Category.objects.create(
+        self.cat = Category.objects.get(
             household=self.h,
             name="Transfer",
             category_type=Category.CategoryType.EXPENSE,
-            sort_order=1,
         )
 
     def test_delete_from_checking_also_deletes_savings_leg(self):

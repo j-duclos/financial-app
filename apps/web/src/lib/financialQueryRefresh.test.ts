@@ -29,6 +29,7 @@ describe("financialQueryRefresh utilization preference", () => {
     expect(keys).toContain("dti");
     expect(keys).toContain("debt-plan");
     expect(keys).toContain("accounts");
+    expect(keys).toContain("onboarding");
     expect(accountsSource).toMatch(/queryKey: \["dti"\]/);
     expect(accountsSource).toMatch(/queryKey: \["debt-plan"\]/);
     expect(accountsSource).toMatch(/Refresh card minimums/);

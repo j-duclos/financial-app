@@ -17,6 +17,7 @@ export * from "./actionCenterView";
 export * from "./resolveRiskDisplay";
 export * from "./scheduledImportMatch";
 export * from "./importMatchSemantics";
+export * from "./onboarding";
 export * from "./dashboardDisplay";
 export * from "./dashboardTerminology";
 export * from "./extendedCashRiskQuery";

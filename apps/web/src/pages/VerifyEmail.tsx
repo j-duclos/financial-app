@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { verifyEmail } from "@budget-app/api-client";
 import { useAuth } from "../context/AuthContext";
+import PublicScreen from "../components/legal/PublicScreen";
 
 type Status = "verifying" | "verified" | "already_verified" | "expired" | "invalid";
 
@@ -51,7 +52,7 @@ export default function VerifyEmail() {
           : "Invalid verification link";
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow text-center">
         <h1 className="text-2xl font-bold">Verify email</h1>
         <p className="text-sm text-gray-700">{copy}</p>
@@ -68,6 +69,6 @@ export default function VerifyEmail() {
           </Link>
         )}
       </div>
-    </div>
+    </PublicScreen>
   );
 }

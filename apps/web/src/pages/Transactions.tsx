@@ -25,7 +25,7 @@ import {
   type PayoffProjection,
 } from "@budget-app/api-client";
 import { useBillingStatus } from "../hooks/useBillingStatus";
-import { forecastOptionsForPlan } from "../lib/entitlements";
+import { canUsePlaidBankSync, forecastOptionsForPlan } from "../lib/entitlements";
 import { FORECAST_WINDOW_LABELS } from "../lib/forecastWindow";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
@@ -76,6 +76,7 @@ import {
   type ForecastRange,
 } from "../components/transactions/transactionsLedgerUtils";
 import { logTransactionsPageLoadPlan } from "../lib/transactionsPageLoadPerf";
+import EmptyState from "../components/onboarding/EmptyState";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -142,6 +143,7 @@ export default function Transactions() {
     profile,
   } = usePageForecastWindow();
   const { billing } = useBillingStatus();
+  const plaidAllowed = canUsePlaidBankSync(billing);
   const forecastRange = daysToForecastRange(forecastDays);
   const forecastDayOptions = forecastOptionsForPlan(billing);
   /** Default OFF — reconciled history is loaded only when the user asks. */
@@ -232,6 +234,7 @@ export default function Transactions() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isPending: txnsPending,
   } = useInfiniteQuery({
     queryKey: [
       "transactions",
@@ -417,6 +420,12 @@ export default function Transactions() {
     () => futurePostedTxnsData?.results ?? [],
     [futurePostedTxnsData?.results]
   );
+  const hasUserTransactions =
+    transactions.length > 0 || futurePostedTransactions.length > 0;
+  const showTransactionsEmpty =
+    typeof accountId === "number" &&
+    !txnsPending &&
+    !hasUserTransactions;
 
   const historyPagesComplete = !hasNextPage;
   const account = useMemo(() => {
@@ -2061,9 +2070,18 @@ export default function Transactions() {
       )}
 
       {!accountId ? (
-        <div className="flex-1 flex items-center justify-center text-gray-500">
-          Select an account to view the transaction ledger
-        </div>
+        accounts.length === 0 ? (
+          <EmptyState
+            testId="transactions-empty-state"
+            title="No transactions yet"
+            description="Add an account first, then add a transaction to start tracking activity."
+            primaryAction={{ label: "Add account", to: "/accounts?new=1" }}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-gray-500">
+            Select an account to view the transaction ledger
+          </div>
+        )
       ) : (
         <div className="flex-1 min-h-0 flex flex-col bg-white rounded-lg shadow overflow-hidden">
           {!accountMatchesSelection && accountFetching ? (
@@ -2103,6 +2121,26 @@ export default function Transactions() {
               Timeline could not load (server may have timed out). Showing posted transactions only.
             </p>
           ) : null}
+          {showTransactionsEmpty ? (
+            <div className="shrink-0 px-4 py-3 border-b border-gray-100">
+              <EmptyState
+                testId="transactions-empty-state"
+                title="No transactions yet"
+                description="Add a transaction to start tracking account activity."
+                primaryAction={{
+                  label: "Add transaction",
+                  onClick: () => document.getElementById("inline-add-payee")?.focus(),
+                }}
+              >
+                {plaidAllowed && account?.plaid_item_id ? (
+                  <p className="text-xs text-gray-500">
+                    This account is connected. Use bank connections above to import recent activity.
+                  </p>
+                ) : null}
+              </EmptyState>
+            </div>
+          ) : null}
+
           <PastSection
             start={ledgerSections.start}
             past={filteredPastRows}

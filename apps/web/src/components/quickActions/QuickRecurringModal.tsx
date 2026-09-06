@@ -4,6 +4,7 @@ import { formatAccountOptionLabel, getEffectiveDisplayName } from "@budget-app/s
 import type { Account, Category, RecurringRuleFrequency } from "@budget-app/shared";
 import { createRule, listCategories } from "@budget-app/api-client";
 import { invalidateRecurringRuleDependents } from "../../lib/financialQueryRefresh";
+import { RECURRING_HELP } from "../../lib/onboardingCopy";
 
 function categoryAllowsTransferDestination(cat: Category | undefined): boolean {
   if (!cat) return false;
@@ -150,6 +151,7 @@ export default function QuickRecurringModal({
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
               required
             />
+            <p className="mt-1 text-xs text-gray-500">{RECURRING_HELP}</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Amount</label>

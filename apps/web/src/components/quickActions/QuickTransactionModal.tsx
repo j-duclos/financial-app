@@ -10,6 +10,7 @@ import {
 import { isTransferCategoryName } from "../transactions/transactionsLedgerUtils";
 import PaymentPlannerSection from "./PaymentPlannerSection";
 import TransferSourceBalancePreview from "./TransferSourceBalancePreview";
+import { FUTURE_TRANSACTION_HELP } from "../../lib/onboardingCopy";
 
 export type QuickTransactionMode =
   | "expense"
@@ -374,6 +375,7 @@ export default function QuickTransactionModal({
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm"
               required
             />
+            <p className="mt-1 text-xs text-gray-500">{FUTURE_TRANSACTION_HELP}</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Description</label>

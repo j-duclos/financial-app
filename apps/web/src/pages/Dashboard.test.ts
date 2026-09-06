@@ -16,7 +16,7 @@ const accountsSource = readFileSync(
 describe("Dashboard page structure", () => {
   it("initializes Forecast Window from the saved profile default and keys queries by days", () => {
     expect(dashboardSource).toMatch(/usePageForecastWindow/);
-    expect(dashboardSource).toMatch(/enabled: forecastReady/);
+    expect(dashboardSource).toMatch(/enabled: loadDashboard/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-details", forecastDays\]/);
     expect(dashboardSource).toMatch(/EXTENDED_CASH_RISK_QUERY_KEY|extended-cash-risk/);
@@ -96,8 +96,11 @@ describe("Dashboard page structure", () => {
     expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(forecastReady && !!summaryFast\)/);
   });
 
-  it("uses shared isDashboardOnboarding for empty-state detection", () => {
-    expect(dashboardSource).toMatch(/isDashboardOnboarding/);
+  it("uses account existence for first-run empty state, not $0 balances", () => {
+    expect(dashboardSource).toMatch(/isMissingAccounts/);
+    expect(dashboardSource).toMatch(/shouldShowDashboardSetup/);
+    expect(dashboardSource).toMatch(/dashboard-first-run/);
+    expect(dashboardSource).not.toMatch(/isDashboardOnboarding/);
     expect(dashboardSource).not.toMatch(
       /summaryFast\.recommendations\?\.length \?\? summaryFast\.insights\.length/
     );

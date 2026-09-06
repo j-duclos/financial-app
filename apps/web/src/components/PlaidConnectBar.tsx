@@ -568,6 +568,7 @@ export function PlaidConnectBar({
     <>
       {linkHost}
       <div
+        id="plaid-connect-bar"
         className="w-full min-w-0 rounded-lg border border-slate-200 bg-slate-50 shadow-sm"
         data-testid="plaid-connect-panel"
         data-expanded={expanded}

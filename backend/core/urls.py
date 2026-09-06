@@ -17,6 +17,9 @@ from .views import (
     ResendVerificationView,
     ForgotPasswordView,
     ResetPasswordView,
+    OnboardingStatusView,
+    OnboardingCompleteView,
+    OnboardingDismissView,
 )
 from timeline.views import TimelineView
 
@@ -38,6 +41,9 @@ urlpatterns = [
     path("profile/export-transactions.csv", ExportTransactionsCsvView.as_view(), name="profile-export-transactions-csv"),
     path("profile/delete-account/preflight/", DeleteAccountPreflightView.as_view(), name="profile-delete-account-preflight"),
     path("profile/delete-account/", DeleteAccountView.as_view(), name="profile-delete-account"),
+    path("onboarding/status/", OnboardingStatusView.as_view(), name="onboarding-status"),
+    path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
+    path("onboarding/dismiss/", OnboardingDismissView.as_view(), name="onboarding-dismiss"),
     path("timeline/", TimelineView.as_view(), name="timeline"),
     path("", include(router.urls)),
 ]

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   EXTENDED_CASH_RISK_QUERY_KEY,
-  isDashboardOnboarding,
+  isMissingAccounts,
+  shouldShowDashboardSetup,
   type FinancialGoal,
 } from "@budget-app/shared";
 import { getDashboardDetails, getDashboardSummaryFast, listAccounts } from "@budget-app/api-client";
@@ -23,33 +23,50 @@ import ActionToast from "../components/quickActions/ActionToast";
 import { attentionTransferPreset } from "../lib/attentionCardDisplay";
 import { UPCOMING_SECTION_TITLE } from "../lib/upcomingDisplay";
 import { DASHBOARD_SECTION } from "../lib/dashboardTerminology";
+import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
+import EmptyState from "../components/onboarding/EmptyState";
+import OnboardingChecklist from "../components/onboarding/OnboardingChecklist";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { useExtendedCashRisk } from "../hooks/useExtendedCashRisk";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
+import { useOnboardingStatus } from "../hooks/useOnboardingStatus";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { canUsePlaidBankSync } from "../lib/entitlements";
+import { FREE_PLAN_LIMITS } from "../lib/billing";
+import { FORECAST_EXPLANATION } from "../lib/onboardingCopy";
 import { isLookingAheadVisible } from "../lib/lookingAhead";
 
-function DashboardOnboarding() {
+function DashboardSetupPanel({
+  isPremium,
+}: {
+  isPremium: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
-      <p className="font-medium text-gray-900">Get started with your financial command center</p>
-      <ul className="list-disc list-inside text-xs space-y-1 text-gray-600">
-        <li>
-          <Link to="/accounts" className="text-blue-600 hover:underline">
-            Connect or add your first account
-          </Link>
-        </li>
-        <li>
-          <Link to="/goals?new=1" className="text-blue-600 hover:underline">
-            Create a savings goal
-          </Link>
-        </li>
-        <li>
-          <Link to="/transactions" className="text-blue-600 hover:underline">
-            Add recurring bills and income
-          </Link>
-        </li>
-      </ul>
-    </div>
+    <EmptyState
+      testId="dashboard-first-run"
+      title="Build your first forecast"
+      description="Add an account and recurring income/bills to see where your balance is headed."
+      primaryAction={{
+        label: "Add account manually",
+        to: "/accounts?new=1",
+      }}
+      secondaryAction={
+        isPremium
+          ? { label: "Connect bank", to: "/accounts", variant: "secondary" }
+          : {
+              label: "Upgrade for automatic bank syncing",
+              to: "/profile",
+              variant: "secondary",
+            }
+      }
+    >
+      {!isPremium ? (
+        <p className="text-xs text-gray-500">
+          Free accounts can track up to {FREE_PLAN_LIMITS.manual_accounts} manually managed
+          accounts. Save time with automatic bank syncing on Premium.
+        </p>
+      ) : null}
+    </EmptyState>
   );
 }
 
@@ -75,6 +92,12 @@ export default function Dashboard() {
   const [toast, setToast] = useState<string | null>(null);
   const [extendedRiskEnabled, setExtendedRiskEnabled] = useState(false);
   const needsAccounts = txnPreset != null;
+  const { status: onboarding, isError: onboardingError } = useOnboardingStatus();
+  const { billing } = useBillingStatus();
+  const isPremium = canUsePlaidBankSync(billing);
+  const missingAccounts = isMissingAccounts(onboarding);
+  const showSetup = shouldShowDashboardSetup(onboarding);
+  const loadDashboard = forecastReady && (onboardingError || onboarding?.steps.account === true);
 
   const {
     data: summaryFast,
@@ -84,7 +107,7 @@ export default function Dashboard() {
   } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
-    enabled: forecastReady,
+    enabled: loadDashboard,
   });
 
   // Details starts immediately after summary-fast succeeds (no artificial delay).
@@ -127,12 +150,41 @@ export default function Dashboard() {
     [details?.goals]
   );
 
-  const showOnboarding = isDashboardOnboarding(summaryFast);
+  const showOnboarding = showSetup;
 
   usePerfPageLoad("dashboard", !fastLoading && !fastError, { forecast_days: forecastDays });
 
+  if (!onboardingError && !onboarding) {
+    return (
+      <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
+        <DashboardSkeleton />
+      </div>
+    );
+  }
+
+  if (missingAccounts) {
+    return (
+      <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
+        <DashboardSetupPanel isPremium={isPremium} />
+        {onboarding ? <OnboardingChecklist status={onboarding} isPremium={isPremium} /> : null}
+        <FinancialDisclaimer className="text-xs text-gray-500" />
+        <ActionToast message={toast} onDismiss={() => setToast(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className={`${PAGE_SHELL} py-3 sm:py-4 space-y-3`}>
+      {showOnboarding && onboarding ? (
+        <OnboardingChecklist status={onboarding} isPremium={isPremium} />
+      ) : null}
+
+      {onboarding?.steps.forecast_ready ? (
+        <p className="text-xs text-gray-600" data-testid="forecast-explanation">
+          {FORECAST_EXPLANATION}
+        </p>
+      ) : null}
+
       <section aria-label={DASHBOARD_SECTION.financialHealth}>
         <DashboardTopSummaryBar
           summary={summaryFast}
@@ -140,6 +192,7 @@ export default function Dashboard() {
           onForecastDaysChange={setForecastDays}
           loading={fastLoading || !forecastReady}
         />
+        <FinancialDisclaimer className="text-xs text-gray-500 mt-2" />
       </section>
 
       {(fastLoading || !forecastReady) && <DashboardSkeleton omitHealth />}
@@ -155,8 +208,6 @@ export default function Dashboard() {
 
       {summaryFast && (
         <>
-          {showOnboarding && <DashboardOnboarding />}
-
           {lookingAhead && <LookingAheadBanner risk={extendedCashRisk.risk} />}
 
           <section>

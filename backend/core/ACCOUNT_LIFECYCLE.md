@@ -22,11 +22,17 @@ If other people are still members of a household:
 
 If the user is the **sole OWNER** and other members remain, deletion is **blocked** until ownership is transferred. The app does not auto-promote another member.
 
+## Export
+
+`GET /api/profile/export-data/` returns household data the user can access: accounts (including credit-card metadata), transactions, recurring rules, FinancialGoal and GoalBucket, categories, budgets, spending targets, scenarios, transfer groups, reconciliation sessions, statement-line match metadata, bank-connection institution names, DTI planning data, and billing plan/status.
+
+It does **not** include password hashes, JWTs, Stripe IDs or secrets, Plaid access tokens / ciphertext / item IDs, statement `raw` blobs, or encryption keys.
+
+Shared household data may include records created by other members.
+
 ## Stripe
 
-Active/trialing subscriptions are **canceled immediately** via the Stripe API before the local user is removed. The Stripe Customer object is **not** deleted so Stripe can retain payment records under its own policies. Local billing linkage is removed with the user.
-
-If Stripe cancellation fails, the local account is left intact.
+Remote cancellation runs only when local status currently grants paid access (`active` / `trialing`). A leftover Stripe subscription ID on a Free/canceled account is not canceled. If Stripe reports the subscription is already missing/deleted (`InvalidRequestError` `resource_missing` or HTTP 404), deletion may proceed. Network, auth, and other Stripe failures still block deletion. The Stripe Customer object is **not** deleted.
 
 ## Plaid
 

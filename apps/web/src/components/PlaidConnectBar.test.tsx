@@ -96,6 +96,6 @@ describe("PlaidConnectBar entitlements", () => {
     expect(await screen.findByText(PLAID_SYNC_PAUSED_MESSAGE)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Upgrade to Premium" }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Link a bank" })).not.toBeInTheDocument();
-    expect(PLAID_PREMIUM_MESSAGE).toMatch(/Premium feature/);
+    expect(PLAID_PREMIUM_MESSAGE).toMatch(/available with Premium/);
   });
 });

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { resetPassword } from "@budget-app/api-client";
+import PublicScreen from "../components/legal/PublicScreen";
 
 export default function ResetPassword() {
   const [params, setParams] = useSearchParams();
@@ -42,7 +43,7 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
         <h1 className="text-2xl font-bold text-center">Reset password</h1>
         {done ? (
@@ -95,6 +96,6 @@ export default function ResetPassword() {
           </form>
         )}
       </div>
-    </div>
+    </PublicScreen>
   );
 }

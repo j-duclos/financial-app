@@ -32,6 +32,7 @@ import {
   METRIC_TILE_SKELETON_CLASS,
 } from "../components/dashboard/metricTileLayout";
 import PlanningSubnav from "../components/PlanningSubnav";
+import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
 import DtiDebtFormModal, { type DtiDebtFormPrefill } from "../components/dti/DtiDebtFormModal";
 import DtiIncomeFormModal from "../components/dti/DtiIncomeFormModal";
 import DtiProfileFormModal from "../components/dti/DtiProfileFormModal";
@@ -406,6 +407,7 @@ export default function DebtToIncome() {
           See how your monthly debt payments and housing costs compare with your gross monthly income.
         </p>
         <p className="text-xs text-gray-500">{DTI_PLANNING_DISCLAIMER}</p>
+        <FinancialDisclaimer />
         <PlanningSubnav />
       </header>
 

@@ -25,6 +25,8 @@ import Recurring from "./pages/Recurring";
 import CreditCards from "./pages/CreditCards";
 import DebtToIncome from "./pages/DebtToIncome";
 import Profile from "./pages/Profile";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
 import PlaidOAuthReturn from "./pages/PlaidOAuthReturn";
 
 const queryClient = createAppQueryClient();
@@ -52,6 +54,8 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
       <Route
         path="/plaid/oauth-return"
         element={

@@ -377,3 +377,31 @@ class HouseholdViewSet(ModelViewSet):
         HouseholdMembership.objects.create(
             household=household, user=self.request.user, role=HouseholdMembership.Role.OWNER
         )
+
+
+class OnboardingStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.onboarding import onboarding_status_payload
+
+        return Response(onboarding_status_payload(request.user))
+
+
+class OnboardingCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.onboarding import mark_onboarding_complete
+
+        return Response(mark_onboarding_complete(request.user))
+
+
+class OnboardingDismissView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.onboarding import mark_onboarding_dismissed
+
+        return Response(mark_onboarding_dismissed(request.user))
+

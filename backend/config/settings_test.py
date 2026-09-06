@@ -1,26 +1,36 @@
 """
-Pytest settings — always use local SQLite, never remote Postgres from .env.
+Pytest settings.
 
-Without this, DATABASE_URL in backend/.env points pytest at Render Postgres,
-which causes hangs (locked test_budgeter_* DB) or flaky setup failures.
+Local/default: SQLite. DATABASE_URL from backend/.env is cleared so tests never
+hit Render Postgres.
+
+CI: set USE_POSTGRES_FOR_TESTS=1 and DATABASE_URL to the GitHub Actions Postgres
+service (dummy credentials only).
 """
 from __future__ import annotations
 
 import os
 
-# Clear before importing config.settings (which loads backend/.env via dotenv).
-os.environ["DATABASE_URL"] = ""
+os.environ["SENTRY_DSN"] = ""
 os.environ.setdefault("DJANGO_SECRET_KEY", "pytest-secret-key")
 os.environ.setdefault("DEBUG", "true")
+os.environ.setdefault("EMAIL_BACKEND", "django.core.mail.backends.locmem.EmailBackend")
+
+_use_postgres = os.environ.get("USE_POSTGRES_FOR_TESTS") == "1"
+if not _use_postgres:
+    os.environ["DATABASE_URL"] = ""
 
 from config.settings import *  # noqa: F401,F403
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "test_db.sqlite3",
+if not _use_postgres:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "test_db.sqlite3",
+        }
     }
-}
+else:
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
 
 # Faster auth in tests.
 PASSWORD_HASHERS = [
@@ -34,4 +44,5 @@ CACHES = {
 }
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+EMAIL_HOST_PASSWORD = ""
 FRONTEND_ORIGIN = "http://localhost:5173"

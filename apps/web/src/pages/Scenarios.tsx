@@ -76,6 +76,7 @@ import {
   planHasHypotheticalChanges,
 } from "../lib/guidedStrategyDisplay";
 import PlanningSubnav from "../components/PlanningSubnav";
+import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
 import { parsePositiveIntParam } from "../lib/whatIfContext";
 
 type ForecastHorizon = "3m" | "6m" | "12m" | "24m";
@@ -409,6 +410,7 @@ export default function Scenarios() {
           </p>
         </div>
         <PlanningSubnav />
+        <FinancialDisclaimer />
         {(contextGoalId || contextDebtId) && (
           <div className="text-sm text-indigo-900 bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2 space-y-2">
             <p>
