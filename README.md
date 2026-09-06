@@ -36,6 +36,8 @@ See **[Web UI — app tour](#web-ui--app-tour)** for what each page and nav item
 
 **One-time setup** (from repo root — installs web, mobile, and shared packages):
 
+Frontend tests (Vitest / jsdom) need **Node 24**. GitHub Actions `web-tests` and `build-web` use Node 24. The Vite production build still succeeds on Node 20; Render currently documents `NODE_VERSION=20` — bumping production Node is a separate deploy change.
+
 ```bash
 npm install
 ```
@@ -306,6 +308,7 @@ python3 -m pytest common/tests/test_canonical_ledger_regression.py
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) is the merge gate. Jobs:
 `backend-tests`, `web-tests`, `build-web`. Canonical `ledger_regression` is fail-closed.
+Frontend CI (`web-tests`, `build-web`) runs **Node 24** (jsdom/undici). Backend CI is unchanged.
 
 A full `pytest` currently includes unrelated pre-existing failures (debt planner, some dashboard/calendar tests). Those are out of scope for this gate; do not merge if `ledger_regression` is red.
 
