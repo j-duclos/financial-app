@@ -105,6 +105,41 @@ describe("Dashboard page structure", () => {
       /summaryFast\.recommendations\?\.length \?\? summaryFast\.insights\.length/
     );
   });
+
+  it("invalidates the same dashboard query keys concurrently after a quick transaction", () => {
+    expect(dashboardSource).toMatch(/Promise\.all\(\[/);
+    expect(dashboardSource).toMatch(/\["dashboard-summary-fast"\]/);
+    expect(dashboardSource).toMatch(/\["dashboard-summary-details"\]/);
+    expect(dashboardSource).toMatch(/EXTENDED_CASH_RISK_QUERY_KEY/);
+    const successHandler = dashboardSource.slice(
+      dashboardSource.indexOf("onSuccess={async (message)"),
+      dashboardSource.indexOf("</QuickTransactionModal>")
+    );
+    expect(successHandler).toMatch(/invalidateQueries\(\{ queryKey: \["dashboard-summary-fast"\] \}\)/);
+    expect(successHandler).toMatch(/invalidateQueries\(\{ queryKey: \["dashboard-summary-details"\] \}\)/);
+    expect(successHandler).toMatch(/invalidateQueries\(\{ queryKey: EXTENDED_CASH_RISK_QUERY_KEY \}\)/);
+    expect(successHandler).not.toMatch(
+      /await queryClient\.invalidateQueries\(\{ queryKey: \["dashboard-summary-fast"\] \}\);\s*await queryClient\.invalidateQueries/
+    );
+  });
+});
+
+describe("web Dashboard financial health remains complete", () => {
+  const summaryBarSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../components/dashboard/DashboardTopSummaryBar.tsx"),
+    "utf8"
+  );
+
+  it("still renders the full desktop metric set including Liquid Net Position and Debt Payoff", () => {
+    expect(summaryBarSource).toMatch(/lowestForecastBalanceLabel/);
+    expect(summaryBarSource).toMatch(/FINANCIAL_HEALTH\.availableCash\.label/);
+    expect(summaryBarSource).toMatch(/FINANCIAL_HEALTH\.availableCredit\.label/);
+    expect(summaryBarSource).toMatch(/FINANCIAL_HEALTH\.cashAfterDebt\.label/);
+    expect(summaryBarSource).toMatch(/DebtPayoffInsight/);
+    expect(dashboardSource).toMatch(/AttentionCardGrid/);
+    expect(dashboardSource).toMatch(/UpcomingMoneyFlowPreviewSection/);
+    expect(dashboardSource).toMatch(/GoalsPreviewSection/);
+  });
 });
 
 describe("Accounts page structure", () => {

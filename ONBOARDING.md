@@ -8,7 +8,7 @@ This is product UX only. Ledger math, matching, Plaid import semantics, recurrin
 
 ## Status API
 
-Authenticated endpoints (reusable by mobile later):
+Authenticated endpoints:
 
 - `GET /api/onboarding/status/`
 - `POST /api/onboarding/complete/`
@@ -33,8 +33,15 @@ A $0 starting balance is not an empty state.
 
 Free users get a manual path (up to 3 accounts). Premium users also see Connect bank. Onboarding is not a paywall.
 
-## Mobile follow-up
+## Mobile
 
-Mobile does **not** yet implement this guided welcome, checklist, or first-run empty states.
+Mobile Home uses the same `GET /api/onboarding/status/` source of truth as web (`useOnboardingStatus`, query key `["onboarding", "status"]`). It does **not** infer first-run from $0 dashboard tiles (`isDashboardOnboarding`).
 
-The onboarding status API and `@budget-app/api-client` helpers (`getOnboardingStatus`, `completeOnboarding`, `dismissOnboarding`) are ready for a later mobile pass. Until then, mobile Home may still use `isDashboardOnboarding`, which looks at $0 summary tiles and is not the source of truth for web first-run.
+When `steps.account` is false, Home shows a first-run empty state (“Build your first forecast”) and does not load dashboard summary queries:
+
+- Free: Add account manually + Upgrade for automatic bank syncing
+- Premium: Add account manually + Connect bank (explains that bank linking is on web; mobile has no Plaid Link flow yet)
+
+Onboarding is not a paywall. Manual accounts remain available on Free (max 3).
+
+Mobile does not yet implement the web welcome modal or checklist; those remain web-first.

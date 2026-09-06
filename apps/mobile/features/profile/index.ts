@@ -3,6 +3,7 @@ export {
   applyUpdatedProfileCache,
   developmentEnvironmentLabel,
   forecastWindowOptions,
+  forecastWindowPickerOptions,
   FORECAST_PREFERENCE_QUERY_PREFIXES,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,

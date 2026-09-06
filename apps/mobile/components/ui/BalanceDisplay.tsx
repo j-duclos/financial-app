@@ -9,10 +9,19 @@ type Props = {
   subtitle?: string;
   tone?: FinancialTone;
   accessibilityHint?: string;
+  /** Span the full row — used for the mobile Available Credit companion tile. */
+  fullWidth?: boolean;
 };
 
 /** Compact balance/metric tile used on Dashboard and summaries. */
-export function BalanceDisplay({ label, amount, subtitle, tone, accessibilityHint }: Props) {
+export function BalanceDisplay({
+  label,
+  amount,
+  subtitle,
+  tone,
+  accessibilityHint,
+  fullWidth = false,
+}: Props) {
   const theme = useTheme();
   return (
     <View
@@ -27,7 +36,8 @@ export function BalanceDisplay({ label, amount, subtitle, tone, accessibilityHin
         borderColor: theme.colors.border,
         padding: theme.spacing.lg,
         flex: 1,
-        minWidth: "46%",
+        minWidth: fullWidth ? "100%" : "46%",
+        alignSelf: fullWidth ? "stretch" : undefined,
       }}
     >
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.label }}>{label}</Text>

@@ -8,9 +8,20 @@ type Props = {
   message?: string;
   actionLabel?: string;
   onAction?: () => void;
+  actionVariant?: "primary" | "secondary";
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 };
 
-export function EmptyState({ title, message, actionLabel, onAction }: Props) {
+export function EmptyState({
+  title,
+  message,
+  actionLabel,
+  onAction,
+  actionVariant = "secondary",
+  secondaryActionLabel,
+  onSecondaryAction,
+}: Props) {
   const theme = useTheme();
   return (
     <View
@@ -41,8 +52,11 @@ export function EmptyState({ title, message, actionLabel, onAction }: Props) {
         </Text>
       ) : null}
       {actionLabel && onAction ? (
-        <View style={{ marginTop: theme.spacing.lg, alignSelf: "stretch" }}>
-          <Button label={actionLabel} onPress={onAction} variant="secondary" />
+        <View style={{ marginTop: theme.spacing.lg, alignSelf: "stretch", gap: theme.spacing.sm }}>
+          <Button label={actionLabel} onPress={onAction} variant={actionVariant} />
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Button label={secondaryActionLabel} onPress={onSecondaryAction} variant="secondary" />
+          ) : null}
         </View>
       ) : null}
     </View>

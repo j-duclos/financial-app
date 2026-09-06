@@ -43,6 +43,8 @@ export const LIVE_QUERY_KEY_ROOTS = {
   households: "households",
   whatIfScenarios: "what-if-scenarios",
   whatIfAccounts: "what-if-accounts",
+  onboarding: "onboarding",
+  billingStatus: "billing-status",
 } as const;
 
 /** Prefixes that must never appear in mutation invalidation helpers. */
@@ -157,6 +159,8 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["monthly-reports"],
   ["reconcile"],
   ["categories"],
+  ["onboarding"],
+  ["billing-status"],
 ] as const;
 
 /**
@@ -247,6 +251,8 @@ export function invalidateAfterAccountFinancialMutation(queryClient: QueryClient
   invalidateForecastQueries(queryClient);
   invalidateRecommendationQueries(queryClient);
   invalidateReportQueries(queryClient);
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.onboarding);
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.billingStatus);
 }
 
 /** Utilization target affects health metrics — not account picker metadata. */

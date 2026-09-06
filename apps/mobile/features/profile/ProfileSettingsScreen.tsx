@@ -7,8 +7,11 @@ import type { Account } from "@budget-app/shared";
 import {
   DEFAULT_OPERATIONAL_FORECAST_DAYS,
   DEFAULT_TARGET_UTILIZATION_PERCENT,
+  clampForecastDaysForPlan,
   forecastWindowLabel,
   formatAccountOptionLabel,
+  isForecastDaysAllowed,
+  lockedForecastUpsellMessage,
   normalizeOperationalForecastDays,
   type OperationalForecastDays,
 } from "@budget-app/shared";
@@ -33,6 +36,8 @@ import {
 import { useAuth } from "@/features/auth";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { invalidateAfterUtilizationTargetChange } from "@/lib/financialQueryRefresh";
@@ -42,7 +47,7 @@ import { SettingsRow } from "./SettingsRow";
 import {
   applyUpdatedProfileCache,
   developmentEnvironmentLabel,
-  forecastWindowOptions,
+  forecastWindowPickerOptions,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,
 } from "./profileSettings";
@@ -69,6 +74,8 @@ export function ProfileSettingsScreen() {
   const { data: profile, isLoading: profileLoading, isFetched } = useProfile();
   const { householdId } = useDefaultHouseholdId();
   const { accounts } = useAccountOptions({ householdId });
+  const { billing } = useBillingStatus();
+  const { promptUpgrade, startUpgrade } = usePremiumUpgrade();
 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -79,10 +86,11 @@ export function ProfileSettingsScreen() {
   const [customUtilization, setCustomUtilization] = useState("");
   const [customUtilizationOpen, setCustomUtilizationOpen] = useState(false);
 
-  const forecastDays = normalizeOperationalForecastDays(
+  const forecastDays = clampForecastDaysForPlan(
     profile?.default_forecast_days ??
       auth.profile?.default_forecast_days ??
-      DEFAULT_OPERATIONAL_FORECAST_DAYS
+      DEFAULT_OPERATIONAL_FORECAST_DAYS,
+    billing
   );
 
   const displayName =
@@ -108,8 +116,12 @@ export function ProfileSettingsScreen() {
   }, [profileEditorOpen, profile?.display_name, auth.user?.displayName]);
 
   const forecastMutation = useMutation({
-    mutationFn: (days: OperationalForecastDays) =>
-      updateProfile({ default_forecast_days: days }),
+    mutationFn: (days: OperationalForecastDays) => {
+      if (!isForecastDaysAllowed(days, billing)) {
+        return Promise.reject(new Error(lockedForecastUpsellMessage(days)));
+      }
+      return updateProfile({ default_forecast_days: days });
+    },
     onSuccess: async (updated) => {
       applyUpdatedProfileCache(queryClient, updated);
       invalidateAfterForecastWindowChange(queryClient);
@@ -181,6 +193,28 @@ export function ProfileSettingsScreen() {
               accessibilityLabel="Profile details"
             />
           </Card>
+
+          <SectionHeader title="Plan" />
+          <View
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderRadius: theme.radius.md,
+              paddingHorizontal: theme.spacing.md,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <SettingsRow
+              title="Subscription"
+              value={billing?.is_premium ? "Premium" : "Free"}
+              onPress={
+                billing?.is_premium ? undefined : () => void startUpgrade()
+              }
+              accessibilityLabel={
+                billing?.is_premium ? "Premium plan" : "Free plan, upgrade to Premium"
+              }
+            />
+          </View>
 
           <SectionHeader title="Forecast & planning" />
           <View
@@ -312,13 +346,22 @@ export function ProfileSettingsScreen() {
         visible={forecastPickerOpen}
         title="Default forecast window"
         selectedId={String(forecastDays)}
-        options={forecastWindowOptions().map((opt) => ({
+        options={forecastWindowPickerOptions(billing).map((opt) => ({
           id: String(opt.value),
           title: opt.label,
+          locked: opt.locked,
+          badge: opt.locked ? "Premium" : undefined,
         }))}
         onClose={() => setForecastPickerOpen(false)}
+        onSelectLocked={(id) => {
+          promptUpgrade("Premium forecast", lockedForecastUpsellMessage(Number(id)));
+        }}
         onSelect={(id) => {
           const days = normalizeOperationalForecastDays(Number(id));
+          if (!isForecastDaysAllowed(days, billing)) {
+            promptUpgrade("Premium forecast", lockedForecastUpsellMessage(days));
+            return;
+          }
           if (days === forecastDays) {
             setForecastPickerOpen(false);
             return;

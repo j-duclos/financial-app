@@ -275,9 +275,11 @@ export default function Dashboard() {
         onClose={() => setTxnPreset(null)}
         onSuccess={async (message) => {
           setToast(message);
-          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] });
-          await queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] });
-          await queryClient.invalidateQueries({ queryKey: EXTENDED_CASH_RISK_QUERY_KEY });
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["dashboard-summary-fast"] }),
+            queryClient.invalidateQueries({ queryKey: ["dashboard-summary-details"] }),
+            queryClient.invalidateQueries({ queryKey: EXTENDED_CASH_RISK_QUERY_KEY }),
+          ]);
         }}
       />
     </div>

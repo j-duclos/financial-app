@@ -202,7 +202,7 @@ export type UserProfile = {
   phone_e164?: string;
   default_household: number | null;
   default_account: number | null;
-  /** Saved Default Forecast Window: 30, 60, 90, or 180. */
+  /** Saved Default Forecast Window: 30, 60, 90, 180, or 365. */
   default_forecast_days: number;
 };
 

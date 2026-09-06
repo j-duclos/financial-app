@@ -22,6 +22,14 @@ describe("usePageForecastWindow", () => {
     expect(source).not.toMatch(/method: "PATCH"/);
   });
 
+  it("clamps a saved Forecast Window that exceeds the current plan", () => {
+    expect(source).toMatch(/useBillingStatus/);
+    expect(source).toMatch(/forecastOptionsForPlan/);
+    expect(source).toMatch(/clampForecastDaysForPlan/);
+    expect(source).toMatch(/allowed\.includes\(requested\)/);
+    expect(source).not.toMatch(/updateProfile/);
+  });
+
   it("allows dashboard requests before profile arrives using the canonical default", () => {
     expect(source).toMatch(/DEFAULT_OPERATIONAL_FORECAST_DAYS/);
     expect(source).toMatch(/ready = auth\.isAuthenticated/);

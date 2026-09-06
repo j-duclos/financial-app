@@ -114,11 +114,80 @@ eas build --profile preview --platform android   # internal APK → Render API
 npm test -w @budget-app/mobile
 ```
 
+## Product strategy — companion app
+
+Mobile is a lightweight companion to the full web financial command center. It is **not** desktop Dashboard parity.
+
+Home should answer three questions quickly:
+
+1. Am I financially okay?
+2. What needs attention?
+3. What is happening next?
+
+### Launch surfaces
+
+**Full / core mobile**
+
+- Dashboard (Home)
+- Transactions
+- Calendar
+- Accounts
+- Action Center
+- Quick manual transaction
+
+**Lightweight mobile**
+
+- Budget
+- Recurring
+- Goals
+- Payment Planner
+- Reports
+
+**Web-first / web-only at launch**
+
+- DTI / affordability planning
+- What-If / Planning Lab
+- Reconciliation
+- Advanced automation administration
+- Category administration
+- Large historical analysis
+- Complex financial setup workflows (including Plaid Link)
+
+Existing mobile screens for web-first features may still exist for deep links; they are not primary navigation. Bottom tabs stay **Home, Transactions, Calendar, Accounts, More**.
+
+### Home metrics
+
+Financial Health on mobile Home shows only:
+
+- Lowest Forecast Balance
+- Available Cash
+- Available Credit
+
+Liquid Net Position and Total Debt stay on **web**. Debt remains available on mobile via Accounts / credit-card detail, Reports, and Payment Planner.
+
+### Free vs Premium (UX only — backend is authoritative)
+
+Launch limits:
+
+| | Free | Premium |
+|---|---|---|
+| Plaid bank sync | Unavailable | Automatic bank sync (web) |
+| Manual accounts | Max 3 | Unlimited |
+| Forecast | Max 90 days | Up to 365 days |
+| Active recurring rules | Max 10 | Unlimited |
+| Goals | Max 2 | Unlimited |
+| Manual transactions | Unlimited | Unlimited |
+
+Mobile forecast pickers show 365 days as a locked Premium row for Free users instead of submitting a request that 403s. Recurring and Goals create-limit UX is still backend-enforced and will be audited with those pages.
+
+Mobile does not ship a mature Plaid Link flow in this companion release. Free users see Premium bank-sync copy; Premium users can connect banks on web. Manual account entry always remains available.
+
 ## Architecture
 
-See `features/`, `components/ui/`, `services/`, and `theme/` for the foundation layout. Dashboard consumes:
+See `features/`, `components/ui/`, `services/`, and `theme/` for the foundation layout. Home progressive loading:
 
-- `GET /api/insights/dashboard/summary-fast/?forecast_days=`
-- `GET /api/insights/dashboard/details/?forecast_days=`
-- `GET /api/insights/extended-cash-risk/`
-- `GET /api/profile/`
+1. `GET /api/onboarding/status/` and `GET /api/billing/status/` (shared React Query keys with Settings)
+2. `GET /api/insights/dashboard/summary-fast/?forecast_days=` when the user has an account
+3. `GET /api/insights/dashboard/details/?forecast_days=` after summary-fast
+4. `GET /api/insights/extended-cash-risk/` deferred after details
+5. Low-priority Transactions prefetch after Home is useful

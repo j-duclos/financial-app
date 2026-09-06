@@ -3,6 +3,8 @@ import type { UserProfile } from "@budget-app/api-client";
 import {
   FORECAST_WINDOW_LABELS,
   OPERATIONAL_FORECAST_DAY_OPTIONS,
+  forecastPickerRows,
+  type BillingStatus,
   type OperationalForecastDays,
 } from "@budget-app/shared";
 import { PROFILE_QUERY_KEY } from "@/lib/profileQueryKey";
@@ -30,6 +32,18 @@ export function forecastWindowOptions(): {
   return OPERATIONAL_FORECAST_DAY_OPTIONS.map((value) => ({
     value,
     label: FORECAST_WINDOW_LABELS[value],
+  }));
+}
+
+export function forecastWindowPickerOptions(billing: BillingStatus | undefined | null): {
+  value: OperationalForecastDays;
+  label: string;
+  locked: boolean;
+}[] {
+  return forecastPickerRows(billing).map((row) => ({
+    value: row.days,
+    label: row.label,
+    locked: row.locked,
   }));
 }
 

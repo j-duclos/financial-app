@@ -1,6 +1,6 @@
 /** Operational Forecast Window for Dashboard, Action Center, and Transactions. */
 
-export const OPERATIONAL_FORECAST_DAY_OPTIONS = [30, 60, 90, 180] as const;
+export const OPERATIONAL_FORECAST_DAY_OPTIONS = [30, 60, 90, 180, 365] as const;
 
 export type OperationalForecastDays = (typeof OPERATIONAL_FORECAST_DAY_OPTIONS)[number];
 
@@ -11,13 +11,14 @@ export const FORECAST_WINDOW_LABELS: Record<OperationalForecastDays, string> = {
   60: "60 days",
   90: "90 days",
   180: "6 months",
+  365: "1 year",
 };
 
 export function isOperationalForecastDays(value: number): value is OperationalForecastDays {
   return (OPERATIONAL_FORECAST_DAY_OPTIONS as readonly number[]).includes(value);
 }
 
-/** Clamp a saved or requested window to 30 / 60 / 90 / 180. */
+/** Clamp a saved or requested window to 30 / 60 / 90 / 180 / 365. */
 export function normalizeOperationalForecastDays(
   days: number | null | undefined
 ): OperationalForecastDays {

@@ -17,17 +17,11 @@ export const PREMIUM_BENEFITS = [
   "Advanced planning and reporting",
 ] as const;
 
-export const FREE_PLAN_LIMITS = {
-  linked_institutions: 0,
-  manual_accounts: 3,
-  recurring_rules: 10,
-  operational_forecast_days: 90,
-  goals: 2,
-} as const;
-
-export const PREMIUM_PLAN_FORECAST_DAYS = 365;
-
-export const PLAID_PREMIUM_MESSAGE = "Automatic bank syncing is available with Premium.";
+export {
+  FREE_PLAN_LIMITS,
+  PLAID_PREMIUM_MESSAGE,
+  PREMIUM_PLAN_FORECAST_DAYS,
+} from "@budget-app/shared";
 export const PLAID_SYNC_PAUSED_MESSAGE =
   "Automatic bank syncing is paused because this account is on the Free plan.";
 export const PLAID_PREMIUM_DESCRIPTION =

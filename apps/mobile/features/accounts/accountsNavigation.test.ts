@@ -25,10 +25,12 @@ describe("Accounts screen navigation", () => {
     expect(accountsSource).not.toMatch(/replace\("\/accounts"\)/);
   });
 
-  it("routes every account row tap to account detail (no separate View button)", () => {
-    expect(accountsSource).toMatch(/router\.push\(`\/account\/\$\{account\.id\}`\)/);
-    expect(accountRow).not.toMatch(/label=["']View/);
-    expect(accountRow).toMatch(/onPress/);
+  it("intercepts Free manual-account creation at the plan limit before the form", () => {
+    expect(accountsSource).toMatch(/atPlanLimit\(billing, "manual_accounts"\)/);
+    expect(accountsSource).toMatch(/manualAccountUsageLabel/);
+    expect(accountsSource).toMatch(/onAddAccount/);
+    expect(accountsSource).toMatch(/You've reached the Free plan limit|manualAccountLimitReachedMessage/);
+    expect(accountsSource).toMatch(/PLAID_PREMIUM_MESSAGE/);
   });
 });
 

@@ -71,6 +71,8 @@ describe("live query-key inventory", () => {
     const flat = FINANCIAL_QUERY_PREFIXES.map((k) => k[0]);
     expect(flat).toContain("transactions");
     expect(flat).toContain("accounts");
+    expect(flat).toContain("onboarding");
+    expect(flat).toContain("billing-status");
     expect(flat).not.toContain("what-if-scenarios");
     for (const obsolete of OBSOLETE_INVALIDATION_PREFIXES) {
       expect(flat).not.toContain(obsolete);
@@ -159,6 +161,8 @@ describe("account mutation invalidation", () => {
     const spy = vi.spyOn(queryClient, "invalidateQueries");
     invalidateAfterAccountFinancialMutation(queryClient);
     expect(invalidatedRoots(spy)).toContain("account-options");
+    expect(invalidatedRoots(spy)).toContain("onboarding");
+    expect(invalidatedRoots(spy)).toContain("billing-status");
     spy.mockRestore();
   });
 

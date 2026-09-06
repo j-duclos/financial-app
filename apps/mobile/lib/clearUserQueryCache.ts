@@ -10,6 +10,8 @@ const USER_SPECIFIC_PREFIXES = [
   ["category-options"],
   ["what-if-scenarios"],
   ["what-if-accounts"],
+  ["onboarding"],
+  ["billing-status"],
 ] as const;
 
 /**

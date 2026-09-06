@@ -7,30 +7,35 @@ import {
   attentionCardsForDisplay,
   EXTENDED_CASH_RISK_QUERY_KEY,
   buildUpcomingDashboardPreview,
+  canUsePlaidBankSync,
+  isMissingAccounts,
 } from "@budget-app/shared";
 import {
   Card,
-  EmptyState,
   Screen,
+  SkeletonBlock,
   StatusChip,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useExtendedCashRisk } from "@/hooks/useExtendedCashRisk";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
+import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { getLastViewedTransactionAccountId } from "@/features/transactions/transactionsSession";
 import { ForecastWindowSelect } from "./ForecastWindowSelect";
 import { DASHBOARD_SECTION } from "./terminology";
 import {
-  isDashboardOnboarding,
   isLookingAheadVisible,
   lookingAheadMessage,
   topSummaryFromDashboard,
 } from "./display";
 import { DashboardGoalsSection, DashboardUpcomingSection } from "./DashboardDetailsSections";
 import { FinancialHealthSection } from "./FinancialHealthSection";
+import { DashboardFirstRun } from "./DashboardFirstRun";
 import { AttentionRequiredSection } from "./AttentionRequiredSection";
 import { attentionViewAllPath } from "./navigation";
 import { markDashboardTiming } from "./dashboardTiming";
@@ -51,6 +56,12 @@ export function DashboardScreen() {
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
+  const { status: onboarding, isError: onboardingError } = useOnboardingStatus();
+  const { billing } = useBillingStatus();
+  const { startUpgrade } = usePremiumUpgrade();
+  const isPremium = canUsePlaidBankSync(billing);
+  const missingAccounts = isMissingAccounts(onboarding);
+  const loadDashboard = forecastReady && (onboardingError || onboarding?.steps.account === true);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [extendedRiskEnabled, setExtendedRiskEnabled] = useState(false);
   const transactionsPrefetchSignatureRef = useRef<string | null>(null);
@@ -60,10 +71,10 @@ export function DashboardScreen() {
   }, []);
 
   useEffect(() => {
-    if (forecastReady) {
+    if (loadDashboard) {
       markDashboardTiming("summary-fast-request-start");
     }
-  }, [forecastReady]);
+  }, [loadDashboard]);
 
   const {
     data: summaryFast,
@@ -77,7 +88,7 @@ export function DashboardScreen() {
   } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
     queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
-    enabled: forecastReady,
+    enabled: loadDashboard,
     placeholderData: keepPreviousData,
   });
 
@@ -89,7 +100,7 @@ export function DashboardScreen() {
 
   // Details reuses forecast/timeline context seeded by summary-fast.
   // Extended risk is deferred separately so it does not compete with Details first paint.
-  const dependentQueriesEnabled = forecastReady && fastSuccess && !fastIsPlaceholderData;
+  const dependentQueriesEnabled = loadDashboard && fastSuccess && !fastIsPlaceholderData;
 
   useEffect(() => {
     if (dependentQueriesEnabled) {
@@ -163,7 +174,7 @@ export function DashboardScreen() {
   );
   const upcomingGroups = details?.upcoming_groups ?? [];
   const goals = (details?.goals ?? []).slice(0, 3);
-  const onboarding = isDashboardOnboarding(summaryFast);
+  const firstRun = missingAccounts;
 
   const upcomingPreview = useMemo(() => {
     const nextIssue = summaryFast?.first_cash_shortfall?.date
@@ -231,10 +242,10 @@ export function DashboardScreen() {
   }, [summaryFast, top]);
 
   useEffect(() => {
-    if (summaryFast && !onboarding && !attentionLoading) {
+    if (summaryFast && !firstRun && !attentionLoading) {
       markDashboardTiming("attention-rendered");
     }
-  }, [summaryFast, onboarding, attentionLoading]);
+  }, [summaryFast, firstRun, attentionLoading]);
 
   useEffect(() => {
     if (upcomingSectionState === "data" || upcomingSectionState === "empty") {
@@ -260,7 +271,7 @@ export function DashboardScreen() {
   }, [summaryFast, details, detailsError, fastFetching, detailsFetching]);
 
   const homeReadyForPrefetch = isHomeReadyForTransactionsPrefetch({
-    onboarding,
+    onboarding: firstRun,
     summaryFast,
     fastIsPlaceholderData,
     fastFetching,
@@ -322,6 +333,32 @@ export function DashboardScreen() {
     queryClient,
   ]);
 
+  if (!onboardingError && !onboarding) {
+    return (
+      <Screen>
+        <Text style={{ color: theme.colors.text, ...theme.typography.title }}>Home</Text>
+        <View style={{ marginTop: theme.spacing.lg }}>
+          <SkeletonBlock lines={4} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (firstRun) {
+    return (
+      <Screen>
+        <Text style={{ color: theme.colors.text, ...theme.typography.title, marginBottom: theme.spacing.md }}>
+          Home
+        </Text>
+        <DashboardFirstRun
+          isPremium={isPremium}
+          onAddAccount={() => router.push("/account/new")}
+          onUpgrade={() => void startUpgrade()}
+        />
+      </Screen>
+    );
+  }
+
   return (
     <Screen
       scroll
@@ -382,24 +419,13 @@ export function DashboardScreen() {
         </Card>
       ) : null}
 
-      {onboarding ? (
-        <View style={{ marginTop: theme.spacing.lg }}>
-          <EmptyState
-            title="Get started with your financial command center"
-            message="Connect an account, add recurring bills and income, or create a savings goal."
-            actionLabel="Accounts"
-            onAction={() => router.push("/(app)/(tabs)/accounts")}
-          />
-        </View>
-      ) : null}
-
       <View style={{ marginTop: theme.spacing.lg }}>
         <AttentionRequiredSection
           forecastDays={forecastDays}
           items={attention}
           totalCount={summaryFast?.attention_total_count ?? 0}
           loading={attentionLoading}
-          visible={!onboarding && (attentionLoading || !!summaryFast)}
+          visible={attentionLoading || !!summaryFast}
           onViewAll={onViewAllAttention}
         />
       </View>

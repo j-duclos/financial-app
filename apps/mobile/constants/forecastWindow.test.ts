@@ -15,5 +15,6 @@ describe("shared forecast window", () => {
   it("labels windows consistently with web", () => {
     expect(forecastWindowLabel(30)).toBe("30 days");
     expect(forecastWindowLabel(180)).toBe("6 months");
+    expect(forecastWindowLabel(365)).toBe("1 year");
   });
 });

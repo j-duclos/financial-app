@@ -11,10 +11,6 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { getEffectiveDisplayName } from "@budget-app/shared";
 import {
-  OPERATIONAL_FORECAST_DAY_OPTIONS,
-  type OperationalForecastDays,
-} from "@budget-app/shared";
-import {
   BottomSheet,
   EmptyState,
   ErrorState,
@@ -29,6 +25,7 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useProfile } from "@/lib/profileQuery";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
+import { ForecastWindowOptionList } from "@/features/dashboard/ForecastWindowSelect";
 import {
   RECENT_RANGE_OPTIONS,
   TIME_FILTER_LABELS,
@@ -689,31 +686,11 @@ export function TransactionsScreen() {
         title="Upcoming forecast"
         onClose={() => setUpcomingRangeOpen(false)}
       >
-        <ScrollView>
-          {OPERATIONAL_FORECAST_DAY_OPTIONS.map((days) => (
-            <Pressable
-              key={days}
-              onPress={() => {
-                setForecastDays(days as OperationalForecastDays);
-                setUpcomingRangeOpen(false);
-              }}
-              style={{
-                paddingVertical: 14,
-                borderBottomWidth: 1,
-                borderBottomColor: theme.colors.border,
-              }}
-            >
-              <Text
-                style={{
-                  color: forecastDays === days ? theme.colors.tint : theme.colors.text,
-                  ...theme.typography.bodyStrong,
-                }}
-              >
-                Next {days} days
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+        <ForecastWindowOptionList
+          value={forecastDays}
+          onChange={setForecastDays}
+          onClose={() => setUpcomingRangeOpen(false)}
+        />
       </BottomSheet>
 
       <TransactionFiltersSheet

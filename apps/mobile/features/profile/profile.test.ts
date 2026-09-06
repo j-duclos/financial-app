@@ -19,6 +19,9 @@ describe("Profile & Settings screen", () => {
     expect(screenSource).toMatch(/Default forecast window/);
     expect(screenSource).toMatch(/updateProfile/);
     expect(screenSource).toMatch(/default_forecast_days/);
+    expect(screenSource).toMatch(/clampForecastDaysForPlan/);
+    expect(screenSource).toMatch(/isForecastDaysAllowed/);
+    expect(screenSource).toMatch(/forecastWindowPickerOptions/);
     expect(screenSource).toMatch(/invalidateAfterForecastWindowChange/);
     expect(screenSource).not.toMatch(/Change it on web Settings/);
     expect(screenSource).not.toMatch(/mobile editing lands/);

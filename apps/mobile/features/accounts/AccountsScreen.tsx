@@ -13,7 +13,15 @@ import {
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { groupAccountsByType } from "@/lib/accountGroups";
+import {
+  atPlanLimit,
+  manualAccountLimitReachedMessage,
+  manualAccountUsageLabel,
+  PLAID_PREMIUM_MESSAGE,
+} from "@budget-app/shared";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { describeApiError } from "@/services/api";
 import { useAccountsList } from "./useAccountsList";
 import { AccountRow } from "./AccountRow";
@@ -25,6 +33,11 @@ export function AccountsScreen() {
   const params = useLocalSearchParams<{ attention?: string }>();
   const attentionFilterActive = params.attention === "1";
   const { forecastDays, ready } = usePageForecastWindow();
+  const { billing } = useBillingStatus();
+  const { promptUpgrade } = usePremiumUpgrade();
+  const accountsLimited = atPlanLimit(billing, "manual_accounts");
+  const usageLabel = manualAccountUsageLabel(billing);
+  const isPremium = billing?.is_premium === true;
   const { accounts, isLoading, isError, error, refetch, isEnriching } = useAccountsList(
     forecastDays,
     { forecastReady: ready }
@@ -65,6 +78,14 @@ export function AccountsScreen() {
 
   const groups = useMemo(() => groupAccountsByType(visibleAccounts), [visibleAccounts]);
 
+  const onAddAccount = useCallback(() => {
+    if (accountsLimited) {
+      promptUpgrade("Account limit reached", manualAccountLimitReachedMessage(billing));
+      return;
+    }
+    router.push("/account/new");
+  }, [accountsLimited, billing, promptUpgrade, router]);
+
   return (
     <Screen
       scroll
@@ -84,10 +105,33 @@ export function AccountsScreen() {
           <IconButton
             name="plus"
             accessibilityLabel="Add account"
-            onPress={() => router.push("/account/new")}
+            onPress={onAddAccount}
           />
         }
       />
+
+      {usageLabel ? (
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.caption,
+            marginTop: theme.spacing.sm,
+          }}
+        >
+          {usageLabel}
+        </Text>
+      ) : null}
+      {!isPremium ? (
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.caption,
+            marginTop: usageLabel ? 4 : theme.spacing.sm,
+          }}
+        >
+          {PLAID_PREMIUM_MESSAGE}
+        </Text>
+      ) : null}
 
       {attentionFilterActive ? (
         <View
@@ -129,7 +173,7 @@ export function AccountsScreen() {
           onAction={() =>
             attentionFilterActive
               ? router.replace("/(app)/(tabs)/accounts")
-              : router.push("/account/new")
+              : onAddAccount()
           }
         />
       ) : (

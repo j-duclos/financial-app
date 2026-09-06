@@ -8,6 +8,8 @@ export type PickerOption = {
   title: string;
   subtitle?: string;
   searchText?: string;
+  locked?: boolean;
+  badge?: string;
 };
 
 type Props = {
@@ -19,6 +21,7 @@ type Props = {
   emptyMessage?: string;
   onClose: () => void;
   onSelect: (id: string) => void;
+  onSelectLocked?: (id: string) => void;
 };
 
 export function OptionsPickerSheet({
@@ -30,6 +33,7 @@ export function OptionsPickerSheet({
   emptyMessage = "No matches",
   onClose,
   onSelect,
+  onSelectLocked,
 }: Props) {
   const theme = useTheme();
   const [query, setQuery] = useState("");
@@ -81,12 +85,16 @@ export function OptionsPickerSheet({
                 <Pressable
                   key={opt.id}
                   onPress={() => {
+                    if (opt.locked) {
+                      onSelectLocked?.(opt.id);
+                      return;
+                    }
                     onSelect(opt.id);
                     setQuery("");
                     onClose();
                   }}
                   accessibilityRole="button"
-                  accessibilityState={{ selected }}
+                  accessibilityState={{ selected, disabled: !!opt.locked }}
                   style={{
                     paddingVertical: theme.spacing.md,
                     paddingHorizontal: theme.spacing.sm,
@@ -96,9 +104,16 @@ export function OptionsPickerSheet({
                     borderColor: selected ? theme.colors.tint : theme.colors.border,
                   }}
                 >
-                  <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                    {opt.title}
-                  </Text>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+                    <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong, flex: 1 }}>
+                      {opt.title}
+                    </Text>
+                    {opt.locked || opt.badge ? (
+                      <Text style={{ color: theme.colors.textMuted, fontWeight: "700" }}>
+                        {opt.badge ?? "Premium"}
+                      </Text>
+                    ) : null}
+                  </View>
                   {opt.subtitle ? (
                     <Text
                       style={{

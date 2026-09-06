@@ -9,14 +9,17 @@ const dashboardSource = readFileSync(
 );
 
 describe("DashboardScreen request ordering", () => {
-  it("starts summary-fast immediately when forecast is ready", () => {
-    expect(dashboardSource).toMatch(/enabled: forecastReady/);
+  it("starts summary-fast after onboarding confirms an account exists", () => {
+    expect(dashboardSource).toMatch(/enabled: loadDashboard/);
+    expect(dashboardSource).toMatch(/useOnboardingStatus/);
+    expect(dashboardSource).toMatch(/isMissingAccounts/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
+    expect(dashboardSource).not.toMatch(/isDashboardOnboarding/);
   });
 
   it("starts details after summary-fast success; defers extended risk until details settle", () => {
     expect(dashboardSource).toMatch(/dependentQueriesEnabled/);
-    expect(dashboardSource).toMatch(/forecastReady && fastSuccess && !fastIsPlaceholderData/);
+    expect(dashboardSource).toMatch(/loadDashboard && fastSuccess && !fastIsPlaceholderData/);
     expect(dashboardSource).toMatch(/enabled: dependentQueriesEnabled/);
     expect(dashboardSource).toMatch(/useExtendedCashRisk\(extendedRiskEnabled\)/);
     expect(dashboardSource).not.toMatch(/useExtendedCashRisk\(dependentQueriesEnabled\)/);

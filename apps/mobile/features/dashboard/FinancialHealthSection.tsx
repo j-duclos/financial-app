@@ -4,8 +4,6 @@ import { useRouter } from "expo-router";
 import type { DashboardSummaryFast, DashboardTopSummary } from "@budget-app/shared";
 import {
   BalanceDisplay,
-  Card,
-  CurrencyDisplay,
   ErrorState,
   Skeleton,
 } from "@/components/ui";
@@ -29,7 +27,7 @@ type Props = {
 
 function FinancialHealthSkeleton() {
   const theme = useTheme();
-  const tile = (key: string) => (
+  const tile = (key: string, fullWidth = false) => (
     <View
       key={key}
       style={{
@@ -39,7 +37,7 @@ function FinancialHealthSkeleton() {
         borderColor: theme.colors.border,
         padding: theme.spacing.lg,
         flex: 1,
-        minWidth: "46%",
+        minWidth: fullWidth ? "100%" : "46%",
         gap: 8,
       }}
     >
@@ -51,18 +49,11 @@ function FinancialHealthSkeleton() {
 
   return (
     <View style={{ gap: theme.spacing.md }}>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm }}>
-        {tile("a")}
-        {tile("b")}
+      <View style={{ flexDirection: "row", gap: theme.spacing.sm }}>
+        {tile("lowest")}
+        {tile("cash")}
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm }}>
-        {tile("c")}
-        {tile("d")}
-      </View>
-      <Card>
-        <Skeleton height={12} width="35%" />
-        <Skeleton height={24} width="45%" style={{ marginTop: 8 }} />
-      </Card>
+      {tile("credit", true)}
     </View>
   );
 }
@@ -97,7 +88,7 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
       {recalculating ? (
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Updating…</Text>
       ) : null}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm }}>
+      <View style={{ flexDirection: "row", gap: theme.spacing.sm }}>
         <BalanceDisplay
           label={lowestForecastBalanceLabel(forecastDays)}
           amount={data.lowest_projected_cash?.amount ?? "0"}
@@ -114,37 +105,18 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
           subtitle={FINANCIAL_HEALTH.availableCash.subtitle}
         />
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm }}>
-        <Pressable
-          style={{ flex: 1, minWidth: "46%" }}
-          onPress={() => router.push("/(app)/(tabs)/accounts")}
-          accessibilityRole="button"
-          accessibilityLabel="View accounts for available credit"
-        >
-          <BalanceDisplay
-            label={FINANCIAL_HEALTH.availableCredit.label}
-            amount={top.available_credit}
-            subtitle={availableCreditSubtitle(top.credit_utilization, top.total_credit_limit)}
-          />
-        </Pressable>
+      <Pressable
+        onPress={() => router.push("/(app)/(tabs)/accounts")}
+        accessibilityRole="button"
+        accessibilityLabel="View accounts for available credit"
+      >
         <BalanceDisplay
-          label={FINANCIAL_HEALTH.cashAfterDebt.label}
-          amount={top.net_position}
-          subtitle={FINANCIAL_HEALTH.cashAfterDebt.subtitle}
+          label={FINANCIAL_HEALTH.availableCredit.label}
+          amount={top.available_credit}
+          subtitle={availableCreditSubtitle(top.credit_utilization, top.total_credit_limit)}
+          fullWidth
         />
-      </View>
-
-      {data.debt ? (
-        <Card>
-          <Text style={{ color: theme.colors.textMuted, ...theme.typography.label }}>Total debt</Text>
-          <CurrencyDisplay amount={data.debt.total_debt} tone="negative" />
-          {data.debt.debt_free_date ? (
-            <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 4 }}>
-              Debt-free target {data.debt.debt_free_date}
-            </Text>
-          ) : null}
-        </Card>
-      ) : null}
+      </Pressable>
     </View>
   );
 });
