@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from core.models import Household, HouseholdMembership
@@ -7,6 +8,14 @@ from accounts.models import Account
 from categories.models import Category
 
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def _clear_rate_limit_cache():
+    """Throttle counters live in locmem cache and otherwise leak across tests with reused PKs."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

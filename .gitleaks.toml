@@ -1,0 +1,18 @@
+title = "FlowSight"
+
+[allowlist]
+description = "Local placeholders, CI dummies, and documented examples — not production secrets"
+regexes = [
+  '''ci-dummy-secret-not-for-production''',
+  '''pytest-secret-key''',
+  '''dev-secret-key-change-in-production''',
+  '''change-me-in-production''',
+  '''AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''',
+]
+paths = [
+  '''\.env\.example$''',
+  '''\.env\..*\.example$''',
+  '''render-env-restore\.env\.example$''',
+  '''RENDER_DEPLOYMENT\.md$''',
+  '''SECURITY\.md$''',
+]

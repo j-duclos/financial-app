@@ -79,6 +79,7 @@ describe("Action Center route", () => {
   it("uses canonical getRecommendations API", () => {
     expect(actionCenterSource).toMatch(/getRecommendations/);
     expect(actionCenterSource).not.toMatch(/getDashboardSummary/);
+    expect(actionCenterSource).toMatch(/ProjectedFundsActionCards/);
   });
 
   it("uses single recommendations query key", () => {

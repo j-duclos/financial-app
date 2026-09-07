@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { currentMonthStr } from "@budget-app/shared";
-import { AppHeader, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
+import { currentMonthStr, REPORTS_ADVANCED_CASH_FLOW_MESSAGE } from "@budget-app/shared";
+import { AppHeader, Button, Card, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
 import { PeriodSelector } from "@/features/budget/PeriodSelector";
 import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/features/budget/periodUtils";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
 import {
   CashFlowSection,
   DebtSection,
@@ -30,6 +32,7 @@ export function ReportDetailScreen() {
   }>();
   const reportType = parseReportTypeParam(params.type);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const { startUpgrade } = usePremiumUpgrade();
 
   const routeFilters = parseReportRouteParams(params);
   const filters: ReportFilters = useMemo(
@@ -46,6 +49,7 @@ export function ReportDetailScreen() {
     data,
     householdReady,
     householdId,
+    reportsAdvanced,
     isLoading,
     isError,
     error,
@@ -74,6 +78,7 @@ export function ReportDetailScreen() {
   };
 
   const onHistoryMonthsChange = (months: ReportHistoryMonths) => {
+    if (!reportsAdvanced) return;
     router.setParams({ months: String(months) });
   };
 
@@ -116,10 +121,6 @@ export function ReportDetailScreen() {
         contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 32 }}
         refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} />}
       >
-        <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginBottom: 8 }}>
-          {formatMonthLabel(filters.monthKey)}
-        </Text>
-
         <PeriodSelector
           period={period}
           onPrev={() =>
@@ -158,11 +159,23 @@ export function ReportDetailScreen() {
             ) : null}
             {reportType === "overview" ? <OverviewSection data={data} filters={filters} /> : null}
             {reportType === "cash-flow" ? (
-              <CashFlowSection
-                data={data}
-                historyMonths={filters.historyMonths}
-                onHistoryMonthsChange={onHistoryMonthsChange}
-              />
+              reportsAdvanced ? (
+                <CashFlowSection
+                  data={data}
+                  historyMonths={filters.historyMonths}
+                  onHistoryMonthsChange={onHistoryMonthsChange}
+                />
+              ) : (
+                <Card>
+                  <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
+                    Cash Flow
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginBottom: 12 }}>
+                    {REPORTS_ADVANCED_CASH_FLOW_MESSAGE}
+                  </Text>
+                  <Button label={UPGRADE_TO_PREMIUM_LABEL} onPress={() => void startUpgrade()} />
+                </Card>
+              )
             ) : null}
             {reportType === "spending" ? (
               <SpendingSection
@@ -172,8 +185,10 @@ export function ReportDetailScreen() {
                 initiallyExpandLimits={expandLimits}
               />
             ) : null}
-            {reportType === "goals" ? <GoalsSection data={data} /> : null}
-            {reportType === "debt" ? <DebtSection data={data} /> : null}
+            {reportType === "goals" ? (
+              <GoalsSection data={data} showFundingHistory={reportsAdvanced} />
+            ) : null}
+            {reportType === "debt" ? <DebtSection data={data} showInterestHistory={reportsAdvanced} /> : null}
           </>
         ) : updatingPeriod ? (
           <SkeletonBlock lines={6} />

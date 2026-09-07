@@ -1,10 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Linking, Text, View } from "react-native";
+import { Alert, Linking, Switch, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { updateAccount, updateProfile } from "@budget-app/api-client";
+import {
+  exportProfileData,
+  exportTransactionsCsv,
+  updateAccount,
+  updateProfile,
+} from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
 import {
+  APP_NAME,
+  APP_WEB_HOST,
+  APP_WEB_URL,
   DEFAULT_OPERATIONAL_FORECAST_DAYS,
   DEFAULT_TARGET_UTILIZATION_PERCENT,
   clampForecastDaysForPlan,
@@ -15,6 +23,7 @@ import {
   normalizeOperationalForecastDays,
   type OperationalForecastDays,
 } from "@budget-app/shared";
+import { BrandLogo } from "@/components/brand";
 import {
   AppHeader,
   BottomSheet,
@@ -34,6 +43,7 @@ import {
   getTermsUrl,
 } from "@/constants/appInfo";
 import { useAuth } from "@/features/auth";
+import { useReviewFeedback } from "@/features/review";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
@@ -44,12 +54,18 @@ import { invalidateAfterUtilizationTargetChange } from "@/lib/financialQueryRefr
 import { useTheme } from "@/theme";
 import { OptionsPickerSheet } from "@/components/forms";
 import { SettingsRow } from "./SettingsRow";
+import { EmailSettingsSheet } from "./EmailSettingsSheet";
+import { PasswordSettingsSheet } from "./PasswordSettingsSheet";
+import { DeleteAccountSheet } from "./DeleteAccountSheet";
+import { shareAuthenticatedFile } from "./profileExport";
 import {
   applyUpdatedProfileCache,
   developmentEnvironmentLabel,
+  emailSettingsRow,
   forecastWindowPickerOptions,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,
+  profileEmailDisplay,
 } from "./profileSettings";
 
 const UTILIZATION_PRESETS = [5, 10, 20, 30] as const;
@@ -66,11 +82,29 @@ function formatUtilization(value: number): string {
   return `${rounded}%`;
 }
 
+function SettingsGroup({ children }: { children: React.ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        backgroundColor: theme.colors.surface,
+        borderRadius: theme.radius.md,
+        paddingHorizontal: theme.spacing.md,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
 export function ProfileSettingsScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { auth, logout, refreshProfile } = useAuth();
+  const { openFeedback } = useReviewFeedback();
   const { data: profile, isLoading: profileLoading, isFetched } = useProfile();
   const { householdId } = useDefaultHouseholdId();
   const { accounts } = useAccountOptions({ householdId });
@@ -81,10 +115,15 @@ export function ProfileSettingsScreen() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [forecastPickerOpen, setForecastPickerOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [utilizationAccount, setUtilizationAccount] = useState<Account | null>(null);
   const [customUtilization, setCustomUtilization] = useState("");
   const [customUtilizationOpen, setCustomUtilizationOpen] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   const forecastDays = clampForecastDaysForPlan(
     profile?.default_forecast_days ??
@@ -99,6 +138,9 @@ export function ProfileSettingsScreen() {
     auth.user?.username ??
     "—";
   const username = auth.user?.username ?? profile?.username;
+  const email = profile?.email ?? auth.profile?.email;
+  const emailVerified = profile?.email_verified ?? auth.profile?.email_verified;
+  const emailRow = emailSettingsRow({ email, verified: emailVerified });
 
   const creditAccounts = useMemo(
     () => accounts.filter((a) => a.account_type === "CREDIT"),
@@ -134,6 +176,17 @@ export function ProfileSettingsScreen() {
     },
   });
 
+  const alertsMutation = useMutation({
+    mutationFn: (patch: Parameters<typeof updateProfile>[0]) => updateProfile(patch),
+    onSuccess: async (updated) => {
+      applyUpdatedProfileCache(queryClient, updated);
+      await refreshProfile();
+    },
+    onError: (err) => {
+      Alert.alert("Couldn’t update alerts", describeApiError(err));
+    },
+  });
+
   const displayNameMutation = useMutation({
     mutationFn: (name: string) => updateProfile({ display_name: name.trim() }),
     onSuccess: async (updated) => {
@@ -161,6 +214,30 @@ export function ProfileSettingsScreen() {
     },
   });
 
+  async function handleExportData() {
+    setExportingData(true);
+    try {
+      const file = await exportProfileData();
+      await shareAuthenticatedFile(file);
+    } catch (err) {
+      Alert.alert("Couldn’t export data", describeApiError(err));
+    } finally {
+      setExportingData(false);
+    }
+  }
+
+  async function handleExportTransactions() {
+    setExportingCsv(true);
+    try {
+      const file = await exportTransactionsCsv();
+      await shareAuthenticatedFile(file);
+    } catch (err) {
+      Alert.alert("Couldn’t export transactions", describeApiError(err));
+    } finally {
+      setExportingCsv(false);
+    }
+  }
+
   const showSkeleton = profileLoading && !isFetched && !auth.profile;
 
   return (
@@ -187,45 +264,57 @@ export function ProfileSettingsScreen() {
                 @{username}
               </Text>
             ) : null}
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                ...theme.typography.caption,
+                marginTop: 4,
+              }}
+            >
+              {profileEmailDisplay(email)}
+            </Text>
+          </Card>
+
+          <SectionHeader title="Account" />
+          <SettingsGroup>
             <SettingsRow
               title="Profile details"
               onPress={() => setProfileEditorOpen(true)}
               accessibilityLabel="Profile details"
             />
-          </Card>
+            <SettingsRow
+              title={emailRow.title}
+              value={emailRow.value}
+              subtitle={emailRow.subtitle}
+              onPress={() => setEmailOpen(true)}
+              accessibilityLabel={
+                emailRow.subtitle
+                  ? `Email, ${emailRow.subtitle}, ${emailRow.value}`
+                  : `Email, ${emailRow.value}`
+              }
+            />
+            <SettingsRow
+              title="Password"
+              value="Change password"
+              onPress={() => setPasswordOpen(true)}
+              accessibilityLabel="Password, Change password"
+            />
+          </SettingsGroup>
 
           <SectionHeader title="Plan" />
-          <View
-            style={{
-              backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.md,
-              paddingHorizontal: theme.spacing.md,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
+          <SettingsGroup>
             <SettingsRow
               title="Subscription"
               value={billing?.is_premium ? "Premium" : "Free"}
-              onPress={
-                billing?.is_premium ? undefined : () => void startUpgrade()
-              }
+              onPress={billing?.is_premium ? undefined : () => void startUpgrade()}
               accessibilityLabel={
                 billing?.is_premium ? "Premium plan" : "Free plan, upgrade to Premium"
               }
             />
-          </View>
+          </SettingsGroup>
 
           <SectionHeader title="Forecast & planning" />
-          <View
-            style={{
-              backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.md,
-              paddingHorizontal: theme.spacing.md,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
+          <SettingsGroup>
             <SettingsRow
               title="Default forecast window"
               value={forecastWindowLabel(forecastDays)}
@@ -259,7 +348,7 @@ export function ProfileSettingsScreen() {
                 );
               })
             )}
-          </View>
+          </SettingsGroup>
           {creditAccounts.length > 1 ? (
             <Text
               style={{
@@ -272,17 +361,123 @@ export function ProfileSettingsScreen() {
             </Text>
           ) : null}
 
+          <SectionHeader title="Alerts" />
+          <SettingsGroup>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                minHeight: theme.touchTarget,
+                borderBottomWidth: 1 / 2,
+                borderBottomColor: theme.colors.border,
+              }}
+            >
+              <Text style={{ color: theme.colors.text, ...theme.typography.body, flex: 1, paddingRight: 12 }}>
+                Projected low balance alerts
+              </Text>
+              <Switch
+                value={profile?.projected_funds_alerts_enabled !== false}
+                onValueChange={(value) =>
+                  alertsMutation.mutate({ projected_funds_alerts_enabled: value })
+                }
+                accessibilityLabel="Projected low balance alerts"
+              />
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                minHeight: theme.touchTarget,
+                borderBottomWidth: 1 / 2,
+                borderBottomColor: theme.colors.border,
+              }}
+            >
+              <Text style={{ color: theme.colors.text, ...theme.typography.body, flex: 1, paddingRight: 12 }}>
+                Push notifications
+              </Text>
+              <Switch
+                value={profile?.projected_funds_push_enabled !== false}
+                onValueChange={(value) =>
+                  alertsMutation.mutate({ projected_funds_push_enabled: value })
+                }
+                accessibilityLabel="Push notifications"
+              />
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                minHeight: theme.touchTarget,
+              }}
+            >
+              <Text style={{ color: theme.colors.text, ...theme.typography.body, flex: 1, paddingRight: 12 }}>
+                3 days / 1 day / day of
+              </Text>
+              <Switch
+                value={
+                  profile?.notify_3_days_before !== false &&
+                  profile?.notify_1_day_before !== false &&
+                  profile?.notify_day_of !== false
+                }
+                onValueChange={(value) =>
+                  alertsMutation.mutate({
+                    notify_3_days_before: value,
+                    notify_1_day_before: value,
+                    notify_day_of: value,
+                  })
+                }
+                accessibilityLabel="Warning lead times"
+              />
+            </View>
+          </SettingsGroup>
+
+          <SectionHeader title="Data & privacy" />
+          <SettingsGroup>
+            <SettingsRow
+              title="Export my data"
+              onPress={() => void handleExportData()}
+              disabled={exportingData}
+              accessibilityLabel="Export my data"
+            />
+            <SettingsRow
+              title="Export transactions"
+              onPress={() => void handleExportTransactions()}
+              disabled={exportingCsv}
+              accessibilityLabel="Export transactions"
+            />
+            <SettingsRow
+              title="Delete account"
+              destructive
+              onPress={() => setDeleteOpen(true)}
+              accessibilityLabel="Delete account"
+            />
+          </SettingsGroup>
+
+          <SectionHeader title="Help" />
+          <SettingsGroup>
+            <SettingsRow
+              title="Send feedback"
+              onPress={() => openFeedback()}
+              accessibilityLabel="Send feedback"
+            />
+          </SettingsGroup>
+
           <SectionHeader title="About" />
-          <View
-            style={{
-              backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.md,
-              paddingHorizontal: theme.spacing.md,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
+          <SettingsGroup>
+            <View style={{ alignItems: "center", paddingVertical: theme.spacing.md }}>
+              <BrandLogo size="small" />
+            </View>
+            <SettingsRow title="App" value={APP_NAME} />
             <SettingsRow title="Version" value={getAppVersionLabel()} />
+            <SettingsRow
+              title="Website"
+              value={APP_WEB_HOST}
+              onPress={() => void Linking.openURL(APP_WEB_URL)}
+              accessibilityLabel={`Website, ${APP_WEB_HOST}`}
+            />
             {privacyUrl ? (
               <SettingsRow
                 title="Privacy Policy"
@@ -311,20 +506,12 @@ export function ProfileSettingsScreen() {
                 Privacy, terms, and support links are not configured for this build.
               </Text>
             ) : null}
-          </View>
+          </SettingsGroup>
 
           {__DEV__ ? (
             <>
               <SectionHeader title="Development" />
-              <View
-                style={{
-                  backgroundColor: theme.colors.surface,
-                  borderRadius: theme.radius.md,
-                  paddingHorizontal: theme.spacing.md,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              >
+              <SettingsGroup>
                 <SettingsRow
                   title="Environment"
                   value={developmentEnvironmentLabel({
@@ -332,7 +519,7 @@ export function ProfileSettingsScreen() {
                     apiTarget: getApiTargetDisplayLabel(),
                   })}
                 />
-              </View>
+              </SettingsGroup>
             </>
           ) : null}
 
@@ -421,6 +608,24 @@ export function ProfileSettingsScreen() {
           loading={displayNameMutation.isPending}
         />
       </BottomSheet>
+
+      <EmailSettingsSheet
+        visible={emailOpen}
+        profile={profile ?? auth.profile ?? undefined}
+        onClose={() => setEmailOpen(false)}
+        onProfileRefreshed={refreshProfile}
+      />
+
+      <PasswordSettingsSheet visible={passwordOpen} onClose={() => setPasswordOpen(false)} />
+
+      <DeleteAccountSheet
+        visible={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={async () => {
+          await logout();
+          router.replace("/(auth)/login");
+        }}
+      />
 
       <BottomSheet
         visible={customUtilizationOpen && utilizationAccount != null}

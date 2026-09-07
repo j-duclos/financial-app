@@ -1,0 +1,15 @@
+{
+  "name": "FlowSight",
+  "short_name": "FlowSight",
+  "description": "See where your money is headed.",
+  "display": "standalone",
+  "background_color": "#F4F6F8",
+  "theme_color": "#0A2540",
+  "icons": [
+    {
+      "src": "/flowsight-logo.jpg",
+      "sizes": "any",
+      "type": "image/jpeg"
+    }
+  ]
+}

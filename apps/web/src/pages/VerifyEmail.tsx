@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { verifyEmail } from "@budget-app/api-client";
 import { useAuth } from "../context/AuthContext";
+import BrandWordmark from "../components/brand/BrandWordmark";
 import PublicScreen from "../components/legal/PublicScreen";
 
 type Status = "verifying" | "verified" | "already_verified" | "expired" | "invalid";
@@ -54,6 +55,9 @@ export default function VerifyEmail() {
   return (
     <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow text-center">
+        <div className="text-center">
+          <BrandWordmark size="small" />
+        </div>
         <h1 className="text-2xl font-bold">Verify email</h1>
         <p className="text-sm text-gray-700">{copy}</p>
         {status === "verified" || status === "already_verified" ? (

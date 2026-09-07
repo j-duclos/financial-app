@@ -1,20 +1,28 @@
 import { Redirect, Stack, usePathname } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
+import { LoadingScreen } from "@/components/brand";
 import { useAuth } from "@/features/auth";
+import { NotificationPermissionSheet, ProjectedFundsInAppBanner, useProjectedFundsPush } from "@/features/alerts";
+import { ReviewPromptHost } from "@/features/review";
 import { setPendingPostLoginRedirect } from "@/lib/postLoginRedirect";
-import { useTheme } from "@/theme";
+
+function ProjectedFundsPushHost() {
+  const { askVisible, enable, dismiss } = useProjectedFundsPush();
+  return (
+    <NotificationPermissionSheet
+      visible={askVisible}
+      onEnable={() => void enable()}
+      onNotNow={() => void dismiss()}
+    />
+  );
+}
 
 export default function AppLayout() {
   const { auth } = useAuth();
-  const theme = useTheme();
   const pathname = usePathname();
 
   if (auth.initializing) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.background }}>
-        <ActivityIndicator color={theme.colors.tint} />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   if (!auth.isAuthenticated) {
@@ -25,7 +33,11 @@ export default function AppLayout() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <ReviewPromptHost>
+    <View style={{ flex: 1 }}>
+      <ProjectedFundsInAppBanner />
+      <View style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="account/[id]" />
       <Stack.Screen name="account/new" />
@@ -64,5 +76,9 @@ export default function AppLayout() {
       <Stack.Screen name="reconcile/session/[id]" />
       <Stack.Screen name="profile" />
     </Stack>
+      </View>
+      <ProjectedFundsPushHost />
+    </View>
+    </ReviewPromptHost>
   );
 }

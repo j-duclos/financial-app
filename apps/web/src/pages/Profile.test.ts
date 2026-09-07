@@ -22,6 +22,7 @@ describe("Profile page", () => {
     expect(profileSource).toMatch(/AccountLifecycleSection/);
     expect(profileSource).toMatch(/settings-legal-section/);
     expect(profileSource).toMatch(/LegalPolicyLinks/);
+    expect(profileSource).toMatch(/AlertsPreferencesSection/);
     expect(profileSource).not.toMatch(/>Account</);
   });
 

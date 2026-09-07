@@ -82,8 +82,97 @@ class UserProfile(models.Model):
         blank=True,
         help_text="When the user skipped the first-run welcome. Empty-state copy can still appear.",
     )
+    projected_funds_alerts_enabled = models.BooleanField(
+        default=True,
+        help_text="Master switch for projected low-balance / over-limit alerts.",
+    )
+    projected_funds_web_alerts = models.BooleanField(
+        default=True,
+        help_text="Show projected-funds warnings in the web app.",
+    )
+    projected_funds_push_enabled = models.BooleanField(
+        default=True,
+        help_text="Allow Expo push for projected-funds alerts when the OS permits it.",
+    )
+    notify_3_days_before = models.BooleanField(default=True)
+    notify_1_day_before = models.BooleanField(default=True)
+    notify_day_of = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "core_user_profile"
+
+
+class ReviewPromptState(models.Model):
+    """Mobile review-prompt timing. No financial data."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="review_prompt_state",
+    )
+    first_eligible_use_at = models.DateTimeField(null=True, blank=True)
+    session_count = models.PositiveIntegerField(default=0)
+    last_session_at = models.DateTimeField(null=True, blank=True)
+    last_prompted_at = models.DateTimeField(null=True, blank=True)
+    enjoyment_prompt_ats = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="ISO timestamps of enjoyment prompts shown.",
+    )
+    enjoyment_response = models.CharField(max_length=16, blank=True, default="")
+    review_asked_at = models.DateTimeField(null=True, blank=True)
+    feedback_submitted_at = models.DateTimeField(null=True, blank=True)
+    dismissed_until = models.DateTimeField(null=True, blank=True)
+    review_flow_completed = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "core_review_prompt_state"
+
+
+class Feedback(models.Model):
+    """In-app product feedback. Persist before emailing so SMTP failure cannot drop it."""
+
+    class Source(models.TextChoices):
+        MOBILE = "mobile", "Mobile"
+        WEB = "web", "Web"
+
+    class Platform(models.TextChoices):
+        IOS = "ios", "iOS"
+        ANDROID = "android", "Android"
+        WEB = "web", "Web"
+        UNKNOWN = "unknown", "Unknown"
+
+    class Category(models.TextChoices):
+        HARD_TO_USE = "hard_to_use", "Hard to use"
+        MISSING_FEATURE = "missing_feature", "Missing feature"
+        SOMETHING_BROKEN = "something_broken", "Something is broken"
+        PERFORMANCE = "performance", "Performance"
+        ACCOUNT_SYNC = "account_sync", "Account / sync issue"
+        OTHER = "other", "Other"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="feedback_submissions",
+    )
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.MOBILE)
+    platform = models.CharField(max_length=16, choices=Platform.choices, default=Platform.UNKNOWN)
+    category = models.CharField(max_length=32, choices=Category.choices, blank=True, default="")
+    message = models.TextField()
+    allow_contact = models.BooleanField(default=False)
+    app_version = models.CharField(max_length=32, blank=True, default="")
+    build_number = models.CharField(max_length=32, blank=True, default="")
+    device_os_version = models.CharField(max_length=32, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_error = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        db_table = "core_feedback"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="core_fb_user_created_idx"),
+        ]

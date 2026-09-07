@@ -371,6 +371,21 @@ def test_liabilities_webhook_is_inert_when_url_unset():
     PLAID_WEBHOOK_URL="https://example.test/api/plaid/webhooks/liabilities/",
 )
 @pytest.mark.django_db
+def test_liabilities_webhook_rejects_unsigned_request():
+    client = APIClient()
+    response = client.post(
+        "/api/plaid/webhooks/liabilities/",
+        {"webhook_type": "LIABILITIES", "webhook_code": "DEFAULT_UPDATE", "item_id": "item-x"},
+        format="json",
+    )
+    assert response.status_code == 401
+
+
+@override_settings(
+    PLAID_ENABLE_LIABILITIES=True,
+    PLAID_WEBHOOK_URL="https://example.test/api/plaid/webhooks/liabilities/",
+)
+@pytest.mark.django_db
 def test_liabilities_webhook_syncs_known_item_without_creating_transactions(plaid_setup, user):
     from billing.tests.helpers import grant_premium
     from transactions.models import Transaction
@@ -384,7 +399,10 @@ def test_liabilities_webhook_syncs_known_item_without_creating_transactions(plai
         accounts=[_account_base("plaid-a")],
     )
     api = APIClient()
-    with patch("plaid_link.liabilities.get_plaid_client", return_value=client):
+    with (
+        patch("plaid_link.liabilities.get_plaid_client", return_value=client),
+        patch("plaid_link.views.verify_plaid_webhook_request", return_value=True),
+    ):
         response = api.post(
             "/api/plaid/webhooks/liabilities/",
             {

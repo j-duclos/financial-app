@@ -15,6 +15,15 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/theme";
 import { Button } from "./Button";
+import { acquirePresentedModal, releasePresentedModal } from "@/lib/modalPresentation";
+
+function useTrackPresentedModal(visible: boolean, enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled || !visible) return;
+    acquirePresentedModal();
+    return () => releasePresentedModal();
+  }, [enabled, visible]);
+}
 
 type SheetProps = {
   visible: boolean;
@@ -24,6 +33,8 @@ type SheetProps = {
   contentStyle?: StyleProp<ViewStyle>;
   /** Lift the sheet above the software keyboard (search/filter inputs). */
   keyboardAware?: boolean;
+  /** When false, the review-prompt host will not treat this sheet as a blocking modal. */
+  trackPresentation?: boolean;
 };
 
 function useKeyboardInset(enabled: boolean): number {
@@ -61,10 +72,12 @@ export function BottomSheet({
   children,
   contentStyle,
   keyboardAware = false,
+  trackPresentation = true,
 }: SheetProps) {
   const theme = useTheme();
   const safeInsets = useSafeAreaInsets();
   const keyboardInset = useKeyboardInset(visible && keyboardAware);
+  useTrackPresentedModal(visible, trackPresentation);
 
   const dismiss = () => {
     Keyboard.dismiss();
@@ -143,6 +156,7 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmProps) {
   const theme = useTheme();
+  useTrackPresentedModal(visible, true);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={[styles.overlayCenter, { backgroundColor: theme.colors.overlay }]}>

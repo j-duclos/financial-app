@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { APP_NAME, APP_VALUE_STATEMENT } from "@budget-app/shared";
+import BrandLogo from "../brand/BrandLogo";
 
 type Props = {
   open: boolean;
@@ -70,12 +72,13 @@ export default function OnboardingWelcomeModal({
         className="max-w-md w-full rounded-lg bg-white p-6 shadow-xl space-y-4"
         tabIndex={-1}
       >
-        <h2 id="onboarding-welcome-title" className="text-xl font-semibold text-gray-900">
+        <BrandLogo size="medium" />
+        <h2 id="onboarding-welcome-title" className="text-xl font-semibold text-gray-900 text-center">
           See your money before it happens.
         </h2>
-        <p className="text-sm text-gray-700">
-          Add your accounts, recurring income, and bills so Financial App can project your future
-          balances.
+        <p className="text-sm text-gray-700 text-center">
+          {APP_VALUE_STATEMENT} Add your accounts, income, and bills so {APP_NAME} can project
+          what’s coming.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
           <button

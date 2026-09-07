@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { Card } from "@/components/ui";
 import { useTheme } from "@/theme";
 import type { RecurringRule } from "@budget-app/shared";
-import { buildRuleSummary, triggerSummary, actionSummary } from "../automationDisplay";
+import { buildRuleSummary } from "../automationDisplay";
 import { ActionBadge, TriggerBadge } from "./RuleBadges";
 
 type Props = {
@@ -26,10 +26,6 @@ export function RuleSummaryCard({ rule }: Props) {
       <Text style={{ color: theme.colors.text, fontSize: 15, lineHeight: 22 }} accessibilityRole="text">
         {summary}
       </Text>
-      <View style={{ marginTop: 12, gap: 6 }}>
-        <Text style={{ color: theme.colors.textMuted, fontSize: 12 }}>Trigger: {triggerSummary(rule)}</Text>
-        <Text style={{ color: theme.colors.textMuted, fontSize: 12 }}>Action: {actionSummary(rule)}</Text>
-      </View>
     </Card>
   );
 }

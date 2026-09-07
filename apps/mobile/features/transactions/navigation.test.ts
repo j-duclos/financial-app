@@ -24,6 +24,24 @@ describe("filtersFromSearchParams", () => {
     });
   });
 
+  it("applies automation rule activity deep link filters", () => {
+    expect(
+      filtersFromSearchParams({
+        account: "3",
+        rule: "9",
+        dateFrom: "2026-05-01",
+        dateTo: "2026-09-06",
+        showReconciled: "1",
+      })
+    ).toEqual({
+      accountId: 3,
+      ruleId: 9,
+      dateFrom: "2026-05-01",
+      dateTo: "2026-09-06",
+      showReconciled: true,
+    });
+  });
+
   it("ignores invalid account ids", () => {
     expect(filtersFromSearchParams({ account: "abc" })).toEqual({});
   });

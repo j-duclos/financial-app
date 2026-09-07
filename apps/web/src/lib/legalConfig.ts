@@ -1,5 +1,7 @@
 /** Central legal/product-safety copy. Production identity comes from env vars. */
 
+import { APP_NAME } from "@budget-app/shared";
+
 export const SHORT_FINANCIAL_DISCLAIMER =
   "Financial forecasts and insights are estimates for informational purposes only and are not financial, investment, tax, legal, or accounting advice.";
 
@@ -23,7 +25,7 @@ function envTrim(value: unknown): string {
 }
 
 export function getLegalConfig(): LegalConfig {
-  const productName = envTrim(import.meta.env.VITE_LEGAL_PRODUCT_NAME) || "Financial App";
+  const productName = envTrim(import.meta.env.VITE_LEGAL_PRODUCT_NAME) || APP_NAME;
   const businessName = envTrim(import.meta.env.VITE_LEGAL_BUSINESS_NAME) || null;
   const contactEmail = envTrim(import.meta.env.VITE_LEGAL_CONTACT_EMAIL) || null;
   const state = envTrim(import.meta.env.VITE_LEGAL_STATE) || "Arizona";

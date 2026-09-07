@@ -122,7 +122,7 @@ JWT access/refresh tokens are runtime-only in SecureStore — never committed.
 
 **Decision: Post-beta (not implemented).**
 
-- `NSFaceIDUsageDescription` reserved in iOS config for future opt-in app lock.
+- Biometrics are not requested yet (no Face ID usage string in the iOS config).
 - Biometrics would protect local re-entry only — not server authentication.
 
 ---

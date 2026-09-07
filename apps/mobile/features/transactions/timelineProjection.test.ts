@@ -45,4 +45,18 @@ describe("needsTimelineProjection", () => {
       )
     ).toBe(false);
   });
+
+  it("skips timeline for automation rule activity deep links", () => {
+    expect(
+      needsTimelineProjection(
+        {
+          ...DEFAULT_TRANSACTION_FILTERS,
+          ruleId: 9,
+          dateFrom: "2026-05-01",
+          dateTo: today,
+        },
+        today
+      )
+    ).toBe(false);
+  });
 });

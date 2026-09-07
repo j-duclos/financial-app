@@ -11,7 +11,9 @@ import {
   atPlanLimit,
   canUsePlaidBankSync,
   canUsePaymentPlannerFull,
+  canUseReportsAdvanced,
   clampForecastDaysForPlan,
+  effectiveReportHistoryMonths,
   forecastOptionsForPlan,
   forecastPickerRows,
   isPremium,
@@ -24,6 +26,7 @@ import {
   recurringRulesLimitReachedMessage,
   recurringSaveConsumesActiveSlot,
   maxOperationalForecastDays,
+  BASIC_REPORT_HISTORY_MONTHS,
 } from "./planLimits";
 
 const freeStatus: BillingStatus = {
@@ -38,6 +41,7 @@ const freeStatus: BillingStatus = {
     is_premium: false,
     plaid_bank_sync: false,
     payment_planner_full: false,
+    reports_advanced: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,
@@ -64,6 +68,7 @@ const premiumStatus: BillingStatus = {
     is_premium: true,
     plaid_bank_sync: true,
     payment_planner_full: true,
+    reports_advanced: true,
     limits: {
       linked_institutions: null,
       manual_accounts: null,
@@ -127,6 +132,14 @@ describe("plan limits", () => {
     expect(canUsePaymentPlannerFull(undefined)).toBe(false);
     expect(canUsePaymentPlannerFull(freeStatus)).toBe(false);
     expect(canUsePaymentPlannerFull(premiumStatus)).toBe(true);
+  });
+
+  it("treats Advanced Reports as Premium-only", () => {
+    expect(canUseReportsAdvanced(undefined)).toBe(false);
+    expect(canUseReportsAdvanced(freeStatus)).toBe(false);
+    expect(canUseReportsAdvanced(premiumStatus)).toBe(true);
+    expect(effectiveReportHistoryMonths(12, freeStatus)).toBe(BASIC_REPORT_HISTORY_MONTHS);
+    expect(effectiveReportHistoryMonths(24, premiumStatus)).toBe(24);
   });
 
   it("reports Free manual-account usage and intercepts at the limit", () => {

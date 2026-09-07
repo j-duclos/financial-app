@@ -20,6 +20,7 @@ import { setMonitoringUser } from "../lib/monitoring";
 
 const ACCESS_KEY = "budget_access";
 const REFRESH_KEY = "budget_refresh";
+/** JWTs live in localStorage so login survives refresh. This is XSS-sensitive; httpOnly cookies are a follow-up. */
 
 type AuthState = {
   access: string | null;

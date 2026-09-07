@@ -105,6 +105,7 @@ def test_export_contains_accessible_data_and_omits_secrets(authenticated_client,
 
     r = authenticated_client.get("/api/profile/export-data/")
     assert r.status_code == 200
+    assert r["Cache-Control"] == "private, no-store"
     assert r["Content-Type"].startswith("application/json")
     assert "attachment" in r["Content-Disposition"]
     assert "filename=" in r["Content-Disposition"]

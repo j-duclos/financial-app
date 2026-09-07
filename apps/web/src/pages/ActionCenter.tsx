@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DashboardRecommendation, RecommendationPreferences } from "@budget-app/shared";
 import {
@@ -19,6 +20,7 @@ import QuickTransactionModal, {
 import ActionToast from "../components/quickActions/ActionToast";
 import ForecastWindowSelect from "../components/forecast/ForecastWindowSelect";
 import LookingAheadBanner from "../components/dashboard/LookingAheadBanner";
+import ProjectedFundsActionList from "../components/ProjectedFundsActionList";
 import {
   ACTION_CENTER_PAGE_TITLE,
   recommendationPreferenceSets,
@@ -34,6 +36,8 @@ import { isLookingAheadVisible } from "../lib/lookingAhead";
 
 export default function ActionCenter() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const highlightAlertId = Number(searchParams.get("alert")) || null;
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -135,6 +139,8 @@ export default function ActionCenter() {
       </div>
 
       {lookingAhead && <LookingAheadBanner risk={extendedCashRisk.risk} />}
+
+      <ProjectedFundsActionList highlightId={highlightAlertId} />
 
       {(isLoading || !forecastReady) && (
         <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2 animate-pulse">

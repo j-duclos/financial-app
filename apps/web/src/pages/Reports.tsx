@@ -1,7 +1,7 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { formatCurrency, currentMonthStr } from "@budget-app/shared";
+import { formatCurrency, currentMonthStr, BASIC_REPORT_HISTORY_MONTHS, REPORTS_ADVANCED_CASH_FLOW_MESSAGE } from "@budget-app/shared";
 import type {
   CategoryBreakdownItem,
   CreditCardInterestReport,
@@ -43,6 +43,10 @@ import {
 } from "../lib/reportDisplay";
 import { SPENDING_GOALS_PATH } from "../lib/spendingTargetDisplay";
 import { useProfileQuery } from "../lib/profileQuery";
+import { useBillingStatus } from "../hooks/useBillingStatus";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { canUseReportsAdvanced } from "../lib/entitlements";
+import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
 const TOP_CATEGORY_LIMIT = 8;
 
 function comparisonSubtitle(
@@ -659,14 +663,19 @@ export default function Reports() {
   const [fundingOpen, setFundingOpen] = useState(false);
   const { data: profile } = useProfileQuery();
   const householdId = profile?.default_household ?? undefined;
+  const { billing, isLoading: billingLoading } = useBillingStatus();
+  const reportsAdvanced = canUseReportsAdvanced(billing);
+  const historyMonths = reportsAdvanced ? 12 : BASIC_REPORT_HISTORY_MONTHS;
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } = usePremiumCheckout();
 
   const { data, isPending, isError, isFetching, isPlaceholderData } = useQuery({
-    queryKey: ["monthly-reports", month, householdId ?? null, 12],
+    queryKey: ["monthly-reports", month, householdId ?? null, historyMonths],
     queryFn: () =>
       getMonthlyReports(month, {
-        months: 12,
+        months: historyMonths,
         household_id: householdId,
       }),
+    enabled: !billingLoading,
     placeholderData: keepPreviousData,
   });
 
@@ -772,7 +781,17 @@ export default function Reports() {
 
       {data && dataMatchesMonth && tab === "cash-flow" && (
         <div role="tabpanel" id="report-panel-cash-flow" aria-labelledby="report-tab-cash-flow">
-          <CashFlowSection data={data} />
+          {reportsAdvanced ? (
+            <CashFlowSection data={data} />
+          ) : (
+            <PremiumUpgradePrompt
+              title={REPORTS_ADVANCED_CASH_FLOW_MESSAGE}
+              onUpgrade={startCheckout}
+              busy={checkoutBusy}
+              error={checkoutError}
+              verificationRequired={emailVerificationRequired}
+            />
+          )}
         </div>
       )}
 
@@ -836,6 +855,7 @@ export default function Reports() {
             <h2 className="px-4 py-2 font-semibold bg-gray-50">Goal progress</h2>
             <GoalProgressList goals={data.goals.buckets} />
           </div>
+          {reportsAdvanced ? (
           <div className="bg-white rounded-lg shadow overflow-hidden">
             <h2 className="px-4 py-2 font-semibold bg-gray-50">Funding</h2>
             <div className="px-4 py-3 border-b border-gray-100">
@@ -854,6 +874,7 @@ export default function Reports() {
             </button>
             {fundingOpen && <FundingTables report={data.goals} />}
           </div>
+          ) : null}
         </div>
       )}
 

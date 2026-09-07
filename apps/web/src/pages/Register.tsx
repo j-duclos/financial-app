@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import BrandLockup from "../components/brand/BrandLockup";
 import PublicScreen from "../components/legal/PublicScreen";
 
 export default function Register() {
@@ -27,6 +28,7 @@ export default function Register() {
     return (
       <PublicScreen>
         <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
+          <BrandLockup size="medium" showTagline={false} />
           <h1 className="text-2xl font-bold text-center">Check your email</h1>
           <p className="text-sm text-gray-700 text-center">
             Check your email to verify your account.
@@ -46,7 +48,8 @@ export default function Register() {
   return (
     <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
-        <h1 className="text-2xl font-bold text-center">Sign up</h1>
+        <BrandLockup />
+        <h1 className="text-xl font-semibold text-center text-gray-900">Sign up</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <div>

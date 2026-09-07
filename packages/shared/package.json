@@ -9,6 +9,7 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./branding": "./src/branding.ts",
     "./types": "./src/types.ts",
     "./utils": "./src/utils.ts",
     "./forecastWindow": "./src/forecastWindow.ts",

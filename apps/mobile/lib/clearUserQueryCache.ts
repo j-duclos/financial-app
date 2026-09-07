@@ -12,6 +12,7 @@ const USER_SPECIFIC_PREFIXES = [
   ["what-if-accounts"],
   ["onboarding"],
   ["billing-status"],
+  ["review-prompt"],
 ] as const;
 
 /**

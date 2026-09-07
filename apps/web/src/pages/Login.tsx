@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import BrandLockup from "../components/brand/BrandLockup";
 import PublicScreen from "../components/legal/PublicScreen";
 
 export default function Login() {
@@ -32,7 +33,7 @@ export default function Login() {
   return (
     <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
-        <h1 className="text-2xl font-bold text-center">Budget App</h1>
+        <BrandLockup />
         {notice ? (
           <p className="text-sm text-green-700 text-center" role="status">
             {notice}

@@ -1,9 +1,15 @@
 node_modules
 # backend/frontend_dist — committed so Render can serve React if npm is missing during build
+# Local env / dumps (never commit secrets or customer financial data)
 backend/.env
 backend/.env.render
 backend/.venv
 backend/test_db.sqlite3
+backend/db.sqlite3
+backend/db.backup.sqlite3
+backend/data.json
+backend/data-smoke.json
+backend/*.sqlite3
 scripts/.render-env-export
 apps/mobile/.env
 apps/mobile/.env.local

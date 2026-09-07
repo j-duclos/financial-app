@@ -71,7 +71,7 @@ def send_email_changed_notice(*, old_email: str, username: str) -> bool:
     context = {"username": username}
     text_body = render_to_string("core/email/email_changed.txt", context)
     html_body = render_to_string("core/email/email_changed.html", context)
-    _send("Your Financial App email was changed", email, text_body, html_body)
+    _send("Your FlowSight email was changed", email, text_body, html_body)
     logger.info("Email-changed notice sent user=%s", username)
     return True
 

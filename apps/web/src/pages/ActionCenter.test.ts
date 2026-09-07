@@ -85,6 +85,7 @@ describe("Action Center page structure", () => {
     expect(actionCenterSource).toMatch(/SurvivalModeBanner/);
     expect(actionCenterSource).toMatch(/view\.summaryText/);
     expect(actionCenterSource).toMatch(/view\.groups/);
+    expect(actionCenterSource).toMatch(/ProjectedFundsActionList/);
     expect(actionCenterSource).not.toMatch(/activeCount/);
   });
 

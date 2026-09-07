@@ -85,4 +85,13 @@ describe("Reports information architecture", () => {
     expect(reportsSource).toMatch(/\["monthly-reports", month, householdId/);
     expect(reportsSource).toMatch(/household_id: householdId/);
   });
+
+  it("uses the same Basic vs Advanced Reports entitlement as billing", () => {
+    expect(reportsSource).toMatch(/canUseReportsAdvanced/);
+    expect(reportsSource).toMatch(/BASIC_REPORT_HISTORY_MONTHS/);
+    expect(reportsSource).toMatch(/months: historyMonths/);
+    expect(reportsSource).toMatch(/REPORTS_ADVANCED_CASH_FLOW_MESSAGE/);
+    expect(reportsSource).toMatch(/PremiumUpgradePrompt/);
+    expect(reportsSource).not.toMatch(/months: 12/);
+  });
 });

@@ -376,15 +376,16 @@ def test_plaid_liabilities_webhook_is_ignored_for_free_household(household):
         institution_name="Bank",
     )
     api = APIClient()
-    r = api.post(
-        "/api/plaid/webhooks/liabilities/",
-        {
-            "webhook_type": "LIABILITIES",
-            "webhook_code": "DEFAULT_UPDATE",
-            "item_id": item.item_id,
-        },
-        format="json",
-    )
+    with patch("plaid_link.views.verify_plaid_webhook_request", return_value=True):
+        r = api.post(
+            "/api/plaid/webhooks/liabilities/",
+            {
+                "webhook_type": "LIABILITIES",
+                "webhook_code": "DEFAULT_UPDATE",
+                "item_id": item.item_id,
+            },
+            format="json",
+        )
     assert r.status_code == 200
     assert r.json()["status"] == "ignored"
     assert r.json()["reason"] == "premium_required"

@@ -10,6 +10,7 @@ type Props = {
   right?: React.ReactNode;
   onPress?: () => void;
   showChevron?: boolean;
+  accessibilityLabel?: string;
 };
 
 export function ListRow({
@@ -19,6 +20,7 @@ export function ListRow({
   right,
   onPress,
   showChevron = !!onPress,
+  accessibilityLabel,
 }: Props) {
   const theme = useTheme();
   const content = (
@@ -55,7 +57,7 @@ export function ListRow({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityLabel={accessibilityLabel ?? title}
       style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
     >
       {content}

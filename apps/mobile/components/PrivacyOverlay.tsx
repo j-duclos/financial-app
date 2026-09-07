@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { AppState, Platform, StyleSheet, Text, View } from "react-native";
+import { BrandWordmark } from "@/components/brand";
 import { useTheme } from "@/theme";
 
 /**
@@ -27,7 +28,7 @@ export function PrivacyOverlay() {
       importantForAccessibility="no-hide-descendants"
     >
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: theme.colors.text, ...theme.typography.headline }}>Budget</Text>
+        <BrandWordmark size="medium" />
         {Platform.OS === "ios" ? (
           <Text style={{ color: theme.colors.textMuted, marginTop: 8, ...theme.typography.caption }}>
             Financial data hidden

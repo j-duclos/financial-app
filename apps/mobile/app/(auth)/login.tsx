@@ -5,7 +5,9 @@ import {
   consumePendingPostLoginRedirect,
   sanitizePostLoginRedirect,
 } from "@/lib/postLoginRedirect";
+import { BrandLogo } from "@/components/brand";
 import { Button, Screen, TextField } from "@/components/ui";
+import { APP_TAGLINE } from "@budget-app/shared";
 import { useAuth } from "@/features/auth";
 import { describeApiError } from "@/services/api";
 import { getApiBaseUrl, getApiConnectivityHint } from "@/constants/env";
@@ -48,19 +50,16 @@ export default function LoginScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1, justifyContent: "center" }}
       >
-        <Text style={{ color: theme.colors.text, ...theme.typography.display, textAlign: "center" }}>
-          Budget
-        </Text>
+        <BrandLogo size="large" style={{ marginBottom: theme.spacing.sm }} />
         <Text
           style={{
             color: theme.colors.textMuted,
             ...theme.typography.caption,
             textAlign: "center",
             marginBottom: theme.spacing.xl,
-            marginTop: 4,
           }}
         >
-          Sign in to your household finances
+          {APP_TAGLINE}
         </Text>
 
         {error ? (

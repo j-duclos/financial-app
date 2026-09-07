@@ -1519,11 +1519,20 @@ class ReconcileMatchView(APIView):
         ).first()
         if not st:
             return Response({"detail": "Statement transaction not found."}, status=status.HTTP_404_NOT_FOUND)
+        matched_transaction = None
+        if matched_transaction_id:
+            from transactions.models import Transaction
+
+            matched_transaction = Transaction.objects.filter(
+                pk=matched_transaction_id, account__household__in=households
+            ).first()
+            if matched_transaction is None:
+                return Response({"detail": "Transaction not found."}, status=status.HTTP_404_NOT_FOUND)
         from django.utils import timezone
         match, created = ReconciliationMatch.objects.update_or_create(
             statement_txn=st,
             defaults={
-                "matched_transaction_id": matched_transaction_id or None,
+                "matched_transaction": matched_transaction,
                 "status": status_val,
                 "matched_at": timezone.now() if status_val == ReconciliationMatch.Status.MATCHED else None,
             },

@@ -751,7 +751,10 @@ class TransactionViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         planned_id = int(raw)
-        planned = Transaction.objects.filter(pk=planned_id).first()
+        households = get_households_for_user(request.user)
+        planned = Transaction.objects.filter(
+            pk=planned_id, account__household__in=households
+        ).first()
         if planned is None:
             return Response({"detail": "planned_transaction_id not found."}, status=status.HTTP_404_NOT_FOUND)
         try:

@@ -1,6 +1,13 @@
 import React from "react";
-import { Alert, Text, View } from "react-native";
-import { FREE_PLAN_LIMITS, PLAID_PREMIUM_MESSAGE } from "@budget-app/shared";
+import { Alert, Linking, Text, View } from "react-native";
+import {
+  APP_VALUE_STATEMENT,
+  APP_WEB_COMPANION_MESSAGE,
+  APP_WEB_URL,
+  FREE_PLAN_LIMITS,
+  PLAID_PREMIUM_MESSAGE,
+} from "@budget-app/shared";
+import { BrandLogo } from "@/components/brand";
 import { Button } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { BANK_SYNC_WEB_MESSAGE } from "@/lib/billing";
@@ -27,6 +34,7 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
         borderStyle: "dashed",
       }}
     >
+      <BrandLogo size="small" style={{ marginBottom: theme.spacing.md }} />
       <Text style={{ color: theme.colors.text, ...theme.typography.headline, textAlign: "center" }}>
         Build your first forecast
       </Text>
@@ -38,7 +46,7 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
           marginTop: theme.spacing.sm,
         }}
       >
-        Add an account and recurring income or bills to see where your balance is headed.
+        {APP_VALUE_STATEMENT}
       </Text>
       <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
         <Button label="Add account manually" onPress={onAddAccount} />
@@ -69,6 +77,22 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
           accounts. {PLAID_PREMIUM_MESSAGE}
         </Text>
       ) : null}
+      <Text
+        style={{
+          color: theme.colors.textMuted,
+          ...theme.typography.caption,
+          textAlign: "center",
+          marginTop: theme.spacing.lg,
+        }}
+      >
+        {APP_WEB_COMPANION_MESSAGE}
+      </Text>
+      <Button
+        label="Open FlowSight on the web"
+        variant="ghost"
+        onPress={() => void Linking.openURL(APP_WEB_URL)}
+        style={{ marginTop: theme.spacing.xs }}
+      />
     </View>
   );
 }

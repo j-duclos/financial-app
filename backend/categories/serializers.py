@@ -1,5 +1,8 @@
 from rest_framework import serializers
 
+from core.permissions import restrict_household_write_queryset
+from core.utils import get_households_for_user
+
 from .models import Category
 from .semantics import category_allows_transfer_destination
 
@@ -35,6 +38,18 @@ class CategorySerializer(serializers.ModelSerializer):
             "parent": {"required": False, "allow_null": True},
         }
         validators = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        restrict_household_write_queryset(self)
+        request = self.context.get("request")
+        if (
+            request
+            and getattr(request.user, "is_authenticated", False)
+            and getattr(request, "method", "GET") not in ("GET", "HEAD", "OPTIONS")
+        ):
+            households = get_households_for_user(request.user)
+            self.fields["parent"].queryset = Category.objects.filter(household__in=households)
 
     def get_allows_transfer_destination(self, obj: Category) -> bool:
         return category_allows_transfer_destination(obj)

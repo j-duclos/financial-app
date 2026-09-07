@@ -271,6 +271,9 @@ def invalidate_financial_cache_for_household(
     if bump_revision:
         bump_household_financial_revision(household_id)
     bump_timeline_cache_for_household(household_id)
+    from alerts.services.evaluate import mark_projected_funds_alerts_dirty
+
+    mark_projected_funds_alerts_dirty(household_id)
 
     user_ids = (
         HouseholdMembership.objects.filter(household_id=household_id)

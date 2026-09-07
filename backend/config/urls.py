@@ -45,6 +45,7 @@ urlpatterns = [
     path("api/", include("goals.urls")),
     path("api/", include("plaid_link.urls")),
     path("api/billing/", include("billing.urls")),
+    path("api/", include("alerts.urls")),
 ]
 
 if settings.SERVE_REACT_APP:

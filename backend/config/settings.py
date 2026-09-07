@@ -8,6 +8,12 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
+from config.security_policy import (
+    merge_allowed_hosts,
+    merge_production_web_origins,
+    production_https_settings,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 _ON_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
 
@@ -71,9 +77,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 
 
 _allowed_hosts = _csv_env("ALLOWED_HOSTS", "localhost,127.0.0.1")
-if ".onrender.com" not in _allowed_hosts:
-    _allowed_hosts.append(".onrender.com")
-ALLOWED_HOSTS = _allowed_hosts
+ALLOWED_HOSTS = merge_allowed_hosts(_allowed_hosts, debug=DEBUG, on_render=_ON_RENDER)
 
 
 def _build_csrf_trusted_origins() -> list[str]:
@@ -90,7 +94,7 @@ def _build_csrf_trusted_origins() -> list[str]:
     # Render sets this automatically on Web Services.
     add(os.environ.get("RENDER_EXTERNAL_URL", ""))
 
-    for host in _allowed_hosts:
+    for host in ALLOWED_HOSTS:
         if host.startswith("."):
             continue
         if host in ("localhost", "127.0.0.1"):
@@ -130,6 +134,7 @@ INSTALLED_APPS = [
     "recommendations",
     "affordability",
     "billing",
+    "alerts",
 ]
 
 MIDDLEWARE = [
@@ -278,12 +283,22 @@ LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/login/"
 
-# Render / reverse-proxy HTTPS
-if not DEBUG:
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() in ("true", "1", "yes")
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+# Render / reverse-proxy HTTPS. HSTS preload is off until custom domains are confirmed HTTPS-only.
+_ssl_redirect = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() in ("true", "1", "yes")
+globals().update(production_https_settings(debug=DEBUG, ssl_redirect=_ssl_redirect))
+# Preload check is deferred on purpose (security.W021). Include-subdomains stays off (W005)
+# until www + apex + any other FlowSight hosts are HTTPS-only.
+SILENCED_SYSTEM_CHECKS = [
+    *globals().get("SILENCED_SYSTEM_CHECKS", []),
+    "security.W005",
+    "security.W021",
+]
+
+if not DEBUG and not os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip():
+    raise ImproperlyConfigured(
+        "PLAID_TOKEN_FERNET_KEY is required when DEBUG is False. "
+        "Generate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+    )
 
 # DRF
 REST_FRAMEWORK = {
@@ -301,6 +316,10 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "auth_email_anon": "5/hour",
         "auth_email_user": "6/hour",
+        "auth_login_anon": "10/minute",
+        "auth_register_anon": "10/hour",
+        "auth_sensitive_user": "10/hour",
+        "feedback_user": "5/hour",
     },
 }
 
@@ -333,10 +352,14 @@ if (
         "Set CORS_ALLOWED_ORIGINS to your app origin (e.g. https://your-app.onrender.com), "
         "or deploy with SERVE_REACT_APP on the same host so RENDER_EXTERNAL_URL applies."
     )
-CORS_ALLOWED_ORIGINS = _csv_env(
-    "CORS_ALLOWED_ORIGINS",
-    _cors_on_render_default if _cors_on_render_default else _CORS_DEV_DEFAULT,
+CORS_ALLOWED_ORIGINS = merge_production_web_origins(
+    _csv_env(
+        "CORS_ALLOWED_ORIGINS",
+        _cors_on_render_default if _cors_on_render_default else _CORS_DEV_DEFAULT,
+    ),
+    debug=DEBUG,
 )
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["content-type", "authorization", "accept"]
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]
@@ -363,12 +386,22 @@ EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").strip().lower() in ("true", "1", "yes")
 EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "false").strip().lower() in ("true", "1", "yes")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@localhost").strip()
+# Temporary generic inbox until a real FlowSight mailbox is wired. Override in env.
+FEEDBACK_EMAIL_TO = os.environ.get("FEEDBACK_EMAIL_TO", "feedback@example.com").strip()
 EMAIL_VERIFICATION_MAX_AGE = int(os.environ.get("EMAIL_VERIFICATION_MAX_AGE", str(60 * 60 * 48)))
 PASSWORD_RESET_TIMEOUT = int(os.environ.get("PASSWORD_RESET_TIMEOUT", str(60 * 60 * 24 * 3)))
 
+# Expo push (projected funds alerts). Optional; dry-run skips the network.
+EXPO_ACCESS_TOKEN = os.environ.get("EXPO_ACCESS_TOKEN", "").strip()
+PROJECTED_FUNDS_PUSH_DRY_RUN = os.environ.get("PROJECTED_FUNDS_PUSH_DRY_RUN", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # drf-spectacular
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Budget App API",
+    "TITLE": "FlowSight API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
@@ -440,6 +473,11 @@ LOGGING = {
             "propagate": False,
         },
         "insights.services.dashboard_summary": {
+            "handlers": ["console"],
+            "level": _PERF_LOG_LEVEL,
+            "propagate": False,
+        },
+        "alerts.projected_funds": {
             "handlers": ["console"],
             "level": _PERF_LOG_LEVEL,
             "propagate": False,

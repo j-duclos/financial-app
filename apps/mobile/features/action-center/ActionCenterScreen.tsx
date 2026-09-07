@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { RefreshControl, Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actionCenterMobileSummaryText,
@@ -28,6 +28,7 @@ import { ForecastWindowSelect } from "@/features/dashboard/ForecastWindowSelect"
 import { RecommendationCard } from "./RecommendationCard";
 import { ResolveRiskSheet } from "./ResolveRiskSheet";
 import { SurvivalModeBanner } from "./SurvivalModeBanner";
+import { ProjectedFundsActionCards } from "@/features/alerts";
 import {
   dismissRecommendation,
   restoreRecommendation,
@@ -39,6 +40,8 @@ import { actionCenterQueryKeys, invalidateActionCenterRecommendationQueries } fr
 export function ActionCenterScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ alert?: string }>();
+  const highlightAlertId = Number(params.alert) || null;
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId } = useDefaultHouseholdId();
@@ -150,6 +153,8 @@ export function ActionCenterScreen() {
           ) : null}
 
           {view.survival ? <SurvivalModeBanner entry={view.survival} /> : null}
+
+          <ProjectedFundsActionCards highlightId={highlightAlertId} />
 
           {view.groups.map((group) => (
             <View key={group.key} style={{ marginBottom: theme.spacing.lg }}>

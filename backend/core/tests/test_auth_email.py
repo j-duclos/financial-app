@@ -379,3 +379,28 @@ def test_change_email_clears_verification_and_invalidates_old_token(authenticate
     verify_bodies = [msg.body for msg in mail.outbox if "Verify your email" in msg.subject]
     assert verify_bodies
     assert "/verify-email?" in verify_bodies[0]
+
+
+def test_login_is_throttled(api_client):
+    cache.clear()
+    statuses = [
+        api_client.post(
+            "/api/auth/token/",
+            {"username": "missing", "password": "wrong"},
+            format="json",
+        ).status_code
+        for _ in range(11)
+    ]
+    assert 429 in statuses
+    cache.clear()
+
+
+def test_register_is_throttled(api_client):
+    cache.clear()
+    statuses = [
+        _register(api_client, username=f"throttleuser{i}", email=f"throttle{i}@example.com").status_code
+        for i in range(11)
+    ]
+    assert 429 in statuses
+    cache.clear()
+

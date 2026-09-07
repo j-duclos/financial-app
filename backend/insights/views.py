@@ -14,7 +14,7 @@ from .services.dashboard_summary import (
     build_dashboard_summary_details,
     build_dashboard_summary_fast,
 )
-from .services.monthly_reports import build_monthly_reports
+from .services.monthly_reports import apply_basic_reports_scope, build_monthly_reports
 from .services.report_context import build_report_context
 from .services.reporting import build_category_breakdown, build_monthly_summary
 from .services.subscription_intelligence import build_subscription_intelligence
@@ -70,6 +70,15 @@ class MonthlyReportsView(APIView):
             household_id = int(household_id) if household_id else None
         except (TypeError, ValueError):
             return Response({"detail": "household_id must be an integer."}, status=400)
+        from billing.entitlements import (
+            resolve_reports_history_months,
+            user_may_use_reports_advanced,
+        )
+
+        advanced = user_may_use_reports_advanced(request.user)
+        history_months = resolve_reports_history_months(request.user, history_months)
+        if not advanced:
+            include_history = False
         try:
             payload = build_monthly_reports(
                 request.user,
@@ -80,6 +89,8 @@ class MonthlyReportsView(APIView):
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
+        if not advanced:
+            payload = apply_basic_reports_scope(payload)
         return Response(payload)
 
 

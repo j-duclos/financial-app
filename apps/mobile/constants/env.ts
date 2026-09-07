@@ -8,9 +8,12 @@
  * Do not hard-code hosts in feature files — use getApiBaseUrl().
  *
  * Environments:
- * - development — Metro; HTTP allowed for localhost / LAN / emulator hosts
+ * - development — Metro / Xcode Debug; HTTP allowed for localhost / LAN / emulator hosts
  * - staging — EAS preview / internal beta; HTTPS required; no localhost
  * - production — store builds; HTTPS required; no localhost
+ *
+ * Physical iPhone: set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000 (never localhost).
+ * See apps/mobile/IOS_DEVICE.md.
  */
 import Constants from "expo-constants";
 

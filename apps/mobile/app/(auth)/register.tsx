@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
 import { router } from "expo-router";
+import { BrandLogo } from "@/components/brand";
 import { Button, Screen, TextField } from "@/components/ui";
+import { APP_TAGLINE } from "@budget-app/shared";
 import { useAuth } from "@/features/auth";
 import { describeApiError } from "@/services/api";
 import { useTheme } from "@/theme";
@@ -39,6 +41,17 @@ export default function RegisterScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1, justifyContent: "center" }}
       >
+        <BrandLogo size="medium" style={{ marginBottom: 8 }} />
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.caption,
+            textAlign: "center",
+            marginBottom: 8,
+          }}
+        >
+          {APP_TAGLINE}
+        </Text>
         <Text style={{ color: theme.colors.text, ...theme.typography.title, textAlign: "center", marginBottom: 16 }}>
           Create account
         </Text>

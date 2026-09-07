@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { APP_NAME, shouldShowOnboardingWelcome } from "@budget-app/shared";
 import { useAuth } from "../context/AuthContext";
 import NotificationsDropdown from "./NotificationsDropdown";
 import { PlaidAutoSync } from "./PlaidAutoSync";
 import AppNav from "./AppNav";
 import BillingReturnBanner from "./billing/BillingReturnBanner";
 import EmailVerificationBanner from "./EmailVerificationBanner";
+import ProjectedFundsAlertBanner from "./ProjectedFundsAlertBanner";
 import SiteFooter from "./legal/SiteFooter";
 import OnboardingWelcomeModal from "./onboarding/OnboardingWelcomeModal";
+import { BrandWordmark } from "./brand/BrandWordmark";
 import { useOnboardingActions, useOnboardingStatus } from "../hooks/useOnboardingStatus";
-import { shouldShowOnboardingWelcome } from "@budget-app/shared";
 
 export default function Layout() {
   const { auth, logout } = useAuth();
@@ -34,7 +36,12 @@ export default function Layout() {
       />
       <header className="flex-none sticky top-0 z-30 bg-white border-b border-gray-200">
         <div className="px-4 flex items-center justify-between gap-x-3 min-h-14 py-2">
-          <AppNav />
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <NavLink to="/" className="shrink-0" aria-label={APP_NAME}>
+              <BrandWordmark size="small" />
+            </NavLink>
+            <AppNav />
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             <NotificationsDropdown />
             <NavLink
@@ -58,6 +65,7 @@ export default function Layout() {
       <main className="flex-1 w-full bg-gray-50">
         <BillingReturnBanner />
         <EmailVerificationBanner />
+        <ProjectedFundsAlertBanner />
         <Outlet />
       </main>
       <SiteFooter />

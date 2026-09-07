@@ -1,7 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { APP_NAME } from "@budget-app/shared";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { createAppQueryClient } from "./lib/queryClient";
+import LoadingScreen from "./components/brand/LoadingScreen";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -34,11 +37,7 @@ const queryClient = createAppQueryClient();
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { auth } = useAuth();
   if (auth.loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Loading...</p>
-      </div>
-    );
+    return <LoadingScreen />;
   }
   if (!auth.access) {
     return <Navigate to="/login" replace />;
@@ -100,6 +99,10 @@ function AppRoutes() {
 }
 
 export default function App() {
+  useEffect(() => {
+    document.title = APP_NAME;
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

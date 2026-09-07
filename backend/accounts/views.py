@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db import close_old_connections, transaction
 from django.db.models import DecimalField, F, Max, Q, Sum, Value
 from django.db.models.functions import Coalesce
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -416,7 +417,7 @@ class AccountViewSet(ModelViewSet):
         """Use get_queryset() so retrieve/detail actions honor ?balance=true and list filters."""
         queryset = self.filter_queryset(self.get_queryset())
         pk = self.kwargs.get(self.lookup_field or "pk")
-        obj = queryset.get(pk=pk)
+        obj = get_object_or_404(queryset, pk=pk)
         self.check_object_permissions(self.request, obj)
         return obj
 

@@ -46,7 +46,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
   const projectionRange = ledgerProjectionRange(forecastDays);
   const isSearchMode = debouncedSearch.trim().length > 0;
   const needsServerFilteredHistory =
-    isSearchMode || filters.categoryId != null;
+    isSearchMode || filters.categoryId != null || filters.ruleId != null;
 
   const dateAfter = useMemo(() => {
     if (filters.specificDate) return filters.specificDate;
@@ -73,6 +73,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     showReconciled: filters.showReconciled,
     historyStart,
     categoryId: filters.categoryId,
+    ruleId: filters.ruleId,
     search: debouncedSearch,
     ordering: isSearchMode ? "-date,-id" : TRANSACTIONS_LEDGER_ORDERING,
     includeRunningBalance: !isSearchMode,
@@ -103,13 +104,14 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     staleTime: DEFAULT_LEDGER_HISTORY_STALE_MS,
   });
 
-  /** Presentation-only when search or category filter needs full-range server matching. */
+  /** Presentation-only when search, category, or rule filter needs full-range server matching. */
   const displayHistoryQuery = useInfiniteQuery({
     queryKey: transactionQueryKeys.listDisplay({ ...displayListParams, pageSize }),
     queryFn: ({ pageParam = 1 }) =>
       listTransactions({
         account: filters.accountId ?? undefined,
         category: filters.categoryId ?? undefined,
+        rule_id: filters.ruleId ?? undefined,
         date_after: dateAfter,
         date_before: dateBefore,
         search: debouncedSearch.trim() || undefined,
@@ -186,6 +188,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     return {
       accountId: filters.accountId,
       categoryId: filters.categoryId,
+      ruleId: filters.ruleId,
       timeFilter: filters.timeFilter,
       specificDate: filters.specificDate,
       dateFrom: filters.dateFrom,
@@ -201,6 +204,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
   }, [
     filters.accountId,
     filters.categoryId,
+    filters.ruleId,
     filters.timeFilter,
     filters.specificDate,
     filters.dateFrom,

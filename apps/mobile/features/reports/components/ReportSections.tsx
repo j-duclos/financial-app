@@ -348,7 +348,13 @@ export function SpendingSection({
   );
 }
 
-export function GoalsSection({ data }: { data: MonthlyReports }) {
+export function GoalsSection({
+  data,
+  showFundingHistory = true,
+}: {
+  data: MonthlyReports;
+  showFundingHistory?: boolean;
+}) {
   const theme = useTheme();
   const router = useRouter();
   const report = data.goals;
@@ -401,7 +407,7 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
         )}
       </Card>
 
-      {recentContributions.length > 0 ? (
+      {showFundingHistory && recentContributions.length > 0 ? (
         <Card>
           <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
             Recent contributions
@@ -432,7 +438,7 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
             </View>
           ))}
         </Card>
-      ) : (
+      ) : showFundingHistory ? (
         <Card>
           <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
             Actual funding
@@ -461,12 +467,18 @@ export function GoalsSection({ data }: { data: MonthlyReports }) {
             ))
           )}
         </Card>
-      )}
+      ) : null}
     </View>
   );
 }
 
-export function DebtSection({ data }: { data: MonthlyReports }) {
+export function DebtSection({
+  data,
+  showInterestHistory = true,
+}: {
+  data: MonthlyReports;
+  showInterestHistory?: boolean;
+}) {
   const theme = useTheme();
   const router = useRouter();
   const debt = data.debt;
@@ -515,7 +527,7 @@ export function DebtSection({ data }: { data: MonthlyReports }) {
         </Pressable>
       ) : null}
 
-      {debt.interest_trend && debt.interest_trend.length > 1 ? (
+      {showInterestHistory && debt.interest_trend && debt.interest_trend.length > 1 ? (
         <Card>
           <Text style={{ color: theme.colors.text, fontWeight: "700", marginBottom: 8 }}>
             Interest over time

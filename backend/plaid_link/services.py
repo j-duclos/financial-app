@@ -487,7 +487,7 @@ def create_link_token(
         user_kw["email_address"] = email
     redirect_uri = resolve_plaid_link_redirect_uri(link_redirect_uri)
     req_kw: dict[str, Any] = dict(
-        client_name="Budget App",
+        client_name="FlowSight",
         language="en",
         country_codes=[CountryCode("US")],
         user=LinkTokenCreateRequestUser(**user_kw),

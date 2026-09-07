@@ -30,6 +30,7 @@ const freeBilling: BillingStatus = {
     is_premium: false,
     plaid_bank_sync: false,
     payment_planner_full: false,
+    reports_advanced: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,
@@ -56,6 +57,7 @@ const premiumBilling: BillingStatus = {
     is_premium: true,
     plaid_bank_sync: true,
     payment_planner_full: true,
+    reports_advanced: true,
     limits: {
       linked_institutions: null,
       manual_accounts: null,
@@ -119,9 +121,23 @@ describe("mobile Home onboarding status", () => {
     expect(firstRunSource).toMatch(/Connect bank/);
   });
 
+  it("mentions the FlowSight web app as a secondary first-run action", () => {
+    expect(firstRunSource).toMatch(/APP_WEB_COMPANION_MESSAGE/);
+    expect(firstRunSource).toMatch(/Open FlowSight on the web/);
+    expect(firstRunSource).toMatch(/Linking\.openURL\(APP_WEB_URL\)/);
+    expect(firstRunSource).toMatch(/variant="ghost"/);
+    const addAccountIdx = firstRunSource.indexOf("Add account manually");
+    const webLinkIdx = firstRunSource.indexOf("Open FlowSight on the web");
+    expect(addAccountIdx).toBeGreaterThan(-1);
+    expect(webLinkIdx).toBeGreaterThan(addAccountIdx);
+  });
+
   it("does not show first-run for established users with accounts", () => {
     expect(dashboardSource).toMatch(/onboarding\?\.steps\.account === true/);
+    expect(dashboardSource).toMatch(/const firstRun = missingAccounts/);
     expect(dashboardSource).toMatch(/FinancialHealthSection/);
+    expect(dashboardSource).not.toMatch(/dismissMu/);
+    expect(firstRunSource).not.toMatch(/dismiss/);
   });
 });
 

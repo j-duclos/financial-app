@@ -56,35 +56,67 @@ function filenameFromDisposition(header: string | null, fallback: string): strin
   return fallback;
 }
 
-export async function downloadAuthenticatedFile(path: string, fallbackName: string): Promise<void> {
+export type AuthenticatedFile = {
+  data: Uint8Array;
+  filename: string;
+  contentType: string;
+};
+
+async function throwDownloadError(res: Response): Promise<never> {
+  const text = await res.text();
+  let message = text || res.statusText;
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+      message = parsed.detail;
+    }
+  } catch {
+    /* keep raw body */
+  }
+  throw new ApiError(res.status, message);
+}
+
+/** Fetch an authenticated file as bytes. Safe for native (no DOM download). */
+export async function fetchAuthenticatedFile(
+  path: string,
+  fallbackName: string,
+  didRefresh = false
+): Promise<AuthenticatedFile> {
   const res = await fetch(`${baseUrl}${path}`, {
     headers: {
       ...(getAuthHeader() ?? {}),
-      Accept: "application/json, text/csv",
+      Accept: "application/json, text/csv, application/octet-stream",
     },
   });
-  if (!res.ok) {
-    if (res.status === 401 && !isPublicAuthPath(path)) {
-      notifyUnauthorized();
+  if (res.status === 401 && !isPublicAuthPath(path)) {
+    if (!didRefresh && getRefreshToken && setAccessToken) {
+      const refreshed = await tryRefreshAccessToken();
+      if (refreshed) return fetchAuthenticatedFile(path, fallbackName, true);
     }
-    const text = await res.text();
-    let message = text || res.statusText;
-    try {
-      const parsed = JSON.parse(text) as { detail?: unknown };
-      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
-        message = parsed.detail;
-      }
-    } catch {
-      /* keep raw body */
-    }
-    throw new ApiError(res.status, message);
+    notifyUnauthorized();
   }
-  const blob = await res.blob();
-  const name = filenameFromDisposition(res.headers.get("Content-Disposition"), fallbackName);
+  if (!res.ok) {
+    await throwDownloadError(res);
+  }
+  const buffer = await res.arrayBuffer();
+  return {
+    data: new Uint8Array(buffer),
+    filename: filenameFromDisposition(res.headers.get("Content-Disposition"), fallbackName),
+    contentType: res.headers.get("Content-Type") ?? "application/octet-stream",
+  };
+}
+
+export async function downloadAuthenticatedFile(path: string, fallbackName: string): Promise<void> {
+  const file = await fetchAuthenticatedFile(path, fallbackName);
+  if (typeof document === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+    throw new ApiError(500, "Browser download is not available in this environment.");
+  }
+  const bytes = Uint8Array.from(file.data);
+  const blob = new Blob([bytes], { type: file.contentType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = name;
+  link.download = file.filename;
   document.body.appendChild(link);
   link.click();
   link.remove();

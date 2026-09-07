@@ -7,6 +7,8 @@ export type TransactionForecastFilter = "all" | "forecast" | "posted";
 export type TransactionFilters = {
   accountId: number | null;
   categoryId: number | null;
+  /** Deep-link from Automation Detail "See all activity". */
+  ruleId: number | null;
   timeFilter: TimeFilter;
   /** When set, list/timeline queries filter to this single day (calendar deep link). */
   specificDate: string | null;
@@ -34,6 +36,7 @@ export const TRANSACTIONS_LEDGER_ORDERING = "date,id";
 export const DEFAULT_TRANSACTION_FILTERS: TransactionFilters = {
   accountId: null,
   categoryId: null,
+  ruleId: null,
   timeFilter: "14d",
   specificDate: null,
   dateFrom: null,
@@ -55,6 +58,7 @@ export function clearTransactionFiltersPreservingAccount(accountId: number | nul
 export function countActiveTransactionFilters(filters: TransactionFilters): number {
   let n = 0;
   if (filters.categoryId != null) n += 1;
+  if (filters.ruleId != null) n += 1;
   if (filters.specificDate) n += 1;
   else if (filters.dateFrom || filters.dateTo) n += 1;
   else if (filters.timeFilter !== "14d") n += 1;

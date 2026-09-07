@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { forgotPassword } from "@budget-app/api-client";
+import BrandWordmark from "../components/brand/BrandWordmark";
 import PublicScreen from "../components/legal/PublicScreen";
 
 const NEUTRAL_DETAIL = "If an account exists for that email, we've sent password reset instructions.";
@@ -28,6 +29,9 @@ export default function ForgotPassword() {
   return (
     <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
+        <div className="text-center">
+          <BrandWordmark size="small" />
+        </div>
         <h1 className="text-2xl font-bold text-center">Forgot password?</h1>
         {submitted ? (
           <p className="text-sm text-gray-700" data-testid="forgot-password-confirmation">

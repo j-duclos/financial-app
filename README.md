@@ -3,6 +3,8 @@ Production-ready budgeting app with a Django REST backend, React web app, and Ex
 
 **Architecture:** Business logic lives in Django services and is exposed as REST APIs (`/api/`). The **web UI is React** (`apps/web/`). Render builds that React app and serves it from the same Django host as the API. Mobile uses the same APIs via `@budget-app/api-client`.
 
+Pre-launch security notes and the production env checklist: **`SECURITY.md`**.
+
 ## Tech stack
 
 - **Backend + API:** Django 5, Django REST Framework, PostgreSQL (Render) / SQLite (local), JWT, drf-spectacular (OpenAPI)
@@ -273,6 +275,7 @@ npx expo start --clear
 
 - **Local (fast):** `EXPO_PUBLIC_API_URL=http://localhost:8000` (simulator) or `http://<LAN-IP>:8000` (device). Run Django with `ALLOWED_HOSTS='*' python3 manage.py runserver 0.0.0.0:8000`.
 - **Render (realistic perf):** `EXPO_PUBLIC_API_URL=https://financial-app-1-tu0l.onrender.com` — mobile hits the hosted Django service (not the DB directly). Mutations are real production data.
+- **Physical iPhone via Xcode:** `apps/mobile/IOS_DEVICE.md`.
 - Full details: `apps/mobile/README.md`.
 
 ## Other commands
@@ -323,6 +326,15 @@ python3 manage.py create_upcoming_charge_notifications
 
 Optional: limit to one household: `--household_id=1`
 
+### Projected insufficient-funds alerts (hourly job)
+
+The server evaluates a **7-day** canonical timeline and upserts `ProjectedFundsAlert` rows (checking/savings overdraft and credit over-limit). Push uses Expo. See `docs/PROJECTED_FUNDS_ALERTS.md`.
+
+```bash
+cd backend
+python3 manage.py evaluate_projected_funds_alerts
+```
+
 ## Key files
 
 | Area | Location |
@@ -361,6 +373,7 @@ Optional: limit to one household: `--household_id=1`
 - Reports: monthly summary (income, expenses, net), category breakdown, account balances
 - Data: Decimal for money; balances computed from transactions; ownership enforced via household membership
 - **Upcoming charge notifications:** In-app reminders 1 day before recurring automation (expense/transfer) is due; created by the `create_upcoming_charge_notifications` management command (run daily)
+- **Projected insufficient-funds alerts:** Server-side 7-day overdraft / credit-limit warnings for web, iOS, and Android (`evaluate_projected_funds_alerts`, hourly). Not premium-gated.
 
 ## Lint / format (backend)
 

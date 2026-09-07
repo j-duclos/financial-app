@@ -30,6 +30,7 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["subscription-intelligence"],
   ["dti"],
   ["onboarding"],
+  ["projected-funds-alerts"],
 ] as const;
 
 /** Preference-only invalidation when credit utilization target changes (not a ledger mutation). */

@@ -4,17 +4,39 @@ import os
 from hashlib import sha256
 
 from cryptography.fernet import Fernet, InvalidToken
+from django.core.exceptions import ImproperlyConfigured
 
 
 class PlaidTokenDecryptError(RuntimeError):
     """Saved access_token_cipher cannot be decrypted with this server's keys."""
 
 
+def _explicit_fernet_key() -> str:
+    return os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip()
+
+
+def _is_production_runtime() -> bool:
+    on_render = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+    debug = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
+    return on_render or not debug
+
+
 def _fernet() -> Fernet:
-    key = os.environ.get("PLAID_TOKEN_FERNET_KEY")
+    key = _explicit_fernet_key()
     if key:
-        kb = key.encode() if isinstance(key, str) else key
-        return Fernet(kb)
+        try:
+            kb = key.encode() if isinstance(key, str) else key
+            return Fernet(kb)
+        except (ValueError, TypeError) as exc:
+            raise ImproperlyConfigured(
+                "PLAID_TOKEN_FERNET_KEY is invalid. Generate a key with: "
+                'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+            ) from exc
+    if _is_production_runtime():
+        raise ImproperlyConfigured(
+            "PLAID_TOKEN_FERNET_KEY is required in production. "
+            "Do not derive Plaid token encryption from DJANGO_SECRET_KEY."
+        )
     digest = sha256(os.environ.get("DJANGO_SECRET_KEY", "dev").encode()).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
 
@@ -34,7 +56,7 @@ def decrypt_plaid_access_token(cipher: str) -> str:
     except InvalidToken as exc:
         on_render = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
         where = "Render Dashboard → Web Service → Environment" if on_render else "backend/.env"
-        explicit = bool(os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip())
+        explicit = bool(_explicit_fernet_key())
         raise PlaidTokenDecryptError(
             "Cannot decrypt this bank login's saved Plaid token. The database copy was encrypted "
             "on your dev machine, not on Render. "

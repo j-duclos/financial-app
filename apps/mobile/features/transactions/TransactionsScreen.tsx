@@ -84,9 +84,11 @@ export function TransactionsScreen() {
     account?: string | string[];
     accountName?: string | string[];
     category?: string | string[];
+    rule?: string | string[];
     date?: string | string[];
     dateFrom?: string | string[];
     dateTo?: string | string[];
+    showReconciled?: string | string[];
     focus?: string | string[];
     focusDate?: string | string[];
     focusTransactionId?: string | string[];
@@ -131,9 +133,11 @@ export function TransactionsScreen() {
   const routeFilters = filtersFromSearchParams({
     account: firstSearchParam(params.account) || undefined,
     category: firstSearchParam(params.category) || undefined,
+    rule: firstSearchParam(params.rule) || undefined,
     date: firstSearchParam(params.date) || undefined,
     dateFrom: firstSearchParam(params.dateFrom) || undefined,
     dateTo: firstSearchParam(params.dateTo) || undefined,
+    showReconciled: firstSearchParam(params.showReconciled) || undefined,
   });
 
   const [filters, setFilters] = useState<TransactionFilters>(() => ({
@@ -168,13 +172,15 @@ export function TransactionsScreen() {
       ...filtersFromSearchParams({
         account: firstSearchParam(params.account) || undefined,
         category: firstSearchParam(params.category) || undefined,
+        rule: firstSearchParam(params.rule) || undefined,
         date: firstSearchParam(params.date) || undefined,
         dateFrom: firstSearchParam(params.dateFrom) || undefined,
         dateTo: firstSearchParam(params.dateTo) || undefined,
+        showReconciled: firstSearchParam(params.showReconciled) || undefined,
       }),
       ...(routeAccountId != null ? { accountId: routeAccountId } : {}),
     }));
-  }, [params.account, params.category, params.date, params.dateFrom, params.dateTo, routeAccountId]);
+  }, [params.account, params.category, params.rule, params.date, params.dateFrom, params.dateTo, params.showReconciled, routeAccountId]);
 
   useEffect(() => {
     if (routeAccountId != null) {

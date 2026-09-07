@@ -106,4 +106,25 @@ def build_monthly_reports(
     }
 
 
-__all__ = ["build_monthly_reports"]
+def apply_basic_reports_scope(payload: dict[str, Any]) -> dict[str, Any]:
+    """Omit Premium historical/trend fields. Does not recompute report math."""
+    month = payload.get("month")
+    overview = dict(payload.get("overview") or {})
+    overview["trend"] = []
+    payload["overview"] = overview
+
+    debt = dict(payload.get("debt") or {})
+    debt["interest_trend"] = []
+    payload["debt"] = debt
+
+    goals = dict(payload.get("goals") or {})
+    goals["contribution_history"] = []
+    goals["projected_monthly_funding"] = []
+    goals["monthly_funding"] = [
+        row for row in (goals.get("monthly_funding") or []) if row.get("month") == month
+    ]
+    payload["goals"] = goals
+    return payload
+
+
+__all__ = ["build_monthly_reports", "apply_basic_reports_scope"]

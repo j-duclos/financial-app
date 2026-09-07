@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from billing.tests.helpers import grant_premium
 from insights.tests.test_reports_query_efficiency import seed_reports_world
 from transactions.models import Transaction
 
@@ -266,6 +267,7 @@ def test_monthly_reports_never_emit_nan_or_infinity(auth_client, household, user
 @pytest.mark.django_db
 def test_unified_monthly_reports_payload(auth_client, household, user):
     seed_reports_world(household, user)
+    grant_premium(user)
     res = auth_client.get("/api/insights/reports/monthly/?month=2026-08&months=12")
     assert res.status_code == 200
     data = res.json()

@@ -26,6 +26,7 @@ from .serializers import (
     PlaidLinkTokenRequestSerializer,
 )
 from .crypto import PlaidTokenDecryptError, decrypt_plaid_access_token
+from .webhook_security import verify_plaid_webhook_request
 from .liabilities import (
     sync_credit_card_liabilities_for_household,
     sync_credit_card_liabilities_for_item,
@@ -331,10 +332,8 @@ class PlaidSyncLiabilitiesAllView(APIView):
 class PlaidLiabilitiesWebhookView(APIView):
     """Plaid LIABILITIES / DEFAULT_UPDATE receiver.
 
-    Security matches the project's other Plaid public endpoints: the route is
-    inert unless ``PLAID_WEBHOOK_URL`` is configured, then only the documented
-    LIABILITIES/DEFAULT_UPDATE payload with a known Item is processed. There is
-    no additional Plaid webhook-JWT verifier elsewhere in this repository.
+    Inert unless ``PLAID_WEBHOOK_URL`` is configured. Requests must include a
+    valid Plaid-Verification JWT; unsigned posts are rejected.
     """
 
     permission_classes = [AllowAny]
@@ -345,6 +344,8 @@ class PlaidLiabilitiesWebhookView(APIView):
 
         if not (getattr(django_settings, "PLAID_WEBHOOK_URL", "") or "").strip():
             return Response({"detail": "Webhooks are not configured."}, status=status.HTTP_404_NOT_FOUND)
+        if not verify_plaid_webhook_request(request):
+            return Response({"detail": "Invalid webhook signature."}, status=status.HTTP_401_UNAUTHORIZED)
         body = request.data if isinstance(request.data, dict) else {}
         webhook_type = str(body.get("webhook_type") or "").upper()
         webhook_code = str(body.get("webhook_code") or "").upper()

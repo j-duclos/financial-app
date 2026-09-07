@@ -10,6 +10,7 @@ export function needsTimelineProjection(
   today: string = todayStr()
 ): boolean {
   if (filters.forecast === "posted") return false;
+  if (filters.ruleId != null) return false;
   if (filters.specificDate && filters.specificDate < today) return false;
   if (filters.dateTo && filters.dateTo < today && !filters.dateFrom) return false;
   if (filters.dateFrom && filters.dateTo && filters.dateTo < today) return false;

@@ -5,6 +5,7 @@ import { formatCurrency } from "@budget-app/shared";
 import { useTheme } from "@/theme";
 import { formatShortMonth, parseOptionalAmount } from "../reportDisplay";
 import type { ReportHistoryMonths } from "../types";
+import { REPORT_HISTORY_OPTIONS } from "../types";
 
 type TrendPoint = Pick<MonthlySummary, "month" | "total_income" | "total_expenses">;
 
@@ -118,7 +119,7 @@ export function CashFlowHistorySelector({
   onChange: (months: ReportHistoryMonths) => void;
 }) {
   const theme = useTheme();
-  const options: ReportHistoryMonths[] = [6, 12];
+  const options = REPORT_HISTORY_OPTIONS.map((opt) => opt.value);
 
   return (
     <View

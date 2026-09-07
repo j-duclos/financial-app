@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useRouter } from "expo-router";
-import { currentMonthStr, formatCurrency } from "@budget-app/shared";
+import { currentMonthStr, formatCurrency, REPORTS_ADVANCED_CASH_FLOW_MESSAGE } from "@budget-app/shared";
 import {
   AppHeader,
   Card,
@@ -16,6 +16,7 @@ import { PeriodSelector } from "@/features/budget/PeriodSelector";
 import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/features/budget/periodUtils";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { ReportFiltersSheet } from "./ReportFiltersSheet";
 import { formatMonthLabel, formatSignedAmount, parseOptionalAmount } from "./reportDisplay";
 import { reportDetailPath } from "./navigation";
@@ -38,6 +39,7 @@ function monthKeyFromPeriod(period: ReturnType<typeof currentPeriodAnchor>) {
 export function ReportsScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { promptUpgrade } = usePremiumUpgrade();
   const [period, setPeriod] = useState(() => periodFromMonthKey(DEFAULT_FILTERS.monthKey));
   const [filters, setFilters] = useState<ReportFilters>(DEFAULT_FILTERS);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
@@ -52,6 +54,7 @@ export function ReportsScreen() {
     data,
     householdReady,
     householdId,
+    reportsAdvanced,
     isLoading,
     isError,
     error,
@@ -114,7 +117,21 @@ export function ReportsScreen() {
 
   return (
     <Screen scroll={false}>
-      <AppHeader title="Reports" onBack={() => router.back()} />
+      <AppHeader
+        title="Reports"
+        onBack={() => router.back()}
+        right={
+          reportsAdvanced ? (
+            <IconButton
+              name="sliders"
+              accessibilityLabel={
+                activeFilterCount > 0 ? `Report filters, ${activeFilterCount} active` : "Report filters"
+              }
+              onPress={() => setFilterSheetOpen(true)}
+            />
+          ) : undefined
+        }
+      />
       <ScrollView
         contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 32 }}
         refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} />}
@@ -123,16 +140,6 @@ export function ReportsScreen() {
           Understand where your money goes — monthly insights from your accounts.
         </Text>
 
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", marginBottom: 4 }}>
-          <IconButton
-            name="sliders"
-            accessibilityLabel={
-              activeFilterCount > 0 ? `Report filters, ${activeFilterCount} active` : "Report filters"
-            }
-            onPress={() => setFilterSheetOpen(true)}
-          />
-        </View>
-
         <PeriodSelector
           period={period}
           onPrev={() => onPeriodChange(shiftPeriodAnchor(period, -1))}
@@ -140,7 +147,7 @@ export function ReportsScreen() {
           onToday={() => onPeriodChange(currentPeriodAnchor())}
         />
 
-        {activeFilterCount > 0 ? (
+        {reportsAdvanced && activeFilterCount > 0 ? (
           <Text style={{ color: theme.colors.tint, fontSize: 12, fontWeight: "600", marginBottom: 8 }}>
             {activeFilterCount} filter active · {filters.historyMonths}-month trend window
           </Text>
@@ -210,12 +217,24 @@ export function ReportsScreen() {
               Report types
             </Text>
 
-            {REPORT_TYPE_CARDS.map((card) => (
+            {REPORT_TYPE_CARDS.map((card) => {
+              const cashFlowLocked = card.id === "cash-flow" && !reportsAdvanced;
+              return (
               <Pressable
                 key={card.id}
-                onPress={() => router.push(reportDetailPath(card.id, activeFilters))}
+                onPress={() => {
+                  if (cashFlowLocked) {
+                    promptUpgrade("Cash Flow", REPORTS_ADVANCED_CASH_FLOW_MESSAGE);
+                    return;
+                  }
+                  router.push(reportDetailPath(card.id, activeFilters));
+                }}
                 accessibilityRole="button"
-                accessibilityLabel={`${card.label}. ${card.description}`}
+                accessibilityLabel={
+                  cashFlowLocked
+                    ? `${card.label}. ${card.description}. Premium`
+                    : `${card.label}. ${card.description}`
+                }
                 style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
               >
                 <Card style={{ marginBottom: theme.spacing.sm }}>
@@ -233,7 +252,16 @@ export function ReportsScreen() {
                       <FontAwesome name={card.icon} size={18} color={theme.colors.tint} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: theme.colors.text, fontWeight: "700", fontSize: 16 }}>{card.label}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Text style={{ color: theme.colors.text, fontWeight: "700", fontSize: 16 }}>
+                          {card.label}
+                        </Text>
+                        {cashFlowLocked ? (
+                          <Text style={{ color: theme.colors.tint, fontSize: 11, fontWeight: "700" }}>
+                            Premium
+                          </Text>
+                        ) : null}
+                      </View>
                       <Text style={{ color: theme.colors.textMuted, fontSize: 13, marginTop: 2 }}>
                         {card.description}
                       </Text>
@@ -257,7 +285,8 @@ export function ReportsScreen() {
                   </View>
                 </Card>
               </Pressable>
-            ))}
+              );
+            })}
           </>
         )}
       </ScrollView>

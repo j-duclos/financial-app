@@ -38,6 +38,7 @@ def test_status_endpoint_for_free_user(authenticated_client, user):
     assert body["has_stripe_customer"] is False
     assert body["entitlements"]["plaid_bank_sync"] is False
     assert body["entitlements"]["payment_planner_full"] is False
+    assert body["entitlements"]["reports_advanced"] is False
     assert body["entitlements"]["limits"]["manual_accounts"] == 3
     assert "STRIPE_SECRET_KEY" not in str(body)
     assert "sk_" not in str(body)
@@ -58,6 +59,7 @@ def test_status_endpoint_for_premium_user(authenticated_client, user):
     assert body["has_stripe_customer"] is True
     assert body["entitlements"]["plaid_bank_sync"] is True
     assert body["entitlements"]["payment_planner_full"] is True
+    assert body["entitlements"]["reports_advanced"] is True
     assert body["entitlements"]["limits"]["operational_forecast_days"] == 365
 
 

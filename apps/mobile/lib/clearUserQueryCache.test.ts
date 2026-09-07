@@ -14,6 +14,7 @@ describe("clearUserQueryCache", () => {
     queryClient.setQueryData(["account-options", 1], [{ id: 1 }]);
     queryClient.setQueryData(["onboarding", "status"], { completed: false });
     queryClient.setQueryData(["billing-status"], { plan: "FREE" });
+    queryClient.setQueryData(["review-prompt"], { session_count: 1 });
 
     clearUserQueryCache(queryClient);
 
@@ -25,5 +26,6 @@ describe("clearUserQueryCache", () => {
     expect(queryClient.getQueryData(["what-if-scenarios"])).toBeUndefined();
     expect(queryClient.getQueryData(["onboarding", "status"])).toBeUndefined();
     expect(queryClient.getQueryData(["billing-status"])).toBeUndefined();
+    expect(queryClient.getQueryData(["review-prompt"])).toBeUndefined();
   });
 });

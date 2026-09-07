@@ -53,6 +53,8 @@ import type {
   DashboardDebtSummary,
   CreditCardInterestReport,
   UpcomingChargeNotification,
+  ProjectedFundsAlert,
+  PushDevice,
   DtiProfile,
   DtiProfileWritePayload,
   DtiIncomeSource,
@@ -69,7 +71,8 @@ import type {
   CheckoutSessionResponse,
   PortalSessionResponse,
 } from "@budget-app/shared";
-import { downloadAuthenticatedFile, request, requestRequired } from "./config";
+import { downloadAuthenticatedFile, fetchAuthenticatedFile, request, requestRequired } from "./config";
+import type { AuthenticatedFile } from "./config";
 
 export interface PaginatedResponse<T> {
   count: number;
@@ -205,6 +208,12 @@ export type UserProfile = {
   default_account: number | null;
   /** Saved Default Forecast Window: 30, 60, 90, 180, or 365. */
   default_forecast_days: number;
+  projected_funds_alerts_enabled?: boolean;
+  projected_funds_web_alerts?: boolean;
+  projected_funds_push_enabled?: boolean;
+  notify_3_days_before?: boolean;
+  notify_1_day_before?: boolean;
+  notify_day_of?: boolean;
 };
 
 // Profile
@@ -240,12 +249,80 @@ export async function dismissOnboarding(): Promise<OnboardingStatus> {
   return requestRequired("/api/onboarding/dismiss/", { method: "POST", body: JSON.stringify({}) });
 }
 
+export type ReviewPromptState = {
+  first_eligible_use_at: string | null;
+  session_count: number;
+  last_session_at: string | null;
+  last_prompted_at: string | null;
+  enjoyment_prompt_ats: string[];
+  enjoyment_response: string;
+  review_asked_at: string | null;
+  feedback_submitted_at: string | null;
+  dismissed_until: string | null;
+  review_flow_completed: boolean;
+};
+
+export type ReviewPromptPatch = {
+  record_session?: boolean;
+  mark_prompt_shown?: boolean;
+  enjoyment_response?: "positive" | "negative";
+  review_asked_at?: boolean;
+  feedback_submitted?: boolean;
+  dismissed_until?: string | null;
+  review_flow_completed?: boolean;
+};
+
+export async function getReviewPromptState(): Promise<ReviewPromptState> {
+  return requestRequired("/api/review-prompt/");
+}
+
+export async function patchReviewPromptState(data: ReviewPromptPatch): Promise<ReviewPromptState> {
+  return requestRequired("/api/review-prompt/", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export type FeedbackPlatform = "ios" | "android" | "web" | "unknown";
+export type FeedbackCategory =
+  | "hard_to_use"
+  | "missing_feature"
+  | "something_broken"
+  | "performance"
+  | "account_sync"
+  | "other"
+  | "";
+
+export type FeedbackPayload = {
+  source: "mobile" | "web";
+  platform: FeedbackPlatform;
+  category?: FeedbackCategory;
+  message: string;
+  allow_contact?: boolean;
+  app_version?: string;
+  build_number?: string;
+  device_os_version?: string;
+};
+
+export async function submitFeedback(data: FeedbackPayload): Promise<{ id: number; email_sent: boolean }> {
+  return requestRequired("/api/feedback/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function updateProfile(data: {
   display_name?: string;
   phone_e164?: string | null;
   default_household?: number | null;
   default_account?: number | null;
   default_forecast_days?: number;
+  projected_funds_alerts_enabled?: boolean;
+  projected_funds_web_alerts?: boolean;
+  projected_funds_push_enabled?: boolean;
+  notify_3_days_before?: boolean;
+  notify_1_day_before?: boolean;
+  notify_day_of?: boolean;
 }): Promise<UserProfile> {
   return requestRequired("/api/profile/", { method: "PATCH", body: JSON.stringify(data) });
 }
@@ -300,6 +377,20 @@ export async function downloadProfileExport(): Promise<void> {
 export async function downloadTransactionsCsv(): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   return downloadAuthenticatedFile(
+    "/api/profile/export-transactions.csv",
+    `financial-app-transactions-${today}.csv`
+  );
+}
+
+/** Bytes + filename for native share/download. Does not trigger a browser download. */
+export async function exportProfileData(): Promise<AuthenticatedFile> {
+  const today = new Date().toISOString().slice(0, 10);
+  return fetchAuthenticatedFile("/api/profile/export-data/", `financial-app-data-${today}.json`);
+}
+
+export async function exportTransactionsCsv(): Promise<AuthenticatedFile> {
+  const today = new Date().toISOString().slice(0, 10);
+  return fetchAuthenticatedFile(
     "/api/profile/export-transactions.csv",
     `financial-app-transactions-${today}.csv`
   );
@@ -2085,6 +2176,54 @@ export async function markUpcomingChargeNotificationRead(id: number): Promise<Up
   return requestRequired(`/api/notifications/${id}/`, {
     method: "PATCH",
     body: JSON.stringify({ read: true }),
+  });
+}
+
+export async function listProjectedFundsAlerts(params?: {
+  active?: boolean;
+  unread?: boolean;
+  page_size?: number;
+}): Promise<PaginatedResponse<ProjectedFundsAlert>> {
+  const q: Record<string, string> = { page_size: String(params?.page_size ?? 50) };
+  if (params?.active) q.active = "true";
+  if (params?.unread) q.unread = "true";
+  return requestRequired("/api/alerts/", { params: q });
+}
+
+export async function patchProjectedFundsAlert(
+  id: number,
+  data: { dismissed?: boolean; read?: boolean }
+): Promise<ProjectedFundsAlert> {
+  return requestRequired(`/api/alerts/${id}/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listPushDevices(): Promise<PaginatedResponse<PushDevice>> {
+  return requestRequired("/api/push-devices/");
+}
+
+export async function registerPushDevice(data: {
+  expo_push_token: string;
+  platform?: "ios" | "android" | "web" | "unknown";
+  device_id?: string;
+  enabled?: boolean;
+}): Promise<PushDevice> {
+  return requestRequired("/api/push-devices/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function unregisterPushDevice(id: number): Promise<void> {
+  await request(`/api/push-devices/${id}/`, { method: "DELETE" });
+}
+
+export async function unregisterPushDeviceByToken(expoPushToken: string): Promise<{ deleted: number }> {
+  return requestRequired("/api/push-devices/unregister/", {
+    method: "POST",
+    body: JSON.stringify({ expo_push_token: expoPushToken }),
   });
 }
 

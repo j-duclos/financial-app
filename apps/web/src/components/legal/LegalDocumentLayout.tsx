@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { getLegalConfig } from "../../lib/legalConfig";
+import { BrandWordmark } from "../brand/BrandWordmark";
 import SiteFooter from "./SiteFooter";
 
 export default function LegalDocumentLayout({
@@ -19,7 +20,7 @@ export default function LegalDocumentLayout({
     <div className="min-h-screen flex flex-col bg-gray-50">
       <header className="border-b border-gray-200 bg-white">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <p className="text-sm font-medium text-gray-900">{legal.productName}</p>
+          <BrandWordmark size="small" />
           {signedIn ? (
             <Link to="/" className="text-sm text-blue-700 hover:underline">
               Back to app

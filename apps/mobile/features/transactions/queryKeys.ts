@@ -26,6 +26,7 @@ export function transactionListQueryParams(input: {
   ordering?: string;
   includeRunningBalance?: boolean;
   categoryId?: number | null;
+  ruleId?: number | null;
   search?: string;
 }): Record<string, unknown> {
   return {
@@ -36,6 +37,7 @@ export function transactionListQueryParams(input: {
       ? { show_reconciled: true, include_reconciled_after: input.historyStart }
       : { reconciled: false }),
     ...(input.categoryId != null ? { category: input.categoryId } : {}),
+    ...(input.ruleId != null ? { rule_id: input.ruleId } : {}),
     ...(input.search?.trim() ? { search: input.search.trim() } : {}),
     ordering: input.ordering,
     include_running_balance: input.includeRunningBalance ? true : undefined,
@@ -61,16 +63,20 @@ export function timelineQueryParams(input: {
 export function filtersFromSearchParams(params: {
   account?: string;
   category?: string;
+  rule?: string;
   timeFilter?: string;
   date?: string;
   dateFrom?: string;
   dateTo?: string;
+  showReconciled?: string;
 }): Partial<TransactionFilters> {
   const next: Partial<TransactionFilters> = {};
   const accountId = Number(params.account);
   if (Number.isInteger(accountId) && accountId > 0) next.accountId = accountId;
   const categoryId = Number(params.category);
   if (Number.isInteger(categoryId) && categoryId > 0) next.categoryId = categoryId;
+  const ruleId = Number(params.rule);
+  if (Number.isInteger(ruleId) && ruleId > 0) next.ruleId = ruleId;
   const tf = params.timeFilter as TimeFilter | undefined;
   if (tf) next.timeFilter = tf;
   if (params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)) {
@@ -81,6 +87,9 @@ export function filtersFromSearchParams(params: {
   }
   if (params.dateTo && /^\d{4}-\d{2}-\d{2}$/.test(params.dateTo)) {
     next.dateTo = params.dateTo;
+  }
+  if (params.showReconciled === "1" || params.showReconciled === "true") {
+    next.showReconciled = true;
   }
   return next;
 }

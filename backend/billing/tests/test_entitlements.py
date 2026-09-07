@@ -23,6 +23,7 @@ def test_new_user_is_free(user):
     assert entitlements["is_premium"] is False
     assert entitlements["plaid_bank_sync"] is False
     assert entitlements["payment_planner_full"] is False
+    assert entitlements["reports_advanced"] is False
     assert entitlements["limits"]["linked_institutions"] == 0
     assert entitlements["limits"]["manual_accounts"] == 3
     assert entitlements["limits"]["recurring_rules"] == 10
@@ -66,6 +67,7 @@ def test_active_subscription_grants_premium(user):
     assert entitlements["is_premium"] is True
     assert entitlements["plaid_bank_sync"] is True
     assert entitlements["payment_planner_full"] is True
+    assert entitlements["reports_advanced"] is True
     assert entitlements["limits"]["linked_institutions"] is None
     assert entitlements["limits"]["manual_accounts"] is None
     assert entitlements["limits"]["recurring_rules"] is None

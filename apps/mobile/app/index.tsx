@@ -1,13 +1,11 @@
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
 import { useAuth } from "@/features/auth";
-import { useTheme } from "@/theme";
+import { LoadingScreen } from "@/components/brand";
 
 export default function Index() {
   const { auth } = useAuth();
   const router = useRouter();
-  const theme = useTheme();
 
   useEffect(() => {
     if (auth.initializing) return;
@@ -18,17 +16,5 @@ export default function Index() {
     }
   }, [auth.initializing, auth.isAuthenticated, router]);
 
-  return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: theme.colors.background,
-      }}
-      accessibilityLabel="Loading"
-    >
-      <ActivityIndicator size="large" color={theme.colors.tint} />
-    </View>
-  );
+  return <LoadingScreen />;
 }

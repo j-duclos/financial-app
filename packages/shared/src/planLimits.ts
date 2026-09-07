@@ -25,6 +25,14 @@ export const PAYMENT_PLANNER_FULL_UPSELL_TITLE = "Build a custom payoff plan";
 export const PAYMENT_PLANNER_FULL_UPSELL_BODY =
   "Premium lets you compare strategies, model extra payments and lump sums, and see month-by-month payoff projections.";
 
+/** Free monthly reports include the selected month plus previous-month comparison. */
+export const BASIC_REPORT_HISTORY_MONTHS = 2;
+
+export const REPORTS_ADVANCED_CASH_FLOW_MESSAGE =
+  "Historical cash-flow trends are available with Premium.";
+export const REPORTS_ADVANCED_HISTORY_MESSAGE =
+  "Multi-month trend history is available with Premium.";
+
 export type PlanLimitedFeature = "manual_accounts" | "recurring_rules" | "goals";
 
 export function isPremium(billing: BillingStatus | undefined | null): boolean {
@@ -47,6 +55,26 @@ export function canUsePaymentPlannerFull(billing: BillingStatus | undefined | nu
     return billing.entitlements.payment_planner_full === true;
   }
   return billing.is_premium === true;
+}
+
+/**
+ * Advanced Reports (multi-month cash-flow, 6/12/24 history, goal/debt trend history).
+ * Unknown billing is treated as Free so clients do not request Premium history.
+ */
+export function canUseReportsAdvanced(billing: BillingStatus | undefined | null): boolean {
+  if (!billing) return false;
+  if (billing.entitlements && typeof billing.entitlements.reports_advanced === "boolean") {
+    return billing.entitlements.reports_advanced === true;
+  }
+  return billing.is_premium === true;
+}
+
+export function effectiveReportHistoryMonths(
+  requested: number,
+  billing: BillingStatus | undefined | null
+): number {
+  if (canUseReportsAdvanced(billing)) return requested;
+  return BASIC_REPORT_HISTORY_MONTHS;
 }
 
 /**

@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { APP_NAME, APP_WEB_HOST, APP_WEB_URL } from "@budget-app/shared";
 import type { AppEnvironment } from "./env";
 
 type ExpoExtra = {
@@ -11,6 +12,18 @@ type ExpoExtra = {
 
 function extra(): ExpoExtra {
   return (Constants.expoConfig?.extra ?? {}) as ExpoExtra;
+}
+
+export function getAppName(): string {
+  return APP_NAME;
+}
+
+export function getWebAppUrl(): string {
+  return APP_WEB_URL;
+}
+
+export function getWebAppHost(): string {
+  return APP_WEB_HOST;
 }
 
 /** Human-readable version for Settings → About (e.g. `0.9.0 (1)`). */

@@ -962,7 +962,7 @@ def build_timeline_calendar(
     if scenario_id:
         from timeline.models import Scenario
 
-        sc = Scenario.objects.filter(pk=scenario_id).first()
+        sc = Scenario.objects.filter(pk=scenario_id, household_id__in=household_ids).first()
         scenario_name = sc.name if sc else None
 
     risky_accounts: list[dict[str, Any]] = []

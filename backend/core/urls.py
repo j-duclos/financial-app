@@ -21,6 +21,7 @@ from .views import (
     OnboardingCompleteView,
     OnboardingDismissView,
 )
+from .feedback_views import FeedbackView, ReviewPromptView
 from timeline.views import TimelineView
 
 router = DefaultRouter()
@@ -44,6 +45,8 @@ urlpatterns = [
     path("onboarding/status/", OnboardingStatusView.as_view(), name="onboarding-status"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     path("onboarding/dismiss/", OnboardingDismissView.as_view(), name="onboarding-dismiss"),
+    path("review-prompt/", ReviewPromptView.as_view(), name="review-prompt"),
+    path("feedback/", FeedbackView.as_view(), name="feedback"),
     path("timeline/", TimelineView.as_view(), name="timeline"),
     path("", include(router.urls)),
 ]

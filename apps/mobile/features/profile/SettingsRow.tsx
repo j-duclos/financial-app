@@ -6,15 +6,26 @@ import { useTheme } from "@/theme";
 type Props = {
   title: string;
   value?: string;
+  subtitle?: string;
   onPress?: () => void;
   accessibilityLabel?: string;
   disabled?: boolean;
+  destructive?: boolean;
 };
 
 /** Compact iOS-style settings row: title left, value + chevron right. */
-export function SettingsRow({ title, value, onPress, accessibilityLabel, disabled }: Props) {
+export function SettingsRow({
+  title,
+  value,
+  subtitle,
+  onPress,
+  accessibilityLabel,
+  disabled,
+  destructive,
+}: Props) {
   const theme = useTheme();
   const label = accessibilityLabel ?? (value ? `${title}, ${value}` : title);
+  const titleColor = destructive ? theme.colors.critical : theme.colors.text;
 
   const content = (
     <View
@@ -29,7 +40,17 @@ export function SettingsRow({ title, value, onPress, accessibilityLabel, disable
         opacity: disabled ? 0.5 : 1,
       }}
     >
-      <Text style={{ flex: 1, color: theme.colors.text, ...theme.typography.body }}>{title}</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ color: titleColor, ...theme.typography.body }}>{title}</Text>
+        {subtitle ? (
+          <Text
+            style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}
+            numberOfLines={1}
+          >
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
       {value ? (
         <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body }} numberOfLines={1}>
           {value}

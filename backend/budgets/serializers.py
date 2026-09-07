@@ -1,7 +1,10 @@
 from rest_framework import serializers
 
+from accounts.models import Account
 from categories.models import Category
 from categories.serializers import CategorySerializer
+from core.permissions import restrict_household_write_queryset
+from core.utils import get_households_for_user
 
 from .models import Budget, SpendingTarget
 from .services.spending_targets import calculate_target_metrics, suggest_target_type
@@ -23,6 +26,10 @@ class BudgetSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        restrict_household_write_queryset(self)
 
 
 class SpendingTargetSerializer(serializers.ModelSerializer):
@@ -106,6 +113,19 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
             "target_type": {"required": False},
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        restrict_household_write_queryset(self)
+        request = self.context.get("request")
+        if (
+            request
+            and getattr(request.user, "is_authenticated", False)
+            and getattr(request, "method", "GET") not in ("GET", "HEAD", "OPTIONS")
+        ):
+            households = get_households_for_user(request.user)
+            self.fields["category"].queryset = Category.objects.filter(household__in=households)
+            self.fields["account"].queryset = Account.objects.filter(household__in=households)
+
     def validate_category(self, category: Category) -> Category:
         if category.category_type != Category.CategoryType.EXPENSE:
             raise serializers.ValidationError("Budgets require an expense category.")
@@ -142,6 +162,10 @@ class SpendingTargetWriteSerializer(serializers.ModelSerializer):
             account = self.instance.account
         else:
             account = None
+        if account and household and account.household_id != household.id:
+            raise serializers.ValidationError(
+                {"account": "Account must belong to the same household."}
+            )
         if household and category and period:
             qs = SpendingTarget.objects.filter(
                 household=household,

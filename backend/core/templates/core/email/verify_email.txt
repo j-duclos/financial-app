@@ -1,6 +1,6 @@
 Verify your email
 
-Confirm this address to finish setting up your Financial App account.
+Confirm this address to finish setting up your FlowSight account.
 
 Verify email:
 {{ verify_url }}

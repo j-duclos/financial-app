@@ -11,6 +11,13 @@ import logging
 
 from .models import Household, HouseholdMembership
 from .permissions import IsHouseholdMember
+from .throttles import (
+    AuthEmailAnonThrottle,
+    AuthEmailUserThrottle,
+    AuthLoginAnonThrottle,
+    AuthRegisterAnonThrottle,
+    AuthSensitiveUserThrottle,
+)
 from .serializers import (
     ChangeEmailSerializer,
     ChangePasswordSerializer,
@@ -59,11 +66,13 @@ class TokenObtainPairViewNoAuth(TokenObtainPairView):
     """Obtain JWT token; do not run JWT auth on this request so a stale/invalid token can't cause 401."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthLoginAnonThrottle]
 
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthRegisterAnonThrottle]
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -174,6 +183,7 @@ class ForgotPasswordView(APIView):
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthEmailAnonThrottle]
 
     def post(self, request):
         from core.auth_tokens import TokenError, read_password_reset_user
@@ -273,6 +283,7 @@ class ChangeEmailView(APIView):
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [AuthSensitiveUserThrottle]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(
@@ -299,6 +310,7 @@ class ExportDataView(APIView):
         body, filename = export_user_data_json_bytes(request.user)
         response = HttpResponse(body, content_type="application/json")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Cache-Control"] = "private, no-store"
         return response
 
 
@@ -311,6 +323,7 @@ class ExportTransactionsCsvView(APIView):
         body, filename = export_transactions_csv_bytes(request.user)
         response = HttpResponse(body, content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Cache-Control"] = "private, no-store"
         return response
 
 
@@ -325,6 +338,7 @@ class DeleteAccountPreflightView(APIView):
 
 class DeleteAccountView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [AuthSensitiveUserThrottle]
 
     def post(self, request):
         from core.account_lifecycle import (

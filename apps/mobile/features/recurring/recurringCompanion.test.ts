@@ -47,6 +47,7 @@ const freeAtLimit: BillingStatus = {
     is_premium: false,
     plaid_bank_sync: false,
     payment_planner_full: false,
+    reports_advanced: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,
@@ -81,6 +82,7 @@ const premiumStatus: BillingStatus = {
     is_premium: true,
     plaid_bank_sync: true,
     payment_planner_full: true,
+    reports_advanced: true,
     limits: {
       linked_institutions: null,
       manual_accounts: null,

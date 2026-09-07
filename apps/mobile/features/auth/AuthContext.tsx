@@ -23,6 +23,7 @@ import {
 } from "@/services/secureTokenStorage";
 import { clearUserQueryCache } from "@/lib/clearUserQueryCache";
 import { PROFILE_QUERY_KEY, PROFILE_STALE_MS } from "@/lib/profileQueryKey";
+import { unregisterStoredPushToken } from "@/features/alerts/pushTokenStorage";
 import { hasCompleteSession, resolveSessionRestore } from "./session";
 
 export type AuthUser = {
@@ -83,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const sessionEpochRef = useRef(0);
 
   const forceLogout = useCallback(async () => {
+    await unregisterStoredPushToken();
     sessionEpochRef.current += 1;
     clearUserQueryCache(queryClient);
     await clearTokens();

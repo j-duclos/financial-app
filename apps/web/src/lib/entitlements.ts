@@ -24,6 +24,14 @@ export function canUsePaymentPlannerFull(billing: BillingStatus | undefined | nu
   return billing.is_premium === true;
 }
 
+export function canUseReportsAdvanced(billing: BillingStatus | undefined | null): boolean {
+  if (!billing) return false;
+  if (billing.entitlements && typeof billing.entitlements.reports_advanced === "boolean") {
+    return billing.entitlements.reports_advanced === true;
+  }
+  return billing.is_premium === true;
+}
+
 export function maxOperationalForecastDays(billing: BillingStatus | undefined | null): number {
   const fromServer = billing?.entitlements?.limits.operational_forecast_days;
   if (typeof fromServer === "number") return fromServer;

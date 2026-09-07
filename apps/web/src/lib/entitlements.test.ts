@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BillingStatus } from "@budget-app/shared";
-import { canUsePlaidBankSync, canUsePaymentPlannerFull, forecastOptionsForPlan, isPremium } from "./entitlements";
+import { canUsePlaidBankSync, canUsePaymentPlannerFull, canUseReportsAdvanced, forecastOptionsForPlan, isPremium } from "./entitlements";
 import { PLAID_PREMIUM_MESSAGE, PREMIUM_BENEFITS } from "./billing";
 
 const freeStatus: BillingStatus = {
@@ -15,6 +15,7 @@ const freeStatus: BillingStatus = {
     is_premium: false,
     plaid_bank_sync: false,
     payment_planner_full: false,
+    reports_advanced: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,
@@ -40,6 +41,11 @@ describe("launch entitlements", () => {
   it("does not grant Payment Planner full simulation to Free users", () => {
     expect(canUsePaymentPlannerFull(freeStatus)).toBe(false);
     expect(canUsePaymentPlannerFull(undefined)).toBe(false);
+  });
+
+  it("does not grant Advanced Reports to Free users", () => {
+    expect(canUseReportsAdvanced(freeStatus)).toBe(false);
+    expect(canUseReportsAdvanced(undefined)).toBe(false);
   });
 
   it("limits Free forecast options to 90 days", () => {

@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 FEATURE_PLAID_BANK_SYNC = "plaid_bank_sync"
 FEATURE_PAYMENT_PLANNER_FULL = "payment_planner_full"
+FEATURE_REPORTS_ADVANCED = "reports_advanced"
 FEATURE_LINKED_INSTITUTIONS = "linked_institutions"
 FEATURE_MANUAL_ACCOUNTS = "manual_accounts"
 FEATURE_RECURRING_RULES = "recurring_rules"
@@ -46,6 +47,11 @@ PLAID_SYNC_PAUSED_DETAIL = "Automatic bank syncing is paused on the Free plan."
 PAYMENT_PLANNER_FULL_DETAIL = (
     "Custom payoff simulations are available with Premium."
 )
+REPORTS_ADVANCED_DETAIL = (
+    "Historical cash-flow trends are available with Premium."
+)
+# Selected month + previous month (MoM comparison). Multi-month trends are Premium.
+FREE_REPORTS_HISTORY_MONTHS = 2
 
 
 class EntitlementDenied(APIException):
@@ -183,6 +189,7 @@ def build_entitlement_payload(user) -> dict[str, Any]:
         "is_premium": is_premium,
         "plaid_bank_sync": is_premium,
         FEATURE_PAYMENT_PLANNER_FULL: is_premium,
+        FEATURE_REPORTS_ADVANCED: is_premium,
         "limits": {
             FEATURE_LINKED_INSTITUTIONS: limits[FEATURE_LINKED_INSTITUTIONS],
             FEATURE_MANUAL_ACCOUNTS: limits[FEATURE_MANUAL_ACCOUNTS],
@@ -218,6 +225,34 @@ def require_payment_planner_full(user) -> None:
         detail=PAYMENT_PLANNER_FULL_DETAIL,
         code="premium_required",
     )
+
+
+def user_may_use_reports_advanced(user) -> bool:
+    """Read-only Premium check — do not create billing rows on report GET."""
+    from billing.models import BillingSubscription
+    from billing.services import subscription_grants_premium
+
+    billing = BillingSubscription.objects.filter(user_id=user.pk).first()
+    return subscription_grants_premium(billing)
+
+
+def require_reports_advanced(user) -> None:
+    """Block Premium-only historical/trend report depth."""
+    if user_may_use_reports_advanced(user):
+        return
+    raise EntitlementDenied(
+        feature=FEATURE_REPORTS_ADVANCED,
+        detail=REPORTS_ADVANCED_DETAIL,
+        code="premium_required",
+    )
+
+
+def resolve_reports_history_months(user, requested: int) -> int:
+    """Cap Free history to the basic window; Premium may request 1–36 months."""
+    history_months = max(1, min(int(requested), 36))
+    if user_may_use_reports_advanced(user):
+        return history_months
+    return min(history_months, FREE_REPORTS_HISTORY_MONTHS)
 
 
 def require_within_limit(user, feature: str, *, noun: str, extra: int = 1) -> None:

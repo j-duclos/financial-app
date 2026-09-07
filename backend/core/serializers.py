@@ -3,7 +3,8 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from .models import Household, HouseholdMembership, UserProfile
+from .feedback import FEEDBACK_MESSAGE_MAX_LENGTH, sanitize_feedback_message
+from .models import Feedback, Household, HouseholdMembership, ReviewPromptState, UserProfile
 from .phone_e164 import normalize_to_e164
 from common.services.forecast_horizon import (
     OPERATIONAL_FORECAST_WINDOW_DAYS,
@@ -34,6 +35,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "default_household",
             "default_account",
             "default_forecast_days",
+            "projected_funds_alerts_enabled",
+            "projected_funds_web_alerts",
+            "projected_funds_push_enabled",
+            "notify_3_days_before",
+            "notify_1_day_before",
+            "notify_day_of",
         ]
         read_only_fields = ["id", "username", "email", "email_verified"]
 
@@ -126,6 +133,9 @@ class HouseholdSerializer(serializers.ModelSerializer):
 
 class HouseholdDetailSerializer(HouseholdSerializer):
     memberships = HouseholdMembershipSerializer(many=True, read_only=True)
+
+    class Meta(HouseholdSerializer.Meta):
+        fields = [*HouseholdSerializer.Meta.fields, "memberships"]
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -226,4 +236,78 @@ class ResetPasswordSerializer(serializers.Serializer):
             validate_password(data["new_password"])
         except DjangoValidationError as exc:
             raise serializers.ValidationError({"new_password": list(exc.messages)}) from exc
+        return data
+
+
+class ReviewPromptStateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReviewPromptState
+        fields = [
+            "first_eligible_use_at",
+            "session_count",
+            "last_session_at",
+            "last_prompted_at",
+            "enjoyment_prompt_ats",
+            "enjoyment_response",
+            "review_asked_at",
+            "feedback_submitted_at",
+            "dismissed_until",
+            "review_flow_completed",
+        ]
+        read_only_fields = fields
+
+
+class ReviewPromptPatchSerializer(serializers.Serializer):
+    record_session = serializers.BooleanField(required=False)
+    mark_prompt_shown = serializers.BooleanField(required=False)
+    enjoyment_response = serializers.ChoiceField(
+        choices=["positive", "negative"], required=False, allow_blank=False
+    )
+    review_asked_at = serializers.BooleanField(required=False)
+    feedback_submitted = serializers.BooleanField(required=False)
+    dismissed_until = serializers.DateTimeField(required=False, allow_null=True)
+    review_flow_completed = serializers.BooleanField(required=False)
+
+
+class FeedbackCreateSerializer(serializers.Serializer):
+    source = serializers.ChoiceField(choices=Feedback.Source.choices, default=Feedback.Source.MOBILE)
+    platform = serializers.ChoiceField(
+        choices=Feedback.Platform.choices, default=Feedback.Platform.UNKNOWN
+    )
+    category = serializers.CharField(required=False, allow_blank=True, default="", max_length=32)
+    message = serializers.CharField(max_length=FEEDBACK_MESSAGE_MAX_LENGTH, allow_blank=False)
+    allow_contact = serializers.BooleanField(required=False, default=False)
+    app_version = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
+    build_number = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
+    device_os_version = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, default=""
+    )
+
+    def validate_message(self, value):
+        cleaned = sanitize_feedback_message(value)
+        if not cleaned:
+            raise serializers.ValidationError("Enter feedback.")
+        return cleaned
+
+    def validate_category(self, value):
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        valid = {choice.value for choice in Feedback.Category}
+        if raw not in valid:
+            raise serializers.ValidationError("Invalid category.")
+        return raw
+
+    def validate(self, data):
+        for key in (
+            "balance",
+            "balances",
+            "transactions",
+            "account_number",
+            "plaid_token",
+            "access_token",
+            "jwt",
+        ):
+            if key in self.initial_data:
+                raise serializers.ValidationError({key: "This field is not allowed."})
         return data

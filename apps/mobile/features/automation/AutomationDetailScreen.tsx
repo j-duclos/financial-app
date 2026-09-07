@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteRule,
   getRule,
@@ -37,10 +37,14 @@ import {
   resolveAutomationNextRun,
   triggerSummary,
 } from "./automationDisplay";
+import {
+  hasAdditionalRuleActivity,
+  historicalRuleActivityListParams,
+  previewHistoricalRuleActivity,
+  transactionsForAutomationRule,
+} from "./activityPreview";
 import { ExecutionHistoryRowView } from "./components/ExecutionHistoryRow";
 import { RuleSummaryCard } from "./components/RuleSummaryCard";
-
-const HISTORY_PAGE_SIZE = 25;
 
 export function AutomationDetailScreen() {
   const theme = useTheme();
@@ -57,25 +61,11 @@ export function AutomationDetailScreen() {
     enabled: Number.isInteger(ruleId) && ruleId > 0,
   });
 
-  const historyQuery = useInfiniteQuery({
-    queryKey: automationQueryKeys.history(ruleId, 0),
-    queryFn: ({ pageParam }) =>
-      listTransactions({
-        rule_id: ruleId,
-        page: pageParam,
-        page_size: HISTORY_PAGE_SIZE,
-        show_reconciled: true,
-      }),
-    initialPageParam: 1,
-    getNextPageParam: (lastPage, _pages, lastPageParam) =>
-      lastPage.next ? lastPageParam + 1 : undefined,
+  const activityQuery = useQuery({
+    queryKey: automationQueryKeys.activityPreview(ruleId, today),
+    queryFn: () => listTransactions(historicalRuleActivityListParams(ruleId, today)),
     enabled: Number.isInteger(ruleId) && ruleId > 0,
   });
-
-  const historyTransactions = useMemo(
-    () => historyQuery.data?.pages.flatMap((page) => page.results) ?? [],
-    [historyQuery.data?.pages]
-  );
 
   const pauseMutation = useMutation({
     mutationFn: () => pauseRule(ruleId),
@@ -105,12 +95,17 @@ export function AutomationDetailScreen() {
   const lifecycle = rule ? getRuleLifecycleStatus(rule, today) : "paused";
   const nextRun = rule ? resolveAutomationNextRun(rule, today) : null;
 
-  const historyRows = useMemo(
-    () => historyTransactions.map(buildExecutionHistoryRow),
-    [historyTransactions]
+  const activityTransactions = useMemo(
+    () => previewHistoricalRuleActivity(activityQuery.data?.results ?? [], today),
+    [activityQuery.data?.results, today]
   );
 
-  const hasMoreHistory = Boolean(historyQuery.hasNextPage);
+  const historyRows = useMemo(
+    () => activityTransactions.map(buildExecutionHistoryRow),
+    [activityTransactions]
+  );
+
+  const hasMoreActivity = activityQuery.data ? hasAdditionalRuleActivity(activityQuery.data) : false;
 
   if (ruleQuery.isLoading) {
     return (
@@ -157,10 +152,8 @@ export function AutomationDetailScreen() {
           <DetailRow label="Trigger" value={triggerSummary(rule)} />
           <DetailRow label="Action" value={actionSummary(rule)} />
           <DetailRow label="Start" value={formatDateDisplay(rule.start_date)} />
-          {rule.end_date ? <DetailRow label="End" value={formatDateDisplay(rule.end_date)} /> : null}
+          {rule.end_date ? <DetailRow label="Ends" value={formatDateDisplay(rule.end_date)} /> : null}
           <DetailRow label="Next run" value={formatNextRunDate(nextRun)} />
-          <DetailRow label="Created" value={formatDateDisplay(rule.created_at)} />
-          <DetailRow label="Updated" value={formatDateDisplay(rule.updated_at)} />
           {rule.paused_at ? (
             <DetailRow label="Paused since" value={formatDateDisplay(rule.paused_at)} />
           ) : null}
@@ -178,19 +171,19 @@ export function AutomationDetailScreen() {
           <View style={{ padding: theme.spacing.lg, paddingBottom: 0 }}>
             <SectionHeader
               title="Recent activity"
-              subtitle="Transactions created by this rule on the server"
+              subtitle="Latest historical transactions this rule created"
             />
           </View>
-          {historyQuery.isLoading ? (
+          {activityQuery.isLoading ? (
             <View style={{ padding: theme.spacing.lg }}>
               <ActivityIndicator color={theme.colors.tint} />
             </View>
-          ) : historyQuery.isError ? (
+          ) : activityQuery.isError ? (
             <View style={{ padding: theme.spacing.lg }}>
               <Text style={{ color: theme.colors.critical, marginBottom: 8 }}>
-                {describeApiError(historyQuery.error)}
+                {describeApiError(activityQuery.error)}
               </Text>
-              <Button label="Retry" variant="secondary" onPress={() => historyQuery.refetch()} />
+              <Button label="Retry" variant="secondary" onPress={() => activityQuery.refetch()} />
             </View>
           ) : historyRows.length === 0 ? (
             <Text style={{ color: theme.colors.textMuted, padding: theme.spacing.lg, fontSize: 13 }}>
@@ -205,13 +198,21 @@ export function AutomationDetailScreen() {
                   onPress={() => router.push(`/transaction/${row.transaction.id}`)}
                 />
               ))}
-              {hasMoreHistory ? (
+              {hasMoreActivity ? (
                 <View style={{ padding: theme.spacing.md }}>
                   <Button
-                    label="Load more activity"
+                    label="See all activity"
                     variant="secondary"
-                    loading={historyQuery.isFetchingNextPage}
-                    onPress={() => historyQuery.fetchNextPage()}
+                    onPress={() =>
+                      router.push(
+                        transactionsForAutomationRule({
+                          ruleId: rule.id,
+                          accountId: rule.account.id,
+                          dateFrom: rule.start_date.slice(0, 10),
+                          dateTo: today,
+                        })
+                      )
+                    }
                   />
                 </View>
               ) : null}

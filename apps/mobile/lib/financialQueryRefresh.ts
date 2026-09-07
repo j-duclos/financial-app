@@ -45,6 +45,7 @@ export const LIVE_QUERY_KEY_ROOTS = {
   whatIfAccounts: "what-if-accounts",
   onboarding: "onboarding",
   billingStatus: "billing-status",
+  projectedFundsAlerts: "projected-funds-alerts",
 } as const;
 
 /** Prefixes that must never appear in mutation invalidation helpers. */
@@ -76,6 +77,7 @@ export function invalidateForecastQueries(queryClient: QueryClient): void {
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.accountPayoff);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.accounts);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.account);
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.projectedFundsAlerts);
 }
 
 export function invalidateAccountQueries(queryClient: QueryClient): void {
@@ -161,6 +163,7 @@ export const FINANCIAL_QUERY_PREFIXES = [
   ["categories"],
   ["onboarding"],
   ["billing-status"],
+  ["projected-funds-alerts"],
 ] as const;
 
 /**

@@ -16,7 +16,7 @@ describe("Reports request orchestration", () => {
   });
 
   it("starts monthly report query when household id is available", () => {
-    expect(reportsData).toMatch(/enabled: householdId != null/);
+    expect(reportsData).toMatch(/enabled: householdId != null && billingReady/);
     expect(reportsData).toMatch(/getMonthlyReports/);
   });
 
@@ -37,5 +37,11 @@ describe("Reports request orchestration", () => {
     expect(reportDetail).toMatch(/useReportsData\(filters\)/);
     expect(reportsScreen).not.toMatch(/getMonthlyReports\(/);
     expect(reportDetail).not.toMatch(/getMonthlyReports\(/);
+  });
+
+  it("Free requests use effectiveReportHistoryMonths instead of always sending 6/12/24", () => {
+    expect(reportsData).toMatch(/effectiveReportHistoryMonths/);
+    expect(reportsData).toMatch(/months: historyMonths/);
+    expect(reportsData).not.toMatch(/months: filters\.historyMonths/);
   });
 });

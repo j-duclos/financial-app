@@ -86,6 +86,20 @@ npx expo start
 
 Auth uses JWT (`/api/auth/token/`, refresh via `/api/auth/refresh/`). Tokens are stored in **Expo SecureStore** (not AsyncStorage). Login and all feature APIs share the same `EXPO_PUBLIC_API_URL`.
 
+## Install on a physical iPhone (Xcode)
+
+See **`IOS_DEVICE.md`** for prebuild, CocoaPods, signing, and the LAN API checklist.
+
+```bash
+cd apps/mobile
+cp .env.local.example .env
+# Set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000
+npx expo prebuild -p ios
+cd ios && pod install && open *.xcworkspace
+```
+
+Or: `npx expo run:ios --device` (installs CocoaPods, builds, and deploys).
+
 ## Environments
 
 | `EXPO_PUBLIC_APP_ENV` | Use |
@@ -95,6 +109,17 @@ Auth uses JWT (`/api/auth/token/`, refresh via `/api/auth/refresh/`). Tokens are
 | `production` | Store builds; HTTPS required |
 
 Staging/production **fail at startup** if the URL is missing, non-HTTPS, or points at localhost/private networks — see `constants/env.ts`.
+
+## Store review and feedback
+
+| Variable / config | Purpose |
+|-------------------|---------|
+| `FEEDBACK_EMAIL_TO` (server) | Inbox for in-app feedback. Defaults to `feedback@example.com`. |
+| `EXPO_PUBLIC_IOS_APP_STORE_ID` | Numeric App Store id. Leave empty until assigned. |
+| `ANDROID_PACKAGE_NAME` (`app.config.ts`) | Play Store package (`com.budgetapp.mobile`). |
+| `EXPO_PUBLIC_GOOGLE_PLAY_STORE_URL` | Optional listing override; default is built from the package name. |
+
+Do not invent a production App Store id. Native review uses `expo-store-review` when the OS supports it.
 
 ## EAS / internal beta
 

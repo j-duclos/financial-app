@@ -1,4 +1,6 @@
 import pytest
+from datetime import date
+
 from rest_framework import status
 from django.urls import reverse
 
@@ -151,7 +153,7 @@ class TestCategoryViewSet:
         )
         Transaction.objects.create(
             account=account,
-            date="2025-01-01",
+            date=date(2025, 1, 1),
             payee="Store",
             amount="-50",
             category=cat,

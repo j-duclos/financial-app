@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { getBillsOverview, getRecurringRulesSummary, getSubscriptionIntelligence, listRules } from "@budget-app/api-client";
-import { formatCurrency } from "@budget-app/shared";
+import { formatCurrency, APP_NAME } from "@budget-app/shared";
 import RecurringDetailPanel from "../components/recurring/RecurringDetailPanel";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { currentMonthKey } from "../lib/billsDisplay";
@@ -343,7 +343,7 @@ export default function Recurring() {
           }
         >
           <p className="text-xs text-gray-500">
-            Recurring income and bills let Financial App project future balances.
+            Recurring income and bills let {APP_NAME} project future balances.
           </p>
         </EmptyState>
       )}

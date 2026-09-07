@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, configureApiClient, request } from "./config";
+import { ApiError, configureApiClient, fetchAuthenticatedFile, request } from "./config";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -155,5 +155,46 @@ describe("configureApiClient unauthorized handling", () => {
       status: 400,
       message: expect.stringContaining("source_account_id"),
     });
+  });
+});
+
+describe("fetchAuthenticatedFile", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    configureApiClient({
+      baseUrl: "http://test.local",
+      getAccessToken: () => "access-token",
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns bytes and Content-Disposition filename without using the DOM", async () => {
+    const body = new TextEncoder().encode('{"ok":true}');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-disposition"
+            ? 'attachment; filename="financial-app-export-2026-09-06.json"'
+            : name.toLowerCase() === "content-type"
+              ? "application/json"
+              : null,
+      },
+      arrayBuffer: async () => body.buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = await fetchAuthenticatedFile(
+      "/api/profile/export-data/",
+      "financial-app-data-2026-09-06.json"
+    );
+    expect(file.filename).toBe("financial-app-export-2026-09-06.json");
+    expect(file.contentType).toBe("application/json");
+    expect(Array.from(file.data.slice(0, 1))).toEqual([body[0]]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

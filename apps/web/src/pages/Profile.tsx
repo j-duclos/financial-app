@@ -6,7 +6,7 @@ import {
   listHouseholds,
   updateProfile,
 } from "@budget-app/api-client";
-import { getEffectiveDisplayName } from "@budget-app/shared";
+import { APP_TAGLINE, getEffectiveDisplayName } from "@budget-app/shared";
 import { useAuth } from "../context/AuthContext";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { useBillingStatus } from "../hooks/useBillingStatus";
@@ -15,6 +15,7 @@ import PlanBadge from "../components/billing/PlanBadge";
 import ChangeEmailSection from "../components/ChangeEmailSection";
 import AccountLifecycleSection from "../components/AccountLifecycleSection";
 import LegalPolicyLinks from "../components/legal/LegalPolicyLinks";
+import BrandLogo from "../components/brand/BrandLogo";
 import { PAGE_SHELL_PY_LOOSE } from "../lib/pageLayout";
 import { formatPhoneForDisplay, formatPhoneInput } from "../lib/phoneDisplay";
 import { accountsForHousehold, nextDefaultAccountId } from "../lib/profileDefaults";
@@ -84,6 +85,84 @@ function PasswordField({
         </p>
       ) : null}
     </div>
+  );
+}
+
+function AlertsPreferencesSection() {
+  const queryClient = useQueryClient();
+  const { data: profile } = useProfileQuery();
+  const save = useMutation({
+    mutationFn: (patch: Parameters<typeof updateProfile>[0]) => updateProfile(patch),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(PROFILE_QUERY_KEY, saved);
+    },
+  });
+  if (!profile) return null;
+  const master = profile.projected_funds_alerts_enabled !== false;
+  return (
+    <section
+      className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4 min-w-0"
+      data-testid="alerts-preferences"
+    >
+      <h2 className="text-lg font-medium text-gray-900">Alerts</h2>
+      <p className="text-sm text-gray-600">
+        FlowSight warns you when a scheduled payment is projected to overdraw an account. Risk is
+        calculated on the server.
+      </p>
+      <label className="flex items-center gap-2 text-sm text-gray-800">
+        <input
+          type="checkbox"
+          checked={master}
+          onChange={(e) => save.mutate({ projected_funds_alerts_enabled: e.target.checked })}
+        />
+        Projected low balance alerts
+      </label>
+      <label className="flex items-center gap-2 text-sm text-gray-800">
+        <input
+          type="checkbox"
+          checked={profile.projected_funds_web_alerts !== false}
+          disabled={!master}
+          onChange={(e) => save.mutate({ projected_funds_web_alerts: e.target.checked })}
+        />
+        Web alerts
+      </label>
+      <label className="flex items-center gap-2 text-sm text-gray-800">
+        <input
+          type="checkbox"
+          checked={profile.projected_funds_push_enabled !== false}
+          disabled={!master}
+          onChange={(e) => save.mutate({ projected_funds_push_enabled: e.target.checked })}
+        />
+        Push notifications
+      </label>
+      <fieldset className="space-y-2" disabled={!master}>
+        <legend className="text-sm font-medium text-gray-700">Warning lead time</legend>
+        <label className="flex items-center gap-2 text-sm text-gray-800">
+          <input
+            type="checkbox"
+            checked={profile.notify_3_days_before !== false}
+            onChange={(e) => save.mutate({ notify_3_days_before: e.target.checked })}
+          />
+          3 days before
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-800">
+          <input
+            type="checkbox"
+            checked={profile.notify_1_day_before !== false}
+            onChange={(e) => save.mutate({ notify_1_day_before: e.target.checked })}
+          />
+          1 day before
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-800">
+          <input
+            type="checkbox"
+            checked={profile.notify_day_of !== false}
+            onChange={(e) => save.mutate({ notify_day_of: e.target.checked })}
+          />
+          Day of
+        </label>
+      </fieldset>
+    </section>
   );
 }
 
@@ -380,6 +459,8 @@ export default function Profile() {
           </form>
         </div>
 
+        <AlertsPreferencesSection />
+
         <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4 min-w-0">
           <h2 className="text-lg font-medium text-gray-900">Security</h2>
           <form onSubmit={handleChangePassword} className="space-y-4" autoComplete="off">
@@ -431,6 +512,15 @@ export default function Profile() {
         </section>
       </div>
       <div className="mt-6 space-y-6">
+        <section
+          className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-3"
+          data-testid="settings-about-section"
+        >
+          <div className="text-center space-y-2">
+            <BrandLogo size="small" />
+            <p className="text-sm text-gray-600">{APP_TAGLINE}</p>
+          </div>
+        </section>
         <section
           className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-3"
           data-testid="settings-legal-section"

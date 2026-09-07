@@ -69,7 +69,7 @@ function matchesClientFilters(
   txn: Transaction,
   filters: TransactionFilters,
   timelineRow?: TimelineRow,
-  options?: { skipSearch?: boolean; skipCategory?: boolean }
+  options?: { skipSearch?: boolean; skipCategory?: boolean; skipRule?: boolean }
 ): boolean {
   const amount = Math.abs(parseFloat(txn.amount));
   if (filters.amountMin != null && amount < filters.amountMin) return false;
@@ -88,6 +88,10 @@ function matchesClientFilters(
   if (!options?.skipCategory && filters.categoryId != null) {
     const catId = txn.category?.id ?? txn.category_id;
     if (catId !== filters.categoryId) return false;
+  }
+
+  if (!options?.skipRule && filters.ruleId != null) {
+    if (txn.rule_id !== filters.ruleId) return false;
   }
 
   if (!options?.skipSearch && filters.search.trim()) {
@@ -118,6 +122,7 @@ function matchesTimelineClientFilters(row: TimelineRow, filters: TransactionFilt
     if (!row.description.toLowerCase().includes(q)) return false;
   }
   if (filters.categoryId != null && row.category_id !== filters.categoryId) return false;
+  if (filters.ruleId != null && row.rule_id !== filters.ruleId) return false;
   if (filters.accountId != null && row.account_id !== filters.accountId) return false;
   return true;
 }
@@ -254,6 +259,7 @@ export function buildTransactionListRows(input: {
           matchesClientFilters(txn, input.filters, undefined, {
             skipSearch: input.serverFilteredHistory && input.isSearchMode,
             skipCategory: input.serverFilteredHistory && input.filters.categoryId != null,
+            skipRule: input.serverFilteredHistory && input.filters.ruleId != null,
           })
         );
 

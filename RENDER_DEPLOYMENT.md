@@ -88,15 +88,15 @@ Set these in the Web Service → **Environment**:
 | `DATABASE_URL` | *(from Render Postgres)* | Required in production |
 | `DJANGO_SECRET_KEY` | `your-long-random-secret` | Generate a new one; never commit |
 | `DEBUG` | `False` | Optional on Render: defaults to **False** when `RENDER=true` (set explicitly if needed) |
-| `ALLOWED_HOSTS` | `budget-app-api.onrender.com` | `.onrender.com` is always allowed by settings |
-| `CSRF_TRUSTED_ORIGINS` | `https://budget-app-api.onrender.com,https://budget-app-web.onrender.com` | HTTPS, no trailing slash |
-| `CORS_ALLOWED_ORIGINS` | *(optional)* | Defaults to `RENDER_EXTERNAL_URL` when React is served from this service |
+| `ALLOWED_HOSTS` | `flowsight.com,www.flowsight.com,<service>.onrender.com` | `.onrender.com` is added only when `RENDER=true`. Include the custom domain before cutover. |
+| `CSRF_TRUSTED_ORIGINS` | `https://flowsight.com,https://www.flowsight.com` | HTTPS, no trailing slash |
+| `CORS_ALLOWED_ORIGINS` | `https://flowsight.com,https://www.flowsight.com` | No wildcard CORS. Production also merges those two origins when `DEBUG=false`. |
 | `PLAID_CLIENT_ID` | `…` | From Plaid Dashboard |
 | `PLAID_SECRET` or `PLAID_PRODUCTION_SECRET` | `…` | Must match `PLAID_ENV` |
 | `PLAID_ENV` | `production` | Use `sandbox` only for fake institutions |
 | `NODE_VERSION` | `20` | **Required** so `build.sh` can run `npm` (Render Python services) |
 | `PLAID_REDIRECT_URI` | `https://<your-app>.onrender.com/plaid/oauth-return` | Same host as the Web Service |
-| `PLAID_TOKEN_FERNET_KEY` | *(required after `loaddata`)* | Must match the machine that exported `data.json` — run `python manage.py plaid_fernet_key_for_render` locally and paste the line |
+| `PLAID_TOKEN_FERNET_KEY` | *(required in production)* | Required when `DEBUG=false`. Generate with Fernet; after a `data.json` import the key must match the export machine (`python manage.py plaid_fernet_key_for_render`). |
 | `PLAID_ENABLE_LIABILITIES` | `false` | Set `true` only after Plaid has approved/enabled the Liabilities product for this environment. Credit-card minimum sync stays off until then. |
 | `MINIMUM_PAYMENT_FRESHNESS_DAYS` | `45` | Days before an institution-reported minimum is labeled stale. Must be an integer ≥ 1. |
 | `PLAID_WEBHOOK_URL` | *(optional)* | Public HTTPS URL, e.g. `https://<api-host>/api/plaid/webhooks/liabilities/`. Leave unset to keep the webhook route inert. Do not commit a real URL. |
@@ -402,3 +402,16 @@ Local dev still uses `docker-compose.yml`, which builds from `backend/Dockerfile
 ### Redirect URI behavior (reference)
 - The **browser** sends `redirect_uri` on each link-token request (`VITE_PLAID_REDIRECT_URI` or `{origin}/plaid/oauth-return`).
 - **`PLAID_REDIRECT_URI`** is used when the client omits `redirect_uri` (CLI, tests). Keep it identical to the frontend value in production.
+
+## Projected insufficient-funds alerts (hourly Cron)
+
+Dashboard → **New → Cron Job**:
+
+- Root Directory: `backend`
+- Build: same Python env as the web service (or skip build and use the web image if you attach the job to it)
+- Command: `python manage.py evaluate_projected_funds_alerts`
+- Schedule: `0 * * * *`
+- Env: same `DATABASE_URL` and `REDIS_URL` as the web service
+
+Full Expo / APNs / FCM notes: `docs/PROJECTED_FUNDS_ALERTS.md`.
+

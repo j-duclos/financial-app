@@ -7,11 +7,19 @@ import {
 } from "@budget-app/shared";
 import {
   developmentEnvironmentLabel,
+  emailSettingsRow,
   forecastWindowOptions,
   forecastWindowPickerOptions,
   FORECAST_PREFERENCE_QUERY_PREFIXES,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,
+  clientDeleteAccountError,
+  clientPasswordErrors,
+  DELETE_CONFIRMATION,
+  profileEmailDisplay,
+  profileExportFallbackName,
+  shouldShowResendVerification,
+  transactionsCsvFallbackName,
 } from "./profileSettings";
 
 describe("profileSettings helpers", () => {
@@ -37,6 +45,7 @@ describe("profileSettings helpers", () => {
         is_premium: false,
         plaid_bank_sync: false,
         payment_planner_full: false,
+        reports_advanced: false,
         limits: {
           linked_institutions: 0,
           manual_accounts: 3,
@@ -62,6 +71,7 @@ describe("profileSettings helpers", () => {
         is_premium: true,
         plaid_bank_sync: true,
         payment_planner_full: true,
+        reports_advanced: true,
         limits: { ...free.entitlements!.limits, operational_forecast_days: 365 },
       },
     };
@@ -118,5 +128,69 @@ describe("profileSettings helpers", () => {
       )
     ).toBe(false);
     spy.mockRestore();
+  });
+
+  it("shows email, verification state, and Add email when blank", () => {
+    expect(profileEmailDisplay("joe@example.com")).toBe("joe@example.com");
+    expect(profileEmailDisplay("")).toBe("No email address");
+    expect(emailSettingsRow({ email: "joe@example.com", verified: true })).toEqual({
+      title: "Email",
+      value: "Verified",
+      subtitle: "joe@example.com",
+    });
+    expect(emailSettingsRow({ email: "joe@example.com", verified: false })).toEqual({
+      title: "Email",
+      value: "Not verified",
+      subtitle: "joe@example.com",
+    });
+    expect(emailSettingsRow({ email: "", verified: false })).toEqual({
+      title: "Email",
+      value: "Add email",
+    });
+    expect(shouldShowResendVerification({ email: "joe@example.com", verified: false })).toBe(true);
+    expect(shouldShowResendVerification({ email: "joe@example.com", verified: true })).toBe(false);
+    expect(shouldShowResendVerification({ email: "", verified: false })).toBe(false);
+  });
+
+  it("blocks password mismatch and missing current password", () => {
+    expect(
+      clientPasswordErrors({
+        currentPassword: "",
+        newPassword: "abcdefgh",
+        confirmPassword: "abcdefgh",
+      })?.current
+    ).toMatch(/current password/i);
+    expect(
+      clientPasswordErrors({
+        currentPassword: "oldpass1",
+        newPassword: "newpass12",
+        confirmPassword: "newpass13",
+      })?.confirm
+    ).toMatch(/do not match/i);
+    expect(
+      clientPasswordErrors({
+        currentPassword: "oldpass1",
+        newPassword: "newpass12",
+        confirmPassword: "newpass12",
+      })
+    ).toBeNull();
+  });
+
+  it("requires DELETE plus current password before account deletion", () => {
+    expect(DELETE_CONFIRMATION).toBe("DELETE");
+    expect(clientDeleteAccountError({ currentPassword: "", confirmation: "DELETE" })).toMatch(
+      /current password/i
+    );
+    expect(clientDeleteAccountError({ currentPassword: "secret", confirmation: "delete" })).toMatch(
+      /DELETE/
+    );
+    expect(clientDeleteAccountError({ currentPassword: "secret", confirmation: "DELETE" })).toBeNull();
+  });
+
+  it("uses dated export filenames without client-side CSV math", () => {
+    expect(profileExportFallbackName("2026-09-06")).toBe("financial-app-data-2026-09-06.json");
+    expect(transactionsCsvFallbackName("2026-09-06")).toBe(
+      "financial-app-transactions-2026-09-06.csv"
+    );
   });
 });

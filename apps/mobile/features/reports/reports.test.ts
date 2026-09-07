@@ -215,6 +215,46 @@ describe("Reports information architecture", () => {
   it("keeps Reports under More, not as a primary tab destination invent", () => {
     expect(moreScreen).toMatch(/title: "Reports"/);
     expect(moreScreen).toMatch(/href: "\/reports"/);
+    expect(moreScreen).toMatch(/SectionHeader title="Insights"/);
+    const insightsBlock = moreScreen.slice(
+      moreScreen.indexOf("const INSIGHTS_LINKS"),
+      moreScreen.indexOf("const SETUP_LINKS")
+    );
+    const setupBlock = moreScreen.slice(
+      moreScreen.indexOf("const SETUP_LINKS"),
+      moreScreen.indexOf("export function MoreScreen")
+    );
+    expect(insightsBlock).toMatch(/title: "Reports"/);
+    expect(setupBlock).not.toMatch(/title: "Reports"/);
+  });
+
+  it("places the filter icon in AppHeader.right, not a standalone toolbar row", () => {
+    expect(reportsScreen).toMatch(/right=\{/);
+    expect(reportsScreen).toMatch(/name="sliders"/);
+    expect(reportsScreen).toMatch(/Report filters/);
+    expect(reportsScreen).not.toMatch(/justifyContent: "flex-end", marginBottom: 4/);
+  });
+
+  it("does not duplicate the month label above PeriodSelector on detail", () => {
+    const periodIdx = reportDetail.indexOf("<PeriodSelector");
+    const beforePeriod = reportDetail.slice(0, periodIdx);
+    expect(beforePeriod).not.toMatch(/formatMonthLabel\(filters\.monthKey\)/);
+    expect(reportDetail).toMatch(/Updating \{formatMonthLabel\(monthKey\)\}/);
+  });
+
+  it("locks Cash Flow and 6/12/24 history for Free; requests basic history only", () => {
+    expect(reportsScreen).toMatch(/canUseReportsAdvanced|reportsAdvanced/);
+    expect(reportsScreen).toMatch(/promptUpgrade/);
+    expect(reportsScreen).toMatch(/REPORTS_ADVANCED_CASH_FLOW_MESSAGE/);
+    expect(reportsScreen).toMatch(/Premium/);
+    expect(reportDetail).toMatch(/reportsAdvanced/);
+    expect(reportDetail).toMatch(/showFundingHistory=\{reportsAdvanced\}/);
+    expect(reportDetail).toMatch(/showInterestHistory=\{reportsAdvanced\}/);
+    const reportsData = readFileSync(join(dir, "useReportsData.ts"), "utf8");
+    expect(reportsData).toMatch(/effectiveReportHistoryMonths/);
+    expect(reportsData).toMatch(/canUseReportsAdvanced/);
+    expect(reportsData).toMatch(/useBillingStatus/);
+    expect(reportsData).not.toMatch(/listTransactions/);
   });
 
   it("uses compact Overview nav sections without View * link clutter", () => {

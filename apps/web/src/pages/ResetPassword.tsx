@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { resetPassword } from "@budget-app/api-client";
+import BrandWordmark from "../components/brand/BrandWordmark";
 import PublicScreen from "../components/legal/PublicScreen";
 
 export default function ResetPassword() {
@@ -45,6 +46,9 @@ export default function ResetPassword() {
   return (
     <PublicScreen>
       <div className="max-w-md w-full space-y-6 p-8 bg-white rounded-lg shadow">
+        <div className="text-center">
+          <BrandWordmark size="small" />
+        </div>
         <h1 className="text-2xl font-bold text-center">Reset password</h1>
         {done ? (
           <div className="space-y-4">
