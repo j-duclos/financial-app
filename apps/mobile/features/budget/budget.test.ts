@@ -156,5 +156,6 @@ describe("Spending limit form threshold", () => {
     expect(formScreen).not.toMatch(/\|\| "80"/);
     expect(formScreen).toMatch(/getSpendingTarget/);
     expect(formScreen).toMatch(/Leave blank for server default/);
+    expect(formScreen).toMatch(/Alert me at/);
   });
 });

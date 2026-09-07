@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,19 +19,21 @@ import {
   SkeletonBlock,
   TextField,
 } from "@/components/ui";
+import { OptionsPickerSheet, SelectField } from "@/components/forms";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateSpendingTargetDependents } from "@/lib/financialQueryRefresh";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { budgetQueryKeys } from "./queryKeys";
-
-const PERIODS: { value: SpendingTargetPeriod; label: string }[] = [
-  { value: "weekly", label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
-  { value: "quarterly", label: "Quarterly" },
-  { value: "yearly", label: "Yearly" },
-];
+import {
+  SPENDING_LIMIT_PERIODS,
+  SPENDING_TYPE_OPTIONS,
+  normalizeLimitAmountInput,
+  spendingLimitCategoryPickerOptions,
+  validateSpendingLimitAmount,
+  validateSpendingLimitCategory,
+} from "./spendingLimitForm";
 
 export function SpendingLimitFormScreen() {
   const theme = useTheme();
@@ -50,7 +52,9 @@ export function SpendingLimitFormScreen() {
   const [notes, setNotes] = useState("");
   const [suggestReason, setSuggestReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ category?: string; amount?: string }>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
 
   const categoriesQuery = useCategoryOptions({
     householdId,
@@ -97,36 +101,40 @@ export function SpendingLimitFormScreen() {
     setSuggestReason(suggestionQuery.data.reason);
   }, [isEdit, categoryId, suggestionQuery.data]);
 
-  const expenseCategories = useMemo(() => {
-    const seen = new Set<string>();
-    return (categoriesQuery.categories ?? [])
-      .filter((c) => c.category_type === "EXPENSE" && !c.is_archived)
-      .filter((c) => {
-        const key = c.name.trim().toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [categoriesQuery.categories]);
+  const categoryOptions = useMemo(
+    () => spendingLimitCategoryPickerOptions(categoriesQuery.categories ?? []),
+    [categoriesQuery.categories]
+  );
+
+  const selectedCategoryName = useMemo(() => {
+    if (typeof categoryId !== "number") return null;
+    return (
+      categoryOptions.find((c) => c.id === String(categoryId))?.title ??
+      editingQuery.data?.category?.name ??
+      null
+    );
+  }, [categoryId, categoryOptions, editingQuery.data?.category?.name]);
+
+  const selectedTypeHelper =
+    SPENDING_TYPE_OPTIONS.find((opt) => opt.value === targetType)?.helper ?? null;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!householdId) throw new Error("No household selected.");
-      const body: Parameters<typeof createSpendingTarget>[0] = {
-        household: householdId,
-        category: categoryId as number,
+      if (typeof categoryId !== "number") throw new Error("Select a category.");
+      const payload = {
         target_amount: targetAmount.trim(),
         period,
         target_type: targetType,
-        notes: notes.trim() || undefined,
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(warningThreshold.trim() ? { warning_threshold_percent: warningThreshold.trim() } : {}),
       };
-      const threshold = warningThreshold.trim();
-      if (threshold) {
-        body.warning_threshold_percent = threshold;
-      }
-      if (isEdit) return updateSpendingTarget(editingId!, body);
-      return createSpendingTarget(body);
+      if (isEdit) return updateSpendingTarget(editingId!, payload);
+      return createSpendingTarget({
+        household: householdId,
+        category: categoryId,
+        ...payload,
+      } as Parameters<typeof createSpendingTarget>[0]);
     },
     onSuccess: () => {
       invalidateSpendingTargetDependents(queryClient);
@@ -144,10 +152,21 @@ export function SpendingLimitFormScreen() {
     onError: (err: Error) => setError(err.message || "Could not delete spending limit"),
   });
 
+  const onSave = () => {
+    setError(null);
+    const nextErrors = {
+      category: validateSpendingLimitCategory(categoryId) ?? undefined,
+      amount: validateSpendingLimitAmount(targetAmount) ?? undefined,
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.category || nextErrors.amount) return;
+    saveMutation.mutate();
+  };
+
   if (isEdit && editingQuery.isLoading) {
     return (
       <Screen>
-        <AppHeader title="Edit limit" onBack={() => router.back()} />
+        <AppHeader title="Edit spending limit" onBack={() => router.back()} />
         <SkeletonBlock lines={4} />
       </Screen>
     );
@@ -166,68 +185,122 @@ export function SpendingLimitFormScreen() {
       <AppHeader title={isEdit ? "Edit spending limit" : "Add spending limit"} onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ gap: theme.spacing.md, paddingBottom: 32 }}>
         {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
-        {suggestReason ? (
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>{suggestReason}</Text>
-        ) : null}
 
-        <ChipSection
-          label="Category"
-          options={expenseCategories.map((c) => ({ value: String(c.id), label: c.name }))}
-          selected={String(categoryId || "")}
-          onSelect={(v) => setCategoryId(Number(v))}
-          disabled={isEdit}
-        />
+        <View>
+          <SelectField
+            label="Category"
+            value={selectedCategoryName}
+            placeholder="Select category"
+            onPress={() => setCategoryPickerOpen(true)}
+            disabled={isEdit}
+            error={fieldErrors.category}
+          />
+          {isEdit ? (
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
+              Category cannot be changed after creating a limit.
+            </Text>
+          ) : null}
+        </View>
 
-        <TextField
+        <AffixedField
           label="Limit amount"
+          prefix="$"
           value={targetAmount}
-          onChangeText={setTargetAmount}
+          onChangeText={(v) => {
+            setTargetAmount(normalizeLimitAmountInput(v));
+            if (fieldErrors.amount) setFieldErrors((prev) => ({ ...prev, amount: undefined }));
+          }}
           keyboardType="decimal-pad"
+          placeholder="0.00"
+          error={fieldErrors.amount}
+          accessibilityLabel="Limit amount"
         />
 
         <ChipSection
           label="Period"
-          options={PERIODS.map((p) => ({ value: p.value, label: p.label }))}
+          options={SPENDING_LIMIT_PERIODS.map((p) => ({ value: p.value, label: p.label }))}
           selected={period}
           onSelect={(v) => setPeriod(v as SpendingTargetPeriod)}
         />
 
-        <ChipSection
-          label="Spending type"
-          options={[
-            { value: "variable", label: "Variable" },
-            { value: "fixed", label: "Fixed / scheduled" },
-          ]}
-          selected={targetType}
-          onSelect={(v) => setTargetType(v as SpendingTargetType)}
-        />
+        <View>
+          <ChipSection
+            label="Spending type"
+            options={SPENDING_TYPE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+            selected={targetType}
+            onSelect={(v) => setTargetType(v as SpendingTargetType)}
+          />
+          {selectedTypeHelper ? (
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 6 }}>
+              {selectedTypeHelper}
+            </Text>
+          ) : null}
+          {suggestReason ? (
+            <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 4 }}>
+              {suggestReason}
+            </Text>
+          ) : null}
+        </View>
 
-        <TextField
-          label="Warning threshold %"
-          value={warningThreshold}
-          onChangeText={setWarningThreshold}
-          keyboardType="number-pad"
-          placeholder="Leave blank for server default"
-        />
+        <View>
+          <AffixedField
+            label="Alert me at"
+            suffix="%"
+            value={warningThreshold}
+            onChangeText={setWarningThreshold}
+            keyboardType="number-pad"
+            placeholder="Leave blank for server default"
+            accessibilityLabel="Alert me at"
+          />
+          <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
+            Show a warning when spending reaches this percentage of the limit.
+          </Text>
+        </View>
 
-        <TextField label="Notes" value={notes} onChangeText={setNotes} multiline />
+        <TextField label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional" />
 
         <Button
           label={isEdit ? "Save changes" : "Create limit"}
           loading={saveMutation.isPending}
-          onPress={() => {
-            setError(null);
-            if (!categoryId || !targetAmount.trim()) {
-              setError("Category and limit amount are required.");
-              return;
-            }
-            saveMutation.mutate();
-          }}
+          onPress={onSave}
         />
+
         {isEdit ? (
-          <Button label="Delete limit" variant="danger" onPress={() => setConfirmDelete(true)} />
+          <View
+            style={{
+              marginTop: theme.spacing.xl,
+              paddingTop: theme.spacing.lg,
+              borderTopWidth: 1,
+              borderTopColor: theme.colors.border,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.colors.critical,
+                fontWeight: "600",
+                marginBottom: theme.spacing.sm,
+              }}
+            >
+              Danger zone
+            </Text>
+            <Button label="Delete limit" variant="danger" onPress={() => setConfirmDelete(true)} />
+          </View>
         ) : null}
       </ScrollView>
+
+      <OptionsPickerSheet
+        visible={categoryPickerOpen}
+        title="Category"
+        options={categoryOptions}
+        selectedId={typeof categoryId === "number" ? String(categoryId) : null}
+        searchPlaceholder="Search categories"
+        emptyMessage="No matching categories"
+        onClose={() => setCategoryPickerOpen(false)}
+        onSelect={(id) => {
+          setCategoryId(Number(id));
+          setFieldErrors((prev) => ({ ...prev, category: undefined }));
+        }}
+      />
 
       <ConfirmDialog
         visible={confirmDelete}
@@ -243,51 +316,121 @@ export function SpendingLimitFormScreen() {
   );
 }
 
+function AffixedField({
+  label,
+  prefix,
+  suffix,
+  value,
+  onChangeText,
+  keyboardType,
+  placeholder,
+  error,
+  accessibilityLabel,
+}: {
+  label: string;
+  prefix?: string;
+  suffix?: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  keyboardType: "decimal-pad" | "number-pad";
+  placeholder?: string;
+  error?: string;
+  accessibilityLabel: string;
+}) {
+  const theme = useTheme();
+  return (
+    <View>
+      <Text style={{ color: theme.colors.textSecondary, ...theme.typography.label, marginBottom: theme.spacing.xs }}>
+        {label}
+      </Text>
+      <View
+        style={{
+          minHeight: theme.touchTarget,
+          borderWidth: 1,
+          borderColor: error ? theme.colors.critical : theme.colors.border,
+          borderRadius: theme.radius.md,
+          paddingHorizontal: theme.spacing.md,
+          backgroundColor: theme.colors.surface,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        {prefix ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 16, marginRight: 6 }}>{prefix}</Text>
+        ) : null}
+        <TextInput
+          accessibilityLabel={accessibilityLabel}
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType={keyboardType}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.textMuted}
+          style={{ flex: 1, color: theme.colors.text, fontSize: 16, paddingVertical: 10 }}
+        />
+        {suffix ? (
+          <Text style={{ color: theme.colors.textMuted, fontSize: 16, marginLeft: 6 }}>{suffix}</Text>
+        ) : null}
+      </View>
+      {error ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={{ color: theme.colors.critical, ...theme.typography.caption, marginTop: 4 }}
+        >
+          {error}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function ChipSection({
   label,
   options,
   selected,
   onSelect,
-  disabled,
 }: {
   label: string;
   options: { value: string; label: string }[];
   selected: string;
   onSelect: (value: string) => void;
-  disabled?: boolean;
 }) {
   const theme = useTheme();
   return (
-    <View style={{ opacity: disabled ? 0.6 : 1 }}>
+    <View>
       <Text style={{ color: theme.colors.textSecondary, fontWeight: "600", marginBottom: 8 }}>{label}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {options.map((opt) => (
-          <Pressable
-            key={opt.value}
-            disabled={disabled}
-            onPress={() => onSelect(opt.value)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: selected === opt.value, disabled: !!disabled }}
-            style={{
-              paddingHorizontal: 10,
-              paddingVertical: 8,
-              borderRadius: 999,
-              backgroundColor: selected === opt.value ? theme.colors.tintMuted : theme.colors.surfaceMuted,
-              borderWidth: 1,
-              borderColor: selected === opt.value ? theme.colors.tint : theme.colors.border,
-            }}
-          >
-            <Text
+        {options.map((opt) => {
+          const isSelected = selected === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              onPress={() => onSelect(opt.value)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              accessibilityLabel={`${label}: ${opt.label}`}
               style={{
-                color: selected === opt.value ? theme.colors.tint : theme.colors.text,
-                fontWeight: "600",
-                fontSize: 13,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                minHeight: theme.touchTarget,
+                justifyContent: "center",
+                borderRadius: 999,
+                backgroundColor: isSelected ? theme.colors.tintMuted : theme.colors.surfaceMuted,
+                borderWidth: 1,
+                borderColor: isSelected ? theme.colors.tint : theme.colors.border,
               }}
             >
-              {opt.label}
-            </Text>
-          </Pressable>
-        ))}
+              <Text
+                style={{
+                  color: isSelected ? theme.colors.tint : theme.colors.text,
+                  fontWeight: "600",
+                  fontSize: 13,
+                }}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );

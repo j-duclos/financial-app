@@ -57,6 +57,7 @@ describe("shared form import boundaries", () => {
     "features/recurring/RecurringFormScreen.tsx",
     "features/goals/GoalFormScreen.tsx",
     "features/categories/CategoryFormScreen.tsx",
+    "features/budget/SpendingLimitFormScreen.tsx",
     "features/what-if/forms/NewRecurringSheet.tsx",
     "features/reconcile/ReconcileScreen.tsx",
     "features/profile/ProfileSettingsScreen.tsx",
