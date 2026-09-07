@@ -95,7 +95,8 @@ describe("calendarUtils", () => {
           is_negative: true,
           transactions: [],
         },
-        "2026-08-29"
+        "2026-08-29",
+        "2026-08-28"
       )
     ).toBe("critical");
   });
@@ -117,7 +118,8 @@ describe("calendarUtils", () => {
           is_negative: true,
           transactions: [],
         },
-        "2026-08-27"
+        "2026-08-27",
+        "2026-08-28"
       )
     ).toBe("healthy");
   });

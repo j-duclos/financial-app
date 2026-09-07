@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { resolveRuleOccurrence } from "@budget-app/api-client";
 import { calendarMonthFromIsoDate, getEffectiveDisplayName, parseIsoDateParam } from "@budget-app/shared";
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
@@ -32,6 +32,7 @@ import {
 } from "./calendarPresentation";
 import {
   getCalendarEventDestination,
+  getCalendarUnmaterializedOccurrencePlan,
   navigateToCalendarEventDestination,
 } from "./calendarEventNavigation";
 import {
@@ -170,31 +171,32 @@ export function CalendarScreen() {
     async (txn: TimelineCalendarTransaction) => {
       const destination = getCalendarEventDestination(txn);
       if (destination) {
-        navigateToCalendarEventDestination(router as { push: (path: string) => void }, destination);
+        navigateToCalendarEventDestination(router, destination);
         return;
       }
-      if (txn.rule_id && txn.account_id && txn.date) {
-        router.push(`/recurring/${txn.rule_id}`);
-        return;
-      }
-      if (txn.rule_id && txn.account_id && selectedDate) {
-        const key = `${txn.rule_id}-${selectedDate}`;
+      const plan = getCalendarUnmaterializedOccurrencePlan(txn);
+      if (plan?.kind === "resolve") {
+        const key = `${plan.ruleId}-${plan.occurrenceDate}`;
         setResolvingId(key);
         try {
           const result = await resolveRuleOccurrence({
-            rule_id: txn.rule_id,
-            account_id: txn.account_id,
-            occurrence_date: selectedDate,
+            rule_id: plan.ruleId,
+            account_id: plan.accountId,
+            occurrence_date: plan.occurrenceDate,
           });
-          router.push(`/transaction/${result.transaction_id}`);
+          router.push(`/transaction/${result.transaction_id}` as Href);
         } catch {
-          router.push(`/recurring/${txn.rule_id}`);
+          router.push(`/recurring/${plan.ruleId}` as Href);
         } finally {
           setResolvingId(null);
         }
+        return;
+      }
+      if (plan?.kind === "recurring") {
+        router.push(`/recurring/${plan.ruleId}` as Href);
       }
     },
-    [router, selectedDate]
+    [router]
   );
 
   const onAccountRiskPress = useCallback(() => {
@@ -301,7 +303,7 @@ export function CalendarScreen() {
             }
             message={
               visibleMonthRangeState === "before_history"
-                ? "This month is before the loaded history window. Choose a more recent month or widen history in filters."
+                ? "This month is before the loaded history window. Choose a more recent month."
                 : "This month is outside the current forecast/history range. Adjust your forecast window to include it."
             }
           />

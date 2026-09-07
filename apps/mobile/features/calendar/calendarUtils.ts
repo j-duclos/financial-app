@@ -136,10 +136,13 @@ export function dayHasActivity(day: TimelineCalendarDay): boolean {
 export type DaySeverity = "neutral" | "healthy" | "watch" | "critical";
 
 /** @deprecated Prefer calendarDayPresentationStatus from calendarPresentation.ts */
-export function daySeverity(day: TimelineCalendarDay, dateIso?: string): DaySeverity {
+export function daySeverity(
+  day: TimelineCalendarDay,
+  dateIso?: string,
+  todayIso: string = todayStr()
+): DaySeverity {
   // Lazy import pattern avoided — re-export presentation mapping inline for compat.
   const iso = dateIso ?? day.date;
-  const todayIso = todayStr();
   if (iso < todayIso) {
     return dayHasActivity(day) ? "healthy" : "neutral";
   }

@@ -8,6 +8,8 @@ import {
   calendarAccountRiskPresentation,
   calendarDateState,
   calendarPastAccountEndingLabel,
+  calendarSelectedDayEmptyCopy,
+  calendarSelectedDayEndingMetricLabel,
 } from "./calendarPresentation";
 import {
   dayHasActivity,
@@ -81,7 +83,7 @@ export function CalendarDaySummary({
           <Metric label="Expenses" amount={resolved.expense_total} tone="negative" />
           {showCanonicalAccountEnding ? (
             <Metric
-              label="Ending balance"
+              label={calendarSelectedDayEndingMetricLabel(dateState)}
               amount={resolved.ending_balance}
               tone={parseCalendarAmount(resolved.ending_balance) < 0 ? "negative" : "neutral"}
             />
@@ -89,11 +91,7 @@ export function CalendarDaySummary({
         </View>
         {!hasActivity ? (
           <Text style={{ color: theme.colors.textSecondary, marginTop: 12, ...theme.typography.body }}>
-            {dateState === "past"
-              ? "No financial activity recorded for this day."
-              : dateState === "today"
-                ? "No remaining activity expected for today."
-                : "No financial activity projected for this day."}
+            {calendarSelectedDayEmptyCopy(dateState)}
           </Text>
         ) : dateState === "past" && isAccountScope ? (
           <Text style={{ color: theme.colors.textMuted, marginTop: 8, fontSize: 12 }}>

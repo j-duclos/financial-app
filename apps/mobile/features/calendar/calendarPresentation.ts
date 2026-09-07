@@ -3,6 +3,7 @@ import type {
   TimelineCalendarPresentationStatus,
   TimelineCalendarSummary,
 } from "@budget-app/shared";
+import { formatCurrency } from "@budget-app/shared";
 import { formatDateDisplay } from "@/lib/dates";
 import { todayStr } from "@/lib/dates";
 import { parseCalendarAmount } from "./calendarUtils";
@@ -332,7 +333,7 @@ export function nextCashShortfallBanner(
 
   const title = isCritical ? "Next cash shortfall" : "Next below-buffer day";
   const subtitle = isCritical
-    ? `${accountName} · ${shortDate} · ${projectedBalance ?? "—"}`
+    ? `${accountName} · ${shortDate} · ${projectedBalance != null ? formatCurrency(projectedBalance) : "—"}`
     : `${accountName} may dip below buffer ${shortDate}`;
 
   const rawTxnId = dayOnRiskDate?.lowest_projected_balance_transaction_id;
@@ -356,6 +357,88 @@ export function noCashShortfallsCopy(forecastDays: number): string {
   return `No cash shortfalls in the next ${forecastDays} days`;
 }
 
+export type CalendarDayFlowCounts = {
+  income: number;
+  expense: number;
+  transfer: number;
+};
+
+/** Event counts from loaded day transactions — not dollar amounts. */
+export function calendarDayFlowCounts(day: TimelineCalendarDay): CalendarDayFlowCounts {
+  let income = 0;
+  let expense = 0;
+  let transfer = 0;
+  for (const txn of day.transactions) {
+    if (txn.is_transfer) {
+      transfer += 1;
+      continue;
+    }
+    const amount = parseCalendarAmount(txn.amount);
+    if (amount > 0) income += 1;
+    else if (amount < 0) expense += 1;
+  }
+  return { income, expense, transfer };
+}
+
+export type CalendarDayCellFlowMarkers = {
+  incomeLabel: string | null;
+  expenseLabel: string | null;
+};
+
+/**
+ * Compact grid markers: +2 / -5 from event counts.
+ * If the day has income/expense totals but no listed events, show + / - without a fake count.
+ */
+export function calendarDayCellFlowMarkers(day: TimelineCalendarDay): CalendarDayCellFlowMarkers {
+  const counts = calendarDayFlowCounts(day);
+  const incomeFromTotal = parseCalendarAmount(day.income_total) > 0;
+  const expenseFromTotal = parseCalendarAmount(day.expense_total) > 0;
+  return {
+    incomeLabel: counts.income > 0 ? `+${counts.income}` : incomeFromTotal ? "+" : null,
+    expenseLabel: counts.expense > 0 ? `-${counts.expense}` : expenseFromTotal ? "-" : null,
+  };
+}
+
+export function calendarDaySpokenDate(dateIso: string): string {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+}
+
+export function calendarSelectedDayEmptyCopy(dateState: CalendarDateState): string {
+  if (dateState === "today") return "No remaining activity expected for today.";
+  return "No activity expected for this day.";
+}
+
+export function calendarSelectedDayEndingMetricLabel(dateState: CalendarDateState): string {
+  return dateState === "past" ? "Ending balance" : "Projected ending balance";
+}
+
+function flowActivityPhrase(counts: CalendarDayFlowCounts, day: TimelineCalendarDay): string {
+  const incomeActivity = counts.income > 0 || parseCalendarAmount(day.income_total) > 0;
+  const expenseActivity = counts.expense > 0 || parseCalendarAmount(day.expense_total) > 0;
+  const incomePhrase =
+    counts.income === 1
+      ? "1 income event"
+      : counts.income > 1
+        ? `${counts.income} income events`
+        : incomeActivity
+          ? "Income activity"
+          : "No income";
+  const expensePhrase =
+    counts.expense === 1
+      ? "1 expense"
+      : counts.expense > 1
+        ? `${counts.expense} expenses`
+        : expenseActivity
+          ? "Expense activity"
+          : "No expenses";
+  if (counts.income > 0 && counts.expense > 0) {
+    return `${incomePhrase} and ${expensePhrase}.`;
+  }
+  return `${incomePhrase}. ${expensePhrase}.`;
+}
+
 export function calendarDayAccessibilityLabel(
   day: TimelineCalendarDay,
   dateIso: string,
@@ -363,13 +446,17 @@ export function calendarDayAccessibilityLabel(
 ): string {
   const status = calendarDayPresentationStatus(day, dateIso, todayIso);
   const state = calendarDateState(dateIso, todayIso);
-  const events = day.transactions.length;
-  const net = parseCalendarAmount(day.net_total);
-  const parts = [dateIso, state, status.replace(/_/g, " ")];
-  if (events > 0) parts.push(`${events} events`);
-  if (net !== 0) parts.push(`net ${net.toFixed(2)}`);
-  if (status === "future_critical" || status === "today_critical") {
-    parts.push("projected negative balance");
+  const counts = calendarDayFlowCounts(day);
+  const parts = [calendarDaySpokenDate(dateIso) + "."];
+  if (state === "today") parts.push("Today.");
+  parts.push(flowActivityPhrase(counts, day));
+  if (counts.transfer > 0) {
+    parts.push(counts.transfer === 1 ? "1 transfer." : `${counts.transfer} transfers.`);
   }
-  return parts.join(", ");
+  if (status === "future_critical" || status === "today_critical") {
+    parts.push("Cash shortfall projected.");
+  } else if (status === "future_warning" || status === "today_warning") {
+    parts.push("Below buffer.");
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
 }

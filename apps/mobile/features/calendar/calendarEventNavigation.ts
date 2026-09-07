@@ -1,4 +1,5 @@
 import type { TimelineCalendarTransaction } from "@budget-app/shared";
+import type { Href } from "expo-router";
 import type { TransactionRowDestination } from "@/features/transactions/transactionRowNavigation";
 import {
   transactionRowDetailPath,
@@ -62,8 +63,32 @@ export function getCalendarEventDestination(
   return { type: "detail", transactionId: txn.transaction_id };
 }
 
+/**
+ * Unmaterialized recurring forecast rows: resolve the single occurrence for
+ * navigation (backend finds-or-creates that date only), else open the rule.
+ */
+export function getCalendarUnmaterializedOccurrencePlan(
+  txn: TimelineCalendarTransaction
+):
+  | { kind: "resolve"; ruleId: number; accountId: number; occurrenceDate: string }
+  | { kind: "recurring"; ruleId: number }
+  | null {
+  if (txn.transaction_id != null) return null;
+  if (txn.rule_id == null || !Number.isInteger(txn.rule_id) || txn.rule_id <= 0) return null;
+  const occurrenceDate = (txn.date ?? "").trim().slice(0, 10);
+  if (txn.account_id && occurrenceDate) {
+    return {
+      kind: "resolve",
+      ruleId: txn.rule_id,
+      accountId: txn.account_id,
+      occurrenceDate,
+    };
+  }
+  return { kind: "recurring", ruleId: txn.rule_id };
+}
+
 export function navigateToCalendarEventDestination(
-  router: { push: (path: string) => void },
+  router: { push: (href: Href) => void },
   destination: TransactionRowDestination
 ): void {
   router.push(

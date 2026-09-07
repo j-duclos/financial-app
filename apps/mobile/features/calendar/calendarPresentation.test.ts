@@ -2,14 +2,20 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { formatCurrency } from "@budget-app/shared";
 import type { TimelineCalendarDay, TimelineCalendarSummary, TimelineCalendarTransaction } from "@budget-app/shared";
 import {
   calendarAccountRiskPresentation,
-  calendarDateState,
+  calendarDayAccessibilityLabel,
+  calendarDayCellFlowMarkers,
+  calendarDayFlowCounts,
   calendarDayPresentationStatus,
   calendarDayShowsAccountRisk,
+  calendarDaySpokenDate,
   calendarGridTone,
   calendarDaySummaryShowsCanonicalEnding,
+  calendarSelectedDayEmptyCopy,
+  calendarSelectedDayEndingMetricLabel,
   nextCashShortfallBanner,
   noCashShortfallsCopy,
   resolveCalendarDayCellChrome,
@@ -17,6 +23,7 @@ import {
 import { calendarEventStatusLabel } from "./calendarEventNavigation";
 import {
   getCalendarEventDestination,
+  getCalendarUnmaterializedOccurrencePlan,
   prefersDirectEditFromCalendar,
 } from "./calendarEventNavigation";
 import { daySeverity, selectedDateAfterMonthChange } from "./calendarUtils";
@@ -64,13 +71,14 @@ describe("month selection regression", () => {
     expect(source).toMatch(/goToMonth/);
   });
 
-  it("CalendarDayCell uses expense > 0 for positive expense_total", () => {
+  it("CalendarDayCell uses signed income/expense count markers", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "CalendarDayCell.tsx"),
       "utf8"
     );
-    expect(source).toMatch(/expense > 0/);
-    expect(source).not.toMatch(/expense < 0/);
+    expect(source).toMatch(/calendarDayCellFlowMarkers/);
+    expect(source).not.toMatch(/arrow-down/);
+    expect(source).not.toMatch(/arrow-up/);
   });
 });
 
@@ -319,6 +327,8 @@ describe("household day summary fields", () => {
     expect(summarySource).not.toMatch(/label="Net"/);
     expect(summarySource).toMatch(/label="Income"/);
     expect(summarySource).toMatch(/label="Expenses"/);
+    expect(summarySource).toMatch(/calendarSelectedDayEndingMetricLabel/);
+    expect(summarySource).toMatch(/calendarSelectedDayEmptyCopy/);
   });
 });
 
@@ -573,7 +583,7 @@ describe("nextCashShortfallBanner", () => {
   it("uses human-readable copy instead of ISO dates", () => {
     const banner = nextCashShortfallBanner(summary);
     expect(banner?.title).toBe("Next cash shortfall");
-    expect(banner?.subtitle).toMatch(/Main · Sep 2 · -522\.54/);
+    expect(banner?.subtitle).toBe(`Main · Sep 2 · ${formatCurrency("-522.54")}`);
     expect(banner?.subtitle).not.toMatch(/2026-09-02/);
   });
 
@@ -702,7 +712,8 @@ describe("daySeverity legacy compat", () => {
           has_risk: true,
           lowest_balance: "-50",
         }),
-        YESTERDAY
+        YESTERDAY,
+        TODAY
       )
     ).toBe("neutral");
   });
@@ -716,7 +727,8 @@ describe("daySeverity legacy compat", () => {
           is_negative: true,
           lowest_balance: "-50",
         }),
-        TOMORROW
+        TOMORROW,
+        TODAY
       )
     ).toBe("critical");
   });
@@ -748,6 +760,9 @@ describe("shortfall banner navigation wiring", () => {
     );
     expect(source).toMatch(/transactionsForForecastRiskPath/);
     expect(source).toMatch(/getCalendarEventDestination/);
+    expect(source).toMatch(/getCalendarUnmaterializedOccurrencePlan/);
+    expect(source).toMatch(/resolveRuleOccurrence/);
+    expect(source).not.toMatch(/materializeTimeline/);
   });
 });
 
@@ -770,5 +785,122 @@ describe("month grid styling source", () => {
     );
     expect(source).not.toMatch(/risk_flag/);
     expect(source).not.toMatch(/exclamation-triangle/);
+  });
+});
+
+describe("day cell flow markers and accessibility", () => {
+  it("counts income and expense events, not dollar amounts", () => {
+    const day = sampleDay({
+      date: "2026-09-18",
+      income_total: "300",
+      expense_total: "50",
+      transactions: [
+        sampleTxn({ id: 1, amount: "200", is_transfer: false }),
+        sampleTxn({ id: 2, amount: "100", is_transfer: false }),
+        sampleTxn({ id: 3, amount: "-50", is_transfer: false }),
+      ],
+    });
+    expect(calendarDayFlowCounts(day)).toEqual({ income: 2, expense: 1, transfer: 0 });
+    expect(calendarDayCellFlowMarkers(day)).toEqual({ incomeLabel: "+2", expenseLabel: "-1" });
+  });
+
+  it("falls back to unsigned + / - when totals exist without listed events", () => {
+    const day = sampleDay({
+      income_total: "100",
+      expense_total: "3100",
+      transactions: [],
+    });
+    expect(calendarDayFlowCounts(day)).toEqual({ income: 0, expense: 0, transfer: 0 });
+    expect(calendarDayCellFlowMarkers(day)).toEqual({ incomeLabel: "+", expenseLabel: "-" });
+  });
+
+  it("describes expenses without implying bank-pending or using color alone", () => {
+    const day = sampleDay({
+      date: "2026-09-02",
+      expense_total: "80",
+      transactions: [
+        sampleTxn({ id: 1, amount: "-40" }),
+        sampleTxn({ id: 2, amount: "-40" }),
+      ],
+    });
+    const label = calendarDayAccessibilityLabel(day, "2026-09-02", "2026-09-01");
+    expect(label).toContain(calendarDaySpokenDate("2026-09-02"));
+    expect(label).toMatch(/2 expenses/i);
+    expect(label).toMatch(/No income/i);
+    expect(label).not.toMatch(/2026-09-02,/);
+  });
+
+  it("describes mixed income and expense events", () => {
+    const day = sampleDay({
+      date: "2026-09-18",
+      transactions: [
+        sampleTxn({ id: 1, amount: "10" }),
+        sampleTxn({ id: 2, amount: "20" }),
+        sampleTxn({ id: 3, amount: "30" }),
+        sampleTxn({ id: 4, amount: "-5" }),
+      ],
+    });
+    const label = calendarDayAccessibilityLabel(day, "2026-09-18", "2026-09-01");
+    expect(label).toMatch(/3 income events and 1 expense/i);
+  });
+});
+
+describe("selected-day empty copy and ending label", () => {
+  it("uses today wording only for today", () => {
+    expect(calendarSelectedDayEmptyCopy("today")).toBe("No remaining activity expected for today.");
+    expect(calendarSelectedDayEmptyCopy("future")).toBe("No activity expected for this day.");
+    expect(calendarSelectedDayEmptyCopy("past")).toBe("No activity expected for this day.");
+    expect(calendarSelectedDayEmptyCopy("future")).not.toMatch(/today/i);
+    expect(calendarSelectedDayEmptyCopy("past")).not.toMatch(/today/i);
+  });
+
+  it("labels account ending as projected for future days", () => {
+    expect(calendarSelectedDayEndingMetricLabel("future")).toBe("Projected ending balance");
+    expect(calendarSelectedDayEndingMetricLabel("today")).toBe("Projected ending balance");
+    expect(calendarSelectedDayEndingMetricLabel("past")).toBe("Ending balance");
+  });
+});
+
+describe("unmaterialized recurring occurrence navigation", () => {
+  it("resolves a rule occurrence that has no transaction_id", () => {
+    const txn = sampleTxn({
+      transaction_id: null,
+      rule_id: 9,
+      account_id: 3,
+      date: "2026-09-18",
+      source: "RULE",
+      status: "PLANNED",
+    });
+    expect(getCalendarEventDestination(txn)).toBeNull();
+    expect(getCalendarUnmaterializedOccurrencePlan(txn)).toEqual({
+      kind: "resolve",
+      ruleId: 9,
+      accountId: 3,
+      occurrenceDate: "2026-09-18",
+    });
+  });
+
+  it("falls back to recurring detail when account or date is missing", () => {
+    const txn = sampleTxn({
+      transaction_id: null,
+      rule_id: 9,
+      account_id: null,
+      date: undefined,
+      source: "RULE",
+    });
+    expect(getCalendarUnmaterializedOccurrencePlan(txn)).toEqual({
+      kind: "recurring",
+      ruleId: 9,
+    });
+  });
+
+  it("does not plan resolve when a materialized transaction_id exists", () => {
+    const txn = sampleTxn({
+      transaction_id: 44,
+      rule_id: 9,
+      account_id: 3,
+      date: "2026-09-18",
+    });
+    expect(getCalendarUnmaterializedOccurrencePlan(txn)).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import { calendarDayCellSizeStyle } from "./calendarLayout";
 import {
   calendarDayAccessibilityLabel,
   calendarDateState,
+  calendarDayCellFlowMarkers,
   calendarDayPresentationStatus,
   calendarGridShowsRiskIndicator,
   calendarGridTone,
@@ -14,7 +15,7 @@ import {
   type CalendarDayCellChrome,
   type CalendarGridTone,
 } from "./calendarPresentation";
-import { dayHasActivity, parseCalendarAmount } from "./calendarUtils";
+import { dayHasActivity } from "./calendarUtils";
 import { todayStr } from "@/lib/dates";
 
 type Props = {
@@ -78,14 +79,12 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
   });
   const colors = chromeColors(chrome, theme);
   const active = day ? dayHasActivity(day) : false;
-  const income = day ? parseCalendarAmount(day.income_total) : 0;
-  const expense = day ? parseCalendarAmount(day.expense_total) : 0;
-  const transfer = day ? parseCalendarAmount(day.transfer_total) : 0;
-  const eventCount = day?.transactions.length ?? 0;
+  const flowMarkers = day ? calendarDayCellFlowMarkers(day) : { incomeLabel: null, expenseLabel: null };
   const showRiskIndicator = calendarGridShowsRiskIndicator(presentationStatus);
   const ariaLabel = day
     ? calendarDayAccessibilityLabel(day, dateIso, todayIso)
     : `${dateIso}, no calendar data`;
+  const showFlowRow = active || showRiskIndicator;
 
   return (
     <Pressable
@@ -115,20 +114,22 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
       >
         {dayNum}
       </Text>
-      {active ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 1 }}>
-          {income > 0 ? (
-            <FontAwesome name="arrow-down" size={8} color={theme.colors.moneyPositive} accessibilityLabel="Income" />
+      {showFlowRow ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1 }}>
+          {flowMarkers.incomeLabel ? (
+            <Text
+              style={{ color: theme.colors.moneyPositive, fontSize: 9, fontWeight: "700" }}
+              accessibilityElementsHidden
+            >
+              {flowMarkers.incomeLabel}
+            </Text>
           ) : null}
-          {expense > 0 ? (
-            <FontAwesome name="arrow-up" size={8} color={theme.colors.moneyNegative} accessibilityLabel="Expense" />
-          ) : null}
-          {transfer !== 0 ? (
-            <FontAwesome name="exchange" size={7} color={theme.colors.textMuted} accessibilityLabel="Transfer" />
-          ) : null}
-          {eventCount > 0 ? (
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: "600" }}>
-              {eventCount}
+          {flowMarkers.expenseLabel ? (
+            <Text
+              style={{ color: theme.colors.moneyNegative, fontSize: 9, fontWeight: "700" }}
+              accessibilityElementsHidden
+            >
+              {flowMarkers.expenseLabel}
             </Text>
           ) : null}
           {showRiskIndicator ? (
@@ -136,7 +137,7 @@ export const CalendarDayCell = React.memo(function CalendarDayCell({
               name="exclamation-circle"
               size={9}
               color={riskDotColor(riskTone, theme)}
-              accessibilityLabel="Forecast risk"
+              accessibilityElementsHidden
             />
           ) : null}
         </View>
