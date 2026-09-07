@@ -55,6 +55,7 @@ import {
   goalsQueryKeys,
   invalidateGoalLifecycleQueries,
 } from "./queryKeys";
+import { useGoalPlanLimit } from "./useGoalPlanLimit";
 
 type BucketsOverviewCache = {
   summary: GoalsAggregateSummary;
@@ -162,6 +163,7 @@ export function GoalDetailScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { householdId } = useDefaultHouseholdId();
+  const { interceptIfLimited } = useGoalPlanLimit();
   const { id } = useLocalSearchParams<{ id: string }>();
   const goalId = Number(id);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -225,6 +227,7 @@ export function GoalDetailScreen() {
         router.push(goalWhatIfPath(goal.id));
         break;
       case "duplicate":
+        if (interceptIfLimited()) return;
         duplicateMu.mutate(goal.id);
         break;
       case "pause":
@@ -443,7 +446,6 @@ export function GoalDetailScreen() {
       <GoalActionsSheet
         visible={actionsOpen}
         goal={goal}
-        includeWhatIf
         onClose={() => setActionsOpen(false)}
         onAction={onAction}
       />

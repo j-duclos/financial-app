@@ -174,9 +174,10 @@ describe("Goal detail presentation", () => {
 
   it("detail uses overflow menu instead of giant Edit/What-If buttons", () => {
     expect(goalDetailSource).toMatch(/GoalActionsSheet/);
-    expect(goalDetailSource).toMatch(/includeWhatIf/);
+    expect(goalDetailSource).not.toMatch(/includeWhatIf/);
     expect(goalDetailSource).not.toMatch(/label="Edit goal"/);
     expect(goalDetailSource).not.toMatch(/label="What-If"/);
+    expect(goalDetailSource).not.toMatch(/Run What-If/);
   });
 
   it("does not label the full account ledger as Related transactions", () => {

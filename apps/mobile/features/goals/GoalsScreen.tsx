@@ -28,6 +28,7 @@ import { GoalCard, GoalSectionHeader } from "./GoalCard";
 import { GoalActionsSheet, type GoalActionId } from "./GoalActionsSheet";
 import { goalCreatePath, goalDetailPath, goalEditPath, goalWhatIfPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalLifecycleQueries } from "./queryKeys";
+import { useGoalPlanLimit } from "./useGoalPlanLimit";
 import type { FinancialGoal } from "@budget-app/shared";
 
 function SummaryStat({ label, value }: { label: string; value: string }) {
@@ -47,6 +48,7 @@ export function GoalsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { householdId, isReady } = useDefaultHouseholdId();
+  const { usageLabel, interceptIfLimited } = useGoalPlanLimit();
   const [actionsGoal, setActionsGoal] = useState<FinancialGoal | null>(null);
   const [deleteGoal, setDeleteGoal] = useState<FinancialGoal | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
@@ -102,6 +104,11 @@ export function GoalsScreen() {
     },
   });
 
+  const onCreateGoal = useCallback(() => {
+    if (interceptIfLimited()) return;
+    router.push(goalCreatePath());
+  }, [interceptIfLimited, router]);
+
   const onAction = (action: GoalActionId) => {
     const goal = actionsGoal;
     if (!goal) return;
@@ -114,6 +121,7 @@ export function GoalsScreen() {
         router.push(goalWhatIfPath(goal.id));
         break;
       case "duplicate":
+        if (interceptIfLimited()) return;
         duplicateMu.mutate(goal.id);
         break;
       case "pause":
@@ -172,10 +180,22 @@ export function GoalsScreen() {
           <IconButton
             name="plus"
             accessibilityLabel="Create goal"
-            onPress={() => router.push(goalCreatePath())}
+            onPress={onCreateGoal}
           />
         }
       />
+
+      {usageLabel ? (
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.caption,
+            marginTop: theme.spacing.sm,
+          }}
+        >
+          {usageLabel}
+        </Text>
+      ) : null}
 
       {isLoading ? (
         <SkeletonBlock lines={8} />
@@ -209,7 +229,7 @@ export function GoalsScreen() {
               title="No goals yet"
               message="Create a goal to track savings, debt payoff, or another financial target."
               actionLabel="Create goal"
-              onAction={() => router.push(goalCreatePath())}
+              onAction={onCreateGoal}
             />
           ) : (
             <View style={{ gap: theme.spacing.sm }}>

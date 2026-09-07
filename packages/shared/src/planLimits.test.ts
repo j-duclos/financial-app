@@ -17,6 +17,8 @@ import {
   lockedForecastUpsellMessage,
   manualAccountLimitReachedMessage,
   manualAccountUsageLabel,
+  goalUsageLabel,
+  goalLimitReachedMessage,
   maxOperationalForecastDays,
 } from "./planLimits";
 
@@ -132,5 +134,53 @@ describe("plan limits", () => {
     expect(manualAccountLimitReachedMessage(atLimit)).toBe(
       "You've reached the Free plan limit of 3 manual accounts."
     );
+  });
+
+  it("reports Free goal usage from billing and intercepts at the limit", () => {
+    const belowLimit: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, goals: 1 },
+      },
+    };
+    expect(goalUsageLabel(belowLimit)).toBe("1 of 2 goals");
+    expect(atPlanLimit(belowLimit, "goals")).toBe(false);
+
+    const atLimit: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, goals: 2 },
+      },
+    };
+    expect(goalUsageLabel(atLimit)).toBe("2 of 2 goals");
+    expect(atPlanLimit(atLimit, "goals")).toBe(true);
+    expect(goalLimitReachedMessage(atLimit)).toBe("You've reached the Free plan limit of 2 goals.");
+
+    expect(goalUsageLabel(premiumStatus)).toBeNull();
+    expect(atPlanLimit(premiumStatus, "goals")).toBe(false);
+  });
+
+  it("does not invent goal quota from a local completed/archived count", () => {
+    const billingUsageOne: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, goals: 1 },
+      },
+    };
+    expect(atPlanLimit(billingUsageOne, "goals")).toBe(false);
+    expect(goalUsageLabel(billingUsageOne)).toBe("1 of 2 goals");
+
+    const missingUsage: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, goals: undefined as unknown as number },
+      },
+    };
+    expect(atPlanLimit(missingUsage, "goals")).toBe(false);
+    expect(goalUsageLabel(missingUsage)).toBeNull();
   });
 });

@@ -26,6 +26,7 @@ import {
 import {
   AppHeader,
   Button,
+  EmptyState,
   ErrorState,
   Screen,
   SkeletonBlock,
@@ -50,6 +51,8 @@ import { goalDetailPath, goalsListPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalFundingQueries, invalidateGoalMetadataQueries } from "./queryKeys";
 import { invalidateForecastQueries } from "@/lib/financialQueryRefresh";
 import { describeApiError } from "@/services/api";
+import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
+import { useGoalPlanLimit } from "./useGoalPlanLimit";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
 
@@ -167,6 +170,13 @@ export function GoalFormScreen() {
   const isEdit = editingId != null && Number.isInteger(editingId) && editingId > 0;
 
   const { householdId, isReady } = useDefaultHouseholdId();
+  const {
+    billing,
+    billingLoading,
+    goalsLimited,
+    limitReachedMessage,
+    startUpgrade,
+  } = useGoalPlanLimit();
   const [form, setForm] = useState<GoalFormValues>(emptyGoalForm);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -269,6 +279,9 @@ export function GoalFormScreen() {
 
   const saveMu = useMutation({
     mutationFn: async (values: GoalFormValues) => {
+      if (!isEdit && goalsLimited) {
+        throw new Error(limitReachedMessage);
+      }
       const body = buildGoalBucketPayload(householdId!, values);
       const saved = isEdit
         ? await updateBucket(editingId!, body)
@@ -295,6 +308,7 @@ export function GoalFormScreen() {
 
   const onSubmit = () => {
     if (saveMu.isPending) return;
+    if (!isEdit && goalsLimited) return;
     setSubmitError(null);
     const nextErrors = validateGoalForm(form);
     if (goalFormHasErrors(nextErrors)) {
@@ -364,7 +378,11 @@ export function GoalFormScreen() {
     title: o.label,
   }));
 
-  if (!isReady || (isEdit && overviewQuery.isLoading && !editing)) {
+  if (
+    !isReady ||
+    (isEdit && overviewQuery.isLoading && !editing) ||
+    (!isEdit && billingLoading && billing == null)
+  ) {
     return (
       <Screen scroll={false}>
         <SkeletonBlock lines={8} />
@@ -376,6 +394,21 @@ export function GoalFormScreen() {
     return (
       <Screen scroll={false}>
         <ErrorState message="Goal not found." onRetry={() => router.push(goalsListPath())} />
+      </Screen>
+    );
+  }
+
+  if (!isEdit && goalsLimited) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title="Create goal" showBack backFallbackHref={goalsListPath()} />
+        <EmptyState
+          title="Goal limit reached"
+          message={limitReachedMessage}
+          actionLabel={UPGRADE_TO_PREMIUM_LABEL}
+          actionVariant="primary"
+          onAction={() => void startUpgrade()}
+        />
       </Screen>
     );
   }

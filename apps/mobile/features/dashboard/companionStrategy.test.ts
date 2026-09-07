@@ -42,13 +42,10 @@ describe("mobile companion navigation", () => {
   });
 });
 
-describe("deferred Recurring and Goals entitlement UX", () => {
+describe("deferred Recurring entitlement UX", () => {
   it("still offers unlimited-looking create actions; backend remains the guard", () => {
     const recurring = read("features/recurring/RecurringListScreen.tsx");
-    const goals = read("features/goals/GoalsScreen.tsx");
     expect(recurring).toMatch(/Add recurring/);
     expect(recurring).not.toMatch(/atPlanLimit/);
-    expect(goals).toMatch(/Create goal/);
-    expect(goals).not.toMatch(/atPlanLimit/);
   });
 });

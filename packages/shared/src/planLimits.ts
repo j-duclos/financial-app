@@ -133,3 +133,16 @@ export function manualAccountLimitReachedMessage(
   const limit = billing?.entitlements?.limits.manual_accounts ?? FREE_PLAN_LIMITS.manual_accounts;
   return `You've reached the Free plan limit of ${limit} manual accounts.`;
 }
+
+export function goalUsageLabel(billing: BillingStatus | undefined | null): string | null {
+  if (isPremium(billing)) return null;
+  const limit = billing?.entitlements?.limits.goals ?? FREE_PLAN_LIMITS.goals;
+  const usage = billing?.entitlements?.usage.goals;
+  if (limit == null || typeof usage !== "number") return null;
+  return `${usage} of ${limit} goals`;
+}
+
+export function goalLimitReachedMessage(billing: BillingStatus | undefined | null): string {
+  const limit = billing?.entitlements?.limits.goals ?? FREE_PLAN_LIMITS.goals;
+  return `You've reached the Free plan limit of ${limit} goals.`;
+}
