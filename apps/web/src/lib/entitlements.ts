@@ -16,6 +16,14 @@ export function canUsePlaidBankSync(billing: BillingStatus | undefined | null): 
   return billing.is_premium === true;
 }
 
+export function canUsePaymentPlannerFull(billing: BillingStatus | undefined | null): boolean {
+  if (!billing) return false;
+  if (billing.entitlements && typeof billing.entitlements.payment_planner_full === "boolean") {
+    return billing.entitlements.payment_planner_full === true;
+  }
+  return billing.is_premium === true;
+}
+
 export function maxOperationalForecastDays(billing: BillingStatus | undefined | null): number {
   const fromServer = billing?.entitlements?.limits.operational_forecast_days;
   if (typeof fromServer === "number") return fromServer;

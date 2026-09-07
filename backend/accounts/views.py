@@ -15,6 +15,7 @@ from rest_framework.viewsets import ModelViewSet
 from core.models import UserProfile
 from core.utils import get_households_for_user
 from core.permissions import IsHouseholdMember
+from billing.entitlements import require_payment_planner_full
 from transactions.models import Transaction, TransactionMatch, Transfer
 from transactions.services import (
     clear_all_transactions_for_account,
@@ -680,6 +681,7 @@ class AccountViewSet(ModelViewSet):
     @action(detail=True, methods=["get"], url_path="payoff/compare")
     def payoff_compare(self, request, pk=None):
         """Compare payoff projections across payment strategies."""
+        require_payment_planner_full(request.user)
         account = self.get_object()
         if account.account_type != Account.AccountType.CREDIT:
             return Response(

@@ -20,8 +20,8 @@ type Props = {
 };
 
 /**
- * Live what-if inputs. Debounce lives in the parent so one plan refetch
- * happens after typing settles — no separate apply button.
+ * Extra-payment / lump-sum simulator. User-facing name is "Adjust plan"
+ * (not the separate What-If / Planning Lab).
  */
 export function WhatIfPanel({
   creditCards,

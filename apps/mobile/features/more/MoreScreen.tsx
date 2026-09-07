@@ -15,7 +15,6 @@ import { useTheme } from "@/theme";
 const PLANNING_LINKS = [
   { title: "Goals", href: "/goals", subtitle: "Savings and debt goals" },
   { title: "Payment Planner", href: "/payment-planner", subtitle: "Credit payment strategies" },
-  { title: "What-If", href: "/what-if", subtitle: "Scenario comparisons" },
   { title: "Spending Limits", href: "/spending-limits", subtitle: "Category spending targets" },
 ] as const;
 

@@ -21,6 +21,10 @@ export const PREMIUM_PLAN_FORECAST_DAYS = 365;
 export const PLAID_PREMIUM_MESSAGE =
   "Automatic bank syncing is available with Premium.";
 
+export const PAYMENT_PLANNER_FULL_UPSELL_TITLE = "Build a custom payoff plan";
+export const PAYMENT_PLANNER_FULL_UPSELL_BODY =
+  "Premium lets you compare strategies, model extra payments and lump sums, and see month-by-month payoff projections.";
+
 export type PlanLimitedFeature = "manual_accounts" | "recurring_rules" | "goals";
 
 export function isPremium(billing: BillingStatus | undefined | null): boolean {
@@ -30,6 +34,18 @@ export function isPremium(billing: BillingStatus | undefined | null): boolean {
 export function canUsePlaidBankSync(billing: BillingStatus | undefined | null): boolean {
   if (!billing) return false;
   if (billing.entitlements) return billing.entitlements.plaid_bank_sync === true;
+  return billing.is_premium === true;
+}
+
+/**
+ * Full Payment Planner (strategy, extra/lump simulation, month-by-month, per-card scenarios).
+ * Unknown billing is treated as Free so clients do not fire Premium-only simulation queries.
+ */
+export function canUsePaymentPlannerFull(billing: BillingStatus | undefined | null): boolean {
+  if (!billing) return false;
+  if (billing.entitlements && typeof billing.entitlements.payment_planner_full === "boolean") {
+    return billing.entitlements.payment_planner_full === true;
+  }
   return billing.is_premium === true;
 }
 

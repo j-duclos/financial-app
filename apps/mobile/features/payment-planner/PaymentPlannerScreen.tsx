@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import type { DebtPayoffMode, DebtPayoffStrategy, PayoffStrategy } from "@budget-app/shared";
+import { canUsePaymentPlannerFull } from "@budget-app/shared";
 import {
   AppHeader,
   EmptyState,
@@ -12,9 +13,12 @@ import {
 } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { DebtDetailSheet } from "./DebtDetailSheet";
 import { DebtPriorityRow } from "./DebtPriorityRow";
 import { PlannerSummaryCard } from "./PlannerSummaryCard";
+import { PremiumUpsellCard } from "./PremiumUpsellCard";
 import { StrategyModePanel } from "./StrategyModePanel";
 import { WhatIfPanel } from "./WhatIfPanel";
 import {
@@ -24,7 +28,7 @@ import {
   WHAT_IF_NUMERIC_DEBOUNCE_MS,
 } from "./display";
 import { planDetailsPath } from "./navigation";
-import type { PlannerScenarioInputs } from "./queryKeys";
+import { BASELINE_PLANNER_INPUTS, type PlannerScenarioInputs } from "./queryKeys";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   useAccountPayoffProjection,
@@ -39,6 +43,9 @@ const NEUTRAL_EXTRA_MONTHLY = "0";
 export function PaymentPlannerScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { billing } = useBillingStatus();
+  const plannerFull = canUsePaymentPlannerFull(billing);
+  const { startUpgrade } = usePremiumUpgrade();
   const params = useLocalSearchParams<{
     account?: string;
     strategy?: string;
@@ -64,16 +71,16 @@ export function PaymentPlannerScreen() {
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const lumpReady = Number(debouncedLumpSum) > 0 && lumpSumAccountId != null;
-  const scenarioInputs: PlannerScenarioInputs = useMemo(
-    () => ({
+  const scenarioInputs: PlannerScenarioInputs = useMemo(() => {
+    if (!plannerFull) return BASELINE_PLANNER_INPUTS;
+    return {
       strategy,
       mode,
       extraMonthly: debouncedExtraMonthly,
       lumpSum: lumpReady ? debouncedLumpSum : "",
       lumpSumAccountId: lumpReady ? lumpSumAccountId : null,
-    }),
-    [strategy, mode, debouncedExtraMonthly, debouncedLumpSum, lumpSumAccountId, lumpReady]
-  );
+    };
+  }, [plannerFull, strategy, mode, debouncedExtraMonthly, debouncedLumpSum, lumpSumAccountId, lumpReady]);
 
   const accountsQuery = usePaymentPlannerAccounts();
   const creditCards = useCreditCardsFromAccounts(accountsQuery.data?.results);
@@ -98,6 +105,7 @@ export function PaymentPlannerScreen() {
   }, [params.account]);
 
   useEffect(() => {
+    if (!plannerFull) return;
     if (params.strategy === "custom_amount" && params.amount) {
       setCardStrategy("custom_amount");
       setAmountInput(params.amount);
@@ -105,14 +113,14 @@ export function PaymentPlannerScreen() {
     } else if (params.strategy === "minimum_payment") {
       setCardStrategy("minimum_payment");
     }
-  }, [params.strategy, params.amount]);
+  }, [plannerFull, params.strategy, params.amount]);
 
   const projectionQuery = useAccountPayoffProjection({
     account: selectedAccount,
     planCard: selectedPlanCard,
     strategy: cardStrategy,
     amountInput: cardStrategy === "custom_amount" ? appliedAmountInput : amountInput,
-    enabled: !!selectedAccount && !!selectedPlanCard,
+    enabled: plannerFull && !!selectedAccount && !!selectedPlanCard,
   });
 
   /**
@@ -188,7 +196,11 @@ export function PaymentPlannerScreen() {
 
       {plan ? (
         <>
-          <PlannerSummaryCard plan={plan} recalculating={planQuery.isFetching && !planQuery.isLoading} />
+          <PlannerSummaryCard
+            plan={plan}
+            recalculating={planQuery.isFetching && !planQuery.isLoading}
+            showExtraPayment={plannerFull}
+          />
           {recommended && focusCard ? (
             <Pressable
               onPress={() => setSelectedAccountId(focusCard.account_id)}
@@ -207,7 +219,9 @@ export function PaymentPlannerScreen() {
                 {focusCard.name} · {focusCard.apr}% APR
               </Text>
               <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}>
-                Pay this debt first under {debtStrategyLabel(strategy)}.
+                {plannerFull
+                  ? `Pay this debt first under ${debtStrategyLabel(strategy)}.`
+                  : recommended}
               </Text>
             </Pressable>
           ) : null}
@@ -216,84 +230,91 @@ export function PaymentPlannerScreen() {
         <SkeletonBlock lines={3} />
       ) : null}
 
-      <StrategyModePanel
-        strategy={strategy}
-        mode={mode}
-        onStrategyChange={setStrategy}
-        onModeChange={setMode}
-      />
+      {plannerFull ? (
+        <>
+          <StrategyModePanel
+            strategy={strategy}
+            mode={mode}
+            onStrategyChange={setStrategy}
+            onModeChange={setMode}
+          />
 
-      <WhatIfPanel
-        creditCards={creditCards}
-        extraMonthly={extraMonthly}
-        lumpSum={lumpSum}
-        lumpSumAccountId={lumpSumAccountId}
-        mode={mode}
-        monthlyBudget={plan?.monthly_payment_budget}
-        onExtraMonthlyChange={setExtraMonthly}
-        onLumpSumChange={setLumpSum}
-        onLumpSumAccountChange={setLumpSumAccountId}
-        onSwitchToAggressive={() => setMode("aggressive")}
-      />
+          <WhatIfPanel
+            creditCards={creditCards}
+            extraMonthly={extraMonthly}
+            lumpSum={lumpSum}
+            lumpSumAccountId={lumpSumAccountId}
+            mode={mode}
+            monthlyBudget={plan?.monthly_payment_budget}
+            onExtraMonthlyChange={setExtraMonthly}
+            onLumpSumChange={setLumpSum}
+            onLumpSumAccountChange={setLumpSumAccountId}
+            onSwitchToAggressive={() => setMode("aggressive")}
+          />
 
-      {plan && plan.recommendations.length > 0 ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <SectionHeader title="Recommendations" />
-          {plan.recommendations.slice(0, 3).map((rec) => (
-            <Text
-              key={rec.id}
-              style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginBottom: 6 }}
+          {plan && plan.recommendations.length > 0 ? (
+            <View style={{ marginBottom: theme.spacing.md }}>
+              <SectionHeader title="Recommendations" />
+              {plan.recommendations.slice(0, 3).map((rec) => (
+                <Text
+                  key={rec.id}
+                  style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginBottom: 6 }}
+                >
+                  • {rec.message}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+          {plan && plan.timeline.length > 0 ? (
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: planDetailsPath(),
+                  params: {
+                    strategy,
+                    mode,
+                    extraMonthly: extraMonthly,
+                    lumpSum: lumpSum,
+                    lumpSumAccountId: lumpSumAccountId
+                      ? String(lumpSumAccountId)
+                      : "",
+                  },
+                })
+              }
+              accessibilityRole="button"
+              style={{
+                minHeight: theme.touchTarget,
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: theme.spacing.md,
+                borderTopWidth: 1,
+                borderBottomWidth: 1,
+                borderColor: theme.colors.border,
+                paddingVertical: 12,
+              }}
             >
-              • {rec.message}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-
-      {plan && plan.timeline.length > 0 ? (
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: planDetailsPath(),
-              params: {
-                strategy,
-                mode,
-                extraMonthly: extraMonthly,
-                lumpSum: lumpSum,
-                lumpSumAccountId: lumpSumAccountId
-                  ? String(lumpSumAccountId)
-                  : "",
-              },
-            })
-          }
-          accessibilityRole="button"
-          style={{
-            minHeight: theme.touchTarget,
-            flexDirection: "row",
-            alignItems: "center",
-            marginBottom: theme.spacing.md,
-            borderTopWidth: 1,
-            borderBottomWidth: 1,
-            borderColor: theme.colors.border,
-            paddingVertical: 12,
-          }}
-        >
-          <Text style={{ flex: 1, color: theme.colors.text, fontWeight: "600" }}>
-            Month-by-month projection
-          </Text>
-          <Text style={{ color: theme.colors.textMuted }}>›</Text>
-        </Pressable>
+              <Text style={{ flex: 1, color: theme.colors.text, fontWeight: "600" }}>
+                Month-by-month projection
+              </Text>
+              <Text style={{ color: theme.colors.textMuted }}>›</Text>
+            </Pressable>
+          ) : null}
+        </>
       ) : null}
 
       {plan ? (
         <>
-          <SectionHeader title="Payoff order" subtitle="Tap a debt for payment scenarios" />
+          <SectionHeader
+            title="Payoff order"
+            subtitle={plannerFull ? "Tap a debt for payment scenarios" : "Tap a debt for details"}
+          />
           {plan.cards.map((card) => (
             <DebtPriorityRow
               key={card.account_id}
               card={card}
               selected={selectedAccountId === card.account_id}
-              showUtilization={strategy === "utilization_target" || mode === "credit_score"}
+              showUtilization={plannerFull && (strategy === "utilization_target" || mode === "credit_score")}
               onPress={() =>
                 setSelectedAccountId((prev) =>
                   prev === card.account_id ? null : card.account_id
@@ -304,12 +325,17 @@ export function PaymentPlannerScreen() {
         </>
       ) : null}
 
+      {!plannerFull ? (
+        <PremiumUpsellCard onUpgrade={() => void startUpgrade()} />
+      ) : null}
+
       {selectedAccount && selectedPlanCard ? (
         <DebtDetailSheet
           visible
           account={selectedAccount}
           planCard={selectedPlanCard}
           globalPlan={plan}
+          plannerFull={plannerFull}
           cardStrategy={cardStrategy}
           amountInput={amountInput}
           onStrategyChange={setCardStrategy}
@@ -318,10 +344,12 @@ export function PaymentPlannerScreen() {
             setAmountInput(amount);
             setAppliedAmountInput(amount);
           }}
-          projection={projectionQuery.data}
-          projectionLoading={projectionQuery.isFetching}
+          projection={plannerFull ? projectionQuery.data : undefined}
+          projectionLoading={plannerFull && projectionQuery.isFetching}
           projectionError={
-            projectionQuery.error instanceof Error ? projectionQuery.error.message : null
+            plannerFull && projectionQuery.error instanceof Error
+              ? projectionQuery.error.message
+              : null
           }
           onClose={() => setSelectedAccountId(null)}
         />

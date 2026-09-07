@@ -177,10 +177,21 @@ class TestPayoffApi:
         assert r.status_code == 200
         assert r.json()["strategy"] == "custom_amount" or "payment_amount" in r.json()
 
-    def test_payoff_compare_endpoint(self, auth_client, credit_card):
+    def test_payoff_compare_endpoint(self, auth_client, credit_card, user):
+        from billing.tests.helpers import grant_premium
+
+        grant_premium(user)
         r = auth_client.get(f"/api/accounts/{credit_card.pk}/payoff/compare/")
         assert r.status_code == 200
         assert "strategies" in r.json()
+
+    def test_payoff_compare_requires_premium(self, auth_client, credit_card):
+        r = auth_client.get(f"/api/accounts/{credit_card.pk}/payoff/compare/")
+        assert r.status_code == 403
+        body = r.json()
+        assert body["code"] == "premium_required"
+        assert body["feature"] == "payment_planner_full"
+        assert body["upgrade_required"] is True
 
 
 @pytest.mark.django_db

@@ -44,6 +44,7 @@ const freeStatus: BillingStatus = {
     plan: "FREE",
     is_premium: false,
     plaid_bank_sync: false,
+    payment_planner_full: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,

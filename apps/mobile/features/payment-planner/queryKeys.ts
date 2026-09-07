@@ -8,6 +8,15 @@ export type PlannerScenarioInputs = {
   lumpSumAccountId: number | null;
 };
 
+/** Canonical Free/basic household plan — avalanche + aggressive + $0 extra. */
+export const BASELINE_PLANNER_INPUTS: PlannerScenarioInputs = {
+  strategy: "avalanche",
+  mode: "aggressive",
+  extraMonthly: "0",
+  lumpSum: "",
+  lumpSumAccountId: null,
+};
+
 export const paymentPlannerQueryKeys = {
   accounts: ["accounts", "debt-planner"] as const,
   plan: (inputs: PlannerScenarioInputs) =>

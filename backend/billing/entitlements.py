@@ -16,6 +16,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
 FEATURE_PLAID_BANK_SYNC = "plaid_bank_sync"
+FEATURE_PAYMENT_PLANNER_FULL = "payment_planner_full"
 FEATURE_LINKED_INSTITUTIONS = "linked_institutions"
 FEATURE_MANUAL_ACCOUNTS = "manual_accounts"
 FEATURE_RECURRING_RULES = "recurring_rules"
@@ -42,6 +43,9 @@ PREMIUM_LIMITS: dict[str, int | None] = {
 
 PLAID_PREMIUM_DETAIL = "Automatic bank syncing is available with Premium."
 PLAID_SYNC_PAUSED_DETAIL = "Automatic bank syncing is paused on the Free plan."
+PAYMENT_PLANNER_FULL_DETAIL = (
+    "Custom payoff simulations are available with Premium."
+)
 
 
 class EntitlementDenied(APIException):
@@ -178,6 +182,7 @@ def build_entitlement_payload(user) -> dict[str, Any]:
         "plan": "PREMIUM" if is_premium else "FREE",
         "is_premium": is_premium,
         "plaid_bank_sync": is_premium,
+        FEATURE_PAYMENT_PLANNER_FULL: is_premium,
         "limits": {
             FEATURE_LINKED_INSTITUTIONS: limits[FEATURE_LINKED_INSTITUTIONS],
             FEATURE_MANUAL_ACCOUNTS: limits[FEATURE_MANUAL_ACCOUNTS],
@@ -196,6 +201,21 @@ def require_plaid_bank_sync(user, *, sync: bool = False) -> None:
     raise EntitlementDenied(
         feature=FEATURE_PLAID_BANK_SYNC,
         detail=PLAID_SYNC_PAUSED_DETAIL if sync else PLAID_PREMIUM_DETAIL,
+        code="premium_required",
+    )
+
+
+def user_may_use_payment_planner_full(user) -> bool:
+    return _premium(user)
+
+
+def require_payment_planner_full(user) -> None:
+    """Block Premium-only payoff comparison / custom simulation endpoints."""
+    if user_may_use_payment_planner_full(user):
+        return
+    raise EntitlementDenied(
+        feature=FEATURE_PAYMENT_PLANNER_FULL,
+        detail=PAYMENT_PLANNER_FULL_DETAIL,
         code="premium_required",
     )
 

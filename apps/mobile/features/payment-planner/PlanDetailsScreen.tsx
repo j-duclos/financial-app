@@ -1,14 +1,17 @@
 import React, { useMemo } from "react";
 import { FlatList, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { formatCurrency } from "@budget-app/shared";
+import { canUsePaymentPlannerFull, formatCurrency } from "@budget-app/shared";
 import type { DebtPayoffMode, DebtPayoffStrategy } from "@budget-app/shared";
-import { AppHeader, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
+import { AppHeader, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { formatDateDisplay } from "@/lib/dates";
 import { describeApiError } from "@/services/api";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { parseDebtModeParam } from "./display";
 import type { PlannerScenarioInputs } from "./queryKeys";
+import { PremiumUpsellCard } from "./PremiumUpsellCard";
 import {
   useCreditCardsFromAccounts,
   useDebtPayoffPlan,
@@ -20,6 +23,9 @@ const PAGE_SIZE = 24;
 export function PlanDetailsScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { billing } = useBillingStatus();
+  const plannerFull = canUsePaymentPlannerFull(billing);
+  const { startUpgrade } = usePremiumUpgrade();
   const params = useLocalSearchParams<{
     strategy?: string;
     mode?: string;
@@ -43,7 +49,7 @@ export function PlanDetailsScreen() {
 
   const accountsQuery = usePaymentPlannerAccounts();
   const creditCards = useCreditCardsFromAccounts(accountsQuery.data?.results);
-  const planQuery = useDebtPayoffPlan(scenarioInputs, creditCards.length > 0);
+  const planQuery = useDebtPayoffPlan(scenarioInputs, plannerFull && creditCards.length > 0);
   const plan = planQuery.data;
 
   const accountNames = useMemo(() => {
@@ -53,6 +59,19 @@ export function PlanDetailsScreen() {
     }
     return map;
   }, [plan?.cards]);
+
+  if (!plannerFull) {
+    return (
+      <Screen>
+        <AppHeader title="Plan projection" onBack={() => router.back()} />
+        <EmptyState
+          title="Premium projection"
+          message="Month-by-month payoff projections are available with Premium."
+        />
+        <PremiumUpsellCard onUpgrade={() => void startUpgrade()} />
+      </Screen>
+    );
+  }
 
   if (planQuery.isLoading) {
     return (

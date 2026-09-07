@@ -10,9 +10,10 @@ import { formatDateDisplay } from "@/lib/dates";
 type Props = {
   plan: DebtPayoffPlan;
   recalculating?: boolean;
+  showExtraPayment?: boolean;
 };
 
-export function PlannerSummaryCard({ plan, recalculating }: Props) {
+export function PlannerSummaryCard({ plan, recalculating, showExtraPayment = true }: Props) {
   const theme = useTheme();
   const saved = interestSavedLine(plan);
   const debtFree = debtFreeSummary(plan);
@@ -61,10 +62,12 @@ export function PlannerSummaryCard({ plan, recalculating }: Props) {
           {debtFree.subtitle}
         </Text>
       ) : null}
-      <MetricRow
-        label="Extra payment"
-        value={`${formatMoneyOrDash(plan.extra_monthly)}/mo`}
-      />
+      {showExtraPayment ? (
+        <MetricRow
+          label="Extra payment"
+          value={`${formatMoneyOrDash(plan.extra_monthly)}/mo`}
+        />
+      ) : null}
       {saved ? (
         <Text
           style={{

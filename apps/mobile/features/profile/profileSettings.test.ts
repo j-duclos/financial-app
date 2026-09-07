@@ -36,6 +36,7 @@ describe("profileSettings helpers", () => {
         plan: "FREE",
         is_premium: false,
         plaid_bank_sync: false,
+        payment_planner_full: false,
         limits: {
           linked_institutions: 0,
           manual_accounts: 3,
@@ -60,6 +61,7 @@ describe("profileSettings helpers", () => {
         plan: "PREMIUM",
         is_premium: true,
         plaid_bank_sync: true,
+        payment_planner_full: true,
         limits: { ...free.entitlements!.limits, operational_forecast_days: 365 },
       },
     };

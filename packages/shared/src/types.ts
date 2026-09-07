@@ -2777,6 +2777,7 @@ export interface BillingEntitlements {
   plan: BillingPlan;
   is_premium: boolean;
   plaid_bank_sync: boolean;
+  payment_planner_full: boolean;
   limits: BillingPlanLimits;
   usage: BillingPlanUsage;
 }

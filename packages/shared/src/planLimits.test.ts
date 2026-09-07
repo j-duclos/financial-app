@@ -10,6 +10,7 @@ import {
   PREMIUM_PLAN_FORECAST_DAYS,
   atPlanLimit,
   canUsePlaidBankSync,
+  canUsePaymentPlannerFull,
   clampForecastDaysForPlan,
   forecastOptionsForPlan,
   forecastPickerRows,
@@ -33,6 +34,7 @@ const freeStatus: BillingStatus = {
     plan: "FREE",
     is_premium: false,
     plaid_bank_sync: false,
+    payment_planner_full: false,
     limits: {
       linked_institutions: 0,
       manual_accounts: 3,
@@ -58,6 +60,7 @@ const premiumStatus: BillingStatus = {
     plan: "PREMIUM",
     is_premium: true,
     plaid_bank_sync: true,
+    payment_planner_full: true,
     limits: {
       linked_institutions: null,
       manual_accounts: null,
@@ -115,6 +118,12 @@ describe("plan limits", () => {
   it("does not invent Plaid access for Free", () => {
     expect(canUsePlaidBankSync(freeStatus)).toBe(false);
     expect(canUsePlaidBankSync(undefined)).toBe(false);
+  });
+
+  it("treats Payment Planner full simulation as Premium-only", () => {
+    expect(canUsePaymentPlannerFull(undefined)).toBe(false);
+    expect(canUsePaymentPlannerFull(freeStatus)).toBe(false);
+    expect(canUsePaymentPlannerFull(premiumStatus)).toBe(true);
   });
 
   it("reports Free manual-account usage and intercepts at the limit", () => {

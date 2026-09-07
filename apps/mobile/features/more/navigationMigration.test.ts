@@ -80,7 +80,8 @@ describe("Spending Limits under More", () => {
     expect(moreSource).toMatch(/SectionHeader title="Planning"/);
     expect(moreSource).toMatch(/title: "Goals"/);
     expect(moreSource).toMatch(/title: "Payment Planner"/);
-    expect(moreSource).toMatch(/title: "What-If"/);
+    expect(moreSource).not.toMatch(/title: "What-If"/);
+    expect(moreSource).not.toMatch(/href: "\/what-if"/);
     expect(moreSource).not.toMatch(/href: "\/accounts"/);
   });
 

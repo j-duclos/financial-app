@@ -13,9 +13,11 @@ import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
   DRAWER_PAYOFF_STRATEGY_OPTIONS,
+  debtCardOutcomeLines,
   drawerPayoffImpossibleMessage,
   drawerStrategyRequiresAmountInput,
   formatMoneyOrDash,
+  priorityReasonLabel,
   targetUtilizationPercent,
 } from "./display";
 import { accountDetailPath, transactionsForAccountPath } from "./navigation";
@@ -26,6 +28,7 @@ type Props = {
   account: Account;
   planCard: DebtPayoffCardSummary;
   globalPlan: DebtPayoffPlan | null | undefined;
+  plannerFull?: boolean;
   cardStrategy: PayoffStrategy;
   amountInput: string;
   onStrategyChange: (strategy: PayoffStrategy) => void;
@@ -42,6 +45,7 @@ export function DebtDetailSheet({
   account,
   planCard,
   globalPlan: _globalPlan,
+  plannerFull = false,
   cardStrategy,
   amountInput,
   onStrategyChange,
@@ -65,6 +69,7 @@ export function DebtDetailSheet({
   }, [amountInput]);
 
   useEffect(() => {
+    if (!plannerFull) return;
     if (cardStrategy !== "custom_amount") return;
     if (amountInput.trim()) return;
     const preset = planCard.suggested_payment || planCard.minimum_payment;
@@ -72,7 +77,7 @@ export function DebtDetailSheet({
       onAmountChange(preset);
       onApplyCustomAmount(preset);
     }
-  }, [cardStrategy, amountInput, planCard, onAmountChange, onApplyCustomAmount]);
+  }, [plannerFull, cardStrategy, amountInput, planCard, onAmountChange, onApplyCustomAmount]);
 
   const metaParts = [
     `APR ${planCard.apr}%`,
@@ -81,6 +86,8 @@ export function DebtDetailSheet({
   if (utilPct != null && Number.isFinite(utilPct)) {
     metaParts.push(`Utilization ${Math.round(utilPct)}%`);
   }
+
+  const basicRecommendation = priorityReasonLabel(planCard) ?? debtCardOutcomeLines(planCard).headline;
 
   const payoffLabel = (() => {
     if (projectionLoading) return null;
@@ -108,7 +115,19 @@ export function DebtDetailSheet({
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 4 }}>
           {metaParts.join(" · ")}
         </Text>
+        {planCard.payoff_order != null ? (
+          <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 6 }}>
+            Payoff order {planCard.payoff_order}
+          </Text>
+        ) : null}
+        {!plannerFull && basicRecommendation ? (
+          <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 10 }}>
+            {basicRecommendation}
+          </Text>
+        ) : null}
 
+        {plannerFull ? (
+          <>
         <Text style={{ color: theme.colors.text, fontWeight: "600", marginTop: 16, marginBottom: 8 }}>
           Payment
         </Text>
@@ -207,6 +226,15 @@ export function DebtDetailSheet({
                 Above your {targetUtil}% utilization target
               </Text>
             ) : null}
+          </View>
+        ) : null}
+          </>
+        ) : payoffLabel ? (
+          <View style={{ marginTop: 12, marginBottom: 12 }}>
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Payoff</Text>
+            <Text style={{ color: theme.colors.text, fontWeight: "600", marginTop: 2 }}>
+              {payoffLabel}
+            </Text>
           </View>
         ) : null}
 

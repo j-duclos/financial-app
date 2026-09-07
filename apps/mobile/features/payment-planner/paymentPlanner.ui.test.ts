@@ -20,6 +20,8 @@ describe("Payment Planner mobile UI structure", () => {
     expect(strategyPanel).toContain("SelectField");
     expect(strategyPanel).not.toContain("borderRadius: 999");
     expect(screen).not.toMatch(/ChipRow/);
+    expect(screen).toMatch(/plannerFull \?/);
+    expect(screen).toMatch(/StrategyModePanel/);
   });
 
   it("applies what-if extra/lump as you type after debounce", () => {
@@ -104,7 +106,7 @@ describe("Payment Planner performance structure", () => {
     expect(hooks).toContain("getAccountPayoff");
     expect(screen).toContain("useAccountPayoffProjection");
     // Scenario projection is gated on selected account — not per debt card on the list.
-    expect(screen).toMatch(/enabled: !!selectedAccount && !!selectedPlanCard/);
+    expect(screen).toMatch(/enabled: plannerFull && !!selectedAccount && !!selectedPlanCard/);
   });
 
   it("debounces scenario updates rather than per keystroke on the plan", () => {
