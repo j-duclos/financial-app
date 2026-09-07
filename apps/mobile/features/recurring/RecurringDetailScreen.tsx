@@ -36,6 +36,7 @@ import {
   resolveNextOccurrence,
   ruleLifecycleStatus,
 } from "./recurringDisplay";
+import { useRecurringPlanLimit } from "./useRecurringPlanLimit";
 
 export function RecurringDetailScreen() {
   const theme = useTheme();
@@ -44,6 +45,7 @@ export function RecurringDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const ruleId = Number(id);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { interceptIfLimited } = useRecurringPlanLimit();
 
   const detailQuery = useQuery({
     queryKey: recurringQueryKeys.occurrences(ruleId, 5),
@@ -197,7 +199,10 @@ export function RecurringDetailScreen() {
             <Button
               label="Resume recurrence"
               loading={resumeMutation.isPending}
-              onPress={() => resumeMutation.mutate()}
+              onPress={() => {
+                if (interceptIfLimited()) return;
+                resumeMutation.mutate();
+              }}
             />
           ) : null}
           <Button label="Delete rule" variant="danger" onPress={() => setConfirmDelete(true)} />

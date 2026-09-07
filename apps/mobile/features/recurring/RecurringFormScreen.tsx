@@ -12,11 +12,13 @@ import {
   formatAccountOptionLabel,
   getAccountInstitutionSubtitle,
   getEffectiveDisplayName,
+  recurringSaveConsumesActiveSlot,
 } from "@budget-app/shared";
-import { AppHeader, Button, ErrorState, Screen, TextField } from "@/components/ui";
+import { AppHeader, Button, EmptyState, ErrorState, Screen, SkeletonBlock, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
+import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
 import { todayStr } from "@/lib/dates";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
@@ -25,6 +27,7 @@ import { useProfile } from "@/lib/profileQuery";
 import { recurringQueryKeys } from "./queryKeys";
 import { DatePickerField, EndsDateField, OptionsPickerSheet, SelectField, type PickerOption } from "@/components/forms";
 import { monthlyWeekdayLabel } from "./recurringDisplay";
+import { useRecurringPlanLimit } from "./useRecurringPlanLimit";
 
 type Direction = "INCOME" | "EXPENSE" | "TRANSFER";
 type LifecycleStatus = "running" | "paused" | "ended";
@@ -216,6 +219,14 @@ export function RecurringFormScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const editingId = params.id ? Number(params.id) : null;
   const isEdit = editingId != null && Number.isInteger(editingId) && editingId > 0;
+  const {
+    billing,
+    billingLoading,
+    limited,
+    limitReachedMessage,
+    interceptIfLimited,
+    startUpgrade,
+  } = useRecurringPlanLimit();
   const [form, setForm] = useState<FormState>(() => defaultForm());
   const [error, setError] = useState<string | null>(null);
   const [accountPicker, setAccountPicker] = useState<"from" | "to" | null>(null);
@@ -311,10 +322,28 @@ export function RecurringFormScreen() {
   const showTransferDestination =
     form.direction === "TRANSFER" || categoryAllowsTransferDestination(selectedCategory);
 
+  const nextActive = lifecycleToActive(form.lifecycleStatus, form.end_date, todayStr()).active;
+  const currentlyActive = Boolean(isEdit && ruleQuery.data?.active);
+  const saveConsumesSlot = recurringSaveConsumesActiveSlot({
+    isCreate: !isEdit,
+    currentlyActive,
+    nextActive,
+  });
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const today = todayStr();
       const { active, end_date } = lifecycleToActive(form.lifecycleStatus, form.end_date, today);
+      if (
+        limited &&
+        recurringSaveConsumesActiveSlot({
+          isCreate: !isEdit,
+          currentlyActive: Boolean(isEdit && ruleQuery.data?.active),
+          nextActive: active,
+        })
+      ) {
+        throw new Error(limitReachedMessage);
+      }
 
       let categoryId = form.category_id;
       let transferTo = form.transfer_to_account_id;
@@ -397,6 +426,15 @@ export function RecurringFormScreen() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  if (!isEdit && billingLoading && billing == null) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title="New recurring" onBack={() => router.back()} />
+        <SkeletonBlock lines={6} />
+      </Screen>
+    );
+  }
+
   if (isEdit && ruleQuery.isLoading) {
     return (
       <Screen>
@@ -409,6 +447,33 @@ export function RecurringFormScreen() {
     return (
       <Screen>
         <ErrorState message={describeApiError(ruleQuery.error)} onRetry={() => ruleQuery.refetch()} />
+      </Screen>
+    );
+  }
+
+  if (!isEdit && limited && nextActive) {
+    return (
+      <Screen scroll={false}>
+        <AppHeader title="New recurring" onBack={() => router.back()} />
+        <View style={{ gap: theme.spacing.md }}>
+          <ChipRow
+            label="Status"
+            options={[
+              { value: "running", label: "Active" },
+              { value: "paused", label: "Paused" },
+              { value: "ended", label: "Ended" },
+            ]}
+            selected={form.lifecycleStatus}
+            onSelect={(v) => set("lifecycleStatus", v as LifecycleStatus)}
+          />
+          <EmptyState
+            title="Recurring limit reached"
+            message={limitReachedMessage}
+            actionLabel={UPGRADE_TO_PREMIUM_LABEL}
+            actionVariant="primary"
+            onAction={() => void startUpgrade()}
+          />
+        </View>
       </Screen>
     );
   }
@@ -597,6 +662,7 @@ export function RecurringFormScreen() {
                 setError("Transfer destination is required.");
                 return;
               }
+              if (saveConsumesSlot && interceptIfLimited()) return;
               saveMutation.mutate();
             }}
           />

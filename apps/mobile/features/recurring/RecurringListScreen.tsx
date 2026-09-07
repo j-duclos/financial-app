@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -21,6 +21,7 @@ import {
   sortRecurringRows,
   type RecurringSortKey,
 } from "./recurringDisplay";
+import { useRecurringPlanLimit } from "./useRecurringPlanLimit";
 
 const SORT_OPTIONS: { key: RecurringSortKey; label: string }[] = [
   { key: "next", label: "Next" },
@@ -34,6 +35,12 @@ export function RecurringListScreen() {
   const router = useRouter();
   const [sortKey, setSortKey] = useState<RecurringSortKey>("next");
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const { usageLabel, interceptIfLimited } = useRecurringPlanLimit();
+
+  const onAddRecurring = useCallback(() => {
+    if (interceptIfLimited()) return;
+    router.push("/recurring/new");
+  }, [interceptIfLimited, router]);
 
   const rulesQuery = useQuery({
     queryKey: recurringQueryKeys.list(),
@@ -68,17 +75,29 @@ export function RecurringListScreen() {
             <IconButton
               name="plus"
               accessibilityLabel="Add recurring transaction"
-              onPress={() => router.push("/recurring/new")}
+              onPress={onAddRecurring}
             />
           }
         />
+        {usageLabel ? (
+          <Text
+            style={{
+              color: theme.colors.textMuted,
+              fontSize: 12,
+              marginTop: -4,
+              marginBottom: 8,
+            }}
+          >
+            {usageLabel}
+          </Text>
+        ) : null}
         <View
           style={{
             flexDirection: "row",
             flexWrap: "wrap",
             gap: 6,
             marginBottom: 8,
-            marginTop: -4,
+            marginTop: usageLabel ? 0 : -4,
           }}
         >
           {SORT_OPTIONS.map((opt) => {
@@ -125,7 +144,7 @@ export function RecurringListScreen() {
           title="No recurring transactions"
           message="Add recurring income or bills to make your forecast more accurate."
           actionLabel="Add recurring"
-          onAction={() => router.push("/recurring/new")}
+          onAction={onAddRecurring}
         />
       ) : (
         <FlatList

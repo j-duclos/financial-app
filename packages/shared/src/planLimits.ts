@@ -162,3 +162,35 @@ export function goalLimitReachedMessage(billing: BillingStatus | undefined | nul
   const limit = billing?.entitlements?.limits.goals ?? FREE_PLAN_LIMITS.goals;
   return `You've reached the Free plan limit of ${limit} goals.`;
 }
+
+export function recurringRulesUsageLabel(
+  billing: BillingStatus | undefined | null
+): string | null {
+  if (isPremium(billing)) return null;
+  const limit = billing?.entitlements?.limits.recurring_rules ?? FREE_PLAN_LIMITS.recurring_rules;
+  const usage = billing?.entitlements?.usage.recurring_rules;
+  if (limit == null || typeof usage !== "number") return null;
+  return `${usage} of ${limit} active recurring rules`;
+}
+
+export function recurringRulesLimitReachedMessage(
+  billing: BillingStatus | undefined | null
+): string {
+  const limit = billing?.entitlements?.limits.recurring_rules ?? FREE_PLAN_LIMITS.recurring_rules;
+  return `You've reached the Free plan limit of ${limit} active recurring rules.`;
+}
+
+/**
+ * Whether a create/update would consume an additional active-rule slot.
+ * Matches backend: extra slot only for create-active or inactive → active.
+ * Active → active, active → paused, and inactive → inactive do not consume a slot.
+ */
+export function recurringSaveConsumesActiveSlot(opts: {
+  isCreate: boolean;
+  currentlyActive: boolean;
+  nextActive: boolean;
+}): boolean {
+  if (!opts.nextActive) return false;
+  if (opts.isCreate) return true;
+  return !opts.currentlyActive;
+}

@@ -20,6 +20,9 @@ import {
   manualAccountUsageLabel,
   goalUsageLabel,
   goalLimitReachedMessage,
+  recurringRulesUsageLabel,
+  recurringRulesLimitReachedMessage,
+  recurringSaveConsumesActiveSlot,
   maxOperationalForecastDays,
 } from "./planLimits";
 
@@ -191,5 +194,87 @@ describe("plan limits", () => {
     };
     expect(atPlanLimit(missingUsage, "goals")).toBe(false);
     expect(goalUsageLabel(missingUsage)).toBeNull();
+  });
+
+  it("reports Free recurring-rule usage from billing and intercepts at the limit", () => {
+    const belowLimit: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, recurring_rules: 7 },
+      },
+    };
+    expect(recurringRulesUsageLabel(belowLimit)).toBe("7 of 10 active recurring rules");
+    expect(atPlanLimit(belowLimit, "recurring_rules")).toBe(false);
+
+    const atLimit: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, recurring_rules: 10 },
+      },
+    };
+    expect(recurringRulesUsageLabel(atLimit)).toBe("10 of 10 active recurring rules");
+    expect(atPlanLimit(atLimit, "recurring_rules")).toBe(true);
+    expect(recurringRulesLimitReachedMessage(atLimit)).toBe(
+      "You've reached the Free plan limit of 10 active recurring rules."
+    );
+
+    expect(recurringRulesUsageLabel(premiumStatus)).toBeNull();
+    expect(atPlanLimit(premiumStatus, "recurring_rules")).toBe(false);
+  });
+
+  it("does not invent recurring quota from a local paused-rule count", () => {
+    const billingUsageSeven: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, recurring_rules: 7 },
+      },
+    };
+    expect(atPlanLimit(billingUsageSeven, "recurring_rules")).toBe(false);
+    expect(recurringRulesUsageLabel(billingUsageSeven)).toBe("7 of 10 active recurring rules");
+
+    const missingUsage: BillingStatus = {
+      ...freeStatus,
+      entitlements: {
+        ...freeStatus.entitlements!,
+        usage: { ...freeStatus.entitlements!.usage, recurring_rules: undefined as unknown as number },
+      },
+    };
+    expect(atPlanLimit(missingUsage, "recurring_rules")).toBe(false);
+    expect(recurringRulesUsageLabel(missingUsage)).toBeNull();
+  });
+});
+
+describe("recurringSaveConsumesActiveSlot", () => {
+  it("create active consumes a slot; create inactive does not", () => {
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: true, currentlyActive: false, nextActive: true })
+    ).toBe(true);
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: true, currentlyActive: false, nextActive: false })
+    ).toBe(false);
+  });
+
+  it("active → active does not require an extra slot", () => {
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: false, currentlyActive: true, nextActive: true })
+    ).toBe(false);
+  });
+
+  it("inactive/paused → active checks quota", () => {
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: false, currentlyActive: false, nextActive: true })
+    ).toBe(true);
+  });
+
+  it("active → paused and inactive → inactive are allowed", () => {
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: false, currentlyActive: true, nextActive: false })
+    ).toBe(false);
+    expect(
+      recurringSaveConsumesActiveSlot({ isCreate: false, currentlyActive: false, nextActive: false })
+    ).toBe(false);
   });
 });
