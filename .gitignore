@@ -9,6 +9,7 @@ backend/db.sqlite3
 backend/db.backup.sqlite3
 backend/data.json
 backend/data-smoke.json
+backend/postgres_backup.json
 backend/*.sqlite3
 scripts/.render-env-export
 apps/mobile/.env

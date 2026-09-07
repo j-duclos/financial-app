@@ -90,6 +90,7 @@ jobs:
           core/tests/test_account_lifecycle.py
           core/tests/test_sentry_monitoring.py
           config/tests/test_security_policy.py
+          config/tests/test_ci_security_gates.py
           plaid_link/tests/test_crypto.py
           plaid_link/tests/test_liabilities_sync.py
           billing/tests/test_entitlement_enforcement.py
@@ -139,8 +140,7 @@ jobs:
       - name: Install npm workspaces
         run: npm ci
       - name: Production web dependency audit
-        run: npm audit --omit=dev --audit-level=high -w @budget-app/web
-        continue-on-error: true
+        run: node scripts/audit-web-production.mjs
 
   mobile-tests:
     name: mobile-tests
