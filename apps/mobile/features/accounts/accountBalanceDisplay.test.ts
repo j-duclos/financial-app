@@ -9,6 +9,7 @@ import {
   resolveAccountBalanceDisplay,
   resolveAfterPendingBalance,
   resolveListPrimaryBalance,
+  resolveLowestProjectedDisplay,
   resolvePostedCurrentBalance,
   shouldShowAccountHealthBadge,
 } from "./accountBalanceDisplay";
@@ -59,7 +60,7 @@ describe("account balance semantics", () => {
     expect(detail.kind).toBe("cash");
     if (detail.kind === "cash") {
       expect(detail.primary).toBe(list.amount);
-      expect(detail.primaryLabel).toBe("Current balance");
+      expect(detail.primaryLabel).toBe("Current");
       expect(detail.afterPending).toBe(list.afterPending);
       expect(detail.safeToSpend).toBe("250.00");
     }
@@ -151,11 +152,55 @@ describe("account balance semantics", () => {
       expect(display.owed).toBe("926.24");
       expect(display.availableCredit).toBe("3873.76");
       expect(display.creditLimit).toBe("4800.00");
+      expect(display.utilizationPercent).toBe("19.30");
     }
     expect(resolveListPrimaryBalance(cashAccount({
       account_type: "CREDIT",
       balance_owed: "926.24",
     }))).toEqual({ label: "Owed", amount: "926.24", afterPending: null });
+  });
+
+  it("reads lowest projected from canonical account fields without client math", () => {
+    const fromTopLevel = resolveLowestProjectedDisplay(
+      cashAccount({
+        lowest_projected_balance_30_days: "-494.00",
+        lowest_projected_balance_date_30_days: "2026-10-02",
+      })
+    );
+    expect(fromTopLevel).toEqual({ amount: "-494.00", date: "2026-10-02" });
+
+    const fromSummary = resolveLowestProjectedDisplay(
+      cashAccount({
+        forecast_summary: {
+          current_balance: "40.15",
+          lowest_projected_balance: "-120.00",
+          lowest_projected_balance_date: "2026-09-18",
+        },
+      })
+    );
+    expect(fromSummary).toEqual({ amount: "-120.00", date: "2026-09-18" });
+
+    expect(resolveLowestProjectedDisplay(cashAccount())).toBeNull();
+    expect(
+      resolveLowestProjectedDisplay(
+        cashAccount({
+          account_type: "CREDIT",
+          lowest_projected_balance_30_days: "-1.00",
+        })
+      )
+    ).toBeNull();
+  });
+
+  it("does not invent lowest projected from first-negative or projected-ending fields", () => {
+    expect(
+      resolveLowestProjectedDisplay(
+        cashAccount({
+          first_negative_balance: "-50.00",
+          first_negative_date: "2026-10-01",
+          projected_balance_30_days: "10.00",
+        })
+      )
+    ).toBeNull();
   });
 
   it("hides healthy list badges and keeps watch/risk/critical", () => {
@@ -171,7 +216,13 @@ describe("Accounts list UI labels", () => {
     expect(rowSource).toMatch(/After pending/);
     expect(rowSource).toMatch(/primary\.afterPending/);
     expect(detailSource).toMatch(/After pending/);
-    expect(detailSource).toMatch(/Current balance|primaryLabel/);
+    expect(detailSource).toMatch(/primaryLabel/);
+  });
+
+  it("does not render Safe to spend on mobile Account Detail", () => {
+    expect(detailSource).not.toMatch(/Safe to spend/);
+    expect(detailSource).toMatch(/Lowest projected/);
+    expect(detailSource).toMatch(/lowestProjected/);
   });
 });
 

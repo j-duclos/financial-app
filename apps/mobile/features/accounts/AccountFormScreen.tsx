@@ -216,6 +216,18 @@ export function AccountFormScreen() {
   return (
     <Screen scroll>
       <AppHeader title={isEdit ? "Edit account" : "Add account"} onBack={() => router.back()} />
+      {isEdit && accountQuery.data?.plaid_item_id ? (
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.caption,
+            marginBottom: theme.spacing.md,
+          }}
+        >
+          Linked bank accounts keep synced balances from the bank. You can update name and
+          display details here.
+        </Text>
+      ) : null}
       <Card>
         <TextField label="Name" value={form.name} onChangeText={(v) => setField("name", v)} error={fieldErrors.name} />
         <TextField

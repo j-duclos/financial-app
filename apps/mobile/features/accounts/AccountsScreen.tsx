@@ -167,7 +167,9 @@ export function AccountsScreen() {
           message={
             attentionFilterActive
               ? "All accounts look healthy in the current forecast window."
-              : "Add your first account to start tracking balances and transactions."
+              : isPremium
+                ? "Add your first account to start tracking balances and transactions. Connect banks from the web app when you want automatic syncing."
+                : "Add your first account to start tracking balances and transactions."
           }
           actionLabel={attentionFilterActive ? "Clear filter" : "Add account"}
           onAction={() =>

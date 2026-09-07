@@ -40,6 +40,7 @@ describe("Account detail → View ledger", () => {
     expect(accountDetailSource).toMatch(/rememberTransactionAccountSelection\(account\.id\)/);
     expect(accountDetailSource).toMatch(/label="View ledger"/);
     expect(accountDetailSource).not.toMatch(/View transactions/);
+    expect(accountDetailSource).not.toMatch(/View full ledger/);
 
     expect(transactionsForAccountPath(7, "360 Checking")).toEqual({
       pathname: "/(app)/(tabs)/transactions",

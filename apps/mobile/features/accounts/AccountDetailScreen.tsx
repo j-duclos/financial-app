@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshControl, Text, View } from "react-native";
+import { Pressable, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAccount, listAccounts, listTransactions } from "@budget-app/api-client";
 import {
   DEFAULT_TARGET_UTILIZATION_PERCENT,
   formatCurrency,
+  formatShortMonthDay,
   getAccountInstitutionSubtitle,
   getEffectiveDisplayName,
 } from "@budget-app/shared";
@@ -27,10 +28,16 @@ import { todayStr } from "@/lib/dates";
 import { TransactionRowCard } from "@/features/transactions/TransactionRowCard";
 import { defaultLedgerTimelineQueryOptions } from "@/features/transactions/defaultLedgerPrefetch";
 import { isPendingExpectedTimelineRow } from "@/features/transactions/pendingSemantics";
-import { transactionsForAccountPath } from "@/features/payment-planner/navigation";
-import { reconcilePath } from "@/features/reconcile/navigation";
+import {
+  transactionsForAccountPath,
+  transactionsForForecastRiskPath,
+} from "@/features/payment-planner/navigation";
+import { paymentPlannerAccountPath } from "@/features/dashboard/navigation";
 import { rememberTransactionAccountSelection } from "@/features/transactions/accountSelection";
-import { resolveAccountBalanceDisplay } from "./accountBalanceDisplay";
+import {
+  resolveAccountBalanceDisplay,
+  shouldShowAccountHealthBadge,
+} from "./accountBalanceDisplay";
 import { accountDetailUpcomingPreviewRows } from "./accountDetailUpcomingPreview";
 import { accountHasForecastEnrichment, seedAccountFromListCache } from "./accountDetailSeed";
 import {
@@ -129,6 +136,8 @@ export function AccountDetailScreen() {
     enabled: validId,
   });
 
+  // Timeline (row-level pending/forecast events) is a different endpoint from
+  // fetchEnrichedAccountDetail (account-level forecast_summary metrics).
   const timelineQueryOptions = useMemo(
     () =>
       defaultLedgerTimelineQueryOptions({
@@ -153,6 +162,8 @@ export function AccountDetailScreen() {
   const targetUtil = parseFloat(
     account?.target_utilization_percent ?? String(DEFAULT_TARGET_UTILIZATION_PERCENT)
   );
+  const healthStatus = account?.health_status ?? account?.risk_status;
+  const showRisk = shouldShowAccountHealthBadge(healthStatus);
 
   const previewRows = useMemo(() => {
     const recent = (recentQuery.data?.results ?? []).slice(0, ACCOUNT_DETAIL_PREVIEW_LIMIT);
@@ -216,6 +227,21 @@ export function AccountDetailScreen() {
     );
   };
 
+  const openRiskInLedger = () => {
+    if (!account) return;
+    rememberTransactionAccountSelection(account.id);
+    const riskDate = account.health_risk_date ?? account.risk_date;
+    router.push(
+      (riskDate
+        ? transactionsForForecastRiskPath({
+            accountId: account.id,
+            accountName: getEffectiveDisplayName(account),
+            focusDate: riskDate,
+          })
+        : transactionsForAccountPath(account.id, getEffectiveDisplayName(account))) as never
+    );
+  };
+
   if (
     !account &&
     (balanceQuery.isLoading || (needsForecastFetch && forecastQuery.isPending))
@@ -254,6 +280,7 @@ export function AccountDetailScreen() {
 
   const forecastLoading =
     needsForecastFetch && forecastQuery.isFetching && !accountHasForecastEnrichment(account);
+  const isCredit = account.account_type === "CREDIT";
 
   return (
     <Screen
@@ -323,34 +350,68 @@ export function AccountDetailScreen() {
               <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}>
                 Loading forecast…
               </Text>
-            ) : balances.safeToSpend != null ? (
+            ) : balances.lowestProjected != null ? (
               <Text style={{ color: theme.colors.textSecondary, ...theme.typography.body, marginTop: 8 }}>
-                Safe to spend {formatCurrency(balances.safeToSpend, account.currency)}
+                Lowest projected ({forecastDays} days){" "}
+                {formatCurrency(balances.lowestProjected.amount, account.currency)}
+                {balances.lowestProjected.date
+                  ? ` · ${formatShortMonthDay(balances.lowestProjected.date)}`
+                  : ""}
               </Text>
             ) : null}
           </>
         ) : null}
       </Card>
 
-      <View style={{ flexDirection: "row", gap: 8, marginTop: theme.spacing.lg }}>
-        <View style={{ flex: 1 }}>
+      {showRisk ? (
+        <Card style={{ marginTop: theme.spacing.md }}>
+          <Text style={{ color: theme.colors.critical, ...theme.typography.bodyStrong }}>
+            {account.health_reason?.trim() ||
+              (healthStatus === "critical"
+                ? "Critical"
+                : healthStatus === "risk"
+                  ? "At risk"
+                  : "Needs attention")}
+          </Text>
+          <Pressable
+            onPress={openRiskInLedger}
+            accessibilityRole="link"
+            accessibilityLabel="View in ledger"
+            style={{ marginTop: 8 }}
+          >
+            <Text style={{ color: theme.colors.tint, fontWeight: "600" }}>View in ledger</Text>
+          </Pressable>
+        </Card>
+      ) : null}
+
+      {isCredit ? (
+        <View style={{ marginTop: theme.spacing.lg, gap: 8 }}>
           <Button label="View ledger" onPress={openLedger} />
-        </View>
-        <View style={{ flex: 1 }}>
+          <Button
+            label="Payment Planner"
+            variant="secondary"
+            onPress={() => router.push(paymentPlannerAccountPath(account.id) as never)}
+          />
           <Button
             label="Edit"
-            variant="secondary"
+            variant="ghost"
             onPress={() => router.push(`/account/edit/${account.id}`)}
           />
         </View>
-      </View>
-      <View style={{ marginTop: 8 }}>
-        <Button
-          label="Reconcile account"
-          variant="secondary"
-          onPress={() => router.push(reconcilePath(account.id) as never)}
-        />
-      </View>
+      ) : (
+        <View style={{ flexDirection: "row", gap: 8, marginTop: theme.spacing.lg }}>
+          <View style={{ flex: 1 }}>
+            <Button label="View ledger" onPress={openLedger} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button
+              label="Edit"
+              variant="secondary"
+              onPress={() => router.push(`/account/edit/${account.id}`)}
+            />
+          </View>
+        </View>
+      )}
 
       <SectionHeader title="Upcoming" />
       {upcomingTimelineQuery.isPending ? (
@@ -369,9 +430,14 @@ export function AccountDetailScreen() {
               statusOverride={isPendingExpectedTimelineRow(row, today) ? "Pending" : "Forecast"}
             />
           ))}
-          <View style={{ marginTop: 8 }}>
-            <Button label="View full ledger" variant="secondary" onPress={openLedger} />
-          </View>
+          <Pressable
+            onPress={openLedger}
+            accessibilityRole="link"
+            accessibilityLabel="See all"
+            style={{ marginTop: 8 }}
+          >
+            <Text style={{ color: theme.colors.tint, fontWeight: "600" }}>See all</Text>
+          </Pressable>
         </>
       )}
 
@@ -385,9 +451,14 @@ export function AccountDetailScreen() {
           {previewRows.recent.map((txn) => (
             <TransactionRowCard key={txn.id} txn={txn} />
           ))}
-          <View style={{ marginTop: 8, marginBottom: theme.spacing.lg }}>
-            <Button label="View full ledger" variant="secondary" onPress={openLedger} />
-          </View>
+          <Pressable
+            onPress={openLedger}
+            accessibilityRole="link"
+            accessibilityLabel="See all"
+            style={{ marginTop: 8, marginBottom: theme.spacing.lg }}
+          >
+            <Text style={{ color: theme.colors.tint, fontWeight: "600" }}>See all</Text>
+          </Pressable>
         </>
       )}
     </Screen>

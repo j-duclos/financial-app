@@ -28,7 +28,6 @@ const SETUP_LINKS = [
   { title: "Reports", href: "/reports", subtitle: "Monthly insights" },
   { title: "Automation", href: "/automation", subtitle: "Rules & recurring automation" },
   { title: "Categories", href: "/categories", subtitle: "Income and expense categories" },
-  { title: "Reconcile", href: "/reconcile", subtitle: "Match statements to transactions" },
   { title: "Profile & Settings", href: "/profile", subtitle: "Account preferences" },
 ] as const;
 

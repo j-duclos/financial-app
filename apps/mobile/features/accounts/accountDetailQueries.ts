@@ -113,7 +113,13 @@ export function applyEnrichedAccountDetailToCache(
   mergeAccountIntoEnrichedListCache(queryClient, forecastDays, account);
 }
 
-/** Single-account enriched retrieve — balance + forecast_summary + health. */
+/** Single-account enriched retrieve — balance + forecast_summary + health.
+
+ * This is not a substitute for the Transactions timeline query used by Upcoming
+ * preview. Forecast summary is account-level metrics (lowest projected, STS,
+ * health). Timeline is row-level pending/forecast events. Both stay unless a
+ * future payload actually embeds upcoming preview rows.
+ */
 export async function fetchEnrichedAccountDetail(
   queryClient: QueryClient,
   accountId: number,

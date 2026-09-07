@@ -9,7 +9,8 @@ import type { Account } from "@budget-app/shared";
  * |                  | when enrichment is present; else ledger EOD fallback         |
  * | After pending    | Ledger EOD (`available_balance`/`balance`) when it differs   |
  * |                  | from Current (unresolved same-day PLANNED still on ledger)   |
- * | Safe to spend    | Backend `available_to_spend` (forecast)                      |
+ * | Lowest projected | Canonical `lowest_projected_balance(_30_days)` + date when   |
+ * |                  | already present on the loaded account — never computed here  |
  * | Forecast balance | `projected_balance_30_days` — never labeled Current          |
  * | Bank available   | Not a separate RN Accounts field; cash `available_balance`   |
  * |                  | is app ledger EOD, not a second pending adjustment           |
@@ -22,13 +23,20 @@ import type { Account } from "@budget-app/shared";
  * No local financial math — only field selection and labeling.
  */
 
+export type LowestProjectedDisplay = {
+  amount: string;
+  date: string | null;
+};
+
 export type CashBalanceDisplay = {
   kind: "cash";
   /** Primary hero amount. */
   primary: string | null;
-  primaryLabel: "Current balance";
+  primaryLabel: "Current";
   afterPending: string | null;
+  /** Backend `available_to_spend` — not rendered on mobile Account Detail. */
   safeToSpend: string | null;
+  lowestProjected: LowestProjectedDisplay | null;
 };
 
 export type CreditBalanceDisplay = {
@@ -70,6 +78,38 @@ function forecastCurrentBalance(account: Account): string | null {
     return parseMoney(summary.current_balance);
   }
   return null;
+}
+
+function nestedForecastField(account: Account, key: string): string | null {
+  const summary = account.forecast_summary;
+  if (!summary || typeof summary !== "object") return null;
+  const raw = (summary as Record<string, unknown>)[key];
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+  if (typeof raw === "string") return raw;
+  return null;
+}
+
+function isoDateOrNull(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const datePart = String(raw).trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : null;
+}
+
+/**
+ * Lowest projected balance for the already-loaded forecast window.
+ * Reads canonical account / forecast_summary fields only — no client math.
+ */
+export function resolveLowestProjectedDisplay(account: Account): LowestProjectedDisplay | null {
+  if (account.account_type === "CREDIT") return null;
+  const amount =
+    parseMoney(account.lowest_projected_balance_30_days) ??
+    parseMoney(nestedForecastField(account, "lowest_projected_balance"));
+  if (amount == null) return null;
+  const date = isoDateOrNull(
+    account.lowest_projected_balance_date_30_days ??
+      nestedForecastField(account, "lowest_projected_balance_date")
+  );
+  return { amount, date };
 }
 
 /** Ledger end-of-day from `?balance=true` (may include unresolved same-day pending). */
@@ -116,9 +156,10 @@ export function resolveAccountBalanceDisplay(account: Account): AccountBalanceDi
   return {
     kind: "cash",
     primary: resolvePostedCurrentBalance(account),
-    primaryLabel: "Current balance",
+    primaryLabel: "Current",
     afterPending: resolveAfterPendingBalance(account),
     safeToSpend: parseMoney(account.available_to_spend),
+    lowestProjected: resolveLowestProjectedDisplay(account),
   };
 }
 

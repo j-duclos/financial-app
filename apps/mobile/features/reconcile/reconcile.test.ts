@@ -24,15 +24,15 @@ describe("Reconcile routes and placeholder removal", () => {
     expect(routeSource).toMatch(/ReconcileScreen/);
   });
 
-  it("remains under More and supports account deep link", () => {
-    expect(moreSource).toMatch(
+  it("keeps reconcile routes without exposing mobile launch entry points", () => {
+    expect(moreSource).not.toMatch(
       /title: "Reconcile", href: "\/reconcile", subtitle: "Match statements to transactions"/
     );
-    expect(moreSource).not.toMatch(/title: "Reconcile".*Web only for beta/);
-    expect(accountDetailSource).toMatch(/Reconcile account/);
-    expect(accountDetailSource).toMatch(/reconcilePath\(account\.id\)/);
+    expect(accountDetailSource).not.toMatch(/Reconcile account/);
+    expect(accountDetailSource).not.toMatch(/reconcilePath\(account\.id\)/);
     expect(reconcilePath(9)).toEqual({ pathname: "/reconcile", params: { account: "9" } });
     expect(reconcileSessionDetailPath(3)).toBe("/reconcile/session/3");
+    expect(routeSource).toMatch(/ReconcileScreen/);
   });
 });
 
