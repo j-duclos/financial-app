@@ -6,6 +6,7 @@ import {
 } from "./actionCenterView";
 import {
   compareRecommendationsByPriority,
+  recommendationPreferenceSets,
   recommendationTransferPreset,
   recommendationsForActionCenter,
 } from "./recommendationDisplay";
@@ -128,5 +129,24 @@ describe("action center view", () => {
     );
     expect(copy.condition).toContain("Aug 27");
     expect(copy.action).toContain("$1,406.40");
+  });
+});
+
+describe("recommendation preference sets", () => {
+  it("maps backend preference lists into dismissed and snoozed sets", () => {
+    const sets = recommendationPreferenceSets({
+      dismissed: ["a"],
+      snoozed: ["b", "c"],
+    });
+    expect(sets.dismissed.has("a")).toBe(true);
+    expect(sets.snoozed.has("b")).toBe(true);
+    expect(sets.snoozed.has("c")).toBe(true);
+    expect(sets.dismissed.has("b")).toBe(false);
+  });
+
+  it("treats missing preference payload as empty", () => {
+    const sets = recommendationPreferenceSets(undefined);
+    expect(sets.dismissed.size).toBe(0);
+    expect(sets.snoozed.size).toBe(0);
   });
 });

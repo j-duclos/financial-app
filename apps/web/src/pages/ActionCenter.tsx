@@ -1,7 +1,15 @@
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DashboardRecommendation } from "@budget-app/shared";
-import { getRecommendations, listAccounts } from "@budget-app/api-client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { DashboardRecommendation, RecommendationPreferences } from "@budget-app/shared";
+import {
+  dismissRecommendation,
+  getRecommendationPreferences,
+  getRecommendations,
+  listAccounts,
+  restoreRecommendation,
+  snoozeRecommendation,
+  unsnoozeRecommendation,
+} from "@budget-app/api-client";
 import { PAGE_SHELL } from "../lib/pageLayout";
 import RecommendationsList, { SurvivalModeBanner } from "../components/dashboard/RecommendationsList";
 import ResolveRiskModal from "../components/resolveRisk/ResolveRiskModal";
@@ -13,15 +21,10 @@ import ForecastWindowSelect from "../components/forecast/ForecastWindowSelect";
 import LookingAheadBanner from "../components/dashboard/LookingAheadBanner";
 import {
   ACTION_CENTER_PAGE_TITLE,
-  dismissRecommendation,
-  loadDismissedRecommendationIds,
-  loadSnoozedRecommendationIds,
+  recommendationPreferenceSets,
   recommendationTransferPreset,
   recommendationsEmptyMessage,
   recommendationsForActionCenter,
-  restoreRecommendation,
-  snoozeRecommendation,
-  unsnoozeRecommendation,
 } from "../lib/recommendationDisplay";
 import { buildActionCenterView } from "../lib/actionCenterView";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
@@ -32,7 +35,6 @@ import { isLookingAheadVisible } from "../lib/lookingAhead";
 export default function ActionCenter() {
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
-  const [refresh, setRefresh] = useState(0);
   const [txnPreset, setTxnPreset] = useState<QuickTransactionPreset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
@@ -43,6 +45,13 @@ export default function ActionCenter() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["recommendations", "action-center", forecastDays],
     queryFn: () => getRecommendations({ days: forecastDays }),
+    staleTime: 60_000,
+    enabled: forecastReady,
+  });
+
+  const prefsQuery = useQuery({
+    queryKey: ["recommendation-preferences"],
+    queryFn: getRecommendationPreferences,
     staleTime: 60_000,
     enabled: forecastReady,
   });
@@ -58,16 +67,17 @@ export default function ActionCenter() {
   });
   const accounts = accountsData?.results ?? [];
 
+  const { dismissed, snoozed } = recommendationPreferenceSets(prefsQuery.data);
+
   const entries = useMemo(() => {
-    void refresh;
     if (!data) return [];
     return recommendationsForActionCenter(
       data.recommendations,
       undefined,
-      loadDismissedRecommendationIds(),
-      loadSnoozedRecommendationIds()
+      dismissed,
+      snoozed
     );
-  }, [data, refresh]);
+  }, [data, dismissed, snoozed]);
 
   const view = useMemo(
     () => buildActionCenterView(entries),
@@ -78,9 +88,26 @@ export default function ActionCenter() {
 
   usePerfPageLoad("action-center", !isLoading && !isError);
 
-  function bumpRefresh() {
-    setRefresh((n) => n + 1);
+  function applyPreferences(next: RecommendationPreferences) {
+    queryClient.setQueryData(["recommendation-preferences"], next);
   }
+
+  const snoozeMu = useMutation({
+    mutationFn: snoozeRecommendation,
+    onSuccess: applyPreferences,
+  });
+  const dismissMu = useMutation({
+    mutationFn: dismissRecommendation,
+    onSuccess: applyPreferences,
+  });
+  const restoreMu = useMutation({
+    mutationFn: restoreRecommendation,
+    onSuccess: applyPreferences,
+  });
+  const unsnoozeMu = useMutation({
+    mutationFn: unsnoozeRecommendation,
+    onSuccess: applyPreferences,
+  });
 
   async function invalidateFinancialQueries() {
     await Promise.all([
@@ -152,20 +179,16 @@ export default function ActionCenter() {
               }}
               onResolveRisk={setResolveRiskAccountId}
               onDismiss={(id) => {
-                dismissRecommendation(id);
-                bumpRefresh();
+                dismissMu.mutate(id);
               }}
               onSnooze={(id) => {
-                snoozeRecommendation(id);
-                bumpRefresh();
+                snoozeMu.mutate(id);
               }}
               onRestore={(id) => {
-                restoreRecommendation(id);
-                bumpRefresh();
+                restoreMu.mutate(id);
               }}
               onUnsnooze={(id) => {
-                unsnoozeRecommendation(id);
-                bumpRefresh();
+                unsnoozeMu.mutate(id);
               }}
             />
           )}
@@ -194,7 +217,7 @@ export default function ActionCenter() {
             setResolveRiskAccountId(null);
           }}
           onSnoozed={() => {
-            bumpRefresh();
+            void queryClient.invalidateQueries({ queryKey: ["recommendation-preferences"] });
           }}
         />
       )}
@@ -208,7 +231,7 @@ export default function ActionCenter() {
         onSuccess={async (message) => {
           setToast(message);
           await invalidateFinancialQueries();
-          bumpRefresh();
+          await queryClient.invalidateQueries({ queryKey: ["recommendation-preferences"] });
         }}
       />
     </div>

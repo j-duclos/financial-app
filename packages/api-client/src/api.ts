@@ -8,6 +8,7 @@ import type {
   DashboardSummaryDetails,
   DashboardSummaryFast,
   DashboardRecommendation,
+  RecommendationPreferences,
   ExtendedCashRiskResponse,
   MonthlyBillChecklist,
   BillsOverviewResponse,
@@ -1386,6 +1387,30 @@ export async function getRecommendations(params?: {
   return requestRequired("/api/recommendations/", {
     params: Object.keys(q).length ? q : undefined,
   });
+}
+
+export async function getRecommendationPreferences(): Promise<RecommendationPreferences> {
+  return requestRequired("/api/recommendations/preferences/");
+}
+
+function recommendationPreferencePath(id: string, action: "snooze" | "dismiss" | "restore" | "unsnooze"): string {
+  return `/api/recommendations/${encodeURIComponent(id)}/${action}/`;
+}
+
+export async function snoozeRecommendation(id: string): Promise<RecommendationPreferences> {
+  return requestRequired(recommendationPreferencePath(id, "snooze"), { method: "POST" });
+}
+
+export async function dismissRecommendation(id: string): Promise<RecommendationPreferences> {
+  return requestRequired(recommendationPreferencePath(id, "dismiss"), { method: "POST" });
+}
+
+export async function restoreRecommendation(id: string): Promise<RecommendationPreferences> {
+  return requestRequired(recommendationPreferencePath(id, "restore"), { method: "POST" });
+}
+
+export async function unsnoozeRecommendation(id: string): Promise<RecommendationPreferences> {
+  return requestRequired(recommendationPreferencePath(id, "unsnooze"), { method: "POST" });
 }
 
 // Financial goals

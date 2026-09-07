@@ -1,14 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actionCenterMobileSummaryText,
   buildActionCenterView,
+  recommendationPreferenceSets,
   recommendationsEmptyMessage,
   recommendationsForActionCenter,
 } from "@budget-app/shared";
-import { getRecommendations } from "@budget-app/api-client";
+import { getRecommendationPreferences, getRecommendations } from "@budget-app/api-client";
 import {
   AppHeader,
   EmptyState,
@@ -29,8 +30,6 @@ import { ResolveRiskSheet } from "./ResolveRiskSheet";
 import { SurvivalModeBanner } from "./SurvivalModeBanner";
 import {
   dismissRecommendation,
-  loadDismissedRecommendationIds,
-  loadSnoozedRecommendationIds,
   restoreRecommendation,
   snoozeRecommendation,
   unsnoozeRecommendation,
@@ -43,31 +42,10 @@ export function ActionCenterScreen() {
   const queryClient = useQueryClient();
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId } = useDefaultHouseholdId();
-  const [storageRefresh, setStorageRefresh] = useState(0);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [resolveRiskAccountId, setResolveRiskAccountId] = useState<number | null>(null);
   const resolveRiskOpen = resolveRiskAccountId != null;
   const { accounts } = useAccountOptions({ householdId, enabled: resolveRiskOpen });
-  const [storageReady, setStorageReady] = useState(false);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [snoozed, setSnoozed] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const [d, s] = await Promise.all([
-        loadDismissedRecommendationIds(),
-        loadSnoozedRecommendationIds(),
-      ]);
-      if (cancelled) return;
-      setDismissed(d);
-      setSnoozed(s);
-      setStorageReady(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [storageRefresh]);
 
   const {
     data,
@@ -82,44 +60,35 @@ export function ActionCenterScreen() {
     enabled: forecastReady,
   });
 
+  const prefsQuery = useQuery({
+    queryKey: actionCenterQueryKeys.preferences(),
+    queryFn: getRecommendationPreferences,
+    staleTime: 60_000,
+    enabled: forecastReady,
+  });
+
   const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const { dismissed, snoozed } = recommendationPreferenceSets(prefsQuery.data);
 
   const entries = useMemo(() => {
-    void storageRefresh;
-    if (!data || !storageReady) return [];
+    if (!data) return [];
     return recommendationsForActionCenter(data.recommendations, undefined, dismissed, snoozed);
-  }, [data, dismissed, snoozed, storageReady, storageRefresh]);
+  }, [data, dismissed, snoozed]);
 
   const view = useMemo(() => buildActionCenterView(entries), [entries]);
 
-  const bumpStorage = useCallback(() => {
-    setStorageRefresh((n) => n + 1);
-  }, []);
-
   const onRecommendationPresentationChanged = useCallback(() => {
     invalidateActionCenterRecommendationQueries(queryClient);
-    bumpStorage();
-  }, [bumpStorage, queryClient]);
+  }, [queryClient]);
 
   const refreshActionCenter = useCallback(async () => {
     setPullRefreshing(true);
     try {
-      await Promise.all([
-        refetch(),
-        (async () => {
-          const [d, s] = await Promise.all([
-            loadDismissedRecommendationIds(),
-            loadSnoozedRecommendationIds(),
-          ]);
-          setDismissed(d);
-          setSnoozed(s);
-          bumpStorage();
-        })(),
-      ]);
+      await Promise.all([refetch(), prefsQuery.refetch()]);
     } finally {
       setPullRefreshing(false);
     }
-  }, [bumpStorage, refetch]);
+  }, [prefsQuery, refetch]);
 
   const resolveAccountName =
     resolveRiskAccountId != null
@@ -155,7 +124,7 @@ export function ActionCenterScreen() {
         <ForecastWindowSelect value={forecastDays} onChange={setForecastDays} />
       </View>
 
-      {(!forecastReady || isLoading || !storageReady) && (
+      {(!forecastReady || isLoading || prefsQuery.isLoading) && (
         <SkeletonBlock lines={8} />
       )}
 
@@ -163,7 +132,7 @@ export function ActionCenterScreen() {
         <ErrorState message={describeApiError(error)} onRetry={() => refetch()} />
       ) : null}
 
-      {data && !isLoading && storageReady ? (
+      {data && !isLoading && !prefsQuery.isLoading ? (
         <>
           {view.summary.total > 0 || view.inactive.length > 0 ? (
             <Text

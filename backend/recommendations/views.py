@@ -6,8 +6,14 @@ from common.services.forecast_horizon import (
     ADVANCED_DEFAULT_FORECAST_DAYS,
     parse_forecast_days_param,
 )
+from recommendations.preferences import (
+    dismiss_recommendation,
+    preferences_payload,
+    restore_recommendation,
+    snooze_recommendation,
+    unsnooze_recommendation,
+)
 from recommendations.services.engine import (
-    build_dashboard_recommendation_list,
     build_recommendation_context,
     build_recommendations,
     build_scenario_recommendations,
@@ -70,3 +76,27 @@ class ScenarioRecommendationsView(APIView):
                 "timeline_hints": recommendation_timeline_hints(recs),
             }
         )
+
+
+class RecommendationPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(preferences_payload(request.user))
+
+
+class RecommendationPreferenceActionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, recommendation_id: str, action: str):
+        if action == "snooze":
+            payload = snooze_recommendation(request.user, recommendation_id)
+        elif action == "dismiss":
+            payload = dismiss_recommendation(request.user, recommendation_id)
+        elif action == "restore":
+            payload = restore_recommendation(request.user, recommendation_id)
+        elif action == "unsnooze":
+            payload = unsnooze_recommendation(request.user, recommendation_id)
+        else:
+            return Response({"detail": "Unknown preference action."}, status=400)
+        return Response(payload)

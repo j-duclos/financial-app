@@ -3,7 +3,10 @@ import { X, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Account, ResolveRiskAction } from "@budget-app/shared";
 import { formatCurrency } from "@budget-app/shared";
-import { getResolveRiskPlan } from "@budget-app/api-client";
+import {
+  dismissRecommendation,
+  getResolveRiskPlan,
+} from "@budget-app/api-client";
 import SeverityBadge from "../shared/SeverityBadge";
 import {
   formatResolveRiskLowest,
@@ -14,7 +17,6 @@ import {
   simulationStatusClass,
   snoozeResolveRisk,
 } from "../../lib/resolveRiskDisplay";
-import { dismissRecommendation } from "../../lib/recommendationDisplay";
 
 type Props = {
   open: boolean;
@@ -141,15 +143,19 @@ export default function ResolveRiskModal({
   const actions = data?.actions ?? [];
 
   const handleSnooze = () => {
-    if (data) snoozeResolveRisk(data);
-    onSnoozed?.();
-    onClose();
+    void (async () => {
+      if (data) await snoozeResolveRisk(data);
+      onSnoozed?.();
+      onClose();
+    })();
   };
 
   const handleDismiss = () => {
-    dismissRecommendation(`attention-${accountId}`);
-    onSnoozed?.();
-    onClose();
+    void (async () => {
+      await dismissRecommendation(`attention-${accountId}`);
+      onSnoozed?.();
+      onClose();
+    })();
   };
 
   return (
@@ -224,7 +230,7 @@ export default function ResolveRiskModal({
                 <dd className="font-medium text-gray-900">{summary.forecast_days} days</dd>
                 {summary.available_to_spend != null && (
                   <>
-                    <dt className="text-gray-500">Safe to spend</dt>
+                    <dt className="text-gray-500">Available now</dt>
                     <dd className="font-medium tabular-nums">
                       {formatCurrency(summary.available_to_spend)}
                     </dd>

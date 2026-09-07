@@ -718,4 +718,10 @@ class TestSpendingReductionUsesBudgetStatus:
         assert dets
         assert dets[0].category_name == "Dining"
         assert dets[0].extra["target_id"] == 1
+        assert "safe-to-spend" not in dets[0].reason.lower()
+        assert "safe to spend" not in dets[0].reason.lower()
+        assert "projected" in dets[0].reason.lower() or "spending limit" in dets[0].reason.lower()
+        assert dets[0].projected_improvement == (
+            "Reducing discretionary spending improves forecast stability."
+        )
 

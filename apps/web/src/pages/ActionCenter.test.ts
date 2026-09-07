@@ -102,7 +102,10 @@ describe("Action Center page structure", () => {
   });
 
   it("snooze/dismiss do not invalidate financial caches", () => {
-    expect(actionCenterSource).toMatch(/onSnoozed=\{\(\) => \{\s*bumpRefresh\(\)/);
+    expect(actionCenterSource).toMatch(/recommendation-preferences/);
+    expect(actionCenterSource).toMatch(/getRecommendationPreferences/);
+    expect(actionCenterSource).not.toMatch(/localStorage/);
+    expect(actionCenterSource).toMatch(/onSnoozed=\{\(\) => \{\s*void queryClient\.invalidateQueries/);
     expect(actionCenterSource).toMatch(/invalidateFinancialQueries/);
   });
 });
@@ -155,5 +158,36 @@ describe("production hard-coded utilization cleanup", () => {
     expect(displaySource).not.toMatch(/hardcodedWrong/);
     expect(displaySource).not.toMatch(/recommendationUtilizationUsesConfiguredTarget/);
     expect(displaySource).not.toMatch(/\["30%",\s*"70%",\s*"75%"\]/);
+  });
+});
+
+describe("Action Center copy and preference sync", () => {
+  const displaySource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../lib/recommendationDisplay.ts"),
+    "utf8"
+  );
+  const resolveRiskSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../lib/resolveRiskDisplay.ts"),
+    "utf8"
+  );
+  const modalSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../components/resolveRisk/ResolveRiskModal.tsx"),
+    "utf8"
+  );
+
+  it("has no user-facing safe-to-spend wording in Action Center", () => {
+    expect(actionCenterSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(displaySource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(resolveRiskSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(modalSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(modalSource).toMatch(/Available now/);
+  });
+
+  it("uses backend preference state instead of localStorage", () => {
+    expect(actionCenterSource).toMatch(/getRecommendationPreferences/);
+    expect(actionCenterSource).toMatch(/recommendationPreferenceSets/);
+    expect(displaySource).not.toMatch(/localStorage/);
+    expect(displaySource).not.toMatch(/dismissedRecommendations/);
+    expect(resolveRiskSource).toMatch(/@budget-app\/api-client/);
   });
 });

@@ -1012,6 +1012,13 @@ export interface DashboardRecommendation {
   transaction_id?: number | null;
 }
 
+export type RecommendationPreferenceState = "dismissed" | "snoozed";
+
+export interface RecommendationPreferences {
+  dismissed: string[];
+  snoozed: string[];
+}
+
 export interface RecommendationTimelineHint {
   date: string;
   recommendation_id: string;

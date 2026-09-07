@@ -2,13 +2,14 @@ import type { QueryClient } from "@tanstack/react-query";
 
 export const actionCenterQueryKeys = {
   recommendations: (forecastDays: number) => ["recommendations", "action-center", forecastDays] as const,
+  preferences: () => ["recommendation-preferences"] as const,
   resolveRisk: (accountId: number, forecastDays: number) =>
     ["resolve-risk", accountId, forecastDays] as const,
 };
 
 /** Snooze/dismiss/restore — presentation state only, not financial mutations. */
 export function invalidateActionCenterRecommendationQueries(queryClient: QueryClient): void {
-  void queryClient.invalidateQueries({ queryKey: ["recommendations"] });
+  void queryClient.invalidateQueries({ queryKey: actionCenterQueryKeys.preferences() });
 }
 
 /** After an applied transfer or other financial mutation from Resolve Risk. */

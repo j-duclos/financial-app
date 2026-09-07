@@ -16,7 +16,7 @@ import {
   actionSeverityShows,
 } from "@budget-app/shared";
 import { normalizeSeverity, severityShowsAlert } from "./severity";
-import { snoozeRecommendation } from "./recommendationDisplay";
+import { snoozeRecommendation } from "@budget-app/api-client";
 import type { QuickTransactionPreset } from "../components/quickActions/QuickTransactionModal";
 
 export {
@@ -67,8 +67,8 @@ export function resolveRiskPlannerUrl(action: ResolveRiskAction): string | null 
   return `/credit-cards?account=${accountId}`;
 }
 
-export function snoozeResolveRisk(plan: ResolveRiskPlan): void {
-  if (plan.snooze_id) snoozeRecommendation(plan.snooze_id);
+export async function snoozeResolveRisk(plan: ResolveRiskPlan): Promise<void> {
+  if (plan.snooze_id) await snoozeRecommendation(plan.snooze_id);
 }
 
 export { simulationStatusClass } from "./transferSimulation";

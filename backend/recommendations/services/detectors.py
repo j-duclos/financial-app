@@ -355,10 +355,10 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
                     severity="medium" if total_sts < 0 else "low",
                     category_name=cat,
                     amount=reduction,
-                    reason="Spending limits show pressure on safe-to-spend."
+                    reason="One or more spending accounts are projected to fall below $0."
                     if total_sts < 0
                     else f"{cat} is over your spending limit.",
-                    projected_improvement="Helps restore spending stability.",
+                    projected_improvement="Reducing discretionary spending improves forecast stability.",
                     extra={"target_id": row.get("target_id")},
                 )
             )
@@ -371,8 +371,8 @@ def detect_spending_reduction(ctx: RecommendationContext) -> list[Detection]:
                 severity="medium",
                 category_name="Discretionary",
                 amount=shortfall.quantize(Decimal("0.01")),
-                reason="Household safe-to-spend is negative across spending accounts.",
-                projected_improvement="Reducing discretionary spend restores forecast stability.",
+                reason="One or more spending accounts are projected to fall below $0.",
+                projected_improvement="Reducing discretionary spending improves forecast stability.",
             )
         )
     return out[:3]

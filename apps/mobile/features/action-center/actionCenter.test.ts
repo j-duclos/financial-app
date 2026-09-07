@@ -480,10 +480,20 @@ describe("Action Center pull refresh and invalidation", () => {
     expect(actionCenterSource).not.toMatch(/refreshing=\{isFetching/);
   });
 
-  it("snooze/dismiss invalidate recommendations only", () => {
+  it("snooze/dismiss invalidate preference state, not financial recommendation recomputation", () => {
     expect(actionCenterSource).toMatch(/invalidateActionCenterRecommendationQueries/);
     expect(actionCenterSource).toMatch(/onRecommendationPresentationChanged/);
     expect(actionCenterSource).not.toMatch(/invalidateActionCenterFinancialQueries/);
+    expect(actionCenterSource).toMatch(/getRecommendationPreferences/);
+    expect(actionCenterSource).toMatch(/recommendationPreferenceSets/);
+    expect(actionCenterSource).not.toMatch(/AsyncStorage/);
+    const queryKeys = readFileSync(join(dir, "queryKeys.ts"), "utf8");
+    const presentationFn = queryKeys.slice(
+      queryKeys.indexOf("export function invalidateActionCenterRecommendationQueries"),
+      queryKeys.indexOf("export function invalidateActionCenterFinancialQueries")
+    );
+    expect(presentationFn).toMatch(/actionCenterQueryKeys\.preferences\(\)/);
+    expect(presentationFn).not.toMatch(/\["recommendations"\]/);
   });
 });
 
@@ -500,5 +510,35 @@ describe("Resolve Risk sheet navigation", () => {
   it("Resolve Risk snooze/dismiss use presentation invalidation only", () => {
     expect(resolveRiskSource).toMatch(/onPresentationChanged/);
     expect(resolveRiskSource).not.toMatch(/invalidateActionCenterFinancialQueries/);
+  });
+});
+
+describe("Action Center copy and backend preference state", () => {
+  const storageSource = readFileSync(join(dir, "recommendationStorage.ts"), "utf8");
+
+  it("has no user-facing safe-to-spend wording", () => {
+    expect(actionCenterSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(cardSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(survivalSource).not.toMatch(/safe[- ]to[- ]spend/i);
+    expect(storageSource).not.toMatch(/safe[- ]to[- ]spend/i);
+  });
+
+  it("reads backend preference state instead of AsyncStorage", () => {
+    expect(actionCenterSource).toMatch(/getRecommendationPreferences/);
+    expect(storageSource).not.toMatch(/AsyncStorage/);
+    expect(storageSource).toMatch(/@budget-app\/api-client/);
+    expect(storageSource).toMatch(/snoozeRecommendationApi/);
+    expect(storageSource).toMatch(/dismissRecommendationApi/);
+    expect(storageSource).toMatch(/restoreRecommendationApi/);
+    expect(storageSource).toMatch(/unsnoozeRecommendationApi/);
+  });
+
+  it("Snooze/Dismiss/Restore/Unsnooze hide or return cards via preference mutations", () => {
+    expect(actionCenterSource).toMatch(/onSnooze=\{\(\) => \{/);
+    expect(actionCenterSource).toMatch(/snoozeRecommendation\(entry\.rec\.id\)/);
+    expect(actionCenterSource).toMatch(/dismissRecommendation\(entry\.rec\.id\)/);
+    expect(actionCenterSource).toMatch(/unsnoozeRecommendation\(entry\.rec\.id\)/);
+    expect(actionCenterSource).toMatch(/restoreRecommendation\(entry\.rec\.id\)/);
+    expect(actionCenterSource).toMatch(/onRecommendationPresentationChanged/);
   });
 });

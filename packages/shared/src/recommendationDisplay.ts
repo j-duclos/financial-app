@@ -33,6 +33,15 @@ export function isSurvivalModeId(id: string | null | undefined): boolean {
   return id === "survival-mode";
 }
 
+export function recommendationPreferenceSets(
+  prefs: { dismissed?: string[]; snoozed?: string[] } | null | undefined
+): { dismissed: Set<string>; snoozed: Set<string> } {
+  return {
+    dismissed: new Set(prefs?.dismissed ?? []),
+    snoozed: new Set(prefs?.snoozed ?? []),
+  };
+}
+
 /** Consistent CTA copy for credit-card payment planner navigation. */
 export const OPEN_PAYOFF_PLANNER_LABEL = PAYMENT_PLANNER_LABEL;
 
@@ -75,6 +84,17 @@ export function recommendationsForDisplay(
     .slice(0, limit);
 }
 
+function recommendationDisplayState(
+  rec: DashboardRecommendation,
+  dismissed: Set<string>,
+  snoozed: Set<string>
+): RecommendationDisplayState {
+  if (isSurvivalModeRecommendation(rec)) return "active";
+  if (dismissed.has(rec.id)) return "dismissed";
+  if (snoozed.has(rec.id)) return "snoozed";
+  return "active";
+}
+
 /** Full Action Center list — includes snoozed and dismissed entries with state labels. */
 export function recommendationsForActionCenter(
   recommendations: DashboardRecommendation[] | undefined,
@@ -82,20 +102,18 @@ export function recommendationsForActionCenter(
   dismissed: Set<string>,
   snoozed: Set<string>
 ): RecommendationListEntry[] {
+  const stateOrder: Record<RecommendationDisplayState, number> = {
+    active: 0,
+    snoozed: 1,
+    dismissed: 2,
+  };
   return recommendationSource(recommendations, insights)
     .filter((r) => !isHealthyRecommendationSeverity(r.severity))
     .map((rec) => ({
       rec,
-      displayState: isSurvivalModeRecommendation(rec)
-        ? "active"
-        : dismissed.has(rec.id)
-          ? "dismissed"
-          : snoozed.has(rec.id)
-            ? "snoozed"
-            : "active",
+      displayState: recommendationDisplayState(rec, dismissed, snoozed),
     }))
     .sort((a, b) => {
-      const stateOrder = { active: 0, snoozed: 1, dismissed: 2 };
       const stateDiff = stateOrder[a.displayState] - stateOrder[b.displayState];
       if (stateDiff !== 0) return stateDiff;
       return compareRecommendationsByPriority(a.rec, b.rec);
