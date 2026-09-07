@@ -11,7 +11,13 @@ import {
   updateTransaction,
   type ImportMatchCandidate,
 } from "@budget-app/api-client";
-import { formatCurrency, getEffectiveDisplayName, selectableImportMatchCandidates } from "@budget-app/shared";
+import {
+  formatCurrency,
+  getEffectiveDisplayName,
+  MATCH_BANK_TRANSACTION_LABEL,
+  selectableImportMatchCandidates,
+  transactionSourceDisplayLabel,
+} from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
   AppHeader,
@@ -21,17 +27,17 @@ import {
   ConfirmDialog,
   CurrencyDisplay,
   ErrorState,
+  IconButton,
   Screen,
   SkeletonBlock,
   StatusChip,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
-import { formatDateDisplay } from "@/lib/dates";
+import { formatDateDisplay, todayStr } from "@/lib/dates";
 import {
   canChangeTransactionCategory,
   isTransferTransaction,
-  resolveTransactionStatusIcons,
-  STATUS_ICON_LABELS,
+  resolveTransactionDetailBadges,
   transactionEditLockMessage,
 } from "@/lib/transactionStatus";
 import { describeApiError } from "@/services/api";
@@ -40,10 +46,11 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { transactionQueryKeys } from "./queryKeys";
 import {
+  canOpenLinkedTransactionDetail,
   canOpenRecurringRuleDetail,
   getTransactionDetailActions,
-  isAlreadyMatchedToImport,
   isEligibleForImportMatch,
+  linkedTransactionDetailPath,
   recurringRuleDetailPath,
   type TransactionDetailAction,
 } from "./transactionDetailActions";
@@ -57,6 +64,7 @@ export function TransactionDetailScreen() {
   const [confirmAction, setConfirmAction] = useState<TransactionDetailAction | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
   const [matchSheetOpen, setMatchSheetOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [pendingMatchCandidate, setPendingMatchCandidate] = useState<ImportMatchCandidate | null>(
     null
   );
@@ -139,7 +147,7 @@ export function TransactionDetailScreen() {
       queryClient.removeQueries({ queryKey: transactionQueryKeys.importCandidates(txnId) });
       finishNavigatingMutation();
     },
-    onError: (err) => Alert.alert("Could not match import", describeApiError(err)),
+    onError: (err) => Alert.alert("Could not match bank transaction", describeApiError(err)),
   });
 
   const lockMessage = txn ? transactionEditLockMessage(txn, getEffectiveDisplayName(txn.account)) : null;
@@ -161,6 +169,11 @@ export function TransactionDetailScreen() {
     if (!txn) return [];
     return getTransactionDetailActions({ txn });
   }, [txn]);
+
+  const primaryActions = detailActions.filter((action) => action.placement === "primary");
+  const secondaryActions = detailActions.filter((action) => action.placement === "secondary");
+  const overflowActions = detailActions.filter((action) => action.placement === "overflow");
+  const destructiveActions = detailActions.filter((action) => action.placement === "destructive");
 
   const runAction = useCallback(
     (action: TransactionDetailAction) => {
@@ -217,10 +230,18 @@ export function TransactionDetailScreen() {
     );
   }
 
-  const statusIcons = resolveTransactionStatusIcons(txn);
+  const statusBadges = resolveTransactionDetailBadges(txn, todayStr());
   const transfer = isTransferTransaction(txn);
   const showRecurringRuleLink = canOpenRecurringRuleDetail(txn);
-  const alreadyMatched = isAlreadyMatchedToImport(txn);
+  const showLinkedTransaction = canOpenLinkedTransactionDetail(txn);
+  const sourceLabel = transactionSourceDisplayLabel(txn);
+
+  const actionLoading = (action: TransactionDetailAction) =>
+    action.kind === "skip" && skipMutation.isPending
+      ? true
+      : action.kind === "matchImport" && matchMutation.isPending
+        ? true
+        : action.kind === "delete" && deleteMutation.isPending;
 
   return (
     <Screen scroll>
@@ -228,8 +249,19 @@ export function TransactionDetailScreen() {
         title="Transaction"
         onBack={() => router.back()}
         right={
-          categoryMutation.isPending ? (
-            <ActivityIndicator color={theme.colors.tint} />
+          categoryMutation.isPending || overflowActions.length > 0 ? (
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              {categoryMutation.isPending ? (
+                <ActivityIndicator color={theme.colors.tint} />
+              ) : null}
+              {overflowActions.length > 0 ? (
+                <IconButton
+                  name="ellipsis-h"
+                  accessibilityLabel="More actions"
+                  onPress={() => setMoreOpen(true)}
+                />
+              ) : null}
+            </View>
           ) : undefined
         }
       />
@@ -239,78 +271,50 @@ export function TransactionDetailScreen() {
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 8 }}>
           {formatDateDisplay(txn.date)}
         </Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-          {statusIcons.map((icon) => (
-            <StatusChip key={icon} label={STATUS_ICON_LABELS[icon]} tone="neutral" />
-          ))}
-          {alreadyMatched ? (
-            <StatusChip label="Matched to bank import" tone="positive" />
-          ) : null}
-          {txn.cleared ? <StatusChip label="Cleared" tone="positive" /> : <StatusChip label="Pending" tone="warning" />}
-        </View>
+        {statusBadges.length > 0 ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+            {statusBadges.map((badge) => (
+              <StatusChip key={badge.key} label={badge.label} tone={badge.tone} />
+            ))}
+          </View>
+        ) : null}
       </Card>
 
       <Card style={{ marginTop: theme.spacing.md }}>
         <DetailRow label="Account" value={getEffectiveDisplayName(txn.account)} />
         {canChangeCategory ? (
-          <Pressable
-            onPress={() => setCategorySheetOpen(true)}
-            accessibilityRole="button"
+          <NavDetailRow
+            label="Category"
+            value={selectedCategoryName}
+            chevron="down"
             accessibilityLabel={`Category: ${selectedCategoryName}. Tap to change.`}
-            style={{
-              paddingVertical: 8,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.border,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Category</Text>
-              <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 2 }}>
-                {selectedCategoryName}
-              </Text>
-            </View>
-            <FontAwesome name="chevron-down" size={12} color={theme.colors.textMuted} />
-          </Pressable>
+            onPress={() => setCategorySheetOpen(true)}
+          />
         ) : (
           <DetailRow label="Category" value={txn.category?.name ?? "Uncategorized"} />
         )}
         {txn.memo ? <DetailRow label="Notes" value={txn.memo} /> : null}
-        <DetailRow label="Source" value={txn.source ?? "Manual"} />
+        <DetailRow label="Source" value={sourceLabel} />
         {transfer && txn.transfer_to_account ? (
           <DetailRow label="Transfer to" value={getEffectiveDisplayName(txn.transfer_to_account)} />
         ) : null}
-        {txn.linked_transaction_id ? (
-          <DetailRow label="Linked transfer leg" value="See paired transaction" />
+        {showLinkedTransaction ? (
+          <NavDetailRow
+            label="Linked transaction"
+            value="View paired transaction"
+            chevron="right"
+            accessibilityLabel="Linked transaction. View paired transaction."
+            onPress={() => router.push(linkedTransactionDetailPath(txn.linked_transaction_id!))}
+          />
         ) : null}
         {showRecurringRuleLink ? (
-          <Pressable
-            onPress={() => router.push(recurringRuleDetailPath(txn.rule_id!))}
-            accessibilityRole="button"
+          <NavDetailRow
+            label="Recurring rule"
+            value="Linked to scheduled rule"
+            chevron="right"
             accessibilityLabel="Recurring rule. Tap to open rule detail."
-            style={{
-              paddingVertical: 8,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.border,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                Recurring rule
-              </Text>
-              <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 2 }}>
-                Linked to scheduled rule
-              </Text>
-            </View>
-            <FontAwesome name="chevron-right" size={12} color={theme.colors.textMuted} />
-          </Pressable>
+            onPress={() => router.push(recurringRuleDetailPath(txn.rule_id!))}
+          />
         ) : null}
       </Card>
 
@@ -321,21 +325,31 @@ export function TransactionDetailScreen() {
       ) : null}
 
       <View style={{ gap: 8, marginTop: theme.spacing.xl }}>
-        {detailActions.map((action) => (
+        {primaryActions.map((action) => (
           <Button
             key={action.kind}
             label={action.label}
-            variant={
-              action.destructive ? "danger" : action.kind === "skip" ? "secondary" : "primary"
-            }
+            variant="primary"
             onPress={() => runAction(action)}
-            loading={
-              action.kind === "skip" && skipMutation.isPending
-                ? true
-                : action.kind === "matchImport" && matchMutation.isPending
-                  ? true
-                  : action.kind === "delete" && deleteMutation.isPending
-            }
+            loading={actionLoading(action)}
+          />
+        ))}
+        {secondaryActions.map((action) => (
+          <Button
+            key={action.kind}
+            label={action.label}
+            variant="secondary"
+            onPress={() => runAction(action)}
+            loading={actionLoading(action)}
+          />
+        ))}
+        {destructiveActions.map((action) => (
+          <Button
+            key={action.kind}
+            label={action.label}
+            variant="danger"
+            onPress={() => runAction(action)}
+            loading={actionLoading(action)}
           />
         ))}
       </View>
@@ -387,8 +401,35 @@ export function TransactionDetailScreen() {
       </BottomSheet>
 
       <BottomSheet
+        visible={moreOpen}
+        title="More"
+        onClose={() => setMoreOpen(false)}
+      >
+        {overflowActions.map((action) => (
+          <Pressable
+            key={action.kind}
+            onPress={() => {
+              setMoreOpen(false);
+              runAction(action);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
+            style={{
+              paddingVertical: 14,
+              borderBottomWidth: 1,
+              borderBottomColor: theme.colors.border,
+            }}
+          >
+            <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
+              {action.label}
+            </Text>
+          </Pressable>
+        ))}
+      </BottomSheet>
+
+      <BottomSheet
         visible={matchSheetOpen}
-        title="Match imported transaction"
+        title={MATCH_BANK_TRANSACTION_LABEL}
         onClose={() => {
           if (matchMutation.isPending) return;
           setMatchSheetOpen(false);
@@ -405,7 +446,7 @@ export function TransactionDetailScreen() {
         ) : selectableCandidates.length === 0 ? (
           <View style={{ gap: 12, paddingVertical: 8 }}>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.body }}>
-              No unmatched bank imports were found for this scheduled payment.
+              No unmatched bank transactions were found for this scheduled payment.
             </Text>
             <Button
               label="Skip occurrence"
@@ -420,7 +461,7 @@ export function TransactionDetailScreen() {
         ) : (
           <ScrollView>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 12 }}>
-              Select the bank import that matches this scheduled payment.
+              Choose the bank transaction that corresponds to this scheduled transaction.
             </Text>
             {selectableCandidates.map((candidate) => (
               <Pressable
@@ -498,5 +539,47 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>{label}</Text>
       <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 2 }}>{value}</Text>
     </View>
+  );
+}
+
+function NavDetailRow({
+  label,
+  value,
+  chevron,
+  accessibilityLabel,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  chevron: "down" | "right";
+  accessibilityLabel: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={{
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>{label}</Text>
+        <Text style={{ color: theme.colors.text, ...theme.typography.body, marginTop: 2 }}>{value}</Text>
+      </View>
+      <FontAwesome
+        name={chevron === "down" ? "chevron-down" : "chevron-right"}
+        size={12}
+        color={theme.colors.textMuted}
+      />
+    </Pressable>
   );
 }

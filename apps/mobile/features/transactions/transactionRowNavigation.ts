@@ -1,4 +1,5 @@
 import type { Transaction, TimelineRow } from "@budget-app/shared";
+import type { Href } from "expo-router";
 import {
   isBankImportedTransaction,
   isTransferTransaction,
@@ -10,12 +11,12 @@ export type TransactionRowDestination =
   | { type: "edit"; transactionId: number }
   | { type: "detail"; transactionId: number };
 
-export function transactionRowEditPath(transactionId: number): string {
-  return `/transaction/edit/${transactionId}`;
+export function transactionRowEditPath(transactionId: number): Href {
+  return `/transaction/edit/${transactionId}` as Href;
 }
 
-export function transactionRowDetailPath(transactionId: number): string {
-  return `/transaction/${transactionId}`;
+export function transactionRowDetailPath(transactionId: number): Href {
+  return `/transaction/${transactionId}` as Href;
 }
 
 export function isRuleGeneratedTransaction(txn: Transaction): boolean {
@@ -117,7 +118,7 @@ export function getTransactionRowDestination(
 }
 
 export function navigateToTransactionRowDestination(
-  router: { push: (path: string) => void },
+  router: { push: (href: Href) => void },
   destination: TransactionRowDestination
 ): void {
   router.push(

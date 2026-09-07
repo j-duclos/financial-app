@@ -89,4 +89,16 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/fetchNextPage/);
     expect(transactionsScreen).toMatch(/displayQuerySettled/);
   });
+
+  it("refetches active independent queries concurrently", () => {
+    expect(transactionsData).toMatch(/Promise\.all/);
+    expect(transactionsData).toMatch(
+      /\.\.\.\(needsServerFilteredHistory \? \[displayHistoryQuery\.refetch\(\)\] : \[\]\)/
+    );
+    expect(transactionsData).toMatch(/\.\.\.\(wantsTimeline \? \[timelineQuery\.refetch\(\)\] : \[\]\)/);
+    expect(transactionsData).not.toMatch(
+      /if \(needsServerFilteredHistory\) await displayHistoryQuery\.refetch/
+    );
+    expect(transactionsData).not.toMatch(/if \(wantsTimeline\) await timelineQuery\.refetch/);
+  });
 });

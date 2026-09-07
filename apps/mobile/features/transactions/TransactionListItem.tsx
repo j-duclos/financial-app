@@ -72,6 +72,20 @@ export const TransactionListItem = memo(function TransactionListItem({
       </View>
     );
   }
+  if (item.kind === "message") {
+    return (
+      <Text
+        style={{
+          color: theme.colors.textMuted,
+          ...theme.typography.caption,
+          paddingHorizontal: theme.spacing.lg,
+          paddingVertical: theme.spacing.sm,
+        }}
+      >
+        {item.text}
+      </Text>
+    );
+  }
   if (item.kind === "upcoming") {
     const txnId = item.row.transaction_id;
     return wrapFocusHighlight(

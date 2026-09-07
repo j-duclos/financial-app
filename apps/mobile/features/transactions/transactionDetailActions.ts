@@ -1,21 +1,29 @@
 import type { Transaction } from "@budget-app/shared";
 import {
   isImportMatchStatusMatched,
-  MATCH_IMPORTED_TRANSACTION_LABEL,
+  MATCH_BANK_TRANSACTION_LABEL,
 } from "@budget-app/shared";
+import type { Href } from "expo-router";
 import {
   canDeleteTransaction,
   isBankImportedTransaction,
   isTransferTransaction,
 } from "@/lib/transactionStatus";
 import { isPlannedScheduledTransaction } from "./pendingSemantics";
-import { prefersDirectEditFromLedger } from "./transactionRowNavigation";
+import { transactionRowDetailPath } from "./transactionRowNavigation";
 
 export type TransactionDetailActionKind = "edit" | "skip" | "matchImport" | "delete";
+
+export type TransactionDetailActionPlacement =
+  | "primary"
+  | "secondary"
+  | "overflow"
+  | "destructive";
 
 export type TransactionDetailAction = {
   kind: TransactionDetailActionKind;
   label: string;
+  placement: TransactionDetailActionPlacement;
   confirmationTitle?: string;
   confirmationMessage?: string;
   destructive?: boolean;
@@ -52,8 +60,9 @@ export function isAlreadyMatchedToImport(txn: Transaction): boolean {
 /**
  * Canonical Transaction Detail actions — source/status aware.
  *
- * Planned rule/one-time occurrences: Edit + Skip only (Delete is redundant with Skip).
- * Posted manual rows: Edit + Delete when allowed. Bank imports: no destructive actions.
+ * Future scheduled: Edit (primary) + Skip (secondary) + Match bank (overflow).
+ * Posted manual: Edit when permitted + Delete when allowed.
+ * Bank imports / reconciled: no financial edit/delete.
  */
 export function getTransactionDetailActions(
   input: TransactionDetailActionsInput
@@ -65,34 +74,36 @@ export function getTransactionDetailActions(
   const alreadyMatched = isAlreadyMatchedToImport(txn);
   const canEdit = !txn.reconciled && !isBankImportedTransaction(txn);
 
-  if (canEdit && !prefersDirectEditFromLedger(txn)) {
+  if (canEdit) {
     actions.push({
       kind: "edit",
       label: isPlanned ? "Edit this occurrence" : "Edit",
+      placement: "primary",
     });
   }
 
   if (isPlanned && !alreadyMatched) {
-    if (isEligibleForImportMatch(txn)) {
-      actions.push({ kind: "matchImport", label: MATCH_IMPORTED_TRANSACTION_LABEL });
-    }
     actions.push({
       kind: "skip",
       label: "Skip occurrence",
+      placement: "secondary",
       confirmationTitle: "Skip this occurrence?",
       confirmationMessage: skipConfirmationMessage(txn),
     });
+    if (isEligibleForImportMatch(txn)) {
+      actions.push({
+        kind: "matchImport",
+        label: MATCH_BANK_TRANSACTION_LABEL,
+        placement: "overflow",
+      });
+    }
   }
 
-  if (
-    canDeleteTransaction(txn) &&
-    !isPlanned &&
-    !alreadyMatched &&
-    !prefersDirectEditFromLedger(txn)
-  ) {
+  if (canDeleteTransaction(txn) && !isPlanned && !alreadyMatched) {
     actions.push({
       kind: "delete",
       label: "Delete transaction",
+      placement: "destructive",
       destructive: true,
       confirmationTitle: "Delete transaction",
       confirmationMessage: isTransfer
@@ -108,6 +119,15 @@ export function canOpenRecurringRuleDetail(txn: Transaction): boolean {
   return txn.rule_id != null && Number.isInteger(txn.rule_id) && txn.rule_id > 0;
 }
 
-export function recurringRuleDetailPath(ruleId: number): string {
-  return `/recurring/${ruleId}`;
+export function recurringRuleDetailPath(ruleId: number): Href {
+  return `/recurring/${ruleId}` as Href;
+}
+
+export function canOpenLinkedTransactionDetail(txn: Transaction): boolean {
+  const linkedId = txn.linked_transaction_id;
+  return linkedId != null && Number.isInteger(linkedId) && linkedId > 0;
+}
+
+export function linkedTransactionDetailPath(linkedTransactionId: number): Href {
+  return transactionRowDetailPath(linkedTransactionId);
 }

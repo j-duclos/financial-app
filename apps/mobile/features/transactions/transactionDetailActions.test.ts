@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Transaction } from "@budget-app/shared";
 import {
+  canOpenLinkedTransactionDetail,
   canOpenRecurringRuleDetail,
   getTransactionDetailActions,
   isAlreadyMatchedToImport,
   isEligibleForImportMatch,
+  linkedTransactionDetailPath,
   recurringRuleDetailPath,
 } from "./transactionDetailActions";
 
@@ -24,7 +26,7 @@ const txn = (partial: Partial<Transaction> & Pick<Transaction, "id">): Transacti
   }) as Transaction;
 
 describe("getTransactionDetailActions", () => {
-  it("RULE occurrence shows Edit, Match imported transaction, and Skip", () => {
+  it("RULE occurrence: Edit primary, Skip secondary, Match bank overflow", () => {
     const actions = getTransactionDetailActions({
       txn: txn({
         id: 1,
@@ -33,11 +35,18 @@ describe("getTransactionDetailActions", () => {
         rule_id: 42,
       }),
     });
-    expect(actions.map((a) => a.kind)).toEqual(["edit", "matchImport", "skip"]);
-    expect(actions.find((a) => a.kind === "edit")?.label).toBe("Edit this occurrence");
-    expect(actions.find((a) => a.kind === "matchImport")?.label).toBe(
-      "Match imported transaction"
-    );
+    expect(actions.map((a) => a.kind)).toEqual(["edit", "skip", "matchImport"]);
+    expect(actions.find((a) => a.kind === "edit")).toMatchObject({
+      label: "Edit this occurrence",
+      placement: "primary",
+    });
+    expect(actions.find((a) => a.kind === "skip")).toMatchObject({
+      placement: "secondary",
+    });
+    expect(actions.find((a) => a.kind === "matchImport")).toMatchObject({
+      label: "Match bank transaction",
+      placement: "overflow",
+    });
     expect(actions.find((a) => a.kind === "skip")?.confirmationTitle).toBe(
       "Skip this occurrence?"
     );
@@ -47,19 +56,23 @@ describe("getTransactionDetailActions", () => {
     expect(actions.some((a) => a.kind === "delete")).toBe(false);
   });
 
-  it("one-time planned occurrence shows Match and Skip on detail (ledger opens edit)", () => {
+  it("one-time planned occurrence: Edit primary, Skip secondary, Match overflow", () => {
     const actions = getTransactionDetailActions({
       txn: txn({ id: 2, status: "PLANNED", source: "ONE_TIME" }),
     });
-    expect(actions.map((a) => a.kind)).toEqual(["matchImport", "skip"]);
+    expect(actions.map((a) => a.kind)).toEqual(["edit", "skip", "matchImport"]);
+    expect(actions.find((a) => a.kind === "edit")?.label).toBe("Edit this occurrence");
+    expect(actions.find((a) => a.kind === "matchImport")?.placement).toBe("overflow");
     expect(actions.some((a) => a.kind === "delete")).toBe(false);
   });
 
-  it("manual editable transaction omits detail actions (ledger opens edit)", () => {
+  it("manual posted transaction keeps Edit primary and Delete destructive", () => {
     const actions = getTransactionDetailActions({
       txn: txn({ id: 3, status: "CLEARED", source: "ACTUAL" }),
     });
-    expect(actions).toEqual([]);
+    expect(actions.map((a) => a.kind)).toEqual(["edit", "delete"]);
+    expect(actions.find((a) => a.kind === "edit")?.placement).toBe("primary");
+    expect(actions.find((a) => a.kind === "delete")?.placement).toBe("destructive");
   });
 
   it("bank import blocks Edit and Delete", () => {
@@ -121,6 +134,16 @@ describe("recurring rule navigation", () => {
   });
 });
 
+describe("linked transfer navigation", () => {
+  it("opens paired transaction detail when linked_transaction_id is present", () => {
+    expect(canOpenLinkedTransactionDetail(txn({ id: 1, linked_transaction_id: 88 }))).toBe(true);
+    expect(linkedTransactionDetailPath(88)).toBe("/transaction/88");
+    expect(canOpenLinkedTransactionDetail(txn({ id: 1, linked_transaction_id: null }))).toBe(
+      false
+    );
+  });
+});
+
 describe("TransactionDetailScreen wiring", () => {
   it("uses centralized action resolver and recurring rule navigation", async () => {
     const { readFileSync } = await import("node:fs");
@@ -130,7 +153,16 @@ describe("TransactionDetailScreen wiring", () => {
     const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
     expect(src).toMatch(/getTransactionDetailActions/);
     expect(src).toMatch(/recurringRuleDetailPath/);
+    expect(src).toMatch(/linkedTransactionDetailPath/);
+    expect(src).toMatch(/transactionSourceDisplayLabel/);
+    expect(src).toMatch(/resolveTransactionDetailBadges/);
+    expect(src).toMatch(/placement === "overflow"/);
+    expect(src).toMatch(/accessibilityLabel="More actions"/);
+    expect(src).toMatch(/MATCH_BANK_TRANSACTION_LABEL/);
     expect(src).not.toMatch(/canDeleteTransaction/);
+    expect(src).not.toMatch(/txn\.source \?\? "Manual"/);
+    expect(src).not.toMatch(/Matched to bank import/);
+    expect(src).not.toMatch(/See paired transaction/);
   });
 
   it("match import action does not call skipTransactionOccurrence", async () => {

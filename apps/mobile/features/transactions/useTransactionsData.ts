@@ -302,9 +302,11 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
     hasNextPage: activeHistoryQuery.hasNextPage,
     fetchNextPage: activeHistoryQuery.fetchNextPage,
     refetch: async () => {
-      await canonicalHistoryQuery.refetch();
-      if (needsServerFilteredHistory) await displayHistoryQuery.refetch();
-      if (wantsTimeline) await timelineQuery.refetch();
+      await Promise.all([
+        canonicalHistoryQuery.refetch(),
+        ...(needsServerFilteredHistory ? [displayHistoryQuery.refetch()] : []),
+        ...(wantsTimeline ? [timelineQuery.refetch()] : []),
+      ]);
     },
     wantsTimeline,
   };

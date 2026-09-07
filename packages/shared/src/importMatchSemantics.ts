@@ -12,4 +12,7 @@ export function selectableImportMatchCandidates<T extends { reject?: string | nu
 
 export const MATCH_IMPORTED_TRANSACTION_LABEL = "Match imported transaction";
 
+/** Mobile companion wording — web row menus keep MATCH_IMPORTED_TRANSACTION_LABEL. */
+export const MATCH_BANK_TRANSACTION_LABEL = "Match bank transaction";
+
 export const NO_IMPORT_CANDIDATES_MESSAGE = "No unmatched bank imports were found.";

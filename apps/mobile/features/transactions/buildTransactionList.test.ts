@@ -119,4 +119,104 @@ describe("buildTransactionListRows", () => {
     expect(rows.some((r) => r.kind === "section" && r.title === "Upcoming")).toBe(true);
     expect(rows.some((r) => r.kind === "upcoming")).toBe(true);
   });
+
+  it("keeps Recent and shows a compact Upcoming empty message", () => {
+    const rows = buildTransactionListRows({
+      upcoming: [],
+      pending: [],
+      history: [txn({ id: 1, payee: "Coffee", amount: "-4.00", date: "2026-06-04" })],
+      balanceMap: new Map(),
+      filters: DEFAULT_TRANSACTION_FILTERS,
+      today: "2026-06-05",
+      upcomingRangeLabel: "Next 90 days",
+    });
+    expect(rows.some((r) => r.kind === "history")).toBe(true);
+    expect(rows.some((r) => r.kind === "section" && r.title === "Upcoming")).toBe(true);
+    expect(rows.some((r) => r.kind === "upcoming")).toBe(false);
+    const empty = rows.find((r) => r.kind === "message");
+    expect(empty && empty.kind === "message" ? empty.text : null).toBe(
+      "No upcoming transactions in this forecast window."
+    );
+  });
+
+  it("does not treat a fully empty ledger as Upcoming-empty-only", () => {
+    const rows = buildTransactionListRows({
+      upcoming: [],
+      pending: [],
+      history: [],
+      balanceMap: new Map(),
+      filters: DEFAULT_TRANSACTION_FILTERS,
+      today: "2026-06-05",
+      upcomingRangeLabel: "Next 90 days",
+    });
+    expect(rows.some((r) => r.kind === "history" || r.kind === "upcoming" || r.kind === "pending")).toBe(
+      false
+    );
+    expect(rows.some((r) => r.kind === "message")).toBe(false);
+  });
+
+  it("keeps identical imported bank rows instead of deduplicating them", () => {
+    const rows = buildTransactionListRows({
+      upcoming: [],
+      pending: [],
+      history: [
+        txn({
+          id: 11,
+          payee: "Store",
+          amount: "-12.00",
+          date: "2026-06-04",
+          source: "PLAID",
+          plaid_transaction_id: "same-plaid",
+        }),
+        txn({
+          id: 12,
+          payee: "Store",
+          amount: "-12.00",
+          date: "2026-06-04",
+          source: "PLAID",
+          plaid_transaction_id: "same-plaid",
+        }),
+      ],
+      balanceMap: new Map(),
+      filters: DEFAULT_TRANSACTION_FILTERS,
+      today: "2026-06-05",
+    });
+    const historyIds = rows
+      .filter((r) => r.kind === "history")
+      .map((r) => (r.kind === "history" ? r.txn.id : null));
+    expect(historyIds).toEqual([11, 12]);
+  });
+
+  it("keeps future manual transactions in Upcoming", () => {
+    const rows = buildTransactionListRows({
+      upcoming: [
+        {
+          date: "2026-06-20",
+          description: "Planned transfer",
+          account_id: 1,
+          account_name: "Checking",
+          category_id: null,
+          category_name: null,
+          amount: "-50.00",
+          type: "expense",
+          status: "PLANNED",
+          source: "actual",
+          txn_source: "ONE_TIME",
+          rule_id: null,
+          transaction_id: 99,
+          running_balance: "50.00",
+          balance_after: "50.00",
+        },
+      ],
+      pending: [],
+      history: [txn({ id: 1, payee: "Coffee", amount: "-4.00", date: "2026-06-04" })],
+      balanceMap: new Map(),
+      filters: DEFAULT_TRANSACTION_FILTERS,
+      today: "2026-06-05",
+      upcomingRangeLabel: "Next 90 days",
+    });
+    const upcoming = rows.find((r) => r.kind === "upcoming");
+    expect(upcoming && upcoming.kind === "upcoming" ? upcoming.row.transaction_id : null).toBe(99);
+    expect(upcoming && upcoming.kind === "upcoming" ? upcoming.runningBalance : null).toBe("50.00");
+  });
 });

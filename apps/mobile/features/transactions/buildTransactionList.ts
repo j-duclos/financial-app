@@ -37,6 +37,11 @@ export type TransactionListRow =
       id: string;
       txn: Transaction;
       runningBalance: string | null;
+    }
+  | {
+      kind: "message";
+      id: string;
+      text: string;
     };
 
 export function indexTimelineBalances(
@@ -309,6 +314,10 @@ export function buildTransactionListRows(input: {
         .slice()
         .sort(compareTimelineAsc);
 
+      const hasRecentOrPendingActivity =
+        pending.length > 0 ||
+        rows.some((row) => row.kind === "history");
+
       if (pending.length > 0) {
         rows.push({ kind: "section", id: "section-pending", title: "Pending" });
         for (const row of pending) {
@@ -321,7 +330,7 @@ export function buildTransactionListRows(input: {
         }
       }
 
-      if (upcoming.length > 0 || input.upcomingRangeLabel) {
+      if (upcoming.length > 0) {
         rows.push({
           kind: "section",
           id: "section-upcoming",
@@ -337,6 +346,19 @@ export function buildTransactionListRows(input: {
             runningBalance: timelineRowLedgerBalance(row),
           });
         }
+      } else if (hasRecentOrPendingActivity && input.upcomingRangeLabel) {
+        rows.push({
+          kind: "section",
+          id: "section-upcoming",
+          title: "Upcoming",
+          rangeLabel: input.upcomingRangeLabel,
+          rangeKind: "upcoming",
+        });
+        rows.push({
+          kind: "message",
+          id: "upcoming-empty",
+          text: "No upcoming transactions in this forecast window.",
+        });
       }
     }
   }

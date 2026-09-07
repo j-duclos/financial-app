@@ -9,6 +9,7 @@ export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 68;
 export const LEDGER_ROW_HEIGHT = 88;
 export const LEDGER_PENDING_ROW_HEIGHT = 100;
 export const LEDGER_SKELETON_HEIGHT = 56;
+export const LEDGER_MESSAGE_HEIGHT = 40;
 
 export type LedgerFocusKind = "forecast-risk" | "ledger-event";
 
@@ -218,6 +219,7 @@ export function ledgerRowHeight(row: TransactionListRow | undefined): number {
   }
   if (row.kind === "skeleton") return LEDGER_SKELETON_HEIGHT;
   if (row.kind === "pending") return LEDGER_PENDING_ROW_HEIGHT;
+  if (row.kind === "message") return LEDGER_MESSAGE_HEIGHT;
   return LEDGER_ROW_HEIGHT;
 }
 

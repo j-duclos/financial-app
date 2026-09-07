@@ -1,4 +1,6 @@
 import type { Transaction, TimelineRow } from "@budget-app/shared";
+import { isImportMatchStatusMatched } from "@budget-app/shared";
+import type { FinancialTone } from "@/theme";
 
 export type TransactionStatusIcon = "reconciled" | "manual" | "rule" | "plaid" | "transfer" | "forecast";
 
@@ -89,7 +91,60 @@ export const STATUS_ICON_LABELS: Record<TransactionStatusIcon, string> = {
   reconciled: "Reconciled",
   manual: "Manual",
   rule: "Scheduled",
-  plaid: "Imported",
+  plaid: "Bank transaction",
   transfer: "Transfer",
   forecast: "Forecast",
 };
+
+export type TransactionDetailBadge = {
+  key: string;
+  label: string;
+  tone: FinancialTone;
+};
+
+/**
+ * Compact detail chips. Origin belongs on the Source row — do not also chip
+ * Imported / Scheduled / Manual. Pending here means bank settlement only.
+ */
+export function resolveTransactionDetailBadges(
+  txn: Transaction,
+  today: string
+): TransactionDetailBadge[] {
+  const badges: TransactionDetailBadge[] = [];
+  const status = (txn.status ?? "").toUpperCase();
+  const isPlanned = status === "PLANNED";
+  const isBank = isBankImportedTransaction(txn);
+  const matched = isImportMatchStatusMatched(txn.import_match_status);
+  const isFutureDate = txn.date > today;
+  const src = (txn.source ?? "").toUpperCase();
+
+  if (isTransferTransaction(txn)) {
+    badges.push({ key: "transfer", label: "Transfer", tone: "neutral" });
+  }
+
+  if (matched) {
+    badges.push({ key: "matched", label: "Matched", tone: "positive" });
+  }
+
+  if (isPlanned) {
+    if (isFutureDate) {
+      if (src === "RULE" || txn.rule_id != null) {
+        badges.push({ key: "forecast", label: "Forecast", tone: "neutral" });
+      } else {
+        badges.push({ key: "future", label: "Future", tone: "neutral" });
+      }
+    }
+  } else if (isBank) {
+    if (txn.cleared) {
+      badges.push({ key: "cleared", label: "Cleared", tone: "positive" });
+    } else {
+      badges.push({ key: "pending", label: "Pending", tone: "warning" });
+    }
+  }
+
+  if (txn.reconciled) {
+    badges.push({ key: "reconciled", label: "Reconciled", tone: "neutral" });
+  }
+
+  return badges;
+}

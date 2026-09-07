@@ -385,7 +385,6 @@ export function TransactionsScreen() {
     (accountOptionsQuery.isLoading || (accounts.length === 0 && !accountOptionsQuery.isError));
 
   const hasActivity = listHasActivityRows(listRows);
-  const placeholdersOnly = listIsOnlyPlaceholders(listRows);
   const stillLoadingLedger =
     isRecentLoading || isTimelineLoading || historyQuery.isPending || timelineQuery.isPending;
   const showEmpty =
@@ -393,7 +392,7 @@ export function TransactionsScreen() {
     !stillLoadingLedger &&
     displayQuerySettled &&
     !hasActivity &&
-    !placeholdersOnly &&
+    !listRows.some((r) => r.kind === "skeleton") &&
     !isError;
 
   useEffect(() => {
@@ -563,18 +562,29 @@ export function TransactionsScreen() {
         <ErrorState message={describeApiError(error)} onRetry={() => void refetch()} />
       ) : showEmpty ? (
         <EmptyState
-          title={`No transactions for ${selectedAccountName}`}
+          title={
+            activeFilterCount > 0 || filters.search.trim()
+              ? `No transactions for ${selectedAccountName}`
+              : "No transactions yet"
+          }
           message={
             activeFilterCount > 0 || filters.search.trim()
               ? `No ${selectedAccountName} transactions match these filters.`
-              : "Add a transaction to see activity in this account."
+              : "Add a transaction to start tracking this account."
           }
-          actionLabel={activeFilterCount > 0 || filters.search.trim() ? "Clear filters" : undefined}
+          actionLabel={
+            activeFilterCount > 0 || filters.search.trim() ? "Clear filters" : "Add transaction"
+          }
           onAction={
             activeFilterCount > 0 || filters.search.trim()
               ? () =>
                   setFilters((prev) => clearTransactionFiltersPreservingAccount(prev.accountId))
-              : undefined
+              : () =>
+                  router.push(
+                    filters.accountId
+                      ? `/transaction/new?account=${filters.accountId}`
+                      : "/transaction/new"
+                  )
           }
         />
       ) : !ledgerListReady ? (
