@@ -370,25 +370,25 @@ def swap_transfer_pair_if_amount_sign_flipped(txn: Transaction, old_amount: Deci
         Transfer.objects.filter(from_transaction_id=txn.pk).first()
         or Transfer.objects.filter(to_transaction_id=txn.pk).first()
     )
-    if tr is None:
-        return
+    if tr is not None:
+        from_id = tr.from_transaction_id
+        to_id = tr.to_transaction_id
+        amount = tr.amount
+        xfer_date = tr.date
+        memo = tr.memo
+        transfer_id = tr.transfer_id
+        tr.delete()
+        Transfer.objects.create(
+            transfer_id=transfer_id,
+            from_transaction_id=to_id,
+            to_transaction_id=from_id,
+            amount=amount,
+            date=xfer_date,
+            memo=memo,
+        )
 
-    from_id = tr.from_transaction_id
-    to_id = tr.to_transaction_id
-    amount = tr.amount
-    xfer_date = tr.date
-    memo = tr.memo
-    transfer_id = tr.transfer_id
-    tr.delete()
-    Transfer.objects.create(
-        transfer_id=transfer_id,
-        from_transaction_id=to_id,
-        to_transaction_id=from_id,
-        amount=amount,
-        date=xfer_date,
-        memo=memo,
-    )
-
+    # Recurring transfers often have a TransferGroup without a Transfer row.
+    # Still swap from/to so the ledger does not keep treating this account as the sender.
     tg_id = txn.transfer_group_id
     if tg_id:
         tg = TransferGroup.objects.filter(pk=tg_id).first()

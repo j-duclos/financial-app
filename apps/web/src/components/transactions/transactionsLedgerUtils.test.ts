@@ -1089,7 +1089,7 @@ describe("formatDateDisplay", () => {
 });
 
 describe("signedTimelineLedgerAmount", () => {
-  it("treats OUTFLOW type as negative even when DB amount is positive", () => {
+  it("uses the stored amount sign, not row type", () => {
     const row: TimelineRow = {
       date: "2026-08-26",
       description: "Platinum (Platinium)",
@@ -1105,7 +1105,7 @@ describe("signedTimelineLedgerAmount", () => {
       transaction_id: 6877,
       running_balance: "0",
     };
-    expect(signedTimelineLedgerAmount(row)).toBe(-100);
+    expect(signedTimelineLedgerAmount(row)).toBe(100);
   });
 
   it("subtracts positive outflow-type amounts from running balance", () => {

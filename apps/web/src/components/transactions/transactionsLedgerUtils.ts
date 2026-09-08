@@ -595,14 +595,11 @@ function transactionPostedLedgerBalance(txn: Transaction): number | null {
   return null;
 }
 
-/**
- * Signed amount for running-balance math on a timeline row.
- * Transfer legs may store positive DB amounts on outflow rows — honor row.type over raw sign.
- * @deprecated Do not use for authoritative ledger Bal — use backend balance_after.
- */
+/** Signed amount for running-balance math on a timeline row. Prefer the stored sign. */
 export function signedTimelineLedgerAmount(row: TimelineRow): number {
   const raw = parseFloat(row.amount);
   if (Number.isNaN(raw)) return 0;
+  if (raw !== 0) return raw;
   const flow = timelineRowFlowDirection(row);
   if (flow === "OUTFLOW") return -Math.abs(raw);
   if (flow === "INFLOW") return Math.abs(raw);

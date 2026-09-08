@@ -84,6 +84,26 @@ describe("timeline row data wiring", () => {
     expect(canSelectTransactionForBatchDelete(data)).toBe(false);
   });
 
+  it("shows a positive stored amount as an inflow even if type is still OUTFLOW", async () => {
+    const { timelineRowToData } = await import("./TransactionRow");
+    const data = timelineRowToData(
+      {
+        date: "2026-09-17",
+        description: "Transfer for Planning (Chase Savings)",
+        amount: "2331.00",
+        type: "OUTFLOW",
+        account_id: 1,
+        status: "PLANNED",
+        source: "actual",
+        transaction_id: 99,
+      } as never,
+      500,
+      "future"
+    );
+    expect(data.isOutflow).toBe(false);
+    expect(data.amount).toBe(2331);
+  });
+
   it("marks cleared manual rows as batch-deletable", async () => {
     const { timelineRowToData } = await import("./TransactionRow");
     const data = timelineRowToData(

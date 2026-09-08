@@ -51,15 +51,10 @@ export function parsePreviewMoney(raw: string | number | null | undefined): numb
   return Number.isFinite(n) ? n : null;
 }
 
-/** Ledger-signed amount in the edit form so −2331 can be typed to +2331. */
-export function signedAmountForEditForm(
-  amount: string | number,
-  ledgerFlow?: "INFLOW" | "OUTFLOW" | null
-): string {
+/** Stored amount as the edit-form value. Do not invert from row type — that rewrote +2331 back to −2331. */
+export function signedAmountForEditForm(amount: string | number): string {
   const n = parseFloat(String(amount));
   if (!Number.isFinite(n)) return "";
-  if (ledgerFlow === "OUTFLOW") return (-Math.abs(n)).toFixed(2);
-  if (ledgerFlow === "INFLOW") return Math.abs(n).toFixed(2);
   return n.toFixed(2);
 }
 

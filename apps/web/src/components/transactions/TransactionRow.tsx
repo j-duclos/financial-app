@@ -74,7 +74,9 @@ export function timelineRowToData(
     category: categoryLabel(row.category_name, row.description),
     amount: amt,
     balance,
-    isOutflow: row.type === "OUTFLOW" || row.type === "EXPENSE",
+    isOutflow: Number.isFinite(amt) && amt !== 0
+      ? amt < 0
+      : row.type === "OUTFLOW" || row.type === "EXPENSE",
     source: {
       source: row.source,
       rule_id: row.rule_id,

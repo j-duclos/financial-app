@@ -490,7 +490,14 @@ def _timeline_row_type_for_amount(amount: Decimal | None) -> str:
 
 
 def _timeline_row_type_for_transaction(txn: Transaction, amount: Decimal | None) -> str:
-    """Honor transfer leg direction even when a source leg was stored with the wrong sign."""
+    """Ledger type from this row's signed amount — not TransferGroup from/to.
+
+    A sign flip (Chase −2331 → +2331) means this account now receives. Group
+    from/to can lag that edit; the stored amount is what the user just saved.
+    """
+    amt = amount if amount is not None else getattr(txn, "amount", None)
+    if amt is not None and amt != 0:
+        return _timeline_row_type_for_amount(amt)
     tg_id = getattr(txn, "transfer_group_id", None)
     if tg_id:
         tg = getattr(txn, "transfer_group", None)
@@ -501,7 +508,7 @@ def _timeline_row_type_for_transaction(txn: Transaction, amount: Decimal | None)
                 return "OUTFLOW"
             if tg.to_account_id == txn.account_id:
                 return "INFLOW"
-    return _timeline_row_type_for_amount(amount)
+    return _timeline_row_type_for_amount(amt)
 
 
 def _projected_rule_timeline_row(
@@ -567,11 +574,9 @@ def _materialized_rule_timeline_row_if_exists(
         return None
     ids_in_rows.add(existing.pk)
     amt = existing.amount if existing.amount is not None else amount_decimal
-    rt = (row_type or "").upper()
-    if rt == "OUTFLOW" and amt > 0:
-        amt = -abs(amt)
-    elif rt == "INFLOW" and amt < 0:
-        amt = abs(amt)
+    # Honor the stored amount. Forcing the rule's from-leg to OUTFLOW was
+    # rewriting a user sign-flip (+2331) back to −2331 on every timeline build.
+    rt = _timeline_row_type_for_amount(amt) if amt is not None else (row_type or "INFLOW")
     cat_id = category_id if category_id is not None else existing.category_id
     cat_name = category_name
     if cat_name is None and getattr(existing, "category", None):
@@ -585,7 +590,7 @@ def _materialized_rule_timeline_row_if_exists(
         "category_id": cat_id,
         "category_name": cat_name,
         "amount": amt,
-        "type": row_type,
+        "type": rt,
         "status": existing.status,
         "source": "actual",
         "rule_id": rule_id,
@@ -752,18 +757,15 @@ def _link_rule_transfer_pair_transactions(
         return
     existing_tg_id = txn_from.transfer_group_id or txn_to.transfer_group_id
     if existing_tg_id:
-        expected_from = -abs(in_amount)
-        expected_to = abs(in_amount)
+        # Attach the missing FK only. Never rewrite amounts — a user may have
+        # flipped this occurrence to receive (+2331) while the rule still lists
+        # this account as the sender.
         if not txn_from.transfer_group_id:
             txn_from.transfer_group_id = existing_tg_id
+            txn_from.save(update_fields=["transfer_group_id", "updated_at"])
         if not txn_to.transfer_group_id:
             txn_to.transfer_group_id = existing_tg_id
-        for txn, expected in ((txn_from, expected_from), (txn_to, expected_to)):
-            fields = ["transfer_group_id", "updated_at"]
-            if txn.amount != expected:
-                txn.amount = expected
-                fields.append("amount")
-            txn.save(update_fields=fields)
+            txn_to.save(update_fields=["transfer_group_id", "updated_at"])
         return
     from_acc = Account.objects.filter(pk=from_acc_id).first()
     if from_acc is None:
@@ -780,18 +782,8 @@ def _link_rule_transfer_pair_transactions(
     )
     txn_from.transfer_group = tg
     txn_to.transfer_group = tg
-    expected_from = -abs(in_amount)
-    expected_to = abs(in_amount)
-    from_updates = ["transfer_group_id", "updated_at"]
-    to_updates = ["transfer_group_id", "updated_at"]
-    if txn_from.amount != expected_from:
-        txn_from.amount = expected_from
-        from_updates.append("amount")
-    if txn_to.amount != expected_to:
-        txn_to.amount = expected_to
-        to_updates.append("amount")
-    txn_from.save(update_fields=from_updates)
-    txn_to.save(update_fields=to_updates)
+    txn_from.save(update_fields=["transfer_group_id", "updated_at"])
+    txn_to.save(update_fields=["transfer_group_id", "updated_at"])
     cache = get_active_balance_cache()
     if cache is not None:
         cache.note_transaction_saved(txn_from)
@@ -824,6 +816,25 @@ def repair_rule_transfer_leg_amounts(account_ids: Iterable[int]) -> int:
         )
         if not legs:
             continue
+        if len(legs) == 2:
+            a, b = legs[0], legs[1]
+            if (
+                a.amount is not None
+                and b.amount is not None
+                and a.amount != 0
+                and b.amount != 0
+                and (a.amount > 0) != (b.amount > 0)
+            ):
+                # User flipped which account receives. Trust amounts; realign from/to.
+                neg = a if a.amount < 0 else b
+                pos = b if a.amount < 0 else a
+                if tg.from_account_id != neg.account_id or tg.to_account_id != pos.account_id:
+                    TransferGroup.objects.filter(pk=tg.pk).update(
+                        from_account_id=neg.account_id,
+                        to_account_id=pos.account_id,
+                    )
+                    repaired += 1
+                continue
         expected_from = -abs(tg.amount)
         expected_to = abs(tg.amount)
         for leg in legs:
@@ -3559,7 +3570,7 @@ def _build_timeline_impl(
                     "category_id": cat_id,
                     "category_name": cat_name,
                     "amount": amt_from,
-                    "type": "OUTFLOW",
+                    "type": _timeline_row_type_for_amount(amt_from),
                     "status": txn_from.status,
                     "source": "actual",
                     "rule_id": rule.id,
@@ -3575,7 +3586,7 @@ def _build_timeline_impl(
                     "category_id": None,
                     "category_name": None,
                     "amount": amt_to,
-                    "type": "INFLOW",
+                    "type": _timeline_row_type_for_amount(amt_to),
                     "status": txn_to.status,
                     "source": "actual",
                     "rule_id": rule.id,

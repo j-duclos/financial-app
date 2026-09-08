@@ -277,7 +277,23 @@ class TransactionSerializer(serializers.ModelSerializer):
                 instance = Transaction.objects.get(pk=instance.pk)
             if has_to and to_account_obj is not None:
                 out_for_link.refresh_from_db()
-            if has_to and to_account_obj is not None and not hasattr(out_for_link, "transfer_out"):
+            already_paired = False
+            try:
+                out_for_link.transfer_out  # noqa: B018
+                already_paired = True
+            except Transfer.DoesNotExist:
+                pass
+            if not already_paired:
+                try:
+                    out_for_link.transfer_in  # noqa: B018
+                    already_paired = True
+                except Transfer.DoesNotExist:
+                    pass
+            if not already_paired and getattr(out_for_link, "transfer_group_id", None):
+                already_paired = Transaction.objects.filter(
+                    transfer_group_id=out_for_link.transfer_group_id
+                ).exclude(pk=out_for_link.pk).exists()
+            if has_to and to_account_obj is not None and not already_paired:
                 if out_for_link.amount is None or out_for_link.amount >= 0:
                     raise ValidationError(
                         {

@@ -139,7 +139,7 @@ class TestRuleTransferLegAmounts:
         assert wrong_from.amount == Decimal("-70.00")
         assert to_leg.amount == Decimal("70.00")
 
-    def test_timeline_shows_outflow_on_checking_for_wrong_sign_until_repaired(self, user, checking_and_card):
+    def test_timeline_follows_stored_amount_sign(self, user, checking_and_card):
         checking, card, cat = checking_and_card
         rule = RecurringRule.objects.create(
             household=checking.household,
@@ -183,4 +183,127 @@ class TestRuleTransferLegAmounts:
             as_of_date=date(2026, 7, 11),
         )
         cox = next(r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == checking.id)
-        assert cox["type"] == "OUTFLOW"
+        assert cox["type"] == "INFLOW"
+        assert cox["amount"] == Decimal("70.00")
+
+    def test_repair_does_not_revert_user_sign_flip(self, checking_and_card):
+        checking, card, cat = checking_and_card
+        rule = RecurringRule.objects.create(
+            household=checking.household,
+            name="Transfer for Planning",
+            account=checking,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.TRANSFER,
+            amount=Decimal("2331.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=17,
+            start_date=date(2026, 9, 17),
+            active=True,
+        )
+        tg = TransferGroup.objects.create(
+            household=checking.household,
+            from_account=checking,
+            to_account=card,
+            amount=Decimal("2331.00"),
+            scheduled_date=date(2026, 9, 17),
+            status=TransferGroup.Status.PLANNED,
+        )
+        checking_leg = Transaction.objects.create(
+            account=checking,
+            date=date(2026, 9, 17),
+            payee=rule.name,
+            amount=Decimal("2331.00"),
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+            category=cat,
+            status=Transaction.Status.PLANNED,
+        )
+        dest_leg = Transaction.objects.create(
+            account=card,
+            date=date(2026, 9, 17),
+            payee=rule.name,
+            amount=Decimal("-2331.00"),
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+            status=Transaction.Status.PLANNED,
+        )
+        assert repair_rule_transfer_leg_amounts([checking.id, card.id]) == 1
+        checking_leg.refresh_from_db()
+        dest_leg.refresh_from_db()
+        tg.refresh_from_db()
+        assert checking_leg.amount == Decimal("2331.00")
+        assert dest_leg.amount == Decimal("-2331.00")
+        assert tg.from_account_id == card.id
+        assert tg.to_account_id == checking.id
+
+    def test_timeline_shows_inflow_after_user_sign_flip(self, user, checking_and_card):
+        checking, card, cat = checking_and_card
+        savings = Account.objects.create(
+            household=checking.household,
+            account_type=Account.AccountType.SAVINGS,
+            name="Chase Savings",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        rule = RecurringRule.objects.create(
+            household=checking.household,
+            name="Transfer for Planning",
+            account=checking,
+            transfer_to_account=savings,
+            category=cat,
+            direction=RecurringRule.Direction.TRANSFER,
+            amount=Decimal("2331.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=17,
+            start_date=date(2026, 9, 17),
+            active=True,
+        )
+        tg = TransferGroup.objects.create(
+            household=checking.household,
+            from_account=checking,
+            to_account=savings,
+            amount=Decimal("2331.00"),
+            scheduled_date=date(2026, 9, 17),
+            status=TransferGroup.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=checking,
+            date=date(2026, 9, 17),
+            payee=rule.name,
+            amount=Decimal("2331.00"),
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+            category=cat,
+            status=Transaction.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=savings,
+            date=date(2026, 9, 17),
+            payee=rule.name,
+            amount=Decimal("-2331.00"),
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+            status=Transaction.Status.PLANNED,
+        )
+        rows = build_timeline(
+            user,
+            date(2026, 9, 1),
+            date(2026, 9, 30),
+            account_id=checking.id,
+            as_of_date=date(2026, 9, 8),
+        )
+        planning = next(
+            r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == checking.id
+        )
+        assert planning["amount"] == Decimal("2331.00")
+        assert planning["type"] == "INFLOW"
+

@@ -56,6 +56,8 @@ describe("Transactions transfer preview", () => {
     expect(transactions).toMatch(
       /const showEditTransferToSelector =\s*Boolean\(editing\) &&\s*editTransferToAccounts\.length > 0 &&/
     );
-    expect(transactions).toMatch(/linkedId != null && t\.id === linkedId/);
+    expect(transactions).toMatch(/signedAmount = amt/);
+    expect(transactions).not.toMatch(/ledgerFlow:/);
+    expect(transactions).toMatch(/amount: signedAmountForEditForm\(txn\.amount\)/);
   });
 });

@@ -68,7 +68,6 @@ import {
   ledgerPastTransactionStart,
   ledgerProjectionRange,
   indexTimelineRowsByAccount,
-  timelineRowFlowDirection,
   forecastRangeLabel,
   daysToForecastRange,
   forecastRangeToDays,
@@ -1180,18 +1179,24 @@ export default function Transactions() {
 
       await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
       await queryClient.cancelQueries({ queryKey: ["transactions", "future-posted"] });
+      await queryClient.cancelQueries({ queryKey: ["timeline"] });
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
       const previousFuturePosted = queryClient.getQueriesData({
         queryKey: ["transactions", "future-posted"],
       });
+      const previousTimelines = queryClient.getQueriesData({ queryKey: ["timeline"] });
       const linkedId = (editing as { linked_transaction_id?: number | null } | null)?.linked_transaction_id;
       const patchTxn = (t: Transaction) => {
         if (t.id === id) {
+          const nextAmt = data.amount != null ? parseFloat(data.amount) : NaN;
           return {
             ...t,
             ...(data.date != null && { date: data.date }),
             ...(data.payee != null && { payee: data.payee }),
-            ...(data.amount != null && { amount: data.amount }),
+            ...(data.amount != null && {
+              amount: data.amount,
+              direction: Number.isFinite(nextAmt) && nextAmt >= 0 ? "INFLOW" : "OUTFLOW",
+            }),
             ...(data.category_id !== undefined && { category_id: data.category_id }),
             ...(data.memo != null && { memo: data.memo }),
             ...(data.account_id != null && { account_id: data.account_id }),
@@ -1202,11 +1207,15 @@ export default function Transactions() {
             data.amount != null && Number.isFinite(parseFloat(data.amount))
               ? String(-parseFloat(data.amount))
               : undefined;
+          const sibN = siblingAmount != null ? parseFloat(siblingAmount) : NaN;
           return {
             ...t,
             ...(data.date != null && { date: data.date }),
             ...(data.payee != null && { payee: data.payee }),
-            ...(siblingAmount != null && { amount: siblingAmount }),
+            ...(siblingAmount != null && {
+              amount: siblingAmount,
+              direction: Number.isFinite(sibN) && sibN >= 0 ? "INFLOW" : "OUTFLOW",
+            }),
           };
         }
         return t;
@@ -1231,7 +1240,38 @@ export default function Transactions() {
           return { ...old, results: old.results.map(patchTxn) };
         }
       );
-      return { ...snapshot, previousTxns, previousFuturePosted, transactionsQueryKey };
+      if (data.amount != null) {
+        const nextAmt = parseFloat(data.amount);
+        const nextType =
+          Number.isFinite(nextAmt) && nextAmt >= 0 ? "INFLOW" : "OUTFLOW";
+        queryClient.setQueriesData(
+          { queryKey: ["timeline"] },
+          (old: { timeline?: TimelineRow[] } | undefined) => {
+            if (!old?.timeline) return old;
+            return {
+              ...old,
+              timeline: old.timeline.map((row) =>
+                row.transaction_id === id
+                  ? {
+                      ...row,
+                      amount: data.amount as string,
+                      type: nextType,
+                      ...(data.date != null ? { date: data.date } : {}),
+                      ...(data.payee != null ? { description: data.payee } : {}),
+                    }
+                  : row
+              ),
+            };
+          }
+        );
+      }
+      return {
+        ...snapshot,
+        previousTxns,
+        previousFuturePosted,
+        previousTimelines,
+        transactionsQueryKey,
+      };
     },
     onError: (err: Error, _vars, context) => {
       setAwaitingTimelineRecalc(false);
@@ -1240,6 +1280,11 @@ export default function Transactions() {
       }
       if (context?.previousFuturePosted) {
         for (const [key, data] of context.previousFuturePosted) {
+          queryClient.setQueryData(key, data);
+        }
+      }
+      if (context?.previousTimelines) {
+        for (const [key, data] of context.previousTimelines) {
           queryClient.setQueryData(key, data);
         }
       }
@@ -1430,7 +1475,7 @@ export default function Transactions() {
       )
     : null;
 
-  function openEdit(txn: Transaction, opts?: { ledgerFlow?: "INFLOW" | "OUTFLOW" }) {
+  function openEdit(txn: Transaction) {
     setDeleteError(null);
     setEditing(txn);
     const ruleId = (txn as { rule_id?: number | null }).rule_id ?? null;
@@ -1449,21 +1494,17 @@ export default function Transactions() {
       payee: payeeWithCard,
       category_id: (txn.category?.id ?? txn.category_id) ?? "",
       account_id: txnAccountId ?? "",
-      amount: signedAmountForEditForm(txn.amount, opts?.ledgerFlow),
-      direction:
-        opts?.ledgerFlow ?? (amt >= 0 ? "INFLOW" : "OUTFLOW"),
+      amount: signedAmountForEditForm(txn.amount),
+      direction: amt >= 0 ? "INFLOW" : "OUTFLOW",
       transfer_to_account_id: transferToId,
     });
   }
 
-  async function openEditByTimelineId(
-    transactionId: number,
-    opts?: { ledgerFlow?: "INFLOW" | "OUTFLOW" }
-  ) {
+  async function openEditByTimelineId(transactionId: number) {
     try {
       setDeleteError(null);
       const txn = await getTransaction(transactionId);
-      openEdit(txn, opts);
+      openEdit(txn);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not load transaction for edit");
@@ -1515,9 +1556,7 @@ export default function Transactions() {
         setDeleteError("Could not load this scheduled transaction for editing.");
         return;
       }
-      await openEditByTimelineId(transactionId, {
-        ledgerFlow: timelineRowFlowDirection(row) ?? undefined,
-      });
+      await openEditByTimelineId(transactionId);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
       setDeleteError(msg || "Could not load transaction for edit");
@@ -1622,21 +1661,7 @@ export default function Transactions() {
     if (!editing) return;
     const amt = parseFloat(editForm.amount);
     if (!editForm.amount.trim() || amt === 0 || Number.isNaN(amt)) return;
-    const absAmt = Math.abs(amt);
-    const origAmt = parseFloat(editing.amount);
-    const origSign = origAmt < 0 ? -1 : origAmt > 0 ? 1 : 0;
-    const impliedOutflow = origSign < 0;
-    const dirOutflow = editForm.direction === "OUTFLOW";
-    const signedAmount =
-      origSign === 0
-        ? dirOutflow
-          ? -absAmt
-          : absAmt
-        : impliedOutflow === dirOutflow
-          ? origSign * absAmt
-          : dirOutflow
-            ? -absAmt
-            : absAmt;
+    const signedAmount = amt;
     const linkedTransfer = Boolean((editing as { transfer_to_account?: unknown }).transfer_to_account);
     const editCat = editForm.category_id ? categories.find((c) => c.id === editForm.category_id) : null;
     const transferCategory = isTransferCategoryName(editCat?.name);
@@ -2597,6 +2622,11 @@ export default function Transactions() {
                   required
                   disabled={editingFinancialLocked}
                 />
+                {editIsLinkedTransfer && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Drop the minus to receive on this account (2331.00). Keep the minus to send (−2331.00).
+                  </p>
+                )}
               </div>
               {editingRuleId != null && !editingFinancialLocked && (
                 <div>

@@ -244,10 +244,9 @@ describe("projectedCardOwedFromPreview", () => {
 });
 
 describe("signedAmountForEditForm", () => {
-  it("shows the ledger sign so an outflow can be typed positive", () => {
-    expect(signedAmountForEditForm("-2331.00", "OUTFLOW")).toBe("-2331.00");
-    expect(signedAmountForEditForm("2331.00", "OUTFLOW")).toBe("-2331.00");
-    expect(signedAmountForEditForm("-2331.00", "INFLOW")).toBe("2331.00");
+  it("keeps the stored sign so +2331 is not rewritten to −2331", () => {
+    expect(signedAmountForEditForm("-2331.00")).toBe("-2331.00");
+    expect(signedAmountForEditForm("2331.00")).toBe("2331.00");
     expect(directionFromSignedAmount("2331")).toBe("INFLOW");
     expect(directionFromSignedAmount("-2331")).toBe("OUTFLOW");
     expect(applyDirectionToSignedAmount("-2331.00", "INFLOW")).toBe("2331.00");
