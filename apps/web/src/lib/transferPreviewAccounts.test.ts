@@ -9,6 +9,9 @@ import {
   inlineBankDestLedgerPreview,
   previewBalancesForAccountId,
   accountLedgerBalanceToday,
+  signedAmountForEditForm,
+  directionFromSignedAmount,
+  applyDirectionToSignedAmount,
 } from "./transferPreviewAccounts";
 
 function creditCard(overrides: Partial<Account> = {}): Account {
@@ -237,5 +240,16 @@ describe("projectedCardOwedFromPreview", () => {
         previewOwedBefore: "90.00",
       })
     ).toBe(90);
+  });
+});
+
+describe("signedAmountForEditForm", () => {
+  it("shows the ledger sign so an outflow can be typed positive", () => {
+    expect(signedAmountForEditForm("-2331.00", "OUTFLOW")).toBe("-2331.00");
+    expect(signedAmountForEditForm("2331.00", "OUTFLOW")).toBe("-2331.00");
+    expect(signedAmountForEditForm("-2331.00", "INFLOW")).toBe("2331.00");
+    expect(directionFromSignedAmount("2331")).toBe("INFLOW");
+    expect(directionFromSignedAmount("-2331")).toBe("OUTFLOW");
+    expect(applyDirectionToSignedAmount("-2331.00", "INFLOW")).toBe("2331.00");
   });
 });

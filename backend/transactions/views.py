@@ -597,6 +597,11 @@ class TransactionViewSet(ModelViewSet):
                     Transfer.objects.filter(pk=transfer.pk).update(
                         amount=abs(serializer.validated_data["amount"])
                     )
+            from transactions.services.posting import swap_transfer_pair_if_amount_sign_flipped
+
+            if "amount" in serializer.validated_data:
+                instance.refresh_from_db()
+                swap_transfer_pair_if_amount_sign_flipped(instance, old_amount)
         if (
             instance.rule_id is not None
             and new_date is not None

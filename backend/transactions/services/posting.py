@@ -356,6 +356,49 @@ def sync_transfer_pair_date(
     return sibling
 
 
+def swap_transfer_pair_if_amount_sign_flipped(txn: Transaction, old_amount: Decimal) -> None:
+    """If this leg flipped send/receive, swap Transfer from/to so from_transaction stays the outflow."""
+    new_amount = txn.amount
+    if old_amount is None or new_amount is None:
+        return
+    if old_amount == 0 or new_amount == 0:
+        return
+    if (old_amount > 0) == (new_amount > 0):
+        return
+
+    tr = (
+        Transfer.objects.filter(from_transaction_id=txn.pk).first()
+        or Transfer.objects.filter(to_transaction_id=txn.pk).first()
+    )
+    if tr is None:
+        return
+
+    from_id = tr.from_transaction_id
+    to_id = tr.to_transaction_id
+    amount = tr.amount
+    xfer_date = tr.date
+    memo = tr.memo
+    transfer_id = tr.transfer_id
+    tr.delete()
+    Transfer.objects.create(
+        transfer_id=transfer_id,
+        from_transaction_id=to_id,
+        to_transaction_id=from_id,
+        amount=amount,
+        date=xfer_date,
+        memo=memo,
+    )
+
+    tg_id = txn.transfer_group_id
+    if tg_id:
+        tg = TransferGroup.objects.filter(pk=tg_id).first()
+        if tg is not None:
+            TransferGroup.objects.filter(pk=tg.pk).update(
+                from_account_id=tg.to_account_id,
+                to_account_id=tg.from_account_id,
+            )
+
+
 def align_linked_transfer_pair_dates(
     *,
     account_id: int | None = None,

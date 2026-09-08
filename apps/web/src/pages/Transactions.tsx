@@ -109,6 +109,9 @@ import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
 import {
   inlineBankDestLedgerPreview,
   previewBalancesForAccountId,
+  signedAmountForEditForm,
+  directionFromSignedAmount,
+  applyDirectionToSignedAmount,
   transferPreviewAccountIds,
 } from "../lib/transferPreviewAccounts";
 
@@ -1446,7 +1449,7 @@ export default function Transactions() {
       payee: payeeWithCard,
       category_id: (txn.category?.id ?? txn.category_id) ?? "",
       account_id: txnAccountId ?? "",
-      amount: String(Math.abs(amt)),
+      amount: signedAmountForEditForm(txn.amount, opts?.ledgerFlow),
       direction:
         opts?.ledgerFlow ?? (amt >= 0 ? "INFLOW" : "OUTFLOW"),
       transfer_to_account_id: transferToId,
@@ -2540,14 +2543,26 @@ export default function Transactions() {
                 <label className="block text-sm font-medium text-gray-700">Direction</label>
                 <select
                   value={editForm.direction}
-                  onChange={(e) => setEditForm((f) => ({ ...f, direction: e.target.value as "INFLOW" | "OUTFLOW" }))}
-                  disabled={editingFinancialLocked || (editIsTransferInflowLeg && editIsLinkedTransfer)}
+                  onChange={(e) => {
+                    const direction = e.target.value as "INFLOW" | "OUTFLOW";
+                    setEditForm((f) => ({
+                      ...f,
+                      direction,
+                      amount: applyDirectionToSignedAmount(f.amount, direction),
+                    }));
+                  }}
+                  disabled={editingFinancialLocked}
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                 >
                   {editDirectionIsPaymentLike ? (
                     <>
                       <option value="OUTFLOW">Out (payment)</option>
                       <option value="INFLOW">In (payment)</option>
+                    </>
+                  ) : editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name) ? (
+                    <>
+                      <option value="OUTFLOW">Out (this account sends)</option>
+                      <option value="INFLOW">In (this account receives)</option>
                     </>
                   ) : (
                     <>
@@ -2556,9 +2571,9 @@ export default function Transactions() {
                     </>
                   )}
                 </select>
-                {editIsTransferInflowLeg && editIsLinkedTransfer && (
+                {editIsLinkedTransfer && (
                   <p className="mt-1 text-xs text-gray-500">
-                    This account is receiving. Date, amount, and the other account apply to both sides of the transfer.
+                    Negative amount = this account sends. Positive = this account receives. Both sides of the transfer update.
                   </p>
                 )}
               </div>
@@ -2567,9 +2582,17 @@ export default function Transactions() {
                 <input
                   type="number"
                   step="0.01"
-                  min="0"
                   value={editForm.amount}
-                  onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                  onChange={(e) => {
+                    const amount = e.target.value;
+                    const nextDir = directionFromSignedAmount(amount);
+                    setEditForm((f) => ({
+                      ...f,
+                      amount,
+                      ...(nextDir != null ? { direction: nextDir } : {}),
+                    }));
+                  }}
+                  title="Negative = this account sends, positive = this account receives"
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-600"
                   required
                   disabled={editingFinancialLocked}
