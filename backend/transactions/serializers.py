@@ -238,6 +238,10 @@ class TransactionSerializer(serializers.ModelSerializer):
                 try:
                     instance.transfer_in  # noqa: B018 — existence check
                     already_transfer_in = True
+                    # Keep counterpart id so the viewset can retarget the sending leg.
+                    if to_account_obj is not None:
+                        self.validated_data["transfer_to_account_id"] = to_account_obj
+                        validated_data["transfer_to_account_id"] = to_account_obj
                     has_to = False
                     to_account_obj = None
                 except Transfer.DoesNotExist:

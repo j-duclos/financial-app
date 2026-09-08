@@ -43,7 +43,7 @@ describe("OnboardingWelcomeModal", () => {
       <OnboardingWelcomeModal open onGetStarted={() => undefined} onSkip={() => undefined} />
     );
     expect(screen.getByTestId("onboarding-welcome")).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "See your money before it happens." })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Welcome to FlowSight" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Get started" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip onboarding for now" })).toBeInTheDocument();
   });

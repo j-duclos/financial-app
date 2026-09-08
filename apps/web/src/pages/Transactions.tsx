@@ -106,7 +106,11 @@ import { categoriesForDropdown } from "../lib/categoryOptions";
 import { usePageForecastWindow } from "../hooks/usePageForecastWindow";
 import { usePerfPageLoad } from "../hooks/usePerfPageLoad";
 import { useTransferBalancePreview } from "../hooks/useTransferBalancePreview";
-import { transferPreviewAccountIds } from "../lib/transferPreviewAccounts";
+import {
+  inlineBankDestLedgerPreview,
+  previewBalancesForAccountId,
+  transferPreviewAccountIds,
+} from "../lib/transferPreviewAccounts";
 
 export type { TimeFilter, ForecastRange };
 
@@ -316,9 +320,9 @@ export default function Transactions() {
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
-  const { data: accountsData } = useQuery({
-    queryKey: ["accounts", "transactions-picker"],
-    queryFn: () => listAccounts({ active_only: true, page_size: 500 }),
+  const { data: accountsData, isFetching: accountsPickerFetching, refetch: refetchAccountsPicker } = useQuery({
+    queryKey: ["accounts", "transactions-picker", "balance"],
+    queryFn: () => listAccounts({ active_only: true, page_size: 500, balance: "true" }),
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
@@ -646,15 +650,16 @@ export default function Transactions() {
       counterpartyAccountId: inlineTransferToId,
       amount: inlineRow.amount,
       creditCardPayment: selectedCategory?.name === "Credit Card Payment",
+      direction: inlineRow.direction,
     });
-  }, [accountId, inlineTransferToId, inlineRow.amount, selectedCategory?.name]);
+  }, [accountId, inlineTransferToId, inlineRow.amount, inlineRow.direction, selectedCategory?.name]);
 
   const inlineTransferPreview = useTransferBalancePreview({
     fromAccountId: inlinePreviewIds?.fromAccountId ?? null,
     toAccountId: inlinePreviewIds?.toAccountId ?? null,
     amount: inlineRow.amount,
     date: inlineRow.date,
-    enabled: isTransferCategory && inlineTransferToId != null && typeof accountId === "number",
+    enabled: inlinePayToCardAccountId != null && typeof accountId === "number",
   });
 
   const inlineCardPreviewView = projectedPreviewViewState({
@@ -666,15 +671,18 @@ export default function Transactions() {
     previewOwedBefore: inlineTransferPreview.data?.destination_balance_owed_before,
     previewDestSignedBefore: inlineTransferPreview.data?.destination_balance_before,
   });
-  const inlineBankPreviewView = projectedTransferBalancesViewState({
-    previewActive: inlineBankTransferDestId != null,
-    queryMatchesLiveInputs: inlineTransferPreview.queryMatchesLiveInputs,
-    isFetching: inlineTransferPreview.isFetching,
-    isError: inlineTransferPreview.isError,
-    errorMessage: inlineTransferPreview.errorMessage,
-    balanceBefore: inlineTransferPreview.data?.destination_balance_before,
-    balanceAfter: inlineTransferPreview.data?.destination_balance_after,
+  const inlineBankLedger = inlineBankDestLedgerPreview({
+    destinationAccount: inlineDestPickAccount,
+    amount: inlineRow.amount,
   });
+  const inlineBankPreviewView: ReturnType<typeof projectedTransferBalancesViewState> =
+    inlineBankTransferDestId == null
+      ? { kind: "hidden" }
+      : inlineBankLedger != null
+        ? { kind: "ready", before: inlineBankLedger.before, after: inlineBankLedger.after }
+        : accountsPickerFetching
+          ? { kind: "loading" }
+          : { kind: "error", message: "Could not load current balance." };
 
   const editCategory = useMemo(
     () => (editForm.category_id ? categories.find((c) => c.id === editForm.category_id) : null),
@@ -757,7 +765,6 @@ export default function Transactions() {
     editTransferToAccounts.length > 0;
   const showEditTransferToSelector =
     Boolean(editing) &&
-    editForm.direction === "OUTFLOW" &&
     editTransferToAccounts.length > 0 &&
     (editIsLinkedTransfer || editIsTransferCategoryName(editCategory?.name)) &&
     !hideEditTransferToSelector &&
@@ -832,14 +839,23 @@ export default function Transactions() {
     previewOwedBefore: editTransferPreview.data?.destination_balance_owed_before,
     previewDestSignedBefore: editTransferPreview.data?.destination_balance_before,
   });
+  const editLabeledBankBalances = previewBalancesForAccountId({
+    labeledAccountId: editBankTransferDestId ?? 0,
+    fromAccountId: editTransferPreview.data?.from_account_id,
+    toAccountId: editTransferPreview.data?.to_account_id,
+    sourceBefore: editTransferPreview.data?.source_balance_before,
+    sourceAfter: editTransferPreview.data?.source_balance_after,
+    destBefore: editTransferPreview.data?.destination_balance_before,
+    destAfter: editTransferPreview.data?.destination_balance_after,
+  });
   const editBankPreviewView = projectedTransferBalancesViewState({
     previewActive: editBankTransferDestId != null,
     queryMatchesLiveInputs: editTransferPreview.queryMatchesLiveInputs,
     isFetching: editTransferPreview.isFetching,
     isError: editTransferPreview.isError,
     errorMessage: editTransferPreview.errorMessage,
-    balanceBefore: editTransferPreview.data?.destination_balance_before,
-    balanceAfter: editTransferPreview.data?.destination_balance_after,
+    balanceBefore: editLabeledBankBalances?.before,
+    balanceAfter: editLabeledBankBalances?.after,
   });
 
   const editAccounts = useMemo(() => {
@@ -1165,18 +1181,33 @@ export default function Transactions() {
       const previousFuturePosted = queryClient.getQueriesData({
         queryKey: ["transactions", "future-posted"],
       });
-      const patchTxn = (t: Transaction) =>
-        t.id === id
-          ? {
-              ...t,
-              ...(data.date != null && { date: data.date }),
-              ...(data.payee != null && { payee: data.payee }),
-              ...(data.amount != null && { amount: data.amount }),
-              ...(data.category_id !== undefined && { category_id: data.category_id }),
-              ...(data.memo != null && { memo: data.memo }),
-              ...(data.account_id != null && { account_id: data.account_id }),
-            }
-          : t;
+      const linkedId = (editing as { linked_transaction_id?: number | null } | null)?.linked_transaction_id;
+      const patchTxn = (t: Transaction) => {
+        if (t.id === id) {
+          return {
+            ...t,
+            ...(data.date != null && { date: data.date }),
+            ...(data.payee != null && { payee: data.payee }),
+            ...(data.amount != null && { amount: data.amount }),
+            ...(data.category_id !== undefined && { category_id: data.category_id }),
+            ...(data.memo != null && { memo: data.memo }),
+            ...(data.account_id != null && { account_id: data.account_id }),
+          };
+        }
+        if (linkedId != null && t.id === linkedId) {
+          const siblingAmount =
+            data.amount != null && Number.isFinite(parseFloat(data.amount))
+              ? String(-parseFloat(data.amount))
+              : undefined;
+          return {
+            ...t,
+            ...(data.date != null && { date: data.date }),
+            ...(data.payee != null && { payee: data.payee }),
+            ...(siblingAmount != null && { amount: siblingAmount }),
+          };
+        }
+        return t;
+      };
       queryClient.setQueryData(
         transactionsQueryKey,
         (old: { pages?: { results?: Transaction[] }[] } | undefined) => {
@@ -1237,7 +1268,7 @@ export default function Transactions() {
           type: "active",
         });
       }
-      if (newAccountId != null) setAccountId(newAccountId);
+      if (newAccountId != null && newAccountId !== accountId) setAccountId(newAccountId);
       if (syncedToAccountId != null) {
         void queryClient.refetchQueries({ queryKey: ["account", syncedToAccountId], type: "active" });
       }
@@ -1620,15 +1651,11 @@ export default function Transactions() {
       (editing as { linked_transaction_id?: number | null }).linked_transaction_id == null &&
       typeof editForm.transfer_to_account_id === "number" &&
       editForm.transfer_to_account_id > 0;
-    const omitTransferToOnSubmit =
-      editForm.direction === "INFLOW" &&
-      !isOrphanCcPaidFromSubmit &&
-      (linkedTransfer || transferCategory);
+    const omitTransferToOnSubmit = hideEditTransferToSelector;
     const includeTransferToOnSubmit =
       isOrphanCcPaidFromSubmit ||
       (!omitTransferToOnSubmit &&
-        editForm.direction === "OUTFLOW" &&
-        editForm.transfer_to_account_id &&
+        Boolean(editForm.transfer_to_account_id) &&
         (linkedTransfer || transferCategory));
     const imported = isBankImportedTransaction(editing);
     const reconciled = Boolean(editing.reconciled);
@@ -2205,7 +2232,10 @@ export default function Transactions() {
             inlinePayToCardAccountId={inlinePayToCardAccountId}
             inlineCardPreviewView={inlineCardPreviewView}
             inlineBankPreviewView={inlineBankPreviewView}
-            onRetryPreview={() => inlineTransferPreview.refetch()}
+            onRetryPreview={() => {
+              if (inlinePayToCardAccountId != null) inlineTransferPreview.refetch();
+              if (inlineBankTransferDestId != null) void refetchAccountsPicker();
+            }}
             inlineBankTransferDestId={inlineBankTransferDestId}
             inlineDestPickAccount={inlineDestPickAccount}
             cardCurrency={accounts.find((a) => a.id === inlinePayToCardAccountId)?.currency}
@@ -2390,7 +2420,7 @@ export default function Transactions() {
                   <label className="block text-sm font-medium text-gray-700">
                     {editCategory?.name === "Credit Card Payment"
                       ? "Payment to (credit card)"
-                      : "Transfer to account"}
+                      : "Other account"}
                   </label>
                   <select
                     value={editForm.transfer_to_account_id}
@@ -2528,7 +2558,7 @@ export default function Transactions() {
                 </select>
                 {editIsTransferInflowLeg && editIsLinkedTransfer && (
                   <p className="mt-1 text-xs text-gray-500">
-                    This is the receiving side of a transfer — change the date here and the other account updates automatically.
+                    This account is receiving. Date, amount, and the other account apply to both sides of the transfer.
                   </p>
                 )}
               </div>

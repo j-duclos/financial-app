@@ -2,26 +2,22 @@ import { Alert } from "react-native";
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import * as WebBrowser from "expo-web-browser";
-import { ApiError, createCheckoutSession } from "@budget-app/api-client";
+import { ApiError, createCheckoutSession, resendVerification } from "@budget-app/api-client";
+import { describeApiError } from "@/services/api";
 import {
   ALREADY_PREMIUM_MESSAGE,
   BILLING_STATUS_QUERY_KEY,
   BILLING_UNAVAILABLE_MESSAGE,
-  EMAIL_VERIFICATION_REQUIRED_CODE,
-  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
+  EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE,
+  EMAIL_VERIFY_BEFORE_UPGRADE_TITLE,
+  RESEND_VERIFICATION_EMAIL_LABEL,
   UPGRADE_TO_PREMIUM_LABEL,
+  isEmailVerificationRequiredError,
 } from "@/lib/billing";
-
-function isEmailVerificationRequiredError(err: unknown): boolean {
-  if (!(err instanceof ApiError)) return false;
-  if (err.code === EMAIL_VERIFICATION_REQUIRED_CODE) return true;
-  return err.status === 403 && /verify your email before subscribing/i.test(err.message ?? "");
-}
 
 function upgradeErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 409) return ALREADY_PREMIUM_MESSAGE;
-    if (isEmailVerificationRequiredError(error)) return EMAIL_VERIFICATION_REQUIRED_MESSAGE;
     const msg = error.message || "";
     if (
       error.status === 503 ||
@@ -34,6 +30,15 @@ function upgradeErrorMessage(error: unknown): string {
   }
   if (error instanceof Error && error.message) return error.message;
   return "Something went wrong. Please try again.";
+}
+
+async function resendVerificationEmail(): Promise<void> {
+  try {
+    const result = await resendVerification();
+    Alert.alert("Verification email", result.detail || "Verification email sent.");
+  } catch (err) {
+    Alert.alert("Couldn’t send email", describeApiError(err));
+  }
 }
 
 export function usePremiumUpgrade() {
@@ -49,6 +54,16 @@ export function usePremiumUpgrade() {
       await WebBrowser.openBrowserAsync(session.url);
       await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
     } catch (err) {
+      if (isEmailVerificationRequiredError(err)) {
+        Alert.alert(EMAIL_VERIFY_BEFORE_UPGRADE_TITLE, EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE, [
+          { text: "Not now", style: "cancel" },
+          {
+            text: RESEND_VERIFICATION_EMAIL_LABEL,
+            onPress: () => void resendVerificationEmail(),
+          },
+        ]);
+        return;
+      }
       Alert.alert("Upgrade", upgradeErrorMessage(err));
     }
   }, [queryClient]);

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import { registerPushDevice } from "@budget-app/api-client";
 import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
@@ -12,11 +11,31 @@ import {
   NOTIFICATION_ASKED_STORAGE_KEY,
   PUSH_TOKEN_STORAGE_KEY,
   actionCenterHrefFromPushData,
+  isExpoGoRuntime,
   pushPlatformFromOs,
+  resolveExpoPushProjectId,
   shouldShowPermissionEducation,
 } from "./projectedFundsPush";
 
-Notifications.setNotificationHandler({
+type NotificationsModule = typeof import("expo-notifications");
+
+function loadNotifications(): NotificationsModule | null {
+  if (Platform.OS === "web") return null;
+  if (
+    isExpoGoRuntime({
+      appOwnership: Constants.appOwnership,
+      executionEnvironment: Constants.executionEnvironment,
+    })
+  ) {
+    return null;
+  }
+  // Lazy require so Expo Go never evaluates expo-notifications (SDK 53 Android redbox).
+  return require("expo-notifications") as NotificationsModule;
+}
+
+const Notifications = loadNotifications();
+
+Notifications?.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
     shouldShowBanner: true,
@@ -27,22 +46,35 @@ Notifications.setNotificationHandler({
 });
 
 async function registerCurrentToken(): Promise<string | null> {
-  if (Platform.OS === "web") return null;
-  const { status } = await Notifications.getPermissionsAsync();
-  if (status !== "granted") return null;
-  const projectId =
-    Constants.easConfig?.projectId ||
-    (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId;
-  const tokenResult = await Notifications.getExpoPushTokenAsync(
-    projectId ? { projectId } : undefined
-  );
-  const token = tokenResult.data;
-  await registerPushDevice({
-    expo_push_token: token,
-    platform: pushPlatformFromOs(Platform.OS),
-  });
-  await AsyncStorage.setItem(PUSH_TOKEN_STORAGE_KEY, token);
-  return token;
+  if (!Notifications) return null;
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== "granted") return null;
+    const projectId = resolveExpoPushProjectId({
+      easConfigProjectId: Constants.easConfig?.projectId,
+      extraEasProjectId: (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
+        ?.projectId,
+    });
+    if (!projectId) {
+      if (__DEV__) {
+        console.warn("[push] Skipping Expo push token: no EAS projectId (set EAS_PROJECT_ID).");
+      }
+      return null;
+    }
+    const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+    const token = tokenResult.data;
+    await registerPushDevice({
+      expo_push_token: token,
+      platform: pushPlatformFromOs(Platform.OS),
+    });
+    await AsyncStorage.setItem(PUSH_TOKEN_STORAGE_KEY, token);
+    return token;
+  } catch (error) {
+    if (__DEV__) {
+      console.warn("[push] Expo token registration failed", error);
+    }
+    return null;
+  }
 }
 
 export function useProjectedFundsPush() {
@@ -53,6 +85,7 @@ export function useProjectedFundsPush() {
   const [askVisible, setAskVisible] = useState(false);
   const [alreadyAsked, setAlreadyAsked] = useState(true);
   const listening = useRef(false);
+  const nativePushAvailable = Notifications != null;
 
   useEffect(() => {
     void AsyncStorage.getItem(NOTIFICATION_ASKED_STORAGE_KEY).then((value) => {
@@ -69,18 +102,20 @@ export function useProjectedFundsPush() {
         hasFinancialData,
         alreadyAsked,
         pushPrefEnabled: pushPref,
+        nativePushAvailable,
       })
     );
-  }, [alreadyAsked, auth.isAuthenticated, onboarding, profile]);
+  }, [alreadyAsked, auth.isAuthenticated, nativePushAvailable, onboarding, profile]);
 
   useEffect(() => {
+    if (!nativePushAvailable) return;
     if (!auth.isAuthenticated) return;
     if (profile?.projected_funds_push_enabled === false) return;
     void registerCurrentToken();
-  }, [auth.isAuthenticated, profile?.projected_funds_push_enabled]);
+  }, [auth.isAuthenticated, nativePushAvailable, profile?.projected_funds_push_enabled]);
 
   useEffect(() => {
-    if (listening.current) return;
+    if (!Notifications || listening.current) return;
     listening.current = true;
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as {
@@ -103,7 +138,7 @@ export function useProjectedFundsPush() {
 
   const enable = useCallback(async () => {
     await markAsked();
-    if (Platform.OS === "web") return;
+    if (!Notifications) return;
     const perm = await Notifications.requestPermissionsAsync();
     if (perm.status !== "granted") return;
     await registerCurrentToken();

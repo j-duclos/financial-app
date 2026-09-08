@@ -63,6 +63,10 @@ function invalidateRoot(queryClient: QueryClient, root: string): void {
   void queryClient.invalidateQueries({ queryKey: [root] });
 }
 
+export function invalidateOnboardingStatus(queryClient: QueryClient): void {
+  invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.onboarding);
+}
+
 export function invalidateLedgerQueries(queryClient: QueryClient): void {
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.transactions);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.timeline);
@@ -212,6 +216,7 @@ export function refreshAfterTransactionEdit(
   invalidateForecastQueries(queryClient);
   invalidateReportQueries(queryClient);
   invalidateSpendingLimitQueries(queryClient);
+  invalidateOnboardingStatus(queryClient);
 }
 
 /**
@@ -232,6 +237,7 @@ export function invalidateRecurringRuleDependents(queryClient: QueryClient): voi
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.ruleAllocations);
   // What-If baseline uses live rules; keep scenario compare caches fresh after rule edits.
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.whatIfScenarios);
+  invalidateOnboardingStatus(queryClient);
 }
 
 /** Spending-limit definition changes — budget summaries and limit performance only. */

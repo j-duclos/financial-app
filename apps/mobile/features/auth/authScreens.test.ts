@@ -8,7 +8,7 @@ const registerSource = readFileSync(join(dir, "../../app/(auth)/register.tsx"), 
 const loginSource = readFileSync(join(dir, "../../app/(auth)/login.tsx"), "utf8");
 
 describe("auth screens autofill", () => {
-  it("register marks username, email, and new-password for the system Autofill service", () => {
+  it("register keeps iOS Keychain hints; Android Autofill is disabled in TextField", () => {
     expect(registerSource).toMatch(/autoComplete="username"/);
     expect(registerSource).toMatch(/autoComplete="email"/);
     expect(registerSource).toMatch(/autoComplete="password-new"/);
@@ -17,7 +17,7 @@ describe("auth screens autofill", () => {
     expect(registerSource).toMatch(/textContentType="newPassword"/);
   });
 
-  it("login keeps username and password Autofill hints", () => {
+  it("login keeps iOS username/password hints", () => {
     expect(loginSource).toMatch(/autoComplete="username"/);
     expect(loginSource).toMatch(/autoComplete="password"/);
   });

@@ -95,7 +95,7 @@ describe("transaction mutation invalidation", () => {
     refreshAfterTransactionEdit(queryClient);
     const roots = invalidatedRoots(spy);
     expect(roots).toEqual(
-      expect.arrayContaining(["transactions", "timeline", "accounts", "dashboard-summary-fast"])
+      expect.arrayContaining(["transactions", "timeline", "accounts", "dashboard-summary-fast", "onboarding"])
     );
     expect(roots).not.toContain("rules");
     expect(roots).not.toContain("buckets");
@@ -200,6 +200,7 @@ describe("recurring rule mutation invalidation", () => {
         "calendar-chunk",
         "buckets",
         "what-if-scenarios",
+        "onboarding",
       ])
     );
     expect(roots).not.toContain("spending-targets");

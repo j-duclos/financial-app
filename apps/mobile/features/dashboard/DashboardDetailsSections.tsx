@@ -8,6 +8,7 @@ import {
   type DashboardGoalSummary,
   type DashboardUpcomingTransaction,
   type UpcomingDashboardPreviewLayout,
+  GETTING_STARTED_HELP_LABELS,
 } from "@budget-app/shared";
 import {
   Card,
@@ -34,6 +35,7 @@ type UpcomingProps = {
   preview?: UpcomingDashboardPreviewLayout | null;
   firstCashShortfall?: DashboardFirstCashShortfall | null;
   recalculating?: boolean;
+  onHelpPress?: () => void;
 };
 
 export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
@@ -43,6 +45,7 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
   preview,
   firstCashShortfall,
   recalculating,
+  onHelpPress,
 }: UpcomingProps) {
   const theme = useTheme();
   const router = useRouter();
@@ -68,6 +71,8 @@ export const DashboardUpcomingSection = memo(function DashboardUpcomingSection({
       actionLabel="Calendar"
       onAction={() => router.push("/(app)/(tabs)/calendar")}
       subtitle={recalculating ? "Updating…" : undefined}
+      infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.upcomingMoneyFlow}
+      onInfoPress={onHelpPress}
     />
   );
 
@@ -201,6 +206,7 @@ type GoalsProps = {
   onRetry: () => void;
   goals: DashboardGoalSummary[];
   recalculating?: boolean;
+  onHelpPress?: () => void;
 };
 
 export const DashboardGoalsSection = memo(function DashboardGoalsSection({
@@ -209,6 +215,7 @@ export const DashboardGoalsSection = memo(function DashboardGoalsSection({
   onRetry,
   goals,
   recalculating,
+  onHelpPress,
 }: GoalsProps) {
   const theme = useTheme();
   const router = useRouter();
@@ -224,6 +231,8 @@ export const DashboardGoalsSection = memo(function DashboardGoalsSection({
         actionLabel="All goals"
         onAction={() => router.push(goalsListPath())}
         subtitle={recalculating ? "Updating…" : undefined}
+        infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.goalsProgress}
+        onInfoPress={onHelpPress}
       />
       {sectionState === "loading" ? (
         <GoalCardSkeleton />

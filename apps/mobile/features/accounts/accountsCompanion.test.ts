@@ -100,6 +100,8 @@ describe("mobile Account Detail companion UX", () => {
     expect(accountForm).toMatch(/synced balances from the bank/);
     expect(accountForm).toMatch(/!isEdit \?/);
     expect(accountForm).toMatch(/Starting balance/);
+    expect(accountForm).toMatch(/createHousehold/);
+    expect(accountForm).toMatch(/getProfile\(\)/);
   });
 
   it("does not reproduce desktop Resolve Risk on list rows", () => {

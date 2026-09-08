@@ -102,6 +102,15 @@ describe("mobile Home companion metrics", () => {
     expect(attentionCardSource).toMatch(/chevron-right/);
     expect(attentionCardSource).not.toMatch(/ActionButton/);
   });
+
+  it("places the Getting Started card below the Home header and above Financial Health", () => {
+    expect(dashboardSource).toMatch(/GettingStartedCard/);
+    const established = dashboardSource.slice(dashboardSource.lastIndexOf("ForecastWindowSelect"));
+    expect(established.indexOf("{gettingStartedCard}")).toBeGreaterThan(-1);
+    expect(established.indexOf("{gettingStartedCard}")).toBeLessThan(
+      established.indexOf("<FinancialHealthSection")
+    );
+  });
 });
 
 describe("mobile Home onboarding status", () => {
@@ -115,7 +124,7 @@ describe("mobile Home onboarding status", () => {
   it("shows first-run empty state when the user has no accounts", () => {
     expect(dashboardSource).toMatch(/if \(firstRun\)/);
     expect(dashboardSource).toMatch(/DashboardFirstRun/);
-    expect(firstRunSource).toMatch(/Build your first forecast/);
+    expect(firstRunSource).toMatch(/GETTING_STARTED_COPY\.welcomeTitle/);
     expect(firstRunSource).toMatch(/Add account manually/);
     expect(firstRunSource).toMatch(/Upgrade for automatic bank syncing/);
     expect(firstRunSource).toMatch(/Connect bank/);

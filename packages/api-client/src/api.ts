@@ -246,6 +246,12 @@ export type OnboardingStatus = {
     completed_steps: number;
     total_steps: number;
   };
+  checklist?: {
+    account: boolean;
+    upcoming_transaction: boolean;
+    recurring: boolean;
+    goal: boolean;
+  };
 };
 
 export async function getOnboardingStatus(): Promise<OnboardingStatus> {

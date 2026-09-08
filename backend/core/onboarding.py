@@ -24,6 +24,8 @@ class SetupFlags:
     has_account: bool
     has_transaction: bool
     has_recurring: bool
+    has_upcoming_transaction: bool = False
+    has_goal: bool = False
 
     @property
     def forecast_ready(self) -> bool:
@@ -38,21 +40,48 @@ def setup_flags_for_user(user) -> SetupFlags:
     """Existence checks scoped to households the user belongs to."""
     household_ids = list(get_households_for_user(user).values_list("id", flat=True))
     if not household_ids:
-        return SetupFlags(has_account=False, has_transaction=False, has_recurring=False)
+        return SetupFlags(
+            has_account=False,
+            has_transaction=False,
+            has_recurring=False,
+            has_upcoming_transaction=False,
+            has_goal=False,
+        )
 
     from accounts.models import Account
+    from goals.models import GoalBucket
     from timeline.models import RecurringRule
     from transactions.models import Transaction
 
     has_account = Account.objects.filter(household_id__in=household_ids).exists()
     has_transaction = False
+    has_upcoming_transaction = False
     if has_account:
-        has_transaction = Transaction.objects.filter(account__household_id__in=household_ids).exists()
+        txn_qs = Transaction.objects.filter(account__household_id__in=household_ids)
+        has_transaction = txn_qs.exists()
+        today = timezone.localdate()
+        has_upcoming_transaction = (
+            txn_qs.filter(date__gte=today)
+            .exclude(
+                source__in=[
+                    Transaction.Source.RULE,
+                    Transaction.Source.INTEREST,
+                    Transaction.Source.SYSTEM,
+                ]
+            )
+            .exists()
+        )
     has_recurring = RecurringRule.objects.filter(household_id__in=household_ids).exists()
+    has_goal = GoalBucket.objects.filter(
+        household_id__in=household_ids,
+        status__in=[GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED],
+    ).exists()
     return SetupFlags(
         has_account=has_account,
         has_transaction=has_transaction,
         has_recurring=has_recurring,
+        has_upcoming_transaction=has_upcoming_transaction,
+        has_goal=has_goal,
     )
 
 
@@ -92,6 +121,12 @@ def onboarding_status_payload(user, *, persist_auto_complete: bool = True) -> di
         "progress": {
             "completed_steps": completed_steps,
             "total_steps": ONBOARDING_TOTAL_STEPS,
+        },
+        "checklist": {
+            "account": flags.has_account,
+            "upcoming_transaction": flags.has_upcoming_transaction,
+            "recurring": flags.has_recurring,
+            "goal": flags.has_goal,
         },
     }
 

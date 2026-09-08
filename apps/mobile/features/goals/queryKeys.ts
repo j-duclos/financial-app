@@ -3,6 +3,7 @@ import {
   invalidateDashboardQueries,
   invalidateForecastQueries,
   invalidateLedgerQueries,
+  invalidateOnboardingStatus,
   invalidateReportQueries,
 } from "@/lib/financialQueryRefresh";
 
@@ -32,6 +33,7 @@ function invalidateGoalRoots(queryClient: QueryClient): void {
 export function invalidateGoalMetadataQueries(queryClient: QueryClient): void {
   invalidateGoalRoots(queryClient);
   invalidateDashboardQueries(queryClient);
+  invalidateOnboardingStatus(queryClient);
 }
 
 /** Real contribution / withdrawal — may touch ledger and reports. */

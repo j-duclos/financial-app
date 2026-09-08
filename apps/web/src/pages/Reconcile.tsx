@@ -1130,7 +1130,7 @@ export default function Reconcile() {
                   <label className="block text-sm font-medium text-gray-700">
                     {editCategory?.name === "Credit Card Payment"
                       ? "Payment to (credit card)"
-                      : "Transfer to account"}
+                      : "Other account"}
                   </label>
                   <select
                     value={editForm.transfer_to_account_id === "" ? "" : String(editForm.transfer_to_account_id)}

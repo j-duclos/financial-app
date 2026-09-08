@@ -75,6 +75,8 @@ def test_get_profile(authenticated_client, user):
     assert "default_household" in body
     assert "default_account" in body
     assert body["default_forecast_days"] == 30
+    assert body["default_household"] is not None
+    assert Household.objects.filter(pk=body["default_household"], memberships__user=user).exists()
 
 
 def test_profile_get_is_read_only(authenticated_client, user):
@@ -85,6 +87,7 @@ def test_profile_get_is_read_only(authenticated_client, user):
     UserProfile.objects.get(user=user)
     authenticated_client.get("/api/profile/")
     assert UserProfile.objects.filter(user=user).count() == 1
+    assert HouseholdMembership.objects.filter(user=user).count() == 1
 
 
 def test_patch_display_name(authenticated_client, user):

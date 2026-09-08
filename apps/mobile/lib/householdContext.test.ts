@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveHouseholdId } from "./householdContext";
+import { resolveHouseholdId, singleHouseholdIdIfUnambiguous } from "./householdContext";
 
 describe("resolveHouseholdId", () => {
   const accounts = [
@@ -21,5 +21,20 @@ describe("resolveHouseholdId", () => {
 
   it("returns null when no default and no resolvable account", () => {
     expect(resolveHouseholdId(null, null, accounts as never)).toBeNull();
+  });
+});
+
+describe("singleHouseholdIdIfUnambiguous", () => {
+  it("returns the id when the user has exactly one household", () => {
+    expect(singleHouseholdIdIfUnambiguous([{ id: 7 }])).toBe(7);
+  });
+
+  it("does not pick among multiple households", () => {
+    expect(singleHouseholdIdIfUnambiguous([{ id: 7 }, { id: 8 }])).toBeNull();
+  });
+
+  it("returns null when there are no households", () => {
+    expect(singleHouseholdIdIfUnambiguous([])).toBeNull();
+    expect(singleHouseholdIdIfUnambiguous(undefined)).toBeNull();
   });
 });

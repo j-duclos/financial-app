@@ -8,7 +8,10 @@ import {
   EXTENDED_CASH_RISK_QUERY_KEY,
   buildUpcomingDashboardPreview,
   canUsePlaidBankSync,
+  GETTING_STARTED_COPY,
   isMissingAccounts,
+  type GettingStartedHelpTopic,
+  type GettingStartedStepId,
 } from "@budget-app/shared";
 import {
   Card,
@@ -23,6 +26,7 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { useAuth } from "@/features/auth";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { getLastViewedTransactionAccountId } from "@/features/transactions/transactionsSession";
@@ -38,6 +42,12 @@ import { FinancialHealthSection } from "./FinancialHealthSection";
 import { DashboardFirstRun } from "./DashboardFirstRun";
 import { AttentionRequiredSection } from "./AttentionRequiredSection";
 import { attentionViewAllPath } from "./navigation";
+import { GettingStartedCard } from "@/features/onboarding/GettingStartedCard";
+import { GETTING_STARTED_ROUTES } from "@/features/onboarding/gettingStartedRoutes";
+import { OnboardingWelcomeSheet } from "@/features/onboarding/OnboardingWelcomeSheet";
+import { OnboardingEducationSheet } from "@/features/onboarding/OnboardingEducationSheet";
+import { DashboardConceptHelpSheet } from "@/features/onboarding/DashboardConceptHelpSheet";
+import { useGettingStartedEducation } from "@/features/onboarding/useGettingStartedEducation";
 import { markDashboardTiming } from "./dashboardTiming";
 import {
   dashboardDetailsSectionState,
@@ -56,7 +66,13 @@ export function DashboardScreen() {
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
+  const { auth } = useAuth();
   const { status: onboarding, isError: onboardingError } = useOnboardingStatus();
+  const gettingStarted = useGettingStartedEducation({
+    userId: auth.user?.id,
+    onboarding,
+  });
+  const [helpTopic, setHelpTopic] = useState<GettingStartedHelpTopic | null>(null);
   const { billing } = useBillingStatus();
   const { startUpgrade } = usePremiumUpgrade();
   const isPremium = canUsePlaidBankSync(billing);
@@ -231,6 +247,58 @@ export function DashboardScreen() {
     router.push(attentionViewAllPath());
   }, [router]);
 
+  const onGettingStartedStep = useCallback(
+    (id: GettingStartedStepId) => {
+      router.push(GETTING_STARTED_ROUTES[id] as never);
+    },
+    [router]
+  );
+
+  const gettingStartedCard = gettingStarted.showChecklist ? (
+    <GettingStartedCard
+      completion={gettingStarted.completion}
+      onStepPress={onGettingStartedStep}
+      onCollapse={gettingStarted.collapseChecklist}
+    />
+  ) : null;
+
+  const educationLayers = (
+    <>
+      <OnboardingWelcomeSheet
+        visible={gettingStarted.homePrompt === "welcome"}
+        onGetStarted={gettingStarted.markWelcomeSeen}
+        onSkip={gettingStarted.markWelcomeSeen}
+      />
+      <OnboardingEducationSheet
+        visible={gettingStarted.homePrompt === "first_account"}
+        title={GETTING_STARTED_COPY.firstAccountTitle}
+        body={GETTING_STARTED_COPY.firstAccountBody}
+        primaryLabel={GETTING_STARTED_COPY.firstAccountCta}
+        secondaryLabel={GETTING_STARTED_COPY.firstAccountSecondary}
+        testID="first-account-success"
+        onPrimary={() => {
+          gettingStarted.markFirstAccountSeen();
+          router.push("/transaction/new");
+        }}
+        onSecondary={gettingStarted.markFirstAccountSeen}
+      />
+      <OnboardingEducationSheet
+        visible={gettingStarted.homePrompt === "first_transaction"}
+        title={GETTING_STARTED_COPY.firstTransactionTitle}
+        body={GETTING_STARTED_COPY.firstTransactionBody}
+        primaryLabel={GETTING_STARTED_COPY.firstTransactionCta}
+        secondaryLabel={GETTING_STARTED_COPY.firstTransactionSecondary}
+        testID="first-transaction-forecast"
+        onPrimary={() => {
+          gettingStarted.markFirstTransactionSeen();
+          router.push("/(app)/(tabs)/calendar");
+        }}
+        onSecondary={gettingStarted.markFirstTransactionSeen}
+      />
+      <DashboardConceptHelpSheet topic={helpTopic} onClose={() => setHelpTopic(null)} />
+    </>
+  );
+
   useEffect(() => {
     markDashboardTiming("home-shell-rendered");
   }, []);
@@ -346,15 +414,17 @@ export function DashboardScreen() {
 
   if (firstRun) {
     return (
-      <Screen>
+      <Screen scroll>
         <Text style={{ color: theme.colors.text, ...theme.typography.title, marginBottom: theme.spacing.md }}>
           Home
         </Text>
+        {gettingStartedCard}
         <DashboardFirstRun
           isPremium={isPremium}
           onAddAccount={() => router.push("/account/new")}
           onUpgrade={() => void startUpgrade()}
         />
+        {educationLayers}
       </Screen>
     );
   }
@@ -391,6 +461,8 @@ export function DashboardScreen() {
         <ForecastWindowSelect value={forecastDays} onChange={setForecastDays} updating={recalculating} />
       </View>
 
+      {gettingStartedCard}
+
       <FinancialHealthSection
         forecastDays={forecastDays}
         data={summaryFast}
@@ -402,6 +474,7 @@ export function DashboardScreen() {
           void refetchFast();
         }}
         recalculating={recalculating && !!summaryFast}
+        onHelpPress={setHelpTopic}
       />
 
       {lookingAhead && extendedCashRisk?.risk ? (
@@ -427,6 +500,7 @@ export function DashboardScreen() {
           loading={attentionLoading}
           visible={attentionLoading || !!summaryFast}
           onViewAll={onViewAllAttention}
+          onHelpPress={() => setHelpTopic("attentionRequired")}
         />
       </View>
 
@@ -439,6 +513,7 @@ export function DashboardScreen() {
         preview={upcomingPreview}
         firstCashShortfall={summaryFast?.first_cash_shortfall}
         recalculating={recalculating && !!details}
+        onHelpPress={() => setHelpTopic("upcomingMoneyFlow")}
       />
 
       <DashboardGoalsSection
@@ -449,7 +524,9 @@ export function DashboardScreen() {
         }}
         goals={goals}
         recalculating={recalculating && !!details}
+        onHelpPress={() => setHelpTopic("goalsProgress")}
       />
+      {educationLayers}
     </Screen>
   );
 }

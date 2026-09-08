@@ -13,6 +13,7 @@ from core.auth_tokens import (
 )
 from core.email_identity import is_email_verified, mark_email_verified
 from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL
+from core.models import HouseholdMembership
 
 pytestmark = pytest.mark.django_db
 
@@ -77,6 +78,38 @@ def test_register_rejects_duplicate_email_case_insensitively(api_client, user):
     assert r.status_code == 400
     assert "email" in r.json()
     assert User.objects.filter(username="other").exists() is False
+
+
+def test_register_creates_notification_profile_defaults(api_client):
+    r = _register(api_client)
+    assert r.status_code == 201, r.data
+    user = User.objects.get(username="newuser")
+    profile = user.profile
+    assert profile.notify_1_day_before is True
+    assert profile.notify_3_days_before is True
+    assert profile.notify_day_of is True
+    assert profile.projected_funds_alerts_enabled is True
+    assert profile.default_household_id is not None
+    assert HouseholdMembership.objects.filter(
+        user=user, household_id=profile.default_household_id, role=HouseholdMembership.Role.OWNER
+    ).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_register_rolls_back_user_if_profile_create_fails(api_client, monkeypatch):
+    from django.db.utils import IntegrityError
+    from core.models import UserProfile
+
+    def fail_create(*args, **kwargs):
+        raise IntegrityError("null value in column notify_1_day_before")
+
+    monkeypatch.setattr(UserProfile.objects, "get_or_create", fail_create)
+    r = _register(api_client)
+    assert r.status_code == 500
+    assert User.objects.filter(username="newuser").exists() is False
+    monkeypatch.undo()
+    retry = _register(api_client)
+    assert retry.status_code == 201, retry.data
 
 
 def test_register_rejects_weak_password(api_client):

@@ -14,3 +14,11 @@ export function resolveHouseholdId(
   }
   return defaultHouseholdId ?? null;
 }
+
+/** Use a listed household only when there is exactly one. Never pick among multiple. */
+export function singleHouseholdIdIfUnambiguous(
+  households: Array<{ id: number }> | undefined | null
+): number | null {
+  if (households?.length !== 1) return null;
+  return households[0]?.id ?? null;
+}

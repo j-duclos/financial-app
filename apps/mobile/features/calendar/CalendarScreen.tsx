@@ -44,10 +44,22 @@ import {
   shiftMonth,
 } from "./calendarUtils";
 import { DEFAULT_CALENDAR_EVENT_FILTER, type CalendarEventFilter } from "./types";
+import { useAuth } from "@/features/auth";
+import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
+import { OnboardingEducationSheet } from "@/features/onboarding/OnboardingEducationSheet";
+import { useGettingStartedEducation } from "@/features/onboarding/useGettingStartedEducation";
+import { GETTING_STARTED_COPY } from "@budget-app/shared";
 
 export function CalendarScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { auth } = useAuth();
+  const { status: onboarding } = useOnboardingStatus();
+  const gettingStarted = useGettingStartedEducation({
+    userId: auth.user?.id,
+    onboarding,
+  });
+  const [calendarIntroVisible, setCalendarIntroVisible] = useState(false);
   const params = useLocalSearchParams<{ date?: string }>();
   const deepLinkDate = useMemo(() => parseIsoDateParam(params.date), [params.date]);
   const { forecastDays, ready: forecastReady } = usePageForecastWindow();
@@ -61,6 +73,14 @@ export function CalendarScreen() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [eventFilter, setEventFilter] = useState<CalendarEventFilter>(DEFAULT_CALENDAR_EVENT_FILTER);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!gettingStarted.ready) return;
+    gettingStarted.markCalendarOpened();
+    if (gettingStarted.showCalendarIntro) {
+      setCalendarIntroVisible(true);
+    }
+  }, [gettingStarted.ready]);
 
   const accountOptionsQuery = useAccountOptions({
     householdId: defaultHouseholdId,
@@ -233,7 +253,7 @@ export function CalendarScreen() {
       <Screen scroll={false}>
         <EmptyState
           title="Default household required"
-          message="Set a default household in Profile & Settings on web to view your calendar."
+          message="Choose a default household in Profile & Settings to view your calendar."
         />
       </Screen>
     );
@@ -362,6 +382,14 @@ export function CalendarScreen() {
         onAccountChange={setAccountId}
         eventFilter={eventFilter}
         onEventFilterChange={setEventFilter}
+      />
+      <OnboardingEducationSheet
+        visible={calendarIntroVisible}
+        title="Calendar"
+        body={GETTING_STARTED_COPY.calendarIntro}
+        primaryLabel={GETTING_STARTED_COPY.calendarIntroCta}
+        testID="calendar-intro"
+        onPrimary={() => setCalendarIntroVisible(false)}
       />
     </Screen>
   );

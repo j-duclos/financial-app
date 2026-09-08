@@ -14,10 +14,24 @@ type Props = TextInputProps & {
   error?: string;
 };
 
-export function TextField({ label, error, style, importantForAutofill, ...rest }: Props) {
+/**
+ * Android Autofill/Gboard draws a floating toolbar over the field and steals taps.
+ * Keep iOS Keychain hints; do not opt Android into Autofill from this component.
+ */
+export function TextField({
+  label,
+  error,
+  style,
+  importantForAutofill,
+  autoComplete,
+  ...rest
+}: Props) {
   const theme = useTheme();
-  const autofillImportance =
-    importantForAutofill ?? (rest.autoComplete ? "yes" : "no");
+  const android = Platform.OS === "android";
+  const autofillImportance = android
+    ? "noExcludeDescendants"
+    : (importantForAutofill ?? (autoComplete ? "yes" : "no"));
+
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
       <Text
@@ -34,6 +48,10 @@ export function TextField({ label, error, style, importantForAutofill, ...rest }
         placeholderTextColor={theme.colors.textMuted}
         underlineColorAndroid="transparent"
         textAlignVertical="center"
+        showSoftInputOnFocus
+        disableFullscreenUI={android}
+        {...rest}
+        autoComplete={android ? "off" : autoComplete}
         importantForAutofill={autofillImportance}
         style={[
           {
@@ -45,11 +63,10 @@ export function TextField({ label, error, style, importantForAutofill, ...rest }
             color: theme.colors.text,
             backgroundColor: theme.colors.surface,
             fontSize: 16,
-            ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
+            ...(android ? { includeFontPadding: false } : null),
           },
           style,
         ]}
-        {...rest}
       />
       {error ? (
         <Text

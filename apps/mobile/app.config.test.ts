@@ -15,6 +15,11 @@ describe("iOS device prep", () => {
   afterEach(() => {
     process.env.EXPO_PUBLIC_APP_ENV = originalEnv.EXPO_PUBLIC_APP_ENV;
     process.env.EXPO_PUBLIC_API_URL = originalEnv.EXPO_PUBLIC_API_URL;
+    if (originalEnv.EAS_PROJECT_ID === undefined) {
+      delete process.env.EAS_PROJECT_ID;
+    } else {
+      process.env.EAS_PROJECT_ID = originalEnv.EAS_PROJECT_ID;
+    }
   });
 
   it("uses FlowSight display name and the jduclos bundle id", () => {
@@ -72,5 +77,15 @@ describe("iOS device prep", () => {
     expect(prod.ios?.infoPlist?.NSLocalNetworkUsageDescription).toBeUndefined();
     expect(prod.extra?.apiUrl).toBe("https://financial-app-1-tu0l.onrender.com");
     expect(prod.extra?.appEnv).toBe("production");
+  });
+
+  it("omits extra.eas.projectId unless EAS_PROJECT_ID is set", () => {
+    delete process.env.EAS_PROJECT_ID;
+    const none = getConfig({ config: {} } as never);
+    expect((none.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId).toBeUndefined();
+
+    process.env.EAS_PROJECT_ID = "  eas-proj-1  ";
+    const withId = getConfig({ config: {} } as never);
+    expect((withId.extra as { eas?: { projectId?: string } }).eas?.projectId).toBe("eas-proj-1");
   });
 });

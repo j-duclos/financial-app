@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { shouldPromptNotificationPermission } from "@budget-app/shared";
 import {
   actionCenterHrefFromPushData,
+  isExpoGoRuntime,
+  resolveExpoPushProjectId,
   shouldShowPermissionEducation,
 } from "./projectedFundsPush";
 
@@ -30,6 +32,20 @@ describe("mobile projected funds push", () => {
     expect(shouldPromptNotificationPermission({ hasFinancialData: false, alreadyAsked: false, pushPrefEnabled: true })).toBe(
       false
     );
+    expect(
+      shouldShowPermissionEducation({
+        authenticated: true,
+        hasFinancialData: true,
+        alreadyAsked: false,
+        pushPrefEnabled: true,
+        nativePushAvailable: false,
+      })
+    ).toBe(false);
+    expect(isExpoGoRuntime({ appOwnership: "expo" })).toBe(true);
+    expect(isExpoGoRuntime({ executionEnvironment: "storeClient" })).toBe(true);
+    expect(isExpoGoRuntime({ executionEnvironment: "bare" })).toBe(false);
+    expect(hookSource).not.toMatch(/import \* as Notifications from "expo-notifications"/);
+    expect(hookSource).toMatch(/require\("expo-notifications"\)/);
     expect(hookSource).toMatch(/forecast_ready/);
     expect(hookSource).toMatch(/requestPermissionsAsync/);
     expect(sheetSource).toMatch(/NOTIFICATION_PERMISSION_COPY\.title/);
@@ -39,7 +55,17 @@ describe("mobile projected funds push", () => {
   it("registers Expo tokens with the backend and unregisters on logout", () => {
     expect(hookSource).toMatch(/registerPushDevice/);
     expect(hookSource).toMatch(/getExpoPushTokenAsync/);
+    expect(hookSource).toMatch(/resolveExpoPushProjectId/);
     expect(authSource).toMatch(/unregisterStoredPushToken/);
+  });
+
+  it("does not request an Expo push token without an EAS project id", () => {
+    expect(resolveExpoPushProjectId({})).toBeNull();
+    expect(resolveExpoPushProjectId({ easConfigProjectId: "", extraEasProjectId: "   " })).toBeNull();
+    expect(
+      resolveExpoPushProjectId({ easConfigProjectId: "  abc-123  ", extraEasProjectId: "ignored" })
+    ).toBe("abc-123");
+    expect(hookSource).toMatch(/Skipping Expo push token/);
   });
 
   it("opens Action Center from the push payload", () => {

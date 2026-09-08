@@ -1,3 +1,4 @@
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse, JsonResponse
 
 from rest_framework import status
@@ -30,7 +31,7 @@ from .serializers import (
     UserProfileSerializer,
     VerifyEmailSerializer,
 )
-from .utils import get_user_profile, get_households_for_user
+from .utils import get_user_profile, get_households_for_user, ensure_default_household
 
 
 from common.services.redis_config import redis_diagnostics, verify_redis_cache
@@ -77,7 +78,18 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+                profile = get_user_profile(user)
+                ensure_default_household(user)
+                profile = get_user_profile(user)
+        except IntegrityError:
+            logger.exception("Failed to create user profile during register")
+            return Response(
+                {"detail": "Could not create account. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         from rest_framework_simplejwt.tokens import RefreshToken
         from core.mail import send_verification_email
 
@@ -86,7 +98,6 @@ class RegisterView(APIView):
         except Exception:
             logger.exception("Failed to send verification email user_id=%s", user.pk)
         refresh = RefreshToken.for_user(user)
-        profile = get_user_profile(user)
         return Response(
             {
                 "user": {"id": user.id, "username": user.username},
@@ -212,6 +223,8 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        profile = get_user_profile(request.user)
+        ensure_default_household(request.user)
         profile = get_user_profile(request.user)
         serializer = UserProfileSerializer(profile, context={"request": request})
         return Response(serializer.data)
@@ -391,6 +404,10 @@ class HouseholdViewSet(ModelViewSet):
         HouseholdMembership.objects.create(
             household=household, user=self.request.user, role=HouseholdMembership.Role.OWNER
         )
+        profile = get_user_profile(self.request.user)
+        if profile is not None and not profile.default_household_id:
+            profile.default_household = household
+            profile.save(update_fields=["default_household", "updated_at"])
 
 
 class OnboardingStatusView(APIView):

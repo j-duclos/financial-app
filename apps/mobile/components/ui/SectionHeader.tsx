@@ -1,15 +1,25 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "@/theme";
+import { IconButton } from "./IconButton";
 
 type Props = {
   title: string;
   subtitle?: string;
   actionLabel?: string;
   onAction?: () => void;
+  infoAccessibilityLabel?: string;
+  onInfoPress?: () => void;
 };
 
-export function SectionHeader({ title, subtitle, actionLabel, onAction }: Props) {
+export function SectionHeader({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+  infoAccessibilityLabel,
+  onInfoPress,
+}: Props) {
   const theme = useTheme();
   return (
     <View
@@ -22,7 +32,20 @@ export function SectionHeader({ title, subtitle, actionLabel, onAction }: Props)
       }}
     >
       <View style={{ flex: 1, paddingRight: 8 }}>
-        <Text style={{ color: theme.colors.text, ...theme.typography.headline }}>{title}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Text style={{ color: theme.colors.text, ...theme.typography.headline, flexShrink: 1 }}>
+            {title}
+          </Text>
+          {infoAccessibilityLabel && onInfoPress ? (
+            <IconButton
+              name="info-circle"
+              size={16}
+              accessibilityLabel={infoAccessibilityLabel}
+              onPress={onInfoPress}
+              style={{ marginLeft: -4 }}
+            />
+          ) : null}
+        </View>
         {subtitle ? (
           <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: 2 }}>
             {subtitle}

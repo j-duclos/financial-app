@@ -29,13 +29,35 @@ export function pushPlatformFromOs(os: string | undefined): "ios" | "android" | 
   return "unknown";
 }
 
+/** Expo push tokens need an EAS project id. Bare `expo run:*` builds have none unless EAS_PROJECT_ID is set. */
+export function resolveExpoPushProjectId(input: {
+  easConfigProjectId?: string | null;
+  extraEasProjectId?: string | null;
+}): string | null {
+  for (const value of [input.easConfigProjectId, input.extraEasProjectId]) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+/** SDK 53+ Expo Go cannot register Android remote push; loading expo-notifications redboxes. */
+export function isExpoGoRuntime(input: {
+  appOwnership?: string | null;
+  executionEnvironment?: string | null;
+}): boolean {
+  return input.appOwnership === "expo" || input.executionEnvironment === "storeClient";
+}
+
 export function shouldShowPermissionEducation(input: {
   authenticated: boolean;
   hasFinancialData: boolean;
   alreadyAsked: boolean;
   pushPrefEnabled: boolean;
+  nativePushAvailable?: boolean;
 }): boolean {
   if (!input.authenticated) return false;
+  if (input.nativePushAvailable === false) return false;
   return shouldPromptNotificationPermission({
     hasFinancialData: input.hasFinancialData,
     alreadyAsked: input.alreadyAsked,

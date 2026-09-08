@@ -4,9 +4,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createAccount,
+  createHousehold,
   getAccount,
   getAccountLifecyclePreflight,
   getProfile,
+  listHouseholds,
   updateAccount,
   archiveAccount,
 } from "@budget-app/api-client";
@@ -18,6 +20,13 @@ import {
   invalidateAfterAccountFinancialMutation,
   invalidateAfterAccountMetadataEdit,
 } from "@/lib/financialQueryRefresh";
+import { formatMoneyFieldDisplay } from "@/lib/moneyInput";
+import { singleHouseholdIdIfUnambiguous } from "@/lib/householdContext";
+import {
+  accountCreateApiPayload,
+  sanitizeAccountMoneyInput,
+  validateAccountOnboardingForm,
+} from "./accountOnboardingForm";
 
 const ACCOUNT_TYPES: AccountType[] = ["CHECKING", "SAVINGS", "CREDIT", "CASH", "OTHER"];
 
@@ -42,19 +51,7 @@ const emptyForm = (): FormState => ({
 });
 
 function normalizeMoneyInput(raw: string): string {
-  const cleaned = raw.replace(/[^0-9.-]/g, "");
-  const parts = cleaned.split(".");
-  if (parts.length <= 1) return cleaned;
-  return `${parts[0]}.${parts.slice(1).join("").slice(0, 2)}`;
-}
-
-function validateMoneyField(raw: string, label: string): string | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  if (!/^-?\d+(\.\d{1,2})?$/.test(trimmed)) {
-    return `${label} must be a valid amount (up to 2 decimal places).`;
-  }
-  return undefined;
+  return sanitizeAccountMoneyInput(raw);
 }
 
 export function AccountFormScreen() {
@@ -95,34 +92,43 @@ export function AccountFormScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const householdId = profileQuery.data?.default_household;
+      let householdId = profileQuery.data?.default_household ?? null;
+      if (!householdId) {
+        const profile = await getProfile();
+        householdId = profile.default_household;
+      }
+      if (!householdId) {
+        const households = await listHouseholds();
+        householdId = singleHouseholdIdIfUnambiguous(households);
+        if (!householdId && households.length === 0) {
+          const created = await createHousehold({ name: "My household" });
+          householdId = created.id;
+        } else if (!householdId && households.length > 1) {
+          throw new Error("Choose a default household in Profile & Settings before adding an account.");
+        }
+      }
       if (!householdId) throw new Error("No household found on your profile.");
 
-      const payload = {
-        name: form.name.trim(),
-        display_name: form.display_name.trim() || null,
-        institution: form.institution.trim() || "Manual",
-        account_type: form.account_type,
-        starting_balance: form.starting_balance.trim() || null,
-        credit_limit: form.account_type === "CREDIT" ? form.credit_limit.trim() || null : null,
-        target_utilization_percent:
-          form.account_type === "CREDIT" ? form.target_utilization_percent.trim() || "10" : null,
-      };
+      const created = accountCreateApiPayload(
+        {
+          name: form.name,
+          institution: form.institution,
+          account_type: form.account_type,
+          starting_balance: form.starting_balance,
+          credit_limit: form.credit_limit,
+        },
+        householdId
+      );
 
       if (isEdit && editId) {
         return updateAccount(editId, {
-          name: payload.name,
-          display_name: payload.display_name ?? undefined,
-          institution: payload.institution,
-          account_type: payload.account_type,
-          credit_limit: payload.credit_limit ?? undefined,
-          target_utilization_percent: payload.target_utilization_percent ?? undefined,
+          name: created.name,
+          institution: created.institution,
+          account_type: created.account_type,
+          credit_limit: created.credit_limit ?? undefined,
         });
       }
-      return createAccount({
-        household: householdId,
-        ...payload,
-      });
+      return createAccount(created);
     },
     onSuccess: () => {
       if (!isEdit) {
@@ -179,16 +185,13 @@ export function AccountFormScreen() {
   };
 
   const onSave = () => {
-    const nextErrors: Record<string, string> = {};
-    if (!form.name.trim()) nextErrors.name = "Name is required.";
-    const startingErr = validateMoneyField(form.starting_balance, "Starting balance");
-    if (startingErr) nextErrors.starting_balance = startingErr;
-    if (form.account_type === "CREDIT") {
-      const limitErr = validateMoneyField(form.credit_limit, "Credit limit");
-      if (limitErr) nextErrors.credit_limit = limitErr;
-      const utilErr = validateMoneyField(form.target_utilization_percent, "Utilization target");
-      if (utilErr) nextErrors.target_utilization_percent = utilErr;
-    }
+    const nextErrors = validateAccountOnboardingForm({
+      name: form.name,
+      institution: form.institution,
+      account_type: form.account_type,
+      starting_balance: form.starting_balance,
+      credit_limit: form.credit_limit,
+    });
     if (Object.keys(nextErrors).length > 0) {
       setFieldErrors(nextErrors);
       return;
@@ -229,15 +232,14 @@ export function AccountFormScreen() {
         </Text>
       ) : null}
       <Card>
-        <TextField label="Name" value={form.name} onChangeText={(v) => setField("name", v)} error={fieldErrors.name} />
         <TextField
-          label="Display name"
-          value={form.display_name}
-          onChangeText={(v) => setField("display_name", v)}
-          error={fieldErrors.display_name}
+          label="Account name"
+          value={form.name}
+          onChangeText={(v) => setField("name", v)}
+          error={fieldErrors.name}
         />
         <TextField
-          label="Institution"
+          label="Bank / institution (optional)"
           value={form.institution}
           onChangeText={(v) => setField("institution", v)}
           error={fieldErrors.institution}
@@ -260,43 +262,43 @@ export function AccountFormScreen() {
         {!isEdit ? (
           <>
             <TextField
-              label="Starting balance"
-              value={form.starting_balance}
+              label={form.account_type === "CREDIT" ? "Current balance owed" : "Starting balance"}
+              value={formatMoneyFieldDisplay(form.starting_balance)}
               onChangeText={(v) => setField("starting_balance", normalizeMoneyInput(v))}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              autoCorrect={false}
+              autoCapitalize="none"
+              placeholder="$ 0.00"
               error={fieldErrors.starting_balance}
             />
-            <Text
-              style={{
-                color: theme.colors.textMuted,
-                ...theme.typography.caption,
-                marginTop: -8,
-                marginBottom: 12,
-              }}
-            >
-              Sets the ledger opening balance for this account. The server owns history and
-              running balances from this starting point — mobile does not recompute them.
-            </Text>
+            {form.account_type !== "CREDIT" ? (
+              <Text
+                style={{
+                  color: theme.colors.textMuted,
+                  ...theme.typography.caption,
+                  marginTop: -8,
+                  marginBottom: 12,
+                }}
+              >
+                Opening ledger balance for this account.
+              </Text>
+            ) : null}
           </>
         ) : null}
 
         {form.account_type === "CREDIT" ? (
-          <>
-            <TextField
-              label="Credit limit"
-              value={form.credit_limit}
-              onChangeText={(v) => setField("credit_limit", normalizeMoneyInput(v))}
-              keyboardType="decimal-pad"
-              error={fieldErrors.credit_limit}
-            />
-            <TextField
-              label="Utilization target (%)"
-              value={form.target_utilization_percent}
-              onChangeText={(v) => setField("target_utilization_percent", normalizeMoneyInput(v))}
-              keyboardType="decimal-pad"
-              error={fieldErrors.target_utilization_percent}
-            />
-          </>
+          <TextField
+            label="Credit limit"
+            value={formatMoneyFieldDisplay(form.credit_limit)}
+            onChangeText={(v) => setField("credit_limit", normalizeMoneyInput(v))}
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            autoCorrect={false}
+            autoCapitalize="none"
+            placeholder="$ 0.00"
+            error={fieldErrors.credit_limit}
+          />
         ) : null}
       </Card>
 

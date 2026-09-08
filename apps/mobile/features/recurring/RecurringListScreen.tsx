@@ -3,6 +3,7 @@ import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { listRules } from "@budget-app/api-client";
+import { GETTING_STARTED_COPY } from "@budget-app/shared";
 import {
   AppHeader,
   EmptyState,
@@ -142,7 +143,7 @@ export function RecurringListScreen() {
       ) : rows.length === 0 ? (
         <EmptyState
           title="No recurring transactions"
-          message="Add recurring income or bills to make your forecast more accurate."
+          message={GETTING_STARTED_COPY.recurringEmpty}
           actionLabel="Add recurring"
           onAction={onAddRecurring}
         />

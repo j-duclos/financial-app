@@ -22,6 +22,7 @@ export * from "./scheduledImportMatch";
 export * from "./importMatchSemantics";
 export * from "./transactionSourceDisplay";
 export * from "./onboarding";
+export * from "./gettingStarted";
 export * from "./dashboardDisplay";
 export * from "./dashboardTerminology";
 export * from "./extendedCashRiskQuery";

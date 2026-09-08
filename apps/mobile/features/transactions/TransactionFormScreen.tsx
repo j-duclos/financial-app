@@ -37,6 +37,18 @@ import { resolvePostedCurrentBalance } from "@/features/accounts/accountBalanceD
 import { transactionQueryKeys } from "./queryKeys";
 import { TransferSourceBalancePreview } from "./TransferSourceBalancePreview";
 import { isPlannedScheduledTransaction } from "./pendingSemantics";
+import {
+  formatMoneyFieldDisplay,
+  sanitizeUnsignedMoneyInput,
+} from "@/lib/moneyInput";
+import {
+  accountFieldLabel,
+  canonicalCreateAmount,
+  createTransactionButtonLabel,
+  payeeOrSourceLabel,
+  transferAmount,
+  validateTransactionForm,
+} from "./transactionForm";
 
 type TransactionEntryType = "expense" | "income" | "transfer";
 
@@ -278,28 +290,37 @@ export function TransactionFormScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (typeof form.account_id !== "number") throw new Error("Account is required");
       const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(form.dateIso)
         ? form.dateIso
         : parseInputDateToIso(form.dateIso);
-      if (!isoDate) throw new Error("Enter a valid date");
+      const nextErrors = validateTransactionForm({
+        entryType: form.entryType,
+        accountId: form.account_id,
+        transferToAccountId: form.transfer_to_account_id,
+        dateIso: isoDate || "",
+        amount: form.amount,
+      });
+      if (Object.keys(nextErrors).length > 0) {
+        setFieldErrors(nextErrors);
+        const err = new Error("validation");
+        (err as { code?: string }).code = "validation";
+        throw err;
+      }
+      if (typeof form.account_id !== "number" || !isoDate) {
+        throw new Error("Account and date are required");
+      }
 
       if (isTransferEntry && !isEdit) {
         if (typeof form.transfer_to_account_id !== "number") {
           throw new Error("Destination account is required for transfers");
         }
-        if (form.transfer_to_account_id === form.account_id) {
-          throw new Error("Choose two different accounts");
-        }
         const xferCategory = isCreditCardPayment ? creditCardPaymentCategory : bankTransferCategory;
         return createTransfer({
           from_account: form.account_id,
           to_account: form.transfer_to_account_id,
-          amount: form.amount,
+          amount: transferAmount(form.amount),
           date: isoDate,
-          payee:
-            form.payee.trim() ||
-            (isCreditCardPayment ? "Credit card payment" : "Transfer"),
+          payee: isCreditCardPayment ? "Credit card payment" : "Transfer",
           memo: form.memo,
           from_category_id:
             typeof form.category_id === "number"
@@ -308,8 +329,7 @@ export function TransactionFormScreen() {
         });
       }
 
-      const signedAmount =
-        form.entryType === "income" ? form.amount : `-${form.amount}`;
+      const signedAmount = canonicalCreateAmount(form.entryType, form.amount);
 
       const body = {
         account_id: form.account_id,
@@ -333,6 +353,7 @@ export function TransactionFormScreen() {
       router.back();
     },
     onError: (err) => {
+      if (err instanceof Error && (err as { code?: string }).code === "validation") return;
       const fields = fieldErrorsFromApiError(err);
       if (Object.keys(fields).length > 0) {
         setFieldErrors(fields);
@@ -401,7 +422,7 @@ export function TransactionFormScreen() {
       <Card>
         <View style={{ gap: theme.spacing.md }}>
         <SelectField
-          label="Account"
+          label={accountFieldLabel(form.entryType)}
           value={selectedAccount ? getEffectiveDisplayName(selectedAccount) : null}
           placeholder="Select account"
           onPress={() => setPicker("account")}
@@ -409,7 +430,10 @@ export function TransactionFormScreen() {
         />
         {selectedAccount ? (
           <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginTop: -4 }}>
-            {balanceSubtitle(selectedAccount) ?? "Balance unavailable"}
+            Current balance{" "}
+            {resolvePostedCurrentBalance(selectedAccount)
+              ? formatCurrency(resolvePostedCurrentBalance(selectedAccount) as string, selectedAccount.currency ?? "USD")
+              : "unavailable"}
           </Text>
         ) : null}
 
@@ -418,11 +442,19 @@ export function TransactionFormScreen() {
           value={form.dateIso}
           onChange={(iso) => setField("dateIso", iso)}
         />
+        {fieldErrors.dateIso ? (
+          <Text
+            accessibilityLiveRegion="polite"
+            style={{ color: theme.colors.critical, ...theme.typography.caption, marginTop: -8 }}
+          >
+            {fieldErrors.dateIso}
+          </Text>
+        ) : null}
 
         {!isEdit ? (
           <>
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
-              Type
+              Transaction type
             </Text>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.spacing.sm }}>
               {typeChip("Expense", "expense")}
@@ -434,19 +466,24 @@ export function TransactionFormScreen() {
 
         <TextField
           label="Amount"
-          value={form.amount}
-          onChangeText={(v) => setField("amount", v)}
+          value={formatMoneyFieldDisplay(form.amount)}
+          onChangeText={(v) => setField("amount", sanitizeUnsignedMoneyInput(v))}
           keyboardType="decimal-pad"
+          inputMode="decimal"
+          autoCorrect={false}
+          autoCapitalize="none"
+          placeholder="$ 0.00"
           error={fieldErrors.amount}
         />
 
-        <TextField
-          label={isTransferEntry ? "Memo" : "Payee"}
-          value={form.payee}
-          onChangeText={(v) => setField("payee", v)}
-          error={fieldErrors.payee}
-          placeholder={isTransferEntry ? "Optional memo" : undefined}
-        />
+        {!isTransferEntry ? (
+          <TextField
+            label={payeeOrSourceLabel(form.entryType)}
+            value={form.payee}
+            onChangeText={(v) => setField("payee", v)}
+            error={fieldErrors.payee}
+          />
+        ) : null}
 
         {!isTransferEntry ? (
           <SelectField
@@ -514,7 +551,7 @@ export function TransactionFormScreen() {
 
       <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.md }}>
         <Button
-          label={isEdit ? "Save changes" : "Create transaction"}
+          label={isEdit ? "Save changes" : createTransactionButtonLabel(form.entryType, false)}
           onPress={() => saveMutation.mutate()}
           loading={saveMutation.isPending}
           disabled={Boolean(lockMessage?.includes("Reconciled"))}

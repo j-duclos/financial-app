@@ -521,7 +521,7 @@ export default function QuickTransactionModal({
           {categoryDrivenTransfer ? (
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                {isCcPaymentCategory ? "Credit card" : "Transfer to"}
+                {isCcPaymentCategory ? "Credit card" : "Other account"}
               </label>
               <select
                 value={transferToId}

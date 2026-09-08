@@ -4,6 +4,7 @@ import type { DashboardAttentionItem } from "@budget-app/shared";
 import {
   attentionEmptyMessage,
   attentionShowsViewAllLink,
+  GETTING_STARTED_HELP_LABELS,
 } from "@budget-app/shared";
 import { EmptyState, SectionHeader } from "@/components/ui";
 import { useTheme } from "@/theme";
@@ -18,6 +19,7 @@ type Props = {
   loading: boolean;
   visible: boolean;
   onViewAll: () => void;
+  onHelpPress?: () => void;
 };
 
 export const AttentionRequiredSection = memo(function AttentionRequiredSection({
@@ -27,6 +29,7 @@ export const AttentionRequiredSection = memo(function AttentionRequiredSection({
   loading,
   visible,
   onViewAll,
+  onHelpPress,
 }: Props) {
   const theme = useTheme();
 
@@ -49,6 +52,8 @@ export const AttentionRequiredSection = memo(function AttentionRequiredSection({
         onAction={
           !loading && attentionShowsViewAllLink(items.length, totalCount) ? onViewAll : undefined
         }
+        infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.attentionRequired}
+        onInfoPress={onHelpPress}
       />
       {loading ? (
         <AttentionRowsSkeleton count={2} />

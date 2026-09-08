@@ -1,10 +1,10 @@
 import React from "react";
 import { Alert, Linking, Text, View } from "react-native";
 import {
-  APP_VALUE_STATEMENT,
   APP_WEB_COMPANION_MESSAGE,
   APP_WEB_URL,
   FREE_PLAN_LIMITS,
+  GETTING_STARTED_COPY,
   PLAID_PREMIUM_MESSAGE,
 } from "@budget-app/shared";
 import { BrandLogo } from "@/components/brand";
@@ -36,7 +36,7 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
     >
       <BrandLogo size="small" style={{ marginBottom: theme.spacing.md }} />
       <Text style={{ color: theme.colors.text, ...theme.typography.headline, textAlign: "center" }}>
-        Build your first forecast
+        {GETTING_STARTED_COPY.welcomeTitle}
       </Text>
       <Text
         style={{
@@ -46,7 +46,17 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
           marginTop: theme.spacing.sm,
         }}
       >
-        {APP_VALUE_STATEMENT}
+        {GETTING_STARTED_COPY.welcomeBody}
+      </Text>
+      <Text
+        style={{
+          color: theme.colors.textSecondary,
+          ...theme.typography.caption,
+          textAlign: "center",
+          marginTop: theme.spacing.sm,
+        }}
+      >
+        {GETTING_STARTED_COPY.welcomeSecondary}
       </Text>
       <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
         <Button label="Add account manually" onPress={onAddAccount} />

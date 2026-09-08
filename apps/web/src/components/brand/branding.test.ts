@@ -37,8 +37,7 @@ describe("FlowSight web branding", () => {
 
   it("shows branding on onboarding welcome", () => {
     expect(welcomeSource).toMatch(/BrandLogo/);
-    expect(welcomeSource).toMatch(/APP_VALUE_STATEMENT/);
-    expect(welcomeSource).toMatch(/APP_NAME/);
+    expect(welcomeSource).toMatch(/GETTING_STARTED_COPY/);
     expect(welcomeSource).not.toMatch(/Financial App/);
   });
 

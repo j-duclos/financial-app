@@ -340,6 +340,68 @@ class TestPatchTransferDestinationCreatesLeg(TestCase):
         self.assertEqual(data["transfer_to_account"]["id"], self.chase.id)
 
 
+    def test_patch_receiving_leg_retargets_sending_account(self):
+        savings = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.SAVINGS,
+            name="Chase Savings",
+            currency="USD",
+        )
+        other = Account.objects.create(
+            household=self.h,
+            account_type=Account.AccountType.CHECKING,
+            name="Other Bank",
+            currency="USD",
+        )
+        bank_cat, _ = Category.objects.get_or_create(
+            household=self.h,
+            name="Bank Transfer",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 50},
+        )
+        out_leg = Transaction.objects.create(
+            account=self.chase,
+            date=date(2026, 9, 17),
+            payee="Transfer for Planning (Chase Savings)",
+            amount=Decimal("-2331.00"),
+            category=bank_cat,
+            source=Transaction.Source.ACTUAL,
+        )
+        in_leg = Transaction.objects.create(
+            account=savings,
+            date=date(2026, 9, 17),
+            payee="Transfer for Planning (Chase Savings)",
+            amount=Decimal("2331.00"),
+            category=bank_cat,
+            source=Transaction.Source.ACTUAL,
+        )
+        Transfer.objects.create(
+            from_transaction=out_leg,
+            to_transaction=in_leg,
+            amount=Decimal("2331.00"),
+            date=date(2026, 9, 17),
+            memo="",
+        )
+        res = self.client.patch(
+            f"/api/transactions/{in_leg.pk}/",
+            {
+                "date": "2026-09-17",
+                "amount": "2000.00",
+                "payee": "Transfer for Planning (Other Bank)",
+                "category_id": bank_cat.id,
+                "transfer_to_account_id": other.id,
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        out_leg.refresh_from_db()
+        in_leg.refresh_from_db()
+        self.assertEqual(out_leg.account_id, other.id)
+        self.assertEqual(out_leg.amount, Decimal("-2000.00"))
+        self.assertEqual(in_leg.amount, Decimal("2000.00"))
+        self.assertEqual(in_leg.account_id, savings.id)
+
+
 class TestRepairOrphanTransferGroupLegs(TestCase):
     def setUp(self):
         self.h = Household.objects.create(name="H")

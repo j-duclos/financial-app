@@ -92,7 +92,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       googlePlayStoreUrl: process.env.EXPO_PUBLIC_GOOGLE_PLAY_STORE_URL ?? "",
       androidPackageName: ANDROID_PACKAGE_NAME,
       eas: {
-        projectId: process.env.EAS_PROJECT_ID ?? "",
+        ...(process.env.EAS_PROJECT_ID?.trim()
+          ? { projectId: process.env.EAS_PROJECT_ID.trim() }
+          : {}),
       },
     },
   };

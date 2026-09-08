@@ -572,6 +572,18 @@ class TransactionViewSet(ModelViewSet):
                 new_to = transfer_to_account_id
                 if new_to.pk != instance.account_id and new_to.household_id == instance.account.household_id:
                     Transaction.objects.filter(pk=transfer.to_transaction_id).update(account=new_to)
+            # Other-account retarget when editing the receiving (to) leg.
+            if (
+                transfer is not None
+                and transfer_to_account_id is not None
+                and transfer.to_transaction_id == instance.pk
+            ):
+                new_from = transfer_to_account_id
+                if (
+                    new_from.pk != instance.account_id
+                    and new_from.household_id == instance.account.household_id
+                ):
+                    Transaction.objects.filter(pk=transfer.from_transaction_id).update(account=new_from)
             sync_fields = {}
             if "payee" in serializer.validated_data:
                 sync_fields["payee"] = serializer.validated_data["payee"]

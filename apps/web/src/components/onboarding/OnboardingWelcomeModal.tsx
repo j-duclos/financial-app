@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { APP_NAME, APP_VALUE_STATEMENT } from "@budget-app/shared";
+import { GETTING_STARTED_COPY } from "@budget-app/shared";
 import BrandLogo from "../brand/BrandLogo";
 
 type Props = {
@@ -74,11 +74,13 @@ export default function OnboardingWelcomeModal({
       >
         <BrandLogo size="medium" />
         <h2 id="onboarding-welcome-title" className="text-xl font-semibold text-gray-900 text-center">
-          See your money before it happens.
+          {GETTING_STARTED_COPY.welcomeTitle}
         </h2>
         <p className="text-sm text-gray-700 text-center">
-          {APP_VALUE_STATEMENT} Add your accounts, income, and bills so {APP_NAME} can project
-          what’s coming.
+          {GETTING_STARTED_COPY.welcomeBody}
+        </p>
+        <p className="text-sm text-gray-600 text-center">
+          {GETTING_STARTED_COPY.welcomeSecondary}
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
           <button
@@ -88,14 +90,14 @@ export default function OnboardingWelcomeModal({
             disabled={skipPending}
             aria-label="Skip onboarding for now"
           >
-            Skip for now
+            {GETTING_STARTED_COPY.welcomeSkip}
           </button>
           <button
             type="button"
             className="py-2 px-4 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
             onClick={onGetStarted}
           >
-            Get started
+            {GETTING_STARTED_COPY.welcomeCta}
           </button>
         </div>
       </div>

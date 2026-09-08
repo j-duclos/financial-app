@@ -38,7 +38,7 @@ describe("FlowSight mobile branding", () => {
 
   it("adds branding to first-run without replacing setup actions", () => {
     expect(firstRunSource).toMatch(/BrandLogo/);
-    expect(firstRunSource).toMatch(/APP_VALUE_STATEMENT/);
+    expect(firstRunSource).toMatch(/GETTING_STARTED_COPY\.welcomeTitle/);
     expect(firstRunSource).toMatch(/Add account manually/);
     expect(firstRunSource).toMatch(/APP_WEB_COMPANION_MESSAGE/);
     expect(firstRunSource).toMatch(/Open FlowSight on the web/);

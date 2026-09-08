@@ -8,10 +8,18 @@ export function transferPreviewAccountIds(args: {
   counterpartyAccountId: number;
   amount: string;
   creditCardPayment: boolean;
+  /** When set, this wins over amount sign (inline add keeps direction even if amount is unsigned). */
+  direction?: "INFLOW" | "OUTFLOW";
 }): { fromAccountId: number; toAccountId: number } {
-  const { ledgerAccountId, counterpartyAccountId, amount, creditCardPayment } = args;
+  const { ledgerAccountId, counterpartyAccountId, amount, creditCardPayment, direction } = args;
   if (creditCardPayment) {
     return { fromAccountId: ledgerAccountId, toAccountId: counterpartyAccountId };
+  }
+  if (direction === "OUTFLOW") {
+    return { fromAccountId: ledgerAccountId, toAccountId: counterpartyAccountId };
+  }
+  if (direction === "INFLOW") {
+    return { fromAccountId: counterpartyAccountId, toAccountId: ledgerAccountId };
   }
   const n = parseFloat(String(amount).trim());
   if (Number.isFinite(n) && n < 0) {
@@ -41,6 +49,54 @@ export function parsePreviewMoney(raw: string | number | null | undefined): numb
   if (raw == null || String(raw).trim() === "") return null;
   const n = typeof raw === "number" ? raw : parseFloat(String(raw).replace(/[^\d.-]/g, ""));
   return Number.isFinite(n) ? n : null;
+}
+
+function moneyText(n: number): string {
+  return n.toFixed(2);
+}
+
+/**
+ * Canonical signed ledger for a cash/savings dest — `account.balance` from `?balance=true`.
+ * Never starting_balance (stale) or current_balance (credit owed).
+ */
+export function accountLedgerBalanceToday(account: Account | null | undefined): number | null {
+  if (!account) return null;
+  return parsePreviewMoney(account.balance);
+}
+
+/**
+ * Inline bank-transfer footer: dest's current ledger, then this draft amount.
+ * Amount sign matches inline submit (negative = leave the open ledger / arrive at dest).
+ */
+export function inlineBankDestLedgerPreview(args: {
+  destinationAccount: Account | null | undefined;
+  amount: string;
+}): { before: string; after: string } | null {
+  const current = accountLedgerBalanceToday(args.destinationAccount);
+  if (current == null) return null;
+  const n = parseFloat(String(args.amount).trim());
+  const destDelta = Number.isFinite(n) ? -n : 0;
+  return { before: moneyText(current), after: moneyText(current + destDelta) };
+}
+
+/** Pick source vs destination preview legs by the account the UI is naming. */
+export function previewBalancesForAccountId(args: {
+  labeledAccountId: number;
+  fromAccountId?: number | null;
+  toAccountId?: number | null;
+  sourceBefore?: string | number | null;
+  sourceAfter?: string | number | null;
+  destBefore?: string | number | null;
+  destAfter?: string | number | null;
+}): { before: string; after: string } | null {
+  const { labeledAccountId, fromAccountId, toAccountId } = args;
+  if (toAccountId === labeledAccountId && args.destBefore != null && args.destAfter != null) {
+    return { before: String(args.destBefore), after: String(args.destAfter) };
+  }
+  if (fromAccountId === labeledAccountId && args.sourceBefore != null && args.sourceAfter != null) {
+    return { before: String(args.sourceBefore), after: String(args.sourceAfter) };
+  }
+  return null;
 }
 
 function positiveOwed(n: number | null): number | null {

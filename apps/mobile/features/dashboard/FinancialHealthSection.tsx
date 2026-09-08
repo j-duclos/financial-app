@@ -1,7 +1,8 @@
 import React, { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import type { DashboardSummaryFast, DashboardTopSummary } from "@budget-app/shared";
+import type { DashboardSummaryFast, DashboardTopSummary, GettingStartedHelpTopic } from "@budget-app/shared";
+import { GETTING_STARTED_HELP_LABELS } from "@budget-app/shared";
 import {
   BalanceDisplay,
   ErrorState,
@@ -23,6 +24,7 @@ type Props = {
   errorMessage: string;
   onRetry: () => void;
   recalculating?: boolean;
+  onHelpPress?: (topic: GettingStartedHelpTopic) => void;
 };
 
 function FinancialHealthSkeleton() {
@@ -67,6 +69,7 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
   errorMessage,
   onRetry,
   recalculating,
+  onHelpPress,
 }: Props) {
   const theme = useTheme();
   const router = useRouter();
@@ -98,11 +101,15 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
               : "No cash accounts in window"
           }
           accessibilityHint={FINANCIAL_HEALTH.lowestProjectedCash.help}
+          infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.lowestForecastBalance}
+          onInfoPress={onHelpPress ? () => onHelpPress("lowestForecastBalance") : undefined}
         />
         <BalanceDisplay
           label={FINANCIAL_HEALTH.availableCash.label}
           amount={top.liquid_cash}
           subtitle={FINANCIAL_HEALTH.availableCash.subtitle}
+          infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.availableCash}
+          onInfoPress={onHelpPress ? () => onHelpPress("availableCash") : undefined}
         />
       </View>
       <Pressable

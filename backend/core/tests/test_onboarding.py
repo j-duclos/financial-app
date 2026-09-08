@@ -43,6 +43,12 @@ def test_brand_new_user_onboarding_status(fresh_client):
         "forecast_ready": False,
     }
     assert body["progress"] == {"completed_steps": 0, "total_steps": 4}
+    assert body["checklist"] == {
+        "account": False,
+        "upcoming_transaction": False,
+        "recurring": False,
+        "goal": False,
+    }
 
 
 def test_account_only_is_not_forecast_ready(fresh_client, fresh_user):
@@ -64,6 +70,9 @@ def test_account_only_is_not_forecast_ready(fresh_client, fresh_user):
     assert body["steps"]["forecast_ready"] is False
     assert body["show_welcome"] is True
     assert body["progress"]["completed_steps"] == 1
+    assert body["checklist"]["account"] is True
+    assert body["checklist"]["upcoming_transaction"] is False
+    assert body["checklist"]["goal"] is False
 
 
 def test_zero_dollar_account_is_not_missing_setup(fresh_user):
@@ -204,3 +213,106 @@ def test_onboarding_requires_auth(api_client):
     assert api_client.get("/api/onboarding/status/").status_code == 401
     assert api_client.post("/api/onboarding/complete/").status_code == 401
     assert api_client.post("/api/onboarding/dismiss/").status_code == 401
+
+
+def test_past_transaction_does_not_complete_upcoming_checklist(fresh_client, fresh_user):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    household = Household.objects.create(name="Past Txn HH")
+    HouseholdMembership.objects.create(
+        household=household, user=fresh_user, role=HouseholdMembership.Role.OWNER
+    )
+    account = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+        starting_balance=Decimal("50.00"),
+    )
+    Transaction.objects.create(
+        account=account,
+        date=timezone.localdate() - timedelta(days=3),
+        payee="Coffee",
+        amount=Decimal("-4.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+    )
+    body = _status(fresh_client).json()
+    assert body["steps"]["transaction"] is True
+    assert body["checklist"]["upcoming_transaction"] is False
+
+
+def test_future_manual_transaction_completes_upcoming_checklist(fresh_client, fresh_user):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    household = Household.objects.create(name="Future Txn HH")
+    HouseholdMembership.objects.create(
+        household=household, user=fresh_user, role=HouseholdMembership.Role.OWNER
+    )
+    account = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+        starting_balance=Decimal("50.00"),
+    )
+    Transaction.objects.create(
+        account=account,
+        date=timezone.localdate() + timedelta(days=5),
+        payee="Rent",
+        amount=Decimal("-1200.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    body = _status(fresh_client).json()
+    assert body["checklist"]["account"] is True
+    assert body["checklist"]["upcoming_transaction"] is True
+    assert body["steps"]["forecast_ready"] is True
+
+
+def test_active_or_paused_goal_completes_goal_checklist(fresh_client, fresh_user):
+    from goals.models import GoalBucket
+
+    household = Household.objects.create(name="Goal HH")
+    HouseholdMembership.objects.create(
+        household=household, user=fresh_user, role=HouseholdMembership.Role.OWNER
+    )
+    Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+        starting_balance=Decimal("100.00"),
+    )
+    GoalBucket.objects.create(
+        household=household,
+        name="Emergency",
+        type=GoalBucket.BucketType.EMERGENCY,
+        target_amount=Decimal("1000.00"),
+        status=GoalBucket.Status.PAUSED,
+    )
+    body = _status(fresh_client).json()
+    assert body["checklist"]["goal"] is True
+    assert body["steps"]["forecast_ready"] is False
+
+
+def test_archived_goal_does_not_complete_goal_checklist(fresh_client, fresh_user):
+    from goals.models import GoalBucket
+
+    household = Household.objects.create(name="Archived Goal HH")
+    HouseholdMembership.objects.create(
+        household=household, user=fresh_user, role=HouseholdMembership.Role.OWNER
+    )
+    GoalBucket.objects.create(
+        household=household,
+        name="Old goal",
+        type=GoalBucket.BucketType.CUSTOM,
+        target_amount=Decimal("500.00"),
+        status=GoalBucket.Status.ARCHIVED,
+    )
+    body = _status(fresh_client).json()
+    assert body["checklist"]["goal"] is False

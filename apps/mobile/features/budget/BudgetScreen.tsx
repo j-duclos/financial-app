@@ -87,7 +87,7 @@ export function BudgetScreen() {
         <View style={{ padding: theme.spacing.lg }}>
           <EmptyState
             title="Default household required"
-            message="Set a default household in Profile & Settings on web to track your budget."
+            message="Choose a default household in Profile & Settings to track your budget."
           />
         </View>
       </Screen>

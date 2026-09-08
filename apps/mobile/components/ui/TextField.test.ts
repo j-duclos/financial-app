@@ -9,9 +9,11 @@ const source = readFileSync(
 );
 
 describe("TextField", () => {
-  it("does not invite Android Autofill unless the field opts in with autoComplete", () => {
-    expect(source).toMatch(/importantForAutofill/);
-    expect(source).toMatch(/rest\.autoComplete \? "yes" : "no"/);
+  it("keeps Android Autofill off so the system toolbar cannot cover the field", () => {
+    expect(source).toMatch(/noExcludeDescendants/);
+    expect(source).toMatch(/autoComplete=\{android \? "off" : autoComplete\}/);
+    expect(source).toMatch(/disableFullscreenUI=\{android\}/);
+    expect(source).toMatch(/showSoftInputOnFocus/);
     expect(source).toMatch(/underlineColorAndroid="transparent"/);
     expect(source).toMatch(/textAlignVertical="center"/);
   });

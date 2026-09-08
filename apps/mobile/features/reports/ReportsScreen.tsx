@@ -100,7 +100,7 @@ export function ReportsScreen() {
         <View style={{ padding: theme.spacing.lg }}>
           <EmptyState
             title="Default household required"
-            message="Set a default household in Profile & Settings on web to view reports."
+            message="Choose a default household in Profile & Settings to view reports."
           />
         </View>
       </Screen>

@@ -108,7 +108,7 @@ export function ReportDetailScreen() {
         <AppHeader title={reportTabLabel(reportType)} onBack={() => router.back()} />
         <EmptyState
           title="Default household required"
-          message="Set a default household in Profile & Settings on web to view reports."
+          message="Choose a default household in Profile & Settings to view reports."
         />
       </Screen>
     );

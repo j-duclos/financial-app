@@ -133,7 +133,7 @@ export default function InlineAddRow({
                 required
               >
                 <option value="">
-                  {transferCategoryName === "Credit Card Payment" ? "Payment to" : "Transfer to"}
+                  {transferCategoryName === "Credit Card Payment" ? "Payment to" : "Other account"}
                 </option>
                 {transferToAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -206,9 +206,9 @@ export default function InlineAddRow({
           )}
           {inlineBankTransferDestId != null && (
             <span>
-              {inlineDestPickAccount?.name ?? "Account"}:{" "}
+              {inlineDestPickAccount?.name ?? "Account"} (current):{" "}
               {inlineBankPreviewView.kind === "loading" ? (
-                "Calculating projected balance…"
+                "Loading balance…"
               ) : inlineBankPreviewView.kind === "error" ? (
                 <>
                   {inlineBankPreviewView.message}{" "}
