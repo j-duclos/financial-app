@@ -70,6 +70,8 @@ import type {
   BillingStatus,
   CheckoutSessionResponse,
   PortalSessionResponse,
+  TestPlanOverride,
+  TestPlanOverrideResponse,
 } from "@budget-app/shared";
 import { downloadAuthenticatedFile, fetchAuthenticatedFile, request, requestRequired } from "./config";
 import type { AuthenticatedFile } from "./config";
@@ -180,6 +182,15 @@ export async function resetPassword(body: {
 
 export async function getBillingStatus(): Promise<BillingStatus> {
   return requestRequired("/api/billing/status/");
+}
+
+export async function setTestPlanOverride(
+  plan: TestPlanOverride
+): Promise<TestPlanOverrideResponse> {
+  return requestRequired("/api/dev/test-plan/", {
+    method: "POST",
+    body: JSON.stringify({ plan }),
+  });
 }
 
 export async function createCheckoutSession(): Promise<CheckoutSessionResponse> {

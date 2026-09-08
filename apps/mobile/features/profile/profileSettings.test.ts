@@ -13,6 +13,8 @@ import {
   FORECAST_PREFERENCE_QUERY_PREFIXES,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,
+  invalidateAfterTestPlanChange,
+  PLAN_TEST_OVERRIDE_QUERY_PREFIXES,
   clientDeleteAccountError,
   clientPasswordErrors,
   DELETE_CONFIRMATION,
@@ -127,6 +129,27 @@ describe("profileSettings helpers", () => {
         (p) => p[0] === "monthly-reports"
       )
     ).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("invalidates billing and entitlement-sensitive queries after a simulated plan change", () => {
+    const queryClient = new QueryClient();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    invalidateAfterTestPlanChange(queryClient);
+    const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        ["billing-status"],
+        ["profile"],
+        ["dashboard-summary"],
+        ["accounts"],
+        ["rules"],
+        ["buckets"],
+        ["monthly-reports"],
+        ["debt-plan"],
+      ])
+    );
+    expect(PLAN_TEST_OVERRIDE_QUERY_PREFIXES.some((p) => p[0] === "billing-status")).toBe(true);
     spy.mockRestore();
   });
 

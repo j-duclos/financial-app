@@ -1,7 +1,8 @@
 """Launch plan limits and server-side entitlement checks.
 
-Premium is determined only by synchronized Stripe subscription status
-(``user_has_premium``). Limits are not inferred from a Stripe customer id.
+Premium is determined by ``user_has_premium`` (Stripe subscription status,
+with an optional development-only test override that never runs in production).
+Limits are not inferred from a Stripe customer id.
 
 Downgrade never deletes accounts, Plaid Items, transactions, or history.
 Enforcement blocks *new* Premium-only work (new Plaid connections, extra
@@ -229,11 +230,9 @@ def require_payment_planner_full(user) -> None:
 
 def user_may_use_reports_advanced(user) -> bool:
     """Read-only Premium check — do not create billing rows on report GET."""
-    from billing.models import BillingSubscription
-    from billing.services import subscription_grants_premium
+    from billing.services import user_has_premium
 
-    billing = BillingSubscription.objects.filter(user_id=user.pk).first()
-    return subscription_grants_premium(billing)
+    return user_has_premium(user, create_billing_row=False)
 
 
 def require_reports_advanced(user) -> None:

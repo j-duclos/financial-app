@@ -19,6 +19,7 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from billing.dev_views import TestPlanOverrideView
 from core.spa import serve_frontend
 from core.views import health
 from timeline.views import TimelineView, TimelineCalendarView
@@ -46,6 +47,7 @@ urlpatterns = [
     path("api/", include("plaid_link.urls")),
     path("api/billing/", include("billing.urls")),
     path("api/", include("alerts.urls")),
+    path("api/dev/test-plan/", TestPlanOverrideView.as_view(), name="dev-test-plan"),
 ]
 
 if settings.SERVE_REACT_APP:

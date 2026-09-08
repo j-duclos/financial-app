@@ -97,6 +97,22 @@ class UserProfile(models.Model):
     notify_3_days_before = models.BooleanField(default=True)
     notify_1_day_before = models.BooleanField(default=True)
     notify_day_of = models.BooleanField(default=True)
+
+    class TestPlanOverride(models.TextChoices):
+        FREE = "FREE", "Free"
+        PREMIUM = "PREMIUM", "Premium"
+
+    test_plan_override = models.CharField(
+        max_length=16,
+        choices=TestPlanOverride.choices,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Development-only plan simulation. Ignored unless DEBUG and "
+            "ALLOW_PLAN_TEST_OVERRIDE are both true. Does not change Stripe."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

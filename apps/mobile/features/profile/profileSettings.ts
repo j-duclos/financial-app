@@ -8,6 +8,7 @@ import {
   type OperationalForecastDays,
 } from "@budget-app/shared";
 import { PROFILE_QUERY_KEY } from "@/lib/profileQueryKey";
+import { BILLING_STATUS_QUERY_KEY } from "@/lib/billing";
 
 /** Forecast-window changes affect operational views — not historical reports. */
 export const FORECAST_PREFERENCE_QUERY_PREFIXES = [
@@ -68,6 +69,38 @@ export function applyUpdatedProfileCache(queryClient: QueryClient, profile: User
 export function invalidateAfterForecastWindowChange(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY });
   for (const queryKey of FORECAST_PREFERENCE_QUERY_PREFIXES) {
+    void queryClient.invalidateQueries({ queryKey: [...queryKey] });
+  }
+}
+
+/** Immediate entitlement refresh after a development plan simulation change. */
+export const PLAN_TEST_OVERRIDE_QUERY_PREFIXES = [
+  BILLING_STATUS_QUERY_KEY,
+  PROFILE_QUERY_KEY,
+  ["dashboard-summary"],
+  ["dashboard-summary-fast"],
+  ["dashboard-summary-details"],
+  ["extended-cash-risk"],
+  ["transactions"],
+  ["timeline"],
+  ["calendar-summary"],
+  ["calendar-chunk"],
+  ["accounts"],
+  ["account"],
+  ["rules"],
+  ["bills-overview"],
+  ["buckets"],
+  ["bucket-detail"],
+  ["goals-report"],
+  ["monthly-reports"],
+  ["debt-plan"],
+  ["account-payoff"],
+  ["recommendations"],
+  ["onboarding"],
+] as const;
+
+export function invalidateAfterTestPlanChange(queryClient: QueryClient): void {
+  for (const queryKey of PLAN_TEST_OVERRIDE_QUERY_PREFIXES) {
     void queryClient.invalidateQueries({ queryKey: [...queryKey] });
   }
 }

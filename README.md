@@ -204,6 +204,37 @@ Production webhook URL: `https://<your-app>.onrender.com/api/billing/webhook/` (
 
 The app starts without Stripe configured. Checkout/Portal/webhook calls return HTTP 503 until the required variables are set.
 
+### Development-only plan simulator
+
+Local testing can simulate Free or Premium **without** creating a Stripe subscription. This is entitlement simulation only. Stripe remains authoritative in production.
+
+In `backend/.env`:
+
+```
+DEBUG=true
+ALLOW_PLAN_TEST_OVERRIDE=true
+```
+
+**NEVER SET `ALLOW_PLAN_TEST_OVERRIDE=true` ON RENDER PRODUCTION.**
+
+The override is ignored unless **all** of these are true:
+
+- `DEBUG=true`
+- `ALLOW_PLAN_TEST_OVERRIDE=true`
+- the process is **not** running on Render (`RENDER` is unset/false)
+
+Then:
+
+1. Run the backend
+2. Register a brand-new test user (starts Free)
+3. Complete onboarding, add a manual account, transactions, and a recurring rule
+4. Open Profile & Settings → **Developer Testing** → Simulated plan → Premium or Free
+5. The app refreshes entitlements immediately (no logout)
+
+A small **TEST: Premium** / **TEST: Free** indicator appears while an override is active. Switching back to **Real billing** (or Free) does not delete accounts, rules, goals, transactions, or Plaid Items.
+
+Simulated Premium can show Premium Plaid UI, but it does not bypass Plaid configuration. Sandbox credentials are still required for real Link/sync.
+
 ### Legal pages and error monitoring
 
 Public `/privacy` and `/terms` pages, in-app legal links, and optional Sentry error monitoring are documented in [`LEGAL_AND_MONITORING.md`](LEGAL_AND_MONITORING.md).

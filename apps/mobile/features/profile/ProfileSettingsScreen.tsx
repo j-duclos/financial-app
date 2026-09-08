@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   exportProfileData,
   exportTransactionsCsv,
+  setTestPlanOverride,
   updateAccount,
   updateProfile,
 } from "@budget-app/api-client";
@@ -16,12 +17,18 @@ import {
   DEFAULT_OPERATIONAL_FORECAST_DAYS,
   DEFAULT_TARGET_UTILIZATION_PERCENT,
   clampForecastDaysForPlan,
+  canShowPlanTestControls,
+  choiceToTestPlanOverride,
+  effectivePlanLabel,
   forecastWindowLabel,
   formatAccountOptionLabel,
   isForecastDaysAllowed,
   lockedForecastUpsellMessage,
   normalizeOperationalForecastDays,
+  simulatedPlanChoice,
+  simulatedPlanChoiceLabel,
   type OperationalForecastDays,
+  type SimulatedPlanChoice,
 } from "@budget-app/shared";
 import { BrandLogo } from "@/components/brand";
 import {
@@ -65,6 +72,7 @@ import {
   forecastWindowPickerOptions,
   hasConfiguredLegalLinks,
   invalidateAfterForecastWindowChange,
+  invalidateAfterTestPlanChange,
   profileEmailDisplay,
 } from "./profileSettings";
 
@@ -114,6 +122,7 @@ export function ProfileSettingsScreen() {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [forecastPickerOpen, setForecastPickerOpen] = useState(false);
+  const [simulatedPlanPickerOpen, setSimulatedPlanPickerOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -211,6 +220,19 @@ export function ProfileSettingsScreen() {
     },
     onError: (err) => {
       Alert.alert("Couldn’t update utilization target", describeApiError(err));
+    },
+  });
+
+  const testPlanMutation = useMutation({
+    mutationFn: (choice: SimulatedPlanChoice) =>
+      setTestPlanOverride(choiceToTestPlanOverride(choice)),
+    onSuccess: () => {
+      invalidateAfterTestPlanChange(queryClient);
+      setSimulatedPlanPickerOpen(false);
+    },
+    onError: (err) => {
+      setSimulatedPlanPickerOpen(false);
+      Alert.alert("Couldn’t update simulated plan", describeApiError(err));
     },
   });
 
@@ -312,6 +334,26 @@ export function ProfileSettingsScreen() {
               }
             />
           </SettingsGroup>
+
+          {canShowPlanTestControls(billing, typeof __DEV__ !== "undefined" && __DEV__) ? (
+            <>
+              <SectionHeader title="Developer Testing" />
+              <SettingsGroup>
+                <SettingsRow
+                  title="Simulated plan"
+                  value={simulatedPlanChoiceLabel(simulatedPlanChoice(billing))}
+                  subtitle={`Effective plan: ${
+                    effectivePlanLabel(billing) === "PREMIUM" ? "Premium" : "Free"
+                  }`}
+                  onPress={() => setSimulatedPlanPickerOpen(true)}
+                  accessibilityLabel={`Simulated plan, ${simulatedPlanChoiceLabel(
+                    simulatedPlanChoice(billing)
+                  )}`}
+                  disabled={testPlanMutation.isPending}
+                />
+              </SettingsGroup>
+            </>
+          ) : null}
 
           <SectionHeader title="Forecast & planning" />
           <SettingsGroup>
@@ -528,6 +570,20 @@ export function ProfileSettingsScreen() {
           </View>
         </>
       )}
+
+      <OptionsPickerSheet
+        visible={simulatedPlanPickerOpen}
+        title="Simulated plan"
+        selectedId={simulatedPlanChoice(billing)}
+        options={(["real", "FREE", "PREMIUM"] as const).map((id) => ({
+          id,
+          title: simulatedPlanChoiceLabel(id),
+        }))}
+        onClose={() => setSimulatedPlanPickerOpen(false)}
+        onSelect={(id) => {
+          testPlanMutation.mutate(id as SimulatedPlanChoice);
+        }}
+      />
 
       <OptionsPickerSheet
         visible={forecastPickerOpen}

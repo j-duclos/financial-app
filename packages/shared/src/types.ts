@@ -2755,6 +2755,9 @@ export interface DtiCalculationResponse {
 /** Billing plan stored by the backend (Stripe-synchronized). */
 export type BillingPlan = "FREE" | "PREMIUM";
 
+/** Development-only simulated plan. Null means use real Stripe billing. */
+export type TestPlanOverride = BillingPlan | null;
+
 export interface BillingStatus {
   plan: BillingPlan;
   is_premium: boolean;
@@ -2763,6 +2766,15 @@ export interface BillingStatus {
   current_period_end: string | null;
   has_stripe_customer: boolean;
   entitlements?: BillingEntitlements;
+  /** Present only when the backend allows development plan simulation. */
+  test_override_available?: boolean;
+  test_plan_override?: TestPlanOverride;
+  effective_plan?: BillingPlan;
+}
+
+export interface TestPlanOverrideResponse {
+  test_plan_override: TestPlanOverride;
+  effective_plan: BillingPlan;
 }
 
 export interface BillingPlanLimits {

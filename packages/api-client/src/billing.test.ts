@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCheckoutSession, createPortalSession, getBillingStatus } from "./api";
+import { createCheckoutSession, createPortalSession, getBillingStatus, setTestPlanOverride } from "./api";
 import { configureApiClient } from "./config";
-import type { BillingStatus, CheckoutSessionResponse, PortalSessionResponse } from "@budget-app/shared";
+import type {
+  BillingStatus,
+  CheckoutSessionResponse,
+  PortalSessionResponse,
+  TestPlanOverrideResponse,
+} from "@budget-app/shared";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -59,5 +64,30 @@ describe("billing API client", () => {
     await expect(createPortalSession()).resolves.toEqual(payload);
     expect(fetchMock.mock.calls[0][0]).toBe("http://test.local/api/billing/create-portal-session/");
     expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+  });
+
+  it("setTestPlanOverride POSTs /api/dev/test-plan/ with the selected plan", async () => {
+    const payload: TestPlanOverrideResponse = {
+      test_plan_override: "PREMIUM",
+      effective_plan: "PREMIUM",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, payload));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(setTestPlanOverride("PREMIUM")).resolves.toEqual(payload);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://test.local/api/dev/test-plan/");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ plan: "PREMIUM" });
+  });
+
+  it("setTestPlanOverride can clear the override with null", async () => {
+    const payload: TestPlanOverrideResponse = {
+      test_plan_override: null,
+      effective_plan: "FREE",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, payload));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(setTestPlanOverride(null)).resolves.toEqual(payload);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ plan: null });
   });
 });

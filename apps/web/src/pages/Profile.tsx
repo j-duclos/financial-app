@@ -12,6 +12,7 @@ import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
 import { useBillingStatus } from "../hooks/useBillingStatus";
 import PlanBillingSection from "../components/billing/PlanBillingSection";
 import PlanBadge from "../components/billing/PlanBadge";
+import DeveloperTestingSection from "../components/billing/DeveloperTestingSection";
 import ChangeEmailSection from "../components/ChangeEmailSection";
 import AccountLifecycleSection from "../components/AccountLifecycleSection";
 import LegalPolicyLinks from "../components/legal/LegalPolicyLinks";
@@ -307,6 +308,7 @@ export default function Profile() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <div className="space-y-6 min-w-0">
           <PlanBillingSection />
+          <DeveloperTestingSection />
           <form onSubmit={handleSaveProfile} className="space-y-6 min-w-0">
           <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 sm:p-8 space-y-4">
             <h2 className="text-lg font-medium text-gray-900">Profile</h2>

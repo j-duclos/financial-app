@@ -14,6 +14,7 @@ import os
 os.environ["SENTRY_DSN"] = ""
 os.environ.setdefault("DJANGO_SECRET_KEY", "pytest-secret-key")
 os.environ.setdefault("DEBUG", "true")
+os.environ["ALLOW_PLAN_TEST_OVERRIDE"] = "false"
 os.environ.setdefault("EMAIL_BACKEND", "django.core.mail.backends.locmem.EmailBackend")
 
 _use_postgres = os.environ.get("USE_POSTGRES_FOR_TESTS") == "1"

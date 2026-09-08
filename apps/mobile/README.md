@@ -65,6 +65,7 @@ or:
 ```
 
 Profile & Settings (dev builds only) also shows `API: Local` or `API: Render`.
+When the backend has `DEBUG=true` and `ALLOW_PLAN_TEST_OVERRIDE=true`, Settings also shows **Developer Testing** so you can simulate Free or Premium without Stripe. **Never enable that flag on Render production.**
 API performance logs are tagged `[PERF][local]` / `[PERF][render]`.
 
 ## Run
@@ -99,6 +100,25 @@ cd ios && pod install && open *.xcworkspace
 ```
 
 Or: `npx expo run:ios --device` (installs CocoaPods, builds, and deploys).
+
+## Install on Android (emulator or device)
+
+`npx expo run:android` needs **JDK 17+**. This repo’s Android Gradle plugin will fail on JDK 12 (`JAVA_HOME` on this machine).
+
+Use Android Studio’s bundled JDK for the build:
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:Path = "$env:JAVA_HOME\bin;" + $env:Path
+cd apps/mobile
+npx expo run:android
+```
+
+`apps/mobile/android/` is generated and gitignored. After `npx expo prebuild -p android`:
+
+- If Gradle still picks JDK 12, set `org.gradle.java.home` in `android/gradle.properties` to that JBR path.
+- If Gradle reports `SDK location not found`, set `ANDROID_HOME` to `%LOCALAPPDATA%\Android\Sdk` or create `android/local.properties` with `sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk`.
+- If CMake/ninja fails with `Filename longer than 260 characters`, use a short Gradle cache: `$env:GRADLE_USER_HOME = "D:\gradle"`.
 
 ## Environments
 

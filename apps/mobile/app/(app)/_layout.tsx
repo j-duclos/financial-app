@@ -2,7 +2,8 @@ import { Redirect, Stack, usePathname } from "expo-router";
 import { View } from "react-native";
 import { LoadingScreen } from "@/components/brand";
 import { useAuth } from "@/features/auth";
-import { NotificationPermissionSheet, ProjectedFundsInAppBanner, useProjectedFundsPush } from "@/features/alerts";
+import { ProjectedFundsInAppBanner, NotificationPermissionSheet, useProjectedFundsPush } from "@/features/alerts";
+import { TestPlanBanner } from "@/features/profile/TestPlanBanner";
 import { ReviewPromptHost } from "@/features/review";
 import { setPendingPostLoginRedirect } from "@/lib/postLoginRedirect";
 
@@ -35,6 +36,7 @@ export default function AppLayout() {
   return (
     <ReviewPromptHost>
     <View style={{ flex: 1 }}>
+      <TestPlanBanner />
       <ProjectedFundsInAppBanner />
       <View style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false }}>

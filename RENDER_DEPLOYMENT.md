@@ -104,6 +104,7 @@ Set these in the Web Service → **Environment**:
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` | Webhook signing secret. Required to accept `/api/billing/webhook/`. |
 | `STRIPE_PREMIUM_PRICE_ID` | `price_…` | Stripe Price ID for Premium monthly. Do **not** hard-code in application logic. |
 | `STRIPE_PUBLISHABLE_KEY` | `pk_…` | Optional; Checkout is created on the server. |
+| `ALLOW_PLAN_TEST_OVERRIDE` | **leave unset / `false`** | Development-only Free/Premium simulator. **NEVER SET `ALLOW_PLAN_TEST_OVERRIDE=true` ON RENDER PRODUCTION.** Production ignores it anyway (`DEBUG=false` and `RENDER=true`). |
 | `FRONTEND_ORIGIN` | `https://<your-app>.onrender.com` | Optional when `RENDER_EXTERNAL_URL` is set. Used for Checkout return URLs and auth email links. |
 | `EMAIL_BACKEND` | `django.core.mail.backends.smtp.EmailBackend` | Local default is the console backend. Production needs a real transactional provider. |
 | `EMAIL_HOST` | SMTP host | Required for SMTP. |
@@ -316,6 +317,7 @@ Use `backend/.env` for Plaid secrets; optional `apps/web/.env.local` for overrid
 - [ ] **Start**: `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
 - [ ] `DJANGO_SECRET_KEY` — unique, not the dev default
 - [ ] `DEBUG=False` (or rely on Render’s `RENDER=true` default)
+- [ ] **Do not set** `ALLOW_PLAN_TEST_OVERRIDE=true` (development-only plan simulator)
 - [ ] `ALLOWED_HOSTS` — your `*.onrender.com` API hostname (`.onrender.com` is always permitted)
 - [ ] `CSRF_TRUSTED_ORIGINS` — `https://<api-host>,https://<static-site-host>` (no trailing slashes)
 - [ ] Plaid: `PLAID_CLIENT_ID`, `PLAID_ENV`, matching secret, `PLAID_REDIRECT_URI=https://<web-service>/plaid/oauth-return`

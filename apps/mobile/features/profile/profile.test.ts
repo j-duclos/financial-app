@@ -12,6 +12,7 @@ const deleteSource = readFileSync(join(dir, "DeleteAccountSheet.tsx"), "utf8");
 const exportSource = readFileSync(join(dir, "profileExport.ts"), "utf8");
 const detailsSource = readFileSync(join(dir, "ProfileSettingsScreen.tsx"), "utf8");
 const routeSource = readFileSync(join(dir, "../../app/(app)/profile.tsx"), "utf8");
+const layoutSource = readFileSync(join(dir, "../../app/(app)/_layout.tsx"), "utf8");
 const clearCacheSource = readFileSync(join(dir, "../../lib/clearUserQueryCache.ts"), "utf8");
 const authSource = readFileSync(join(dir, "../auth/AuthContext.tsx"), "utf8");
 const webProfileSource = readFileSync(
@@ -126,6 +127,15 @@ describe("Profile & Settings screen", () => {
     expect(screenSource).toMatch(/__DEV__/);
     expect(screenSource).toMatch(/Development/);
     expect(screenSource).toMatch(/developmentEnvironmentLabel/);
+  });
+
+  it("shows Developer Testing only when the backend reports override capability", () => {
+    expect(screenSource).toMatch(/Developer Testing/);
+    expect(screenSource).toMatch(/canShowPlanTestControls/);
+    expect(screenSource).toMatch(/setTestPlanOverride/);
+    expect(screenSource).toMatch(/invalidateAfterTestPlanChange/);
+    expect(screenSource).toMatch(/Simulated plan/);
+    expect(layoutSource).toMatch(/TestPlanBanner/);
   });
 
   it("shows privacy/terms/support only when configured", () => {

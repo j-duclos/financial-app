@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -13,8 +14,10 @@ type Props = TextInputProps & {
   error?: string;
 };
 
-export function TextField({ label, error, style, ...rest }: Props) {
+export function TextField({ label, error, style, importantForAutofill, ...rest }: Props) {
   const theme = useTheme();
+  const autofillImportance =
+    importantForAutofill ?? (rest.autoComplete ? "yes" : "no");
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
       <Text
@@ -29,6 +32,9 @@ export function TextField({ label, error, style, ...rest }: Props) {
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor={theme.colors.textMuted}
+        underlineColorAndroid="transparent"
+        textAlignVertical="center"
+        importantForAutofill={autofillImportance}
         style={[
           {
             minHeight: theme.touchTarget,
@@ -39,6 +45,7 @@ export function TextField({ label, error, style, ...rest }: Props) {
             color: theme.colors.text,
             backgroundColor: theme.colors.surface,
             fontSize: 16,
+            ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
           },
           style,
         ]}

@@ -1,7 +1,8 @@
 """Billing entitlements and Stripe Checkout/Portal orchestration.
 
 Premium access is granted only from locally synchronized Stripe subscription
-status. Presence of a Stripe Customer ID does not imply Premium.
+status, except for an optional development-only test override that never runs
+in production. Presence of a Stripe Customer ID does not imply Premium.
 """
 from __future__ import annotations
 
@@ -66,15 +67,31 @@ def subscription_grants_premium(billing: BillingSubscription | None) -> bool:
     return status_grants_premium(billing.status)
 
 
-def get_user_plan(user) -> str:
-    billing = get_or_create_billing_subscription(user)
+def stripe_plan_for_user(user, *, create_row: bool = True) -> str:
+    """Stripe-authoritative plan. Ignores development test overrides."""
+    if create_row:
+        billing = get_or_create_billing_subscription(user)
+    else:
+        billing = BillingSubscription.objects.filter(user_id=user.pk).first()
+        if billing is None:
+            return BillingSubscription.Plan.FREE
     if subscription_grants_premium(billing):
         return BillingSubscription.Plan.PREMIUM
     return BillingSubscription.Plan.FREE
 
 
-def user_has_premium(user) -> bool:
-    return get_user_plan(user) == BillingSubscription.Plan.PREMIUM
+def get_user_plan(user, *, create_billing_row: bool = True) -> str:
+    """Effective plan: development override when enabled, otherwise Stripe status."""
+    from billing.plan_override import active_test_plan_override
+
+    override = active_test_plan_override(user)
+    if override:
+        return override
+    return stripe_plan_for_user(user, create_row=create_billing_row)
+
+
+def user_has_premium(user, *, create_billing_row: bool = True) -> bool:
+    return get_user_plan(user, create_billing_row=create_billing_row) == BillingSubscription.Plan.PREMIUM
 
 
 def get_entitlements(user) -> dict[str, Any]:
@@ -84,11 +101,14 @@ def get_entitlements(user) -> dict[str, Any]:
 
 
 def get_billing_status_payload(user) -> dict[str, Any]:
+    from billing.plan_override import test_override_status_fields
+
     billing = get_or_create_billing_subscription(user)
-    is_premium = subscription_grants_premium(billing)
+    effective_plan = get_user_plan(user)
+    is_premium = effective_plan == BillingSubscription.Plan.PREMIUM
     period_end = billing.current_period_end
-    return {
-        "plan": BillingSubscription.Plan.PREMIUM if is_premium else BillingSubscription.Plan.FREE,
+    payload: dict[str, Any] = {
+        "plan": effective_plan,
         "is_premium": is_premium,
         "status": billing.status,
         "cancel_at_period_end": bool(billing.cancel_at_period_end),
@@ -96,6 +116,8 @@ def get_billing_status_payload(user) -> dict[str, Any]:
         "has_stripe_customer": bool(billing.stripe_customer_id),
         "entitlements": get_entitlements(user),
     }
+    payload.update(test_override_status_fields(user, effective_plan=effective_plan))
+    return payload
 
 
 def _obj_get(obj: Any, key: str, default: Any = None) -> Any:

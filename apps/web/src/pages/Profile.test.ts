@@ -18,6 +18,7 @@ describe("Profile page", () => {
     expect(profileSource).toMatch(/>Defaults</);
     expect(profileSource).toMatch(/>Security</);
     expect(profileSource).toMatch(/PlanBillingSection/);
+    expect(profileSource).toMatch(/DeveloperTestingSection/);
     expect(profileSource).toMatch(/PlanBadge/);
     expect(profileSource).toMatch(/AccountLifecycleSection/);
     expect(profileSource).toMatch(/settings-legal-section/);

@@ -64,15 +64,33 @@ export default function RegisterScreen() {
           onChangeText={setUsername}
           autoCapitalize="none"
           autoCorrect={false}
+          textContentType="username"
+          autoComplete="username"
+          returnKeyType="next"
         />
         <TextField
           label="Email"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
+          autoCorrect={false}
           keyboardType="email-address"
+          textContentType="emailAddress"
+          autoComplete="email"
+          returnKeyType="next"
         />
-        <TextField label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+        <TextField
+          label="Password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          textContentType="newPassword"
+          autoComplete="password-new"
+          returnKeyType="go"
+          onSubmitEditing={() => {
+            void handleSubmit();
+          }}
+        />
         <Button label="Sign up" onPress={() => void handleSubmit()} loading={submitting} />
         <View style={{ marginTop: 16 }}>
           <Button label="Back to sign in" variant="ghost" onPress={() => router.back()} />

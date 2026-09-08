@@ -56,6 +56,11 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_DEV_SECRET)
 # Local dev: DEBUG True by default. Render sets RENDER=true → DEBUG False unless DEBUG= is explicit.
 # Keep DEBUG False in production so clients do not receive Python tracebacks.
 DEBUG = _env_bool("DEBUG", default=not _ON_RENDER)
+ON_RENDER = _ON_RENDER
+
+# Development-only Free/Premium simulation. Default False. NEVER set true on Render production.
+# Honored only when DEBUG is True AND this flag is True AND ON_RENDER is False.
+ALLOW_PLAN_TEST_OVERRIDE = _env_bool("ALLOW_PLAN_TEST_OVERRIDE", default=False)
 
 # Performance instrumentation ([PERF] logs) — on by default on Render; set ENABLE_PERF_LOGS=false to disable.
 ENABLE_PERF_LOGS = _env_bool("ENABLE_PERF_LOGS", default=_ON_RENDER)

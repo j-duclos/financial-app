@@ -6,6 +6,7 @@ import NotificationsDropdown from "./NotificationsDropdown";
 import { PlaidAutoSync } from "./PlaidAutoSync";
 import AppNav from "./AppNav";
 import BillingReturnBanner from "./billing/BillingReturnBanner";
+import TestPlanBanner from "./billing/TestPlanBanner";
 import EmailVerificationBanner from "./EmailVerificationBanner";
 import ProjectedFundsAlertBanner from "./ProjectedFundsAlertBanner";
 import SiteFooter from "./legal/SiteFooter";
@@ -43,6 +44,7 @@ export default function Layout() {
             <AppNav />
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <TestPlanBanner />
             <NotificationsDropdown />
             <NavLink
               to="/profile"
