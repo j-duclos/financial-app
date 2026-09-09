@@ -895,37 +895,24 @@ def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
     return repaired
 
 
-def _rule_occurrence_is_user_preserved(rule_id: int, occurrence_date: date) -> bool:
+def _occurrence_locked_from_paid_off_skip(rule_id: int, occurrence_date: date) -> bool:
+    """True when a real import or posted/reconciled leg must stay on the ledger.
+
+    Amount edits ($25 rule → $100 this month) and ACTUAL card-side transfer legs do not lock.
+    Those still skip when the card is paid off that day.
     """
-    True when this occurrence must not be auto-hidden/purged: amount was edited away from the
-    rule, or a transfer-group peer is not RULE-sourced (ACTUAL/PLAID).
-    """
-    legs = Transaction.objects.filter(
-        rule_id=rule_id,
-        date=occurrence_date,
-        source=Transaction.Source.RULE,
-    )
-    if not legs.exists():
-        # Card/bank peer may still be ACTUAL with the same transfer group / date.
-        return False
-    rule = RecurringRule.objects.filter(pk=rule_id).only("amount").first()
-    if rule is not None and rule.amount is not None:
-        rule_amt = abs(Decimal(str(rule.amount)))
-        for leg_amt in legs.values_list("amount", flat=True):
-            if leg_amt is None:
-                continue
-            if abs(abs(Decimal(str(leg_amt))) - rule_amt) > Decimal("0.009"):
-                return True
-    transfer_group_ids = [
-        tg_id
-        for tg_id in legs.values_list("transfer_group_id", flat=True).distinct()
-        if tg_id is not None
-    ]
-    if transfer_group_ids and (
-        Transaction.objects.filter(transfer_group_id__in=transfer_group_ids)
-        .exclude(source=Transaction.Source.RULE)
-        .exists()
-    ):
+    if TransactionMatch.objects.filter(
+        planned_transaction__rule_id=rule_id,
+        planned_transaction__date=occurrence_date,
+        imported_transaction__source=Transaction.Source.PLAID,
+    ).exists():
+        return True
+    legs = Transaction.objects.filter(rule_id=rule_id, date=occurrence_date)
+    if legs.filter(source=Transaction.Source.PLAID).exists():
+        return True
+    if legs.exclude(status=Transaction.Status.PLANNED).exists():
+        return True
+    if legs.filter(reconciled=True).exists():
         return True
     return False
 
@@ -939,12 +926,10 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
     Also deletes now-empty TransferGroup / Transfer wiring left behind by paired card-payment
     legs. Occurrences re-materialize automatically if the projected card balance later changes.
 
-    PLAID INVARIANT: only deletes source=RULE. Never delete source=PLAID.
+    PLAID INVARIANT: only deletes source=RULE (and planned ACTUAL transfer-group
+    siblings that are not Plaid). Never delete source=PLAID.
     Never purge when a Plaid import is matched to this occurrence — the bank row must stay
     linked and visible even if the forecast row is skipped.
-
-    Never purge user-edited occurrences: amount differs from the rule, or a transfer-group
-    peer is not RULE-sourced (e.g. ACTUAL card leg). Those must stay on both accounts.
     """
     if occurrence_date < as_of_today:
         return
@@ -967,7 +952,7 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
         return
     if deleted.filter(reconciled=True).exists():
         return
-    if _rule_occurrence_is_user_preserved(rule_id, occurrence_date):
+    if _occurrence_locked_from_paid_off_skip(rule_id, occurrence_date):
         return
 
     account_ids = list(deleted.values_list("account_id", flat=True).distinct())
@@ -983,6 +968,15 @@ def _purge_skipped_rule_occurrence(rule_id: int, occurrence_date: date, as_of_to
             Q(from_transaction_id__in=leg_pks) | Q(to_transaction_id__in=leg_pks)
         ).delete()
     deleted.delete()
+    if transfer_group_ids:
+        sibling_qs = Transaction.objects.filter(
+            transfer_group_id__in=transfer_group_ids,
+            status=Transaction.Status.PLANNED,
+            reconciled=False,
+        ).exclude(source=Transaction.Source.PLAID)
+        sibling_account_ids = list(sibling_qs.values_list("account_id", flat=True).distinct())
+        account_ids = list(dict.fromkeys([*account_ids, *[a for a in sibling_account_ids if a is not None]]))
+        sibling_qs.delete()
     for tg_id in transfer_group_ids:
         if not Transaction.objects.filter(transfer_group_id=tg_id).exists():
             TransferGroup.objects.filter(pk=tg_id).delete()
@@ -2971,12 +2965,11 @@ def _build_timeline_impl(
             ):
                 hide_paid_off = False
                 # Exclude every leg of this occurrence so the payment never counts itself.
+                exclude_q = Q(rule_id=t.rule_id, date=t.date, source=Transaction.Source.RULE)
+                if t.transfer_group_id:
+                    exclude_q |= Q(transfer_group_id=t.transfer_group_id)
                 exclude_ids = list(
-                    Transaction.objects.filter(
-                        rule_id=t.rule_id,
-                        date=t.date,
-                        source=Transaction.Source.RULE,
-                    ).values_list("pk", flat=True)
+                    Transaction.objects.filter(exclude_q).values_list("pk", flat=True)
                 )
                 dest_account: Optional[Account] = None
                 payment_amt: Optional[Decimal] = None
@@ -3037,7 +3030,7 @@ def _build_timeline_impl(
                         t.account and t.account.account_type != Account.AccountType.CREDIT
                     )
                 if dest_account is not None and payment_amt is not None:
-                    if _rule_occurrence_is_user_preserved(t.rule_id, t.date):
+                    if _occurrence_locked_from_paid_off_skip(t.rule_id, t.date):
                         hide_paid_off = False
                     else:
                         hide_paid_off = _should_skip_card_payment_occurrence(
@@ -3053,8 +3046,8 @@ def _build_timeline_impl(
                 if hide_paid_off:
                     if not scenario_projection_only:
                         _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
-                    # If purge refused (user-edited), keep showing the row.
-                    if Transaction.objects.filter(pk=t.id).exists() and _rule_occurrence_is_user_preserved(
+                    # If purge refused (Plaid/posted), keep showing the row.
+                    if Transaction.objects.filter(pk=t.id).exists() and _occurrence_locked_from_paid_off_skip(
                         t.rule_id, t.date
                     ):
                         pass
@@ -3344,9 +3337,20 @@ def _build_timeline_impl(
                             Transaction.objects.filter(
                                 rule_id=rule.id,
                                 date=d,
-                                source=Transaction.Source.RULE,
                             ).values_list("pk", flat=True)
                         )
+                    if exclude_leg_ids:
+                        tg_ids = list(
+                            Transaction.objects.filter(
+                                pk__in=exclude_leg_ids,
+                                transfer_group_id__isnull=False,
+                            ).values_list("transfer_group_id", flat=True)
+                        )
+                        if tg_ids:
+                            extra = Transaction.objects.filter(
+                                transfer_group_id__in=tg_ids
+                            ).values_list("pk", flat=True)
+                            exclude_leg_ids = tuple(dict.fromkeys([*exclude_leg_ids, *extra]))
                     from_acc_obj = _lookup_account(from_acc_id, accs)
                     fund_from_bank = (
                         from_acc_obj is not None

@@ -1592,8 +1592,8 @@ class TestBuildTimeline:
         assert Transaction.objects.filter(pk=planned.pk).exists()
         assert Transaction.objects.filter(rule=rule, date=pay_date).count() == 2
 
-    def test_purge_refuses_user_edited_occurrence_amount(self, user, household, db):
-        """Edited $100 occurrence must not be deleted when rule amount is still $25."""
+    def test_purge_deletes_amount_edited_occurrence_when_skipping(self, user, household, db):
+        """Edited $100 min payment is still removed when the destination is paid off."""
         from datetime import timedelta
 
         today = date.today()
@@ -1610,7 +1610,7 @@ class TestBuildTimeline:
             account_type=Account.AccountType.CREDIT,
             name="Venture",
             currency="USD",
-            starting_balance=Decimal("-3000.00"),
+            starting_balance=Decimal("0"),
         )
         cat = Category.objects.get_or_create(
             household=household,
@@ -1654,8 +1654,95 @@ class TestBuildTimeline:
             rule=rule,
         )
         _purge_skipped_rule_occurrence(rule.id, pay_date, today)
-        assert Transaction.objects.filter(pk=bank_leg.pk).exists()
-        assert Transaction.objects.filter(pk=card_leg.pk).exists()
+        assert not Transaction.objects.filter(pk=bank_leg.pk).exists()
+        assert not Transaction.objects.filter(pk=card_leg.pk).exists()
+
+    def test_timeline_hides_edited_min_payment_when_card_is_paid_off(
+        self, user, household, db
+    ):
+        """Chase $100 (rule $25) + ACTUAL card leg must not show when the card owes $0 that day."""
+        from datetime import timedelta
+
+        today = date.today()
+        pay_date = today + timedelta(days=40)
+        bank = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CHECKING,
+            name="Chase",
+            currency="USD",
+            starting_balance=Decimal("5000.00"),
+        )
+        card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Venture",
+            currency="USD",
+            starting_balance=Decimal("0"),
+        )
+        cat = Category.objects.get_or_create(
+            household=household,
+            name="Credit Card Payment",
+            category_type=Category.CategoryType.EXPENSE,
+            defaults={"sort_order": 100},
+        )[0]
+        rule = RecurringRule.objects.create(
+            household=household,
+            name="Venture C/C Payment",
+            account=bank,
+            transfer_to_account=card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=min(max(pay_date.day, 1), 28),
+            start_date=today,
+            active=True,
+        )
+        tg = TransferGroup.objects.create(
+            household=household,
+            from_account=bank,
+            to_account=card,
+            amount=Decimal("100.00"),
+            scheduled_date=pay_date,
+            status=TransferGroup.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee=f"{rule.name} ({card.name})",
+            amount=Decimal("-100.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=rule,
+            transfer_group=tg,
+        )
+        Transaction.objects.create(
+            account=card,
+            date=pay_date,
+            payee=f"{rule.name} ({card.name})",
+            amount=Decimal("100.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.ACTUAL,
+            rule=None,
+            transfer_group=tg,
+        )
+        rows = build_timeline(
+            user,
+            today,
+            pay_date + timedelta(days=5),
+            account_id=bank.id,
+            as_of_date=today,
+        )
+        kept = [
+            r
+            for r in rows
+            if r.get("rule_id") == rule.id and r.get("account_id") == bank.id and r.get("date") == pay_date
+        ]
+        assert kept == [], f"paid-off card must hide edited min payment; got {kept}"
 
     def test_each_monthly_occurrence_skips_when_destination_balance_zero_that_month(
         self, user, household, db
