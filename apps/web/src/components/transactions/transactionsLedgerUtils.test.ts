@@ -37,6 +37,7 @@ import {
   filterPastTransactionsAfterReconcileClose,
   transactionAlreadyInCheckpoint,
   buildLedgerRowsFromPastAndUpcomingTimeline,
+  shouldMergeFuturePostedTransaction,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
   maxIsoDate,
@@ -279,6 +280,56 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(payees).toEqual(["OpenAI", "Bill 1", "Bill 2", "Move to savings"]);
     const savings = future[future.length - 1];
     expect(savings.balance).toBeCloseTo(-1733.06, 2);
+  });
+
+  it("does not re-merge skipped rule-based card payments the timeline omitted", () => {
+    const today = "2026-09-09";
+    const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
+      [],
+      [],
+      today,
+      5000,
+      false,
+      {
+        futurePostedTransactions: [
+          {
+            id: 75,
+            date: "2026-10-25",
+            payee: "Savor C/C Payment (Savor)",
+            amount: "-100.00",
+            direction: "OUTFLOW",
+            source: "RULE",
+            status: "PLANNED",
+            rule_id: 75,
+          } as never,
+          {
+            id: 76,
+            date: "2026-10-25",
+            payee: "Savor C/C Payment (Savor)",
+            amount: "100.00",
+            direction: "INFLOW",
+            source: "ACTUAL",
+            status: "PLANNED",
+          } as never,
+        ],
+      }
+    );
+    const future = splitLedgerSections(rows).future;
+    expect(future).toEqual([]);
+    expect(
+      shouldMergeFuturePostedTransaction(
+        {
+          id: 75,
+          date: "2026-10-25",
+          payee: "Savor C/C Payment",
+          amount: "-100.00",
+          source: "RULE",
+          status: "PLANNED",
+          rule_id: 75,
+        } as never,
+        today
+      )
+    ).toBe(false);
   });
 
   it("computes past balance from opening + amount even when API running_balance is stale", () => {

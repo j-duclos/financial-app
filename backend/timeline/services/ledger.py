@@ -610,6 +610,7 @@ def _append_rescheduled_rule_materializations(
     end_date: date,
     today: date,
     seen_rule_actual_key: set[tuple],
+    purged_rule_dates: Optional[set[tuple[int, date]]] = None,
 ) -> None:
     """
     Include materialized rule transactions on dates outside the rule's generated schedule.
@@ -645,6 +646,9 @@ def _append_rescheduled_rule_materializations(
     )
     for t in extra:
         if t.pk in ids_in_rows:
+            continue
+        if purged_rule_dates and t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
+            ids_in_rows.add(t.pk)
             continue
         if planned_leg_suppressed_by_import_match(t):
             ids_in_rows.add(t.pk)
@@ -895,6 +899,35 @@ def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
     return repaired
 
 
+def _may_purge_skipped_rule_occurrence(*, scenario, caller: str) -> bool:
+    """Purge skipped forecast ghosts on real household builds, including Transactions Upcoming.
+
+    Projection-only used to skip purge, so edited PLANNED pairs stayed in the DB and the
+    web ledger re-merged them via futurePostedTransactions. Never purge from what-if
+    scenarios or transfer-balance preview (the user may still have the editor open).
+    """
+    if scenario is not None:
+        return False
+    if "preview" in (caller or "").lower():
+        return False
+    return True
+
+
+def _rule_occurrence_and_transfer_group_leg_pks(rule_id: int, occurrence_date: date) -> list[int]:
+    """Every DB leg of this (rule_id, date) pair, including ACTUAL TransferGroup siblings."""
+    legs = list(
+        Transaction.objects.filter(rule_id=rule_id, date=occurrence_date).values_list(
+            "pk", "transfer_group_id"
+        )
+    )
+    pks = [pk for pk, _ in legs]
+    tg_ids = [tg for _, tg in legs if tg is not None]
+    if tg_ids:
+        extra = Transaction.objects.filter(transfer_group_id__in=tg_ids).values_list("pk", flat=True)
+        pks = list(dict.fromkeys([*pks, *extra]))
+    return pks
+
+
 def _occurrence_locked_from_paid_off_skip(rule_id: int, occurrence_date: date) -> bool:
     """True when a real import or posted/reconciled leg must stay on the ledger.
 
@@ -1117,15 +1150,17 @@ def _skip_payment_to_debt_destination(
             include_db_postings_on_as_of_date=True,
             exclude_transaction_ids=exclude_transaction_ids,
         )
-    else:
-        balance = _liability_balance_through_date(
-            dest_account.id,
-            payment_date,
-            rows,
-            include_row_leg_without_txn=True,
-            include_db_postings_on_as_of_date=True,
-            exclude_transaction_ids=exclude_transaction_ids,
-        )
+        # Same owed semantics as Edit Transaction preview (credit_owed_from_signed_balance):
+        # signed credit balance >= 0 means $0 owed, so skip this payment.
+        return balance >= 0
+    balance = _liability_balance_through_date(
+        dest_account.id,
+        payment_date,
+        rows,
+        include_row_leg_without_txn=True,
+        include_db_postings_on_as_of_date=True,
+        exclude_transaction_ids=exclude_transaction_ids,
+    )
     return balance >= 0
 
 
@@ -2906,6 +2941,8 @@ def _build_timeline_impl(
         ids_in_rows: set[int] = set()
         seen_rule_actual_key: set[tuple] = set()
         purged_rule_dates: set[tuple[int, date]] = set()
+        purged_transfer_group_ids: set[int] = set()
+        suppressed_txn_ids: set[int] = set()
         scenario_projection_only = projection_only or scenario is not None
         _phase_load = phase_start(timer, "load_transactions")
         for t in actual:
@@ -2933,6 +2970,11 @@ def _build_timeline_impl(
             sign = 1 if (amt is not None and amt >= 0) else -1
             if t.rule_id is not None and (t.rule_id, t.date) in purged_rule_dates:
                 ids_in_rows.add(t.id)
+                suppressed_txn_ids.add(t.id)
+                continue
+            if t.transfer_group_id and t.transfer_group_id in purged_transfer_group_ids:
+                ids_in_rows.add(t.id)
+                suppressed_txn_ids.add(t.id)
                 continue
             if (
                 t.rule_id is not None
@@ -3044,7 +3086,7 @@ def _build_timeline_impl(
                             payment_amount=payment_amt,
                         )
                 if hide_paid_off:
-                    if not scenario_projection_only:
+                    if _may_purge_skipped_rule_occurrence(scenario=scenario, caller=caller):
                         _purge_skipped_rule_occurrence(t.rule_id, t.date, today)
                     # If purge refused (Plaid/posted), keep showing the row.
                     if Transaction.objects.filter(pk=t.id).exists() and _occurrence_locked_from_paid_off_skip(
@@ -3053,7 +3095,13 @@ def _build_timeline_impl(
                         pass
                     else:
                         purged_rule_dates.add((t.rule_id, t.date))
+                        if t.transfer_group_id:
+                            purged_transfer_group_ids.add(t.transfer_group_id)
+                        for pk in _rule_occurrence_and_transfer_group_leg_pks(t.rule_id, t.date):
+                            ids_in_rows.add(pk)
+                            suppressed_txn_ids.add(pk)
                         ids_in_rows.add(t.id)
+                        suppressed_txn_ids.add(t.id)
                         continue
             desc = t.payee or ""
             try:
@@ -3094,6 +3142,8 @@ def _build_timeline_impl(
                 row_payload["reconciled_balance"] = rec_bal
             rows.append(row_payload)
             ids_in_rows.add(t.id)
+        if suppressed_txn_ids:
+            rows[:] = [r for r in rows if r.get("transaction_id") not in suppressed_txn_ids]
         perf_transactions = len(actual)
         phase_end(timer, _phase_load)
 
@@ -3326,6 +3376,8 @@ def _build_timeline_impl(
                     cat_id,
                     cat_name,
                 ) = payload
+                if (rule.id, d) in purged_rule_dates:
+                    continue
                 to_acc_for_skip = _lookup_account(to_acc_id, accs)
                 if is_debt_dest and to_acc_for_skip:
                     if occurrence_store is not None:
@@ -3368,8 +3420,12 @@ def _build_timeline_impl(
                     ):
                         if materialization_active():
                             record_materialization_skipped()
-                        if not scenario_projection_only:
+                        if _may_purge_skipped_rule_occurrence(scenario=scenario, caller=caller):
                             _purge_skipped_rule_occurrence(rule.id, d, today)
+                        purged_rule_dates.add((rule.id, d))
+                        for pk in exclude_leg_ids:
+                            ids_in_rows.add(pk)
+                            suppressed_txn_ids.add(pk)
                         continue
                 if scenario_projection_only:
                     if any(
@@ -3527,8 +3583,12 @@ def _build_timeline_impl(
                     ):
                         if materialization_active():
                             record_materialization_skipped()
-                        if not scenario_projection_only:
+                        if _may_purge_skipped_rule_occurrence(scenario=scenario, caller=caller):
                             _purge_skipped_rule_occurrence(rule.id, d, today)
+                        purged_rule_dates.add((rule.id, d))
+                        for pk in _rule_occurrence_and_transfer_group_leg_pks(rule.id, d):
+                            ids_in_rows.add(pk)
+                            suppressed_txn_ids.add(pk)
                         continue
                 if scenario_projection_only:
                     proj_key = (rule.id, d, acc_id)
@@ -3624,6 +3684,7 @@ def _build_timeline_impl(
                 end_date=end_date,
                 today=today,
                 seen_rule_actual_key=seen_rule_actual_key,
+                purged_rule_dates=purged_rule_dates,
             )
         phase_end(timer, _phase_materialize)
 

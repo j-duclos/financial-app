@@ -846,6 +846,24 @@ export function buildLedgerRowsFromTimeline(
  * Past ledger from posted transactions; pending + upcoming from a narrow projection timeline.
  * Avoids building months of past timeline on the server while keeping 90-day forecast.
  */
+/**
+ * Future /transactions/ rows the timeline omitted. Only one-off posted activity
+ * belongs here — rule-based and other PLANNED forecast occurrences are decided
+ * by the canonical timeline (including paid-off card-payment skip).
+ */
+export function shouldMergeFuturePostedTransaction(
+  txn: Transaction,
+  today: string
+): boolean {
+  if (txn.date <= today) return false;
+  const source = (txn.source || "").toUpperCase();
+  if (source === "INTEREST" || source === "RULE") return false;
+  if (txn.rule_id != null) return false;
+  const status = (txn.status || "").toUpperCase();
+  if (status === "PLANNED" && source !== "ONE_TIME") return false;
+  return true;
+}
+
 export function buildLedgerRowsFromPastAndUpcomingTimeline(
   pastTransactions: Transaction[],
   upcomingTimeline: TimelineRow[],
@@ -945,10 +963,7 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
       .map((id) => Number(id))
   );
   const extraFutureTxns = (options?.futurePostedTransactions ?? []).filter(
-    (t) =>
-      t.date > today &&
-      (t.source || "").toUpperCase() !== "INTEREST" &&
-      !timelineTxnIds.has(t.id)
+    (t) => shouldMergeFuturePostedTransaction(t, today) && !timelineTxnIds.has(t.id)
   );
   for (const txn of extraFutureTxns) {
     futureRows.push({ type: "transaction", txn, balance: null });
