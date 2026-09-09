@@ -2622,11 +2622,6 @@ export default function Transactions() {
                   required
                   disabled={editingFinancialLocked}
                 />
-                {editIsLinkedTransfer && (
-                  <p className="mt-1 text-xs text-gray-500">
-                    Drop the minus to receive on this account (2331.00). Keep the minus to send (−2331.00).
-                  </p>
-                )}
               </div>
               {editingRuleId != null && !editingFinancialLocked && (
                 <div>

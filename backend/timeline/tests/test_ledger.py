@@ -1350,10 +1350,10 @@ class TestBuildTimeline:
         assert len(kept) >= 1
         assert TransferGroup.objects.filter(pk=tg.pk).exists()
 
-    def test_zero_balance_keeps_payment_when_charge_within_45_day_window(
+    def test_zero_balance_hides_payment_even_when_later_charge_exists(
         self, user, household, db
     ):
-        """Prefunding: card clear today but a charge within 45 days keeps the minimum."""
+        """Card clear on the due date: do not prefund a minimum for spend after that date."""
         from datetime import timedelta
 
         today = date.today()
@@ -1401,7 +1401,6 @@ class TestBuildTimeline:
             start_date=today,
             active=True,
         )
-        # Recurring card spend after the payment date (within 45 days).
         charge_dom = (dom % 28) + 1
         RecurringRule.objects.create(
             household=household,
@@ -1419,7 +1418,14 @@ class TestBuildTimeline:
         )
         rows = build_timeline(user, start, end, account_id=bank.id)
         kept = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
-        assert len(kept) >= 1, "expected min payment kept when charge is within 45-day window"
+        from timeline.services.rule_schedule import generate_rule_occurrence_dates
+
+        occ = list(generate_rule_occurrence_dates(rule, start, end))
+        assert occ, "expected at least one scheduled payment date"
+        first = occ[0]
+        assert not any(r.get("date") == first for r in kept), (
+            f"min payment on {first} must hide while the card is paid off that day; got {kept}"
+        )
 
     def test_past_cleared_reconciled_rule_payments_never_purged(self, user, household, db):
         """Safety: only future PLANNED forecast rows are purged."""

@@ -895,63 +895,6 @@ def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
     return repaired
 
 
-def _db_card_postings_in_exclusive_range(
-    card_account_id: int,
-    after_date: date,
-    through_date: date,
-) -> Decimal:
-    """Signed sum of ledger-visible postings on the card with date in (after_date, through_date]."""
-    cache = get_active_balance_cache()
-    if cache is not None:
-        return cache.db_card_postings_in_exclusive_range(card_account_id, after_date, through_date)
-    qs = ledger_visible_transactions(
-        Transaction.objects.filter(
-            account_id=card_account_id,
-            date__gt=after_date,
-            date__lte=through_date,
-        )
-    )
-    return sum((Decimal(str(a)) for a in qs.values_list("amount", flat=True)), start=Decimal("0"))
-
-
-def _future_recurring_expense_impact_on_card(
-    card_account_id: int,
-    payment_date: date,
-    through_date: date,
-    households,
-) -> Decimal:
-    """
-    Signed incremental debt from recurring EXPENSE rules that post on this card strictly after
-    payment_date through through_date. Usually negative. Skips dates that already have any
-    posting on this card (those are covered by DB sums). Omits rules with transfer_to_account set.
-    """
-    total = Decimal("0")
-    rules = RecurringRule.objects.filter(
-        household__in=households,
-        active=True,
-        account_id=card_account_id,
-        direction=RecurringRule.Direction.EXPENSE,
-        transfer_to_account__isnull=True,
-    )
-    occ_start = payment_date + timedelta(days=1)
-    if occ_start > through_date:
-        return Decimal("0")
-    for rule in rules:
-        for d in generate_rule_occurrence_dates(rule, occ_start, through_date):
-            params = resolve_rule_params(rule, d)
-            amt_delta = -abs(params.amount)
-            if d <= payment_date:
-                continue
-            cache = get_active_balance_cache()
-            if cache is not None:
-                if cache.has_posting_on_date(card_account_id, d):
-                    continue
-            elif Transaction.objects.filter(account_id=card_account_id, date=d).exists():
-                continue
-            total += amt_delta
-    return total
-
-
 def _rule_occurrence_is_user_preserved(rule_id: int, occurrence_date: date) -> bool:
     """
     True when this occurrence must not be auto-hidden/purged: amount was edited away from the
@@ -1204,39 +1147,12 @@ def _should_skip_card_payment_occurrence(
     payment_amount: Optional[Decimal] = None,
 ) -> bool:
     """
-    Shared skip decision for materialized and projected card-payment occurrences.
+    Hide a scheduled card payment when the destination has no debt on the payment date
+    (same “owed besides this payment” figure as the edit preview).
 
-    When funded from a bank account onto a credit card, also look ahead 45 days for known
-    charges so a zero balance today does not suppress a payment that is about to be needed.
+    Charges after the due date belong on the next statement. Looking ahead used to keep
+    a $100 minimum on a $0 card whenever any later spend existed — that is not a payment due.
     """
-    if not _account_is_debt_payment_destination(dest_account, category_name):
-        return False
-    if (
-        funded_from_bank
-        and dest_account.account_type == Account.AccountType.CREDIT
-        and households is not None
-    ):
-        lookahead_end = payment_date + timedelta(days=45)
-        bal = _credit_card_balance_through_date(
-            dest_account.id,
-            payment_date,
-            rows,
-            include_row_leg_without_txn=True,
-            include_db_postings_on_as_of_date=True,
-            exclude_transaction_ids=exclude_ids,
-        )
-        extra_scheduled = _future_recurring_expense_impact_on_card(
-            dest_account.id,
-            payment_date,
-            lookahead_end,
-            households,
-        )
-        extra_db = _db_card_postings_in_exclusive_range(
-            dest_account.id,
-            payment_date,
-            lookahead_end,
-        )
-        return bal + extra_scheduled + extra_db >= 0
     return _skip_payment_to_debt_destination(
         dest_account,
         payment_date,
