@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Collection
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -158,6 +159,59 @@ def _resolve_ledger_anchors(
             Decimal("0.01")
         )
     return resolved
+
+
+def occurrence_insert_sort_key(
+    on_date: date,
+    *,
+    transaction_id: int | None = None,
+    description: str = "",
+) -> tuple:
+    """Same-day key as ``_sort_key`` / Transactions ledger order."""
+    if transaction_id is None:
+        # Create-preview: after every existing same-day row (new id would be last).
+        return (on_date, 2**31 - 1, description or "\uffff")
+    return (on_date, int(transaction_id), description)
+
+
+def canonical_projected_balance_before_occurrence(
+    rows: list[dict[str, Any]],
+    *,
+    account_id: int,
+    today: date,
+    on_date: date,
+    exclude_transaction_ids: Collection[int] | None = None,
+    sort_transaction_id: int | None = None,
+    sort_description: str = "",
+) -> Decimal:
+    """
+    Canonical Transactions ledger balance immediately before this occurrence.
+
+    Walks the same Pending → Upcoming sequence as ``assign_canonical_ledger_balance_after``,
+    from the same posted-before-pending anchor, skipping ``exclude_transaction_ids``
+    (the edited transfer's existing legs). Same-day rows that sort before the
+    occurrence remain included; later same-day rows do not.
+    """
+    from accounts.models import Account
+    from transactions.services.historical_ledger import posted_balance_before_pending_excluding
+
+    exclude = {int(i) for i in (exclude_transaction_ids or ()) if i is not None}
+    account = Account.objects.get(pk=account_id)
+    running = posted_balance_before_pending_excluding(
+        account, as_of=today, exclude_transaction_ids=exclude
+    ).quantize(Decimal("0.01"))
+    insert_key = occurrence_insert_sort_key(
+        on_date, transaction_id=sort_transaction_id, description=sort_description
+    )
+    walk = transactions_ledger_walk_rows(rows, account_id=account_id, today=today)
+    for row in walk:
+        tid = row.get("transaction_id")
+        if tid is not None and int(tid) in exclude:
+            continue
+        if _sort_key(row) >= insert_key:
+            break
+        running = (running + signed_timeline_ledger_amount(row)).quantize(Decimal("0.01"))
+    return running
 
 
 def _debug_walk_account_id() -> int | None:

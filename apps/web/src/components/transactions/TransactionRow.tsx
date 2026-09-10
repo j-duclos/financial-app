@@ -31,6 +31,11 @@ export type TransactionRowData = {
   plannedScheduled?: boolean;
 };
 
+/** Posted ledger rows the user can check off while reviewing a statement (imports included). */
+export function canSelectTransactionForReview(row: TransactionRowData): boolean {
+  return row.transactionId != null;
+}
+
 /** Rows that can be batch-deleted: posted manual txns only (not planned forecast occurrences). */
 export function canSelectTransactionForBatchDelete(row: TransactionRowData): boolean {
   if (row.reconciled || row.readOnly) return false;
@@ -38,6 +43,23 @@ export function canSelectTransactionForBatchDelete(row: TransactionRowData): boo
   if ((row.plaidTransactionId ?? "").trim()) return false;
   if ((row.txnSource ?? "").toUpperCase() === "PLAID") return false;
   return row.transactionId != null;
+}
+
+/** Count and signed amount of selected posted rows (for statement tallying). */
+export function reviewSelectionTotals(
+  selectedIds: ReadonlySet<number>,
+  rows: readonly Pick<TransactionRowData, "transactionId" | "amount">[]
+): { count: number; sum: number } {
+  const seen = new Set<number>();
+  let sum = 0;
+  for (const row of rows) {
+    const id = row.transactionId;
+    if (id == null || !selectedIds.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    const amt = Number(row.amount);
+    if (Number.isFinite(amt)) sum += amt;
+  }
+  return { count: selectedIds.size, sum };
 }
 
 type Props = {
@@ -52,7 +74,7 @@ type Props = {
   onMatchImport?: () => void;
   onMoveDate?: () => void;
   actionsDisabled?: boolean;
-  /** Multi-select for batch delete. */
+  /** Multi-select for statement review (and batch delete when allowed). */
   selected?: boolean;
   onSelectedChange?: (transactionId: number, selected: boolean, shiftKey?: boolean) => void;
   /** Row background / border styling (forecast buffer/risk or schedule highlight). */
@@ -150,7 +172,7 @@ export default function TransactionRow({
   const amountStr = row.isOutflow ? `- ${formatCurrency(abs, currency)}` : formatCurrency(abs, currency);
   const clickable = Boolean(onEdit) && !row.readOnly;
   const selectable =
-    canSelectTransactionForBatchDelete(row) && row.transactionId != null && onSelectedChange != null;
+    canSelectTransactionForReview(row) && row.transactionId != null && onSelectedChange != null;
   const kind = resolveTransactionKind({
     type: row.source.type,
     direction: row.source.direction,
@@ -160,17 +182,23 @@ export default function TransactionRow({
     has_transfer_destination: row.hasTransferDestination,
   });
 
-  const surfaceClasses = rowSurface
-    ? `${rowSurface.backgroundClass} ${rowSurface.hoverClass} ${rowSurface.borderClass}`
-    : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
-  const selectedSurface = selected ? "bg-blue-50/70" : "";
+  const surfaceClasses = selected
+    ? "bg-blue-100 hover:bg-blue-100 border-b border-blue-200"
+    : rowSurface
+      ? `${rowSurface.backgroundClass} ${rowSurface.hoverClass} ${rowSurface.borderClass}`
+      : "bg-white hover:bg-gray-50/80 border-b border-gray-100";
 
   return (
     <article
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
+      role={clickable || selectable ? "button" : undefined}
+      tabIndex={clickable || selectable ? 0 : undefined}
       title={scheduleHighlightTitle}
-      onClick={() => {
+      onClick={(e) => {
+        if (selectable && row.transactionId != null && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          onSelectedChange?.(row.transactionId, e.shiftKey ? true : !selected, e.shiftKey);
+          return;
+        }
         if (clickable) onEdit?.();
       }}
       onKeyDown={(e) => {
@@ -179,7 +207,7 @@ export default function TransactionRow({
           onEdit?.();
         }
       }}
-      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${surfaceClasses} ${selectedSurface} ${clickable ? "cursor-pointer" : ""}`}
+      className={`group ${LEDGER_TABLE_GRID} px-4 py-2 text-sm ${surfaceClasses} ${clickable || selectable ? "cursor-pointer" : ""}`}
     >
       <span className="flex justify-center" onClick={(e) => e.stopPropagation()}>
         {selectable ? (
@@ -196,7 +224,7 @@ export default function TransactionRow({
               onSelectedChange(row.transactionId, e.target.checked, false);
             }}
             disabled={actionsDisabled}
-            aria-label={`Select ${row.payee}`}
+            aria-label={`Mark ${row.payee} for review`}
             className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
           />
         ) : (

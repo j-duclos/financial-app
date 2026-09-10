@@ -33,7 +33,13 @@ import PastSection from "../components/transactions/PastSection";
 import PendingExpectedSection from "../components/transactions/PendingExpectedSection";
 import ForecastCardsSection from "../components/transactions/ForecastCardsSection";
 import InlineAddRow, { type InlineAddForm } from "../components/transactions/InlineAddRow";
-import { type TransactionRowData } from "../components/transactions/TransactionRow";
+import {
+  canSelectTransactionForBatchDelete,
+  reviewSelectionTotals,
+  timelineRowToData,
+  transactionToData,
+  type TransactionRowData,
+} from "../components/transactions/TransactionRow";
 import {
   ShowReconciledFilter,
   TransactionColumnFilters,
@@ -1089,6 +1095,39 @@ export default function Transactions() {
     [ledgerSections.future, pastRowFilters]
   );
 
+  const ledgerReviewRows = useMemo(() => {
+    const rows: TransactionRowData[] = [];
+    const push = (row: (typeof filteredPastRows)[number]) => {
+      if (row.type === "transaction") rows.push(transactionToData(row.txn, row.balance));
+      else if (row.type === "transaction_from_timeline") {
+        rows.push(timelineRowToData(row.row, row.balance, "ledger"));
+      } else if (row.type === "recurring") {
+        rows.push(timelineRowToData(row.row, row.balance, "ledger"));
+      }
+    };
+    for (const row of filteredPastRows) push(row);
+    for (const row of filteredFutureRows) push(row);
+    return rows;
+  }, [filteredPastRows, filteredFutureRows]);
+
+  const selectedReview = useMemo(
+    () => reviewSelectionTotals(selectedTransactionIds, ledgerReviewRows),
+    [selectedTransactionIds, ledgerReviewRows]
+  );
+
+  const selectedDeletableIds = useMemo(
+    () =>
+      ledgerReviewRows
+        .filter(
+          (row) =>
+            row.transactionId != null &&
+            selectedTransactionIds.has(row.transactionId) &&
+            canSelectTransactionForBatchDelete(row)
+        )
+        .map((row) => row.transactionId as number),
+    [ledgerReviewRows, selectedTransactionIds]
+  );
+
   const pastFiltersActive = hasActiveLedgerRowFilters(pastRowFilters);
 
   const resetInlineRow = () => {
@@ -1854,13 +1893,13 @@ export default function Transactions() {
   }
 
   function confirmBatchDelete() {
-    const ids = Array.from(selectedTransactionIds);
+    const ids = selectedDeletableIds;
     if (ids.length === 0) return;
     setDeleteError(null);
     const noun = ids.length === 1 ? "transaction" : "transactions";
     if (
       window.confirm(
-        `Delete ${ids.length} selected ${noun}? This cannot be undone. Reconciled rows will be skipped.`
+        `Delete ${ids.length} selected ${noun}? This cannot be undone. Imported and reconciled rows will be skipped.`
       )
     ) {
       batchDeleteMu.mutate(ids);
@@ -2100,7 +2139,19 @@ export default function Transactions() {
 
       {selectedTransactionIds.size > 0 && !editing && (
         <div className="mb-3 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 shadow-sm">
-          <span className="font-medium">{selectedTransactionIds.size} selected</span>
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-medium">{selectedTransactionIds.size} selected</span>
+            <span
+              className={`tabular-nums font-semibold ${
+                selectedReview.sum < 0 ? "text-red-700" : selectedReview.sum > 0 ? "text-emerald-800" : "text-blue-900"
+              }`}
+            >
+              {selectedReview.sum < 0
+                ? `−${formatCurrency(Math.abs(selectedReview.sum), currency)}`
+                : formatCurrency(selectedReview.sum, currency)}
+            </span>
+            <span className="text-xs text-blue-800/80">Check off rows to tally a statement</span>
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -2110,16 +2161,18 @@ export default function Transactions() {
             >
               Clear
             </button>
-            <button
-              type="button"
-              onClick={confirmBatchDelete}
-              disabled={batchDeleteMu.isPending}
-              className="rounded bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {batchDeleteMu.isPending
-                ? "Deleting…"
-                : `Delete ${selectedTransactionIds.size} selected`}
-            </button>
+            {selectedDeletableIds.length > 0 ? (
+              <button
+                type="button"
+                onClick={confirmBatchDelete}
+                disabled={batchDeleteMu.isPending}
+                className="rounded bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {batchDeleteMu.isPending
+                  ? "Deleting…"
+                  : `Delete ${selectedDeletableIds.length} selected`}
+              </button>
+            ) : null}
           </div>
         </div>
       )}

@@ -132,7 +132,7 @@ export function LedgerColumnHeader({
             }}
             onChange={(e) => onSelectAllChange(e.target.checked)}
             disabled={selectAllDisabled}
-            aria-label="Select all deletable transactions"
+            aria-label="Select all transactions in this section"
             className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
           />
         </span>

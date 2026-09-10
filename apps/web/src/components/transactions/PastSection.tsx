@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect } from "react";
 import { formatCurrency } from "@budget-app/shared";
 import TransactionRow, {
-  canSelectTransactionForBatchDelete,
+  canSelectTransactionForReview,
   timelineRowToData,
   transactionToData,
 } from "./TransactionRow";
@@ -88,12 +88,12 @@ export default function PastSection({
     for (const row of past) {
       if (row.type === "transaction_from_timeline") {
         const data = timelineRowToData(row.row, row.balance, "past");
-        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+        if (canSelectTransactionForReview(data) && data.transactionId != null) {
           ids.push(data.transactionId);
         }
       } else if (row.type === "transaction") {
         const data = transactionToData(row.txn, row.balance);
-        if (canSelectTransactionForBatchDelete(data) && data.transactionId != null) {
+        if (canSelectTransactionForReview(data) && data.transactionId != null) {
           ids.push(data.transactionId);
         }
       }

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import type { TimelineRow, Transaction } from "@budget-app/shared";
 import TransactionRow, {
-  canSelectTransactionForBatchDelete,
+  canSelectTransactionForReview,
   timelineRowToData,
   transactionToData,
   type TransactionRowData,
@@ -89,10 +89,10 @@ export default function ForecastCardsSection({
     for (const row of forecastRows) {
       if (row.type === "transaction") {
         const data = transactionToData(row.txn, row.balance);
-        if (canSelectTransactionForBatchDelete(data)) rows.push(data);
+        if (canSelectTransactionForReview(data)) rows.push(data);
       } else {
         const data = timelineRowToData(row.row, row.balance, "future");
-        if (canSelectTransactionForBatchDelete(data)) rows.push(data);
+        if (canSelectTransactionForReview(data)) rows.push(data);
       }
     }
     return rows;

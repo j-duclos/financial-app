@@ -165,6 +165,27 @@ def posted_balance_before_pending_from_steps(
     return historical_walk_opening_balance(account, as_of)
 
 
+def posted_balance_before_pending_excluding(
+    account: Account,
+    *,
+    as_of: date,
+    exclude_transaction_ids: Collection[int] | None = None,
+) -> Decimal:
+    """Posted-before-pending anchor with specific transaction ids omitted from the walk."""
+    exclude = {int(i) for i in (exclude_transaction_ids or ()) if i is not None}
+    if not exclude:
+        return posted_balance_before_pending_from_steps(account, as_of=as_of)
+    opening, steps = iter_historical_ledger_steps(account, as_of=as_of)
+    running = opening.quantize(Decimal("0.01"))
+    for step in steps:
+        if not step.participates:
+            continue
+        if step.transaction_id in exclude:
+            continue
+        running = (running + step.signed_amount).quantize(Decimal("0.01"))
+    return running
+
+
 def validate_historical_ledger_chain(
     *,
     opening_balance: Decimal,

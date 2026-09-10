@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   canSelectTransactionForBatchDelete,
+  canSelectTransactionForReview,
+  reviewSelectionTotals,
   type TransactionRowData,
 } from "./TransactionRow";
 
@@ -59,6 +61,32 @@ describe("canSelectTransactionForBatchDelete", () => {
     expect(canSelectTransactionForBatchDelete(baseRow({ txnSource: "PLAID" }))).toBe(false);
     expect(canSelectTransactionForBatchDelete(baseRow({ plaidTransactionId: "abc" }))).toBe(false);
     expect(canSelectTransactionForBatchDelete(baseRow({ readOnly: true }))).toBe(false);
+  });
+});
+
+describe("canSelectTransactionForReview", () => {
+  it("allows imported and reconciled posted rows so they can be tallied", () => {
+    expect(canSelectTransactionForReview(baseRow({ txnSource: "PLAID" }))).toBe(true);
+    expect(canSelectTransactionForReview(baseRow({ plaidTransactionId: "abc" }))).toBe(true);
+    expect(canSelectTransactionForReview(baseRow({ reconciled: true }))).toBe(true);
+  });
+
+  it("skips projection-only rows without a transaction id", () => {
+    expect(canSelectTransactionForReview(baseRow({ transactionId: null }))).toBe(false);
+  });
+});
+
+describe("reviewSelectionTotals", () => {
+  it("sums selected signed amounts once per id", () => {
+    const rows = [
+      baseRow({ transactionId: 1, amount: -21.84 }),
+      baseRow({ transactionId: 2, amount: 100 }),
+      baseRow({ transactionId: 2, amount: 100 }),
+      baseRow({ transactionId: 3, amount: -1 }),
+    ];
+    const totals = reviewSelectionTotals(new Set([1, 2]), rows);
+    expect(totals.count).toBe(2);
+    expect(totals.sum).toBeCloseTo(78.16, 2);
   });
 });
 
