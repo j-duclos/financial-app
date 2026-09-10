@@ -281,3 +281,109 @@ class TransferLegImportMatchingTestCase(TestCase):
             Transaction.objects.filter(account=self.checking, amount=-self.amount)
         )
         self.assertEqual(visible_checking.count(), 1)
+
+    def _create_stale_direction_savings_transfer(self):
+        """TG still says checking→savings while live legs are +checking / −savings."""
+        amount = Decimal("100.00")
+        create_transfer(
+            user=self.user,
+            from_account_id=self.checking.id,
+            to_account_id=self.other.id,
+            amount=amount,
+            transfer_date=self.pay_date.isoformat(),
+            payee="Transfer for Andy (Chase Savings)",
+        )
+        checking_leg = Transaction.objects.get(account=self.checking, amount=-amount)
+        savings_leg = Transaction.objects.get(account=self.other, amount=amount)
+        Transaction.objects.filter(pk=checking_leg.pk).update(amount=amount)
+        Transaction.objects.filter(pk=savings_leg.pk).update(amount=-amount)
+        checking_leg.refresh_from_db()
+        savings_leg.refresh_from_db()
+        tg = checking_leg.transfer_group
+        self.assertEqual(tg.from_account_id, self.checking.id)
+        self.assertEqual(tg.to_account_id, self.other.id)
+        self.assertEqual(checking_leg.amount, amount)
+        self.assertEqual(savings_leg.amount, -amount)
+        return checking_leg, savings_leg
+
+    def test_stale_group_from_to_matches_checking_inflow(self):
+        checking_leg, savings_leg = self._create_stale_direction_savings_transfer()
+        imp = self._plaid_import(
+            account=self.checking,
+            amount=Decimal("100.00"),
+            plaid_id="pl-chase-from-sav",
+        )
+        self.assertEqual(find_transfer_payment_leg_for_import(imp).pk, checking_leg.pk)
+        match_imported_transaction(imp)
+        imp.refresh_from_db()
+        checking_leg.refresh_from_db()
+        self.assertEqual(imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(checking_leg.plaid_transaction_id, "pl-chase-from-sav")
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.checking, amount=Decimal("100.00"))
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, checking_leg.pk)
+        savings_leg.refresh_from_db()
+        self.assertEqual(savings_leg.amount, Decimal("-100.00"))
+
+    def test_materialized_actual_plaid_still_merges_stale_group(self):
+        checking_leg, _savings_leg = self._create_stale_direction_savings_transfer()
+        imp = Transaction.objects.create(
+            account=self.checking,
+            date=self.pay_date,
+            payee="Online Transfer from SAV ...2908",
+            amount=Decimal("100.00"),
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-chase-actual",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        self.assertEqual(find_transfer_payment_leg_for_import(imp).pk, checking_leg.pk)
+        match_imported_transaction(imp)
+        checking_leg.refresh_from_db()
+        self.assertFalse(Transaction.objects.filter(pk=imp.pk).exists())
+        self.assertEqual(checking_leg.plaid_transaction_id, "pl-chase-actual")
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.checking, amount=Decimal("100.00"))
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, checking_leg.pk)
+
+    def test_second_leg_import_still_merges_after_counterpart_confirm(self):
+        checking_leg, savings_leg = self._create_stale_direction_savings_transfer()
+        chase_imp = Transaction.objects.create(
+            account=self.checking,
+            date=self.pay_date,
+            payee="Online Transfer from SAV",
+            amount=Decimal("100.00"),
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-chase-both",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        sav_imp = Transaction.objects.create(
+            account=self.other,
+            date=self.pay_date,
+            payee="Online Transfer to CHK",
+            amount=Decimal("-100.00"),
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-sav-both",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        match_imported_transaction(chase_imp)
+        savings_leg.refresh_from_db()
+        self.assertEqual(savings_leg.import_match_status, Transaction.ImportMatchStatus.MATCHED)
+        match_imported_transaction(sav_imp)
+        savings_leg.refresh_from_db()
+        self.assertFalse(Transaction.objects.filter(pk=sav_imp.pk).exists())
+        self.assertEqual(savings_leg.plaid_transaction_id, "pl-sav-both")
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.other, amount=Decimal("-100.00"))
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, savings_leg.pk)

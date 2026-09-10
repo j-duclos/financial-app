@@ -202,3 +202,27 @@ describe("accounts page progressive loading", () => {
     expect(merged[1].available_to_spend).toBe("10");
   });
 });
+
+describe("account form day-of-month inputs", () => {
+  it("uses plain text fields instead of number spinners", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../pages/Accounts.tsx"),
+      "utf8"
+    );
+    const dayField = (label: string) => {
+      const idx = source.indexOf(label);
+      expect(idx).toBeGreaterThan(-1);
+      return source.slice(idx, idx + 700);
+    };
+    for (const label of [
+      "Billing cycle end day (1–31)",
+      "Payment due day (1–31)",
+      "Interest cycle end day (optional)",
+    ]) {
+      const snippet = dayField(label);
+      expect(snippet).toMatch(/type="text"/);
+      expect(snippet).toMatch(/inputMode="numeric"/);
+      expect(snippet).not.toMatch(/type="number"/);
+    }
+  });
+});

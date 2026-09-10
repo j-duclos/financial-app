@@ -1242,14 +1242,16 @@ def reconcile_orphan_matched_plaid_imports(*, account_id: int | None = None) -> 
 
 
 def _transfer_leg_already_import_matched(leg: Transaction) -> bool:
-    """True when this transfer/payment leg already absorbed a bank import."""
+    """True when this transfer/payment leg already absorbed a bank import for this account.
+
+    Counterpart confirm sets MATCHED on the sibling without copying a Plaid id.
+    That must not block this account's own bank row from merging.
+    """
     if leg.reconciled:
         return True
     if leg.source == Transaction.Source.PLAID:
         return True
     if (leg.plaid_transaction_id or "").strip():
-        return True
-    if leg.import_match_status == Transaction.ImportMatchStatus.MATCHED:
         return True
     if TransactionMatch.objects.filter(planned_transaction_id=leg.pk).exists():
         return True
@@ -1273,13 +1275,17 @@ def _is_transfer_dest_leg(leg: Transaction, tg: TransferGroup) -> bool:
 
 
 def _transfer_leg_direction_matches_import(leg: Transaction, tg: TransferGroup, imported: Transaction) -> bool:
+    """True when this leg is the same signed movement as the import on this account.
+
+    TransferGroup from/to can lag a user sign-flip (checking +100 / savings −100 while
+    the group still lists from=checking). Live leg amount is the source of truth.
+    """
+    _ = tg
     if imported.amount is None or leg.amount is None:
         return False
-    if imported.amount > 0:
-        return _is_transfer_dest_leg(leg, tg)
-    if imported.amount < 0:
-        return _is_transfer_source_leg(leg, tg)
-    return False
+    if imported.amount == 0 or leg.amount == 0:
+        return False
+    return (imported.amount > 0) == (leg.amount > 0)
 
 
 def _is_bank_import_for_transfer_match(txn: Transaction) -> bool:
@@ -1297,8 +1303,9 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
     """
     Locate an existing transfer/payment leg that should absorb this import.
 
-    Leg-specific rules: same account, same signed amount, ±3 days, correct source/dest direction,
-    not already matched/imported/reconciled. Never matches the opposite account's leg.
+    Leg-specific rules: same account, same signed amount, ±3 days, not already
+    matched/imported/reconciled. Never matches the opposite account's leg.
+    TransferGroup from/to labels are not required to match the live signs.
     """
     if not _is_bank_import_for_transfer_match(imported):
         return None
@@ -1465,14 +1472,29 @@ def try_match_import_to_transfer_payment_leg(imported: Transaction) -> bool:
 def rematch_pending_transfer_imports_for_group(tg: TransferGroup) -> int:
     """
     After creating transfer/payment legs, match bank imports that arrived before the schedule existed.
+
+    Walks live legs (signed amounts), not TransferGroup from/to — those can be stale after a sign-flip.
     """
     low = tg.scheduled_date - timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
     high = tg.scheduled_date + timedelta(days=TRANSFER_LEG_MATCH_DATE_WINDOW_DAYS)
     matched = 0
-    for account_id, signed_amount in (
-        (tg.to_account_id, tg.amount),
-        (tg.from_account_id, -tg.amount),
-    ):
+    seen: set[tuple[int, str]] = set()
+    legs = Transaction.objects.filter(transfer_group_id=tg.pk).exclude(source=Transaction.Source.PLAID)
+    slots: list[tuple[int, Decimal]] = []
+    for leg in legs:
+        if leg.account_id is None or leg.amount is None or leg.amount == 0:
+            continue
+        slots.append((leg.account_id, leg.amount))
+    if not slots:
+        slots = [
+            (tg.to_account_id, tg.amount),
+            (tg.from_account_id, -tg.amount),
+        ]
+    for account_id, signed_amount in slots:
+        key = (account_id, str(signed_amount))
+        if key in seen:
+            continue
+        seen.add(key)
         qs = (
             Transaction.objects.filter(
                 account_id=account_id,
@@ -2602,9 +2624,16 @@ def match_imported_transaction(imported: Transaction, *, dry_run: bool = False) 
     Creates TransactionMatch when score >= AUTO_MATCH_THRESHOLD; MatchSuggestion between thresholds;
     otherwise leaves import_match_status UNMATCHED (or SUGGESTED if suggestions exist).
     """
-    if imported.source != Transaction.Source.PLAID:
-        return None
     if not (imported.plaid_transaction_id or "").strip():
+        return None
+    # Materialized bank rows (source=ACTUAL + Plaid id) still merge into transfer legs.
+    if imported.source != Transaction.Source.PLAID:
+        if imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE:
+            return None
+        if imported.reconciled:
+            return None
+        if try_match_import_to_transfer_payment_leg(imported):
+            return None
         return None
     existing = TransactionMatch.objects.filter(imported_transaction=imported).first()
     if existing:

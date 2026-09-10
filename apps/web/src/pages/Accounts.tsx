@@ -76,6 +76,15 @@ function formatBillingCycleEndPreview(closingDay: string): string {
   return formatDateDisplay(nextBillingCycleEndDate(day));
 }
 
+/** Day-of-month fields: plain text, digits only — no number-spinner arrows. */
+function sanitizeDayOfMonthInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 2);
+  if (!digits) return "";
+  const n = Number(digits);
+  if (n > 31) return "31";
+  return digits;
+}
+
 export default function Accounts() {
   const navigate = useNavigate();
   const { billing } = useBillingStatus();
@@ -1433,13 +1442,19 @@ export default function Accounts() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Interest cycle end day (optional)</label>
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={2}
                       value={form.interest_cycle_end_day}
-                      onChange={(e) => setForm((f) => ({ ...f, interest_cycle_end_day: e.target.value }))}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          interest_cycle_end_day: sanitizeDayOfMonthInput(e.target.value),
+                        }))
+                      }
                       placeholder="e.g. 1 (interest credited on the 1st)"
-                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 tabular-nums"
                     />
                     <p className="mt-1 text-xs text-gray-500">
                       Day of month (1–31) when interest is credited. Used to project next interest income on the timeline.
@@ -1547,19 +1562,21 @@ export default function Accounts() {
                       Billing cycle end day (1–31)
                     </label>
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={2}
                       value={form.statement_closing_day}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const day = sanitizeDayOfMonthInput(e.target.value);
                         setForm((f) => ({
                           ...f,
-                          statement_closing_day: e.target.value,
-                          billing_cycle_end_day: e.target.value,
-                        }))
-                      }
+                          statement_closing_day: day,
+                          billing_cycle_end_day: day,
+                        }));
+                      }}
                       placeholder="e.g. 15"
-                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 tabular-nums"
                     />
                     <p className="mt-1 text-xs text-gray-500">
                       Day of month your statement closes. Used for projected statement balance and
@@ -1579,13 +1596,16 @@ export default function Accounts() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Payment due day (1–31)</label>
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={2}
                       value={form.payment_due_day}
-                      onChange={(e) => setForm((f) => ({ ...f, payment_due_day: e.target.value }))}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, payment_due_day: sanitizeDayOfMonthInput(e.target.value) }))
+                      }
                       placeholder="e.g. 10"
-                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                      className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 tabular-nums"
                     />
                   </div>
                   <div>
