@@ -21,4 +21,11 @@ describe("auth screens autofill", () => {
     expect(loginSource).toMatch(/autoComplete="username"/);
     expect(loginSource).toMatch(/autoComplete="password"/);
   });
+
+  it("maps login/register 401s to credential copy, not session expiry", () => {
+    expect(loginSource).toMatch(/describeAuthFormError/);
+    expect(registerSource).toMatch(/describeAuthFormError/);
+    expect(loginSource).not.toMatch(/describeApiError/);
+    expect(registerSource).not.toMatch(/describeApiError/);
+  });
 });

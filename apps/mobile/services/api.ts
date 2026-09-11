@@ -5,7 +5,7 @@ import {
 import { getApiBaseUrl, getApiTargetLabel } from "@/constants/env";
 import { saveAccessToken } from "@/services/secureTokenStorage";
 
-export { ApiError, describeApiError } from "./apiErrors";
+export { ApiError, describeApiError, describeAuthFormError } from "./apiErrors";
 
 type TokenRefs = {
   getAccess: () => string | null;

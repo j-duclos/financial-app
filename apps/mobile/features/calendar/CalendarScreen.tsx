@@ -48,6 +48,13 @@ import { useAuth } from "@/features/auth";
 import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { OnboardingEducationSheet } from "@/features/onboarding/OnboardingEducationSheet";
 import { useGettingStartedEducation } from "@/features/onboarding/useGettingStartedEducation";
+import {
+  GETTING_STARTED_HOME_ROUTE,
+  GETTING_STARTED_EXPLORE_ROUTE,
+  calendarSheetAfterIntroDismiss,
+  initialCalendarOnboardingSheet,
+  isCalendarOnboardingSource,
+} from "@/features/onboarding/gettingStartedRoutes";
 import { GETTING_STARTED_COPY } from "@budget-app/shared";
 
 export function CalendarScreen() {
@@ -60,7 +67,9 @@ export function CalendarScreen() {
     onboarding,
   });
   const [calendarIntroVisible, setCalendarIntroVisible] = useState(false);
-  const params = useLocalSearchParams<{ date?: string }>();
+  const [handoffVisible, setHandoffVisible] = useState(false);
+  const params = useLocalSearchParams<{ date?: string; source?: string | string[] }>();
+  const fromOnboarding = isCalendarOnboardingSource(params.source);
   const deepLinkDate = useMemo(() => parseIsoDateParam(params.date), [params.date]);
   const { forecastDays, ready: forecastReady } = usePageForecastWindow();
   const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
@@ -77,10 +86,32 @@ export function CalendarScreen() {
   useEffect(() => {
     if (!gettingStarted.ready) return;
     gettingStarted.markCalendarOpened();
-    if (gettingStarted.showCalendarIntro) {
+    const sheet = initialCalendarOnboardingSheet({
+      fromOnboarding,
+      introSeen: !gettingStarted.showCalendarIntro,
+      handoffSeen: gettingStarted.flags.calendar_onboarding_handoff_seen,
+    });
+    if (sheet === "intro") {
       setCalendarIntroVisible(true);
+      return;
     }
-  }, [gettingStarted.ready]);
+    if (sheet === "handoff") {
+      setHandoffVisible(true);
+      gettingStarted.markCalendarOnboardingHandoffSeen();
+    }
+  }, [gettingStarted.ready, fromOnboarding]);
+
+  const dismissCalendarIntro = useCallback(() => {
+    setCalendarIntroVisible(false);
+    const sheet = calendarSheetAfterIntroDismiss({
+      fromOnboarding,
+      handoffSeen: gettingStarted.flags.calendar_onboarding_handoff_seen,
+    });
+    if (sheet === "handoff") {
+      setHandoffVisible(true);
+      gettingStarted.markCalendarOnboardingHandoffSeen();
+    }
+  }, [fromOnboarding, gettingStarted]);
 
   const accountOptionsQuery = useAccountOptions({
     householdId: defaultHouseholdId,
@@ -389,7 +420,23 @@ export function CalendarScreen() {
         body={GETTING_STARTED_COPY.calendarIntro}
         primaryLabel={GETTING_STARTED_COPY.calendarIntroCta}
         testID="calendar-intro"
-        onPrimary={() => setCalendarIntroVisible(false)}
+        onPrimary={dismissCalendarIntro}
+      />
+      <OnboardingEducationSheet
+        visible={handoffVisible && !calendarIntroVisible}
+        title={GETTING_STARTED_COPY.calendarCompleteTitle}
+        body={GETTING_STARTED_COPY.calendarCompleteBody}
+        primaryLabel={GETTING_STARTED_COPY.calendarCompletePrimary}
+        secondaryLabel={GETTING_STARTED_COPY.calendarCompleteSecondary}
+        testID="calendar-onboarding-handoff"
+        onPrimary={() => {
+          setHandoffVisible(false);
+          router.replace(GETTING_STARTED_HOME_ROUTE as never);
+        }}
+        onSecondary={() => {
+          setHandoffVisible(false);
+          router.push(GETTING_STARTED_EXPLORE_ROUTE as never);
+        }}
       />
     </Screen>
   );

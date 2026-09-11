@@ -127,6 +127,8 @@ describe("Profile & Settings screen", () => {
     expect(screenSource).toMatch(/__DEV__/);
     expect(screenSource).toMatch(/Development/);
     expect(screenSource).toMatch(/developmentEnvironmentLabel/);
+    expect(screenSource).toMatch(/Replay getting started/);
+    expect(screenSource).toMatch(/resetGettingStartedEducation/);
   });
 
   it("shows Developer Testing only when the backend reports override capability", () => {

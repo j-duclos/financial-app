@@ -19,26 +19,36 @@ const ledgerUtils = readFileSync(
   "utf8"
 );
 
-describe("Transactions future posted query", () => {
-  it("keeps the future-posted fallback and paginates it", () => {
-    expect(source).toMatch(/\["transactions",\s*"future-posted"/);
-    expect(source).toMatch(/collectPaginatedResults/);
-    expect(source).toMatch(/futurePostedTransactions/);
-    expect(ledgerUtils).toMatch(/futurePostedTransactions/);
+describe("Transactions canonical future ledger", () => {
+  it("does not query or merge future-posted listTransactions rows", () => {
+    expect(source).not.toMatch(/\["transactions",\s*"future-posted"/);
+    expect(source).not.toMatch(/futurePostedTransactions/);
+    expect(source).not.toMatch(/collectPaginatedResults/);
+    expect(ledgerUtils).not.toMatch(/futurePostedTransactions/);
+    expect(ledgerUtils).not.toMatch(/shouldMergeFuturePostedTransaction/);
+    expect(refresh).not.toMatch(/\["transactions", "future-posted"\]/);
   });
 
-  it("refreshes future-posted after create, update, move, and delete", () => {
-    expect(refresh).toMatch(/\["transactions", "future-posted"\]/);
+  it("refreshes after create, update, move, and delete via a single invalidation", () => {
     expect(source).toMatch(/createMu = useMutation/);
     expect(source).toMatch(/createTransferMu = useMutation/);
     expect(source).toMatch(/deleteMu = useMutation/);
     expect(source).toMatch(/moveDateMu = useMutation/);
     expect(source).toMatch(/afterFinancialEdit/);
+    const refreshFn = refresh.slice(refresh.indexOf("export function refreshAfterTransactionEdit"));
+    expect(refreshFn).not.toMatch(/refetchQueries/);
   });
 
   it("clears the add form only after a successful save", () => {
     expect(source).toMatch(/const onAddSuccess = \(\) => \{\s*resetInlineRow\(\);/);
     expect(source).toMatch(/const restoreInlineForm = \(\) => setInlineRow\(formSnapshot\)/);
     expect(source).toMatch(/onError: onAddError/);
+  });
+
+  it("does not fetch a household-wide timeline for risk warnings", () => {
+    expect(source).not.toMatch(/queryKey: \[\s*"timeline",\s*"household"/);
+    expect(source).toMatch(/listProjectedFundsAlerts/);
+    expect(source).toMatch(/householdRiskWarningsFromProjectedFundsAlerts/);
+    expect(source).not.toMatch(/parseFloat\(r\.running_balance\)/);
   });
 });

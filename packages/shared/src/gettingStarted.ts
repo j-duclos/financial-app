@@ -10,22 +10,37 @@ export const GETTING_STARTED_COPY = {
   welcomeSkip: "Skip for now",
   checklistTitle: "Getting started with FlowSight",
   checklistIntro:
-    "FlowSight focuses on what happens next, not just what you already spent. Add upcoming income, bills, and planned transactions to see your future balance.",
+    "FlowSight focuses on what happens next. Add a future transaction and recurring income or bills so you can see where your balance is headed.",
   collapseLabel: "Hide checklist",
   expandLabel: "Show checklist",
   firstAccountTitle: "Your forecast has started",
   firstAccountBody:
-    "Your starting balance is now the baseline for FlowSight. Add upcoming income and expenses to see how your balance changes over time.",
-  firstAccountCta: "Add upcoming transaction",
+    "Your starting balance is now the baseline for FlowSight. Add something that hasn't happened yet so FlowSight can show how it will affect your future balance.",
+  firstAccountCta: "Add a future transaction",
   firstAccountSecondary: "Not now",
   firstTransactionTitle: "This is your forecast",
   firstTransactionBody:
-    "FlowSight projects your balance forward using the transactions and recurring items you add.",
-  firstTransactionCta: "View calendar",
-  firstTransactionSecondary: "Continue",
+    "FlowSight now includes that future transaction when projecting your balance. Add recurring income and bills next so your forecast can keep itself up to date.",
+  firstTransactionCta: "Add recurring income or bill",
+  firstTransactionSecondary: "View forecast calendar",
   calendarIntro:
-    "The calendar shows when money is expected to move and how those transactions affect your projected balance.",
+    "The calendar shows when your future transactions and recurring activity are expected to happen and how they affect your projected balance.",
   calendarIntroCta: "Got it",
+  calendarCompleteTitle: "You're ready",
+  calendarCompleteBody:
+    "FlowSight will now help you see where your balances are headed before money moves.",
+  calendarCompletePrimary: "Go to Home",
+  calendarCompleteSecondary: "Explore FlowSight",
+  futureTransactionFormTitle: "Add something coming up",
+  futureTransactionFormBody:
+    "Add a bill, paycheck, purchase, transfer, or card payment that will happen in the future. FlowSight will use it to project your balance before it happens.",
+  futureTransactionStepHelp:
+    "Add something that hasn't happened yet so FlowSight can show how it will affect your future balance.",
+  futureTransactionSavedNotFuture:
+    "Transaction saved. Add one dated in the future to see how FlowSight forecasts your balance.",
+  recurringOnboardingHelp:
+    "Add something that repeats, such as a paycheck, rent, utilities, subscriptions, or transfers. FlowSight will automatically place future occurrences into your forecast.",
+  optionalGoalsHint: "Want to plan for something specific? Create a savings or debt goal.",
   recurringEmpty:
     "Add paychecks, rent, subscriptions, bills, or transfers once and FlowSight will project them automatically.",
   help: {
@@ -51,10 +66,9 @@ export const GETTING_STARTED_HELP_LABELS: Record<GettingStartedHelpTopic, string
 
 export const GETTING_STARTED_STEPS = [
   { id: "account", title: "Create your first account" },
-  { id: "upcoming_transaction", title: "Add an upcoming transaction" },
-  { id: "recurring", title: "Add a recurring bill or income" },
+  { id: "upcoming_transaction", title: "Add a future transaction" },
+  { id: "recurring", title: "Add recurring income or a bill" },
   { id: "calendar", title: "View your forecast calendar" },
-  { id: "goal", title: "Create a goal" },
 ] as const;
 
 export type GettingStartedStepId = (typeof GETTING_STARTED_STEPS)[number]["id"];
@@ -62,13 +76,17 @@ export type GettingStartedStepId = (typeof GETTING_STARTED_STEPS)[number]["id"];
 export type GettingStartedCompletion = Record<GettingStartedStepId, boolean>;
 
 export const GETTING_STARTED_STEP_COUNT = GETTING_STARTED_STEPS.length;
-export const GETTING_STARTED_COLLAPSE_THRESHOLD = 4;
+export const GETTING_STARTED_COLLAPSE_THRESHOLD = 3;
+
+/** Manual sources that can complete the future-transaction onboarding step. */
+export const ONBOARDING_MANUAL_TRANSACTION_SOURCES = ["ACTUAL", "ONE_TIME"] as const;
 
 export type GettingStartedEducationFlags = {
   home_forecast_intro_seen: boolean;
   first_account_success_seen: boolean;
   first_transaction_forecast_seen: boolean;
   calendar_intro_seen: boolean;
+  calendar_onboarding_handoff_seen: boolean;
   getting_started_collapsed: boolean;
 };
 
@@ -77,6 +95,7 @@ export const EMPTY_GETTING_STARTED_EDUCATION: GettingStartedEducationFlags = {
   first_account_success_seen: false,
   first_transaction_forecast_seen: false,
   calendar_intro_seen: false,
+  calendar_onboarding_handoff_seen: false,
   getting_started_collapsed: false,
 };
 
@@ -86,8 +105,24 @@ export function emptyGettingStartedCompletion(): GettingStartedCompletion {
     upcoming_transaction: false,
     recurring: false,
     calendar: false,
-    goal: false,
   };
+}
+
+/** Date must be after today's local ISO date (YYYY-MM-DD). Today and past do not qualify. */
+export function isOnboardingFutureTransactionDate(dateIso: string, todayIso: string): boolean {
+  const date = dateIso.trim().slice(0, 10);
+  const today = todayIso.trim().slice(0, 10);
+  return Boolean(date && today && date > today);
+}
+
+export function qualifiesOnboardingFutureTransaction(opts: {
+  dateIso: string;
+  todayIso: string;
+  source?: string | null;
+}): boolean {
+  if (!isOnboardingFutureTransactionDate(opts.dateIso, opts.todayIso)) return false;
+  if (opts.source == null || opts.source === "") return true;
+  return (ONBOARDING_MANUAL_TRANSACTION_SOURCES as readonly string[]).includes(opts.source);
 }
 
 export function completionFromOnboardingStatus(
@@ -97,11 +132,9 @@ export function completionFromOnboardingStatus(
   const checklist = status?.checklist;
   return {
     account: checklist?.account ?? status?.steps.account === true,
-    upcoming_transaction:
-      checklist?.upcoming_transaction ?? status?.steps.transaction === true,
+    upcoming_transaction: checklist?.upcoming_transaction ?? false,
     recurring: checklist?.recurring ?? status?.steps.recurring === true,
     calendar: local.calendarOpened,
-    goal: checklist?.goal === true,
   };
 }
 
@@ -119,14 +152,34 @@ export function canCollapseGettingStarted(completion: GettingStartedCompletion):
 
 /**
  * Checklist stays visible while setup is incomplete.
- * Collapse is honored only after meaningful progress (4 of 5).
- * Hiding is ignored when almost nothing is done so users cannot get stuck.
+ * Collapse is honored only after meaningful progress (3 of 4).
+ * Users who already finished the old 5-step checklist stay completed.
  */
+export function wasPreviouslyFinishedGettingStarted(
+  flags: Pick<
+    GettingStartedEducationFlags,
+    "getting_started_collapsed" | "calendar_intro_seen" | "home_forecast_intro_seen"
+  >
+): boolean {
+  return (
+    flags.getting_started_collapsed &&
+    flags.calendar_intro_seen &&
+    flags.home_forecast_intro_seen
+  );
+}
+
 export function shouldShowGettingStartedCard(opts: {
   completion: GettingStartedCompletion;
   collapsed: boolean;
+  educationFlags?: Pick<
+    GettingStartedEducationFlags,
+    "getting_started_collapsed" | "calendar_intro_seen" | "home_forecast_intro_seen"
+  >;
 }): boolean {
   if (isGettingStartedComplete(opts.completion)) return false;
+  if (opts.educationFlags && wasPreviouslyFinishedGettingStarted(opts.educationFlags)) {
+    return false;
+  }
   if (opts.collapsed && canCollapseGettingStarted(opts.completion)) return false;
   return true;
 }
@@ -158,6 +211,13 @@ export function shouldShowCalendarIntro(opts: {
   return !opts.calendarIntroSeen;
 }
 
+export function shouldShowCalendarOnboardingHandoff(opts: {
+  fromOnboarding: boolean;
+  handoffSeen: boolean;
+}): boolean {
+  return opts.fromOnboarding && !opts.handoffSeen;
+}
+
 /**
  * First persist for a user who already has a working forecast: mark one-time
  * prompts seen so existing accounts are not nagged. Brand-new users keep zeros.
@@ -182,6 +242,7 @@ export function seedGettingStartedEducation(opts: {
     first_account_success_seen: opts.completion.account,
     first_transaction_forecast_seen: opts.completion.upcoming_transaction,
     calendar_intro_seen: true,
+    calendar_onboarding_handoff_seen: true,
     getting_started_collapsed: canCollapseGettingStarted(seededCompletion),
   };
 }

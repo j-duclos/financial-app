@@ -26,6 +26,7 @@ class SetupFlags:
     has_recurring: bool
     has_upcoming_transaction: bool = False
     has_goal: bool = False
+    has_active_recurring: bool = False
 
     @property
     def forecast_ready(self) -> bool:
@@ -46,6 +47,7 @@ def setup_flags_for_user(user) -> SetupFlags:
             has_recurring=False,
             has_upcoming_transaction=False,
             has_goal=False,
+            has_active_recurring=False,
         )
 
     from accounts.models import Account
@@ -60,18 +62,15 @@ def setup_flags_for_user(user) -> SetupFlags:
         txn_qs = Transaction.objects.filter(account__household_id__in=household_ids)
         has_transaction = txn_qs.exists()
         today = timezone.localdate()
-        has_upcoming_transaction = (
-            txn_qs.filter(date__gte=today)
-            .exclude(
-                source__in=[
-                    Transaction.Source.RULE,
-                    Transaction.Source.INTEREST,
-                    Transaction.Source.SYSTEM,
-                ]
-            )
-            .exists()
-        )
-    has_recurring = RecurringRule.objects.filter(household_id__in=household_ids).exists()
+        # Checklist-only: a manually created row dated after today.
+        # forecast_ready still uses any transaction via has_transaction.
+        has_upcoming_transaction = txn_qs.filter(
+            date__gt=today,
+            source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME],
+        ).exists()
+    recurring_qs = RecurringRule.objects.filter(household_id__in=household_ids)
+    has_recurring = recurring_qs.exists()
+    has_active_recurring = recurring_qs.filter(active=True).exists()
     has_goal = GoalBucket.objects.filter(
         household_id__in=household_ids,
         status__in=[GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED],
@@ -82,6 +81,7 @@ def setup_flags_for_user(user) -> SetupFlags:
         has_recurring=has_recurring,
         has_upcoming_transaction=has_upcoming_transaction,
         has_goal=has_goal,
+        has_active_recurring=has_active_recurring,
     )
 
 
@@ -125,7 +125,7 @@ def onboarding_status_payload(user, *, persist_auto_complete: bool = True) -> di
         "checklist": {
             "account": flags.has_account,
             "upcoming_transaction": flags.has_upcoming_transaction,
-            "recurring": flags.has_recurring,
+            "recurring": flags.has_active_recurring,
             "goal": flags.has_goal,
         },
     }

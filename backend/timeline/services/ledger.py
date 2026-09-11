@@ -902,9 +902,9 @@ def repair_unlinked_rule_transfer_pairs(account_ids: Iterable[int]) -> int:
 def _may_purge_skipped_rule_occurrence(*, scenario, caller: str) -> bool:
     """Purge skipped forecast ghosts on real household builds, including Transactions Upcoming.
 
-    Projection-only used to skip purge, so edited PLANNED pairs stayed in the DB and the
-    web ledger re-merged them via futurePostedTransactions. Never purge from what-if
-    scenarios or transfer-balance preview (the user may still have the editor open).
+    Projection-only used to skip purge, so edited PLANNED pairs stayed in the DB and
+    appeared as extra forecast rows. Never purge from what-if scenarios or
+    transfer-balance preview (the user may still have the editor open).
     """
     if scenario is not None:
         return False

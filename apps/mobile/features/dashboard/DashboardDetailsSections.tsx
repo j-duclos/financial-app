@@ -8,6 +8,7 @@ import {
   type DashboardGoalSummary,
   type DashboardUpcomingTransaction,
   type UpcomingDashboardPreviewLayout,
+  GETTING_STARTED_COPY,
   GETTING_STARTED_HELP_LABELS,
 } from "@budget-app/shared";
 import {
@@ -241,7 +242,7 @@ export const DashboardGoalsSection = memo(function DashboardGoalsSection({
       ) : goals.length === 0 ? (
         <EmptyState
           title="No goals yet"
-          message="Create a savings or debt goal to track progress here."
+          message={GETTING_STARTED_COPY.optionalGoalsHint}
           actionLabel="Goals"
           onAction={() => router.push(goalsListPath())}
         />

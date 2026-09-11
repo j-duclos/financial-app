@@ -96,3 +96,23 @@ describe("Projected funds web surfaces", () => {
     expect(profileSource).toMatch(/notify_3_days_before/);
   });
 });
+
+describe("householdRiskWarningsFromProjectedFundsAlerts", () => {
+  it("maps canonical alert types without inspecting running_balance", async () => {
+    const { householdRiskWarningsFromProjectedFundsAlerts } = await import("@budget-app/shared");
+    const warnings = householdRiskWarningsFromProjectedFundsAlerts([
+      sampleAlert(),
+      sampleAlert({
+        id: 10,
+        account_name: "Savor",
+        alert_type: "CREDIT_LIMIT_RISK",
+        occurrence_date: "2026-09-12",
+      }),
+      sampleAlert({ id: 11, active: false, occurrence_date: "2026-09-01" }),
+    ]);
+    expect(warnings).toEqual([
+      { accountName: "Main Checking", date: "2026-09-10", kind: "negative" },
+      { accountName: "Savor", date: "2026-09-12", kind: "credit_limit" },
+    ]);
+  });
+});

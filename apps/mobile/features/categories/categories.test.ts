@@ -165,4 +165,12 @@ describe("Shared category picker reuse", () => {
     expect(categoryFormSource).toMatch(/invalidateAfterCategoryMutation/);
     expect(queryKeysSource).toMatch(/invalidateCategoryOptionsQueries/);
   });
+
+  it("transaction category pickers use the shared preferred-order helper, not per-screen alpha sorts", () => {
+    expect(transactionFormSource).toMatch(/buildCategoryPickerOptions|sortCategoriesForPicker/);
+    expect(recurringFormSource).toMatch(/sortCategoriesForPicker/);
+    expect(automationFormSource).toMatch(/sortCategoriesForPicker/);
+    expect(transactionFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
+    expect(recurringFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
+  });
 });

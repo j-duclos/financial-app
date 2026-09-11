@@ -14,9 +14,12 @@ import {
   shouldShowGettingStartedCard,
 } from "@budget-app/shared";
 import {
+  educationFlagsEqual,
   gettingStartedEducationStorageKey,
   parseGettingStartedEducation,
   serializeGettingStartedEducation,
+  setGettingStartedEducationCache,
+  subscribeGettingStartedEducation,
 } from "./gettingStartedStorage";
 import { GETTING_STARTED_ROUTES } from "./gettingStartedRoutes";
 
@@ -43,8 +46,14 @@ const goalKeysSource = read("features/goals/queryKeys.ts");
 describe("getting started storage", () => {
   it("keys education flags per user and shares updates in memory", () => {
     expect(gettingStartedEducationStorageKey(42)).toBe("getting-started-education:42");
+    expect(read("features/onboarding/gettingStartedStorage.ts")).toMatch(
+      /resetGettingStartedEducation/
+    );
+    expect(hookSource).toMatch(/Cache was reset from outside this hook/);
     expect(hookSource).toMatch(/setGettingStartedEducationCache/);
     expect(hookSource).toMatch(/subscribeGettingStartedEducation/);
+    expect(hookSource).toMatch(/educationFlagsEqual/);
+    expect(hookSource).not.toMatch(/setGettingStartedEducationCache\(userId, next\)[\s\S]{0,80}return next/);
   });
 
   it("round-trips persisted flags and ignores corrupt payloads", () => {
@@ -53,6 +62,7 @@ describe("getting started storage", () => {
       first_account_success_seen: false,
       first_transaction_forecast_seen: true,
       calendar_intro_seen: false,
+      calendar_onboarding_handoff_seen: false,
       getting_started_collapsed: true,
     });
     expect(parseGettingStartedEducation(raw)).toEqual({
@@ -60,10 +70,54 @@ describe("getting started storage", () => {
       first_account_success_seen: false,
       first_transaction_forecast_seen: true,
       calendar_intro_seen: false,
+      calendar_onboarding_handoff_seen: false,
       getting_started_collapsed: true,
     });
     expect(parseGettingStartedEducation("not-json")).toBeNull();
     expect(parseGettingStartedEducation(null)).toBeNull();
+    expect(
+      parseGettingStartedEducation(
+        JSON.stringify({
+          home_forecast_intro_seen: true,
+          first_account_success_seen: false,
+          first_transaction_forecast_seen: false,
+          calendar_intro_seen: false,
+          getting_started_collapsed: false,
+        })
+      )
+    ).toMatchObject({ calendar_onboarding_handoff_seen: false });
+  });
+
+  it("does not notify other screens synchronously from a cache write", async () => {
+    let calls = 0;
+    const unsub = subscribeGettingStartedEducation(() => {
+      calls += 1;
+    });
+    setGettingStartedEducationCache(9001, {
+      home_forecast_intro_seen: false,
+      first_account_success_seen: false,
+      first_transaction_forecast_seen: false,
+      calendar_intro_seen: true,
+      calendar_onboarding_handoff_seen: false,
+      getting_started_collapsed: false,
+    });
+    expect(calls).toBe(0);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    unsub();
+  });
+
+  it("treats identical education flags as equal", () => {
+    const flags = {
+      home_forecast_intro_seen: true,
+      first_account_success_seen: false,
+      first_transaction_forecast_seen: true,
+      calendar_intro_seen: false,
+      calendar_onboarding_handoff_seen: false,
+      getting_started_collapsed: true,
+    };
+    expect(educationFlagsEqual(flags, { ...flags })).toBe(true);
+    expect(educationFlagsEqual(flags, { ...flags, calendar_intro_seen: true })).toBe(false);
   });
 });
 
@@ -129,48 +183,57 @@ describe("getting started checklist on Home", () => {
 
     const withCalendar = { ...withRecurring, calendar: true };
     expect(withCalendar.calendar).toBe(true);
-
-    const withGoal = { ...withCalendar, goal: true };
-    expect(withGoal.goal).toBe(true);
-    expect(isGettingStartedComplete(withGoal)).toBe(true);
-    expect(shouldShowGettingStartedCard({ completion: withGoal, collapsed: false })).toBe(false);
+    expect(isGettingStartedComplete(withCalendar)).toBe(true);
+    expect(shouldShowGettingStartedCard({ completion: withCalendar, collapsed: false })).toBe(false);
+    expect(GETTING_STARTED_STEPS).toHaveLength(4);
+    expect(GETTING_STARTED_STEPS.some((step) => step.id === "goal")).toBe(false);
   });
 
-  it("hides or collapses when setup is complete enough, and reappears if state regresses", () => {
-    const fourOfFive = {
+  it("hides or collapses when setup is complete enough, and keeps previously finished users completed", () => {
+    const threeOfFour = {
       account: true,
       upcoming_transaction: true,
       recurring: true,
-      calendar: true,
-      goal: false,
+      calendar: false,
     };
-    expect(canCollapseGettingStarted(fourOfFive)).toBe(true);
-    expect(shouldShowGettingStartedCard({ completion: fourOfFive, collapsed: true })).toBe(false);
+    expect(canCollapseGettingStarted(threeOfFour)).toBe(true);
+    expect(shouldShowGettingStartedCard({ completion: threeOfFour, collapsed: true })).toBe(false);
 
     const almostNothing = { ...emptyGettingStartedCompletion(), account: true };
     expect(shouldShowGettingStartedCard({ completion: almostNothing, collapsed: true })).toBe(true);
 
-    const finished = { ...fourOfFive, goal: true };
-    const afterDelete = { ...finished, goal: false };
+    const finished = { ...threeOfFour, calendar: true };
     expect(shouldShowGettingStartedCard({ completion: finished, collapsed: false })).toBe(false);
-    expect(shouldShowGettingStartedCard({ completion: afterDelete, collapsed: false })).toBe(true);
+    expect(
+      shouldShowGettingStartedCard({
+        completion: almostNothing,
+        collapsed: true,
+        educationFlags: {
+          getting_started_collapsed: true,
+          calendar_intro_seen: true,
+          home_forecast_intro_seen: true,
+        },
+      })
+    ).toBe(false);
   });
 
   it("routes checklist actions to existing screens without upgrade CTAs", () => {
     expect(GETTING_STARTED_ROUTES.account).toBe("/account/new");
-    expect(GETTING_STARTED_ROUTES.upcoming_transaction).toBe("/transaction/new");
-    expect(GETTING_STARTED_ROUTES.recurring).toBe("/recurring/new");
-    expect(GETTING_STARTED_ROUTES.calendar).toBe("/(app)/(tabs)/calendar");
-    expect(GETTING_STARTED_ROUTES.goal).toBe("/goal/new");
+    expect(GETTING_STARTED_ROUTES.upcoming_transaction).toBe(
+      "/transaction/new?source=onboarding&mode=future"
+    );
+    expect(GETTING_STARTED_ROUTES.recurring).toBe("/recurring/new?source=onboarding");
+    expect(GETTING_STARTED_ROUTES.calendar).toBe("/(app)/(tabs)/calendar?source=onboarding");
+    expect(GETTING_STARTED_ROUTES).not.toHaveProperty("goal");
     expect(cardSource).not.toMatch(/Upgrade/);
     expect(cardSource).not.toMatch(/Premium/);
     expect(cardSource).not.toMatch(/startUpgrade/);
+    expect(cardSource).toMatch(/of \{GETTING_STARTED_STEP_COUNT\} complete/);
     expect(GETTING_STARTED_STEPS.map((step) => GETTING_STARTED_ROUTES[step.id])).toEqual([
       "/account/new",
-      "/transaction/new",
-      "/recurring/new",
-      "/(app)/(tabs)/calendar",
-      "/goal/new",
+      "/transaction/new?source=onboarding&mode=future",
+      "/recurring/new?source=onboarding",
+      "/(app)/(tabs)/calendar?source=onboarding",
     ]);
   });
 
@@ -200,6 +263,11 @@ describe("dashboard education and first-run prompts", () => {
     expect(dashboardSource).toMatch(/testID="first-transaction-forecast"/);
     expect(GETTING_STARTED_COPY.firstAccountTitle).toBe("Your forecast has started");
     expect(GETTING_STARTED_COPY.firstTransactionTitle).toBe("This is your forecast");
+    expect(GETTING_STARTED_COPY.firstTransactionCta).toBe("Add recurring income or bill");
+    expect(GETTING_STARTED_COPY.firstTransactionSecondary).toBe("View forecast calendar");
+    expect(dashboardSource).toMatch(/GETTING_STARTED_ROUTES\.upcoming_transaction/);
+    expect(dashboardSource).toMatch(/GETTING_STARTED_ROUTES\.recurring/);
+    expect(dashboardSource).toMatch(/GETTING_STARTED_ROUTES\.calendar/);
   });
 
   it("opens concept help from info icons with accessible labels", () => {
@@ -208,6 +276,7 @@ describe("dashboard education and first-run prompts", () => {
     expect(attentionSource).toMatch(/GETTING_STARTED_HELP_LABELS\.attentionRequired/);
     expect(detailsSource).toMatch(/GETTING_STARTED_HELP_LABELS\.upcomingMoneyFlow/);
     expect(detailsSource).toMatch(/GETTING_STARTED_HELP_LABELS\.goalsProgress/);
+    expect(detailsSource).toMatch(/GETTING_STARTED_COPY\.optionalGoalsHint/);
     expect(dashboardSource).toMatch(/DashboardConceptHelpSheet/);
     expect(GETTING_STARTED_HELP_LABELS.lowestForecastBalance).toBe("About Lowest Forecast Balance");
     expect(GETTING_STARTED_COPY.help.availableCash).toMatch(/checking and savings/);
@@ -228,7 +297,9 @@ describe("dashboard education and first-run prompts", () => {
     expect(hookSource).toMatch(/first_account_success_seen/);
     expect(hookSource).toMatch(/first_transaction_forecast_seen/);
     expect(hookSource).toMatch(/calendar_intro_seen/);
+    expect(hookSource).toMatch(/calendar_onboarding_handoff_seen/);
     expect(hookSource).toMatch(/getting_started_collapsed/);
+    expect(hookSource).toMatch(/educationFlags: flags/);
     const seeded = seedGettingStartedEducation({
       stored: null,
       forecastReady: true,
@@ -237,7 +308,6 @@ describe("dashboard education and first-run prompts", () => {
         upcoming_transaction: true,
         recurring: true,
         calendar: false,
-        goal: false,
       },
     });
     expect(seeded.first_account_success_seen).toBe(true);
@@ -257,6 +327,8 @@ describe("dashboard education and first-run prompts", () => {
     expect(dashboardSource).toMatch(/GETTING_STARTED_ROUTES/);
     expect(firstRunSource).toMatch(/Add account manually/);
     expect(GETTING_STARTED_ROUTES.account).toBe("/account/new");
-    expect(GETTING_STARTED_ROUTES.upcoming_transaction).toBe("/transaction/new");
+    expect(GETTING_STARTED_ROUTES.upcoming_transaction).toBe(
+      "/transaction/new?source=onboarding&mode=future"
+    );
   });
 });

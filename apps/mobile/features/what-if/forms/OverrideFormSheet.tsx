@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ScrollView, Text } from "react-native";
 import type { Account, Category, RecurringRule, ScenarioRuleOverride } from "@budget-app/shared";
 import { formatAccountOptionLabel, formatCurrency } from "@budget-app/shared";
+import { categoryPickerOptions as buildCategoryPickerOptions } from "@/features/categories/categoryPickerOptions";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
@@ -75,6 +76,16 @@ export function OverrideFormSheet({
   const selectedRule = ruleOptions.find((r) => String(r.id) === ruleId) ?? existing?.rule;
   const selectedAccount = accounts.find((a) => String(a.id) === accountId);
   const selectedCategory = categories.find((c) => String(c.id) === categoryId);
+  const categoryPickerType = context === "paycheck" ? "INCOME" : "EXPENSE";
+  const categoryPickerOptions: PickerOption[] = useMemo(
+    () =>
+      buildCategoryPickerOptions(categories, categoryPickerType, {
+        id: "",
+        title: "No change",
+        searchText: "No change None No category",
+      }),
+    [categories, categoryPickerType]
+  );
   const statusLabel =
     active === "true" ? "Keep active" : active === "false" ? "Cancel / pause" : "No change";
 
@@ -225,10 +236,7 @@ export function OverrideFormSheet({
       <OptionsPickerSheet
         visible={picker === "category"}
         title="Category"
-        options={[
-          { id: "", title: "No change" },
-          ...categories.map((c) => ({ id: String(c.id), title: c.name, searchText: c.name })),
-        ]}
+        options={categoryPickerOptions}
         selectedId={categoryId}
         searchPlaceholder="Search categories"
         onClose={() => setPicker(null)}

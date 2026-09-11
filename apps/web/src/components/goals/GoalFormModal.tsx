@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Account, FinancialGoal, FinancialGoalStatus, FinancialGoalType, RecurringRule } from "@budget-app/shared";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import {
+  formatCurrency,
+  getEffectiveDisplayName,
+  GOAL_INCLUDE_IN_FORECAST_HELP,
+  GOAL_INCLUDE_IN_FORECAST_LABEL,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL,
+} from "@budget-app/shared";
 import { bucketPriorityToNumber } from "../../lib/bucketGoalTypes";
 import { GOAL_TYPE_OPTIONS, isDebtGoalType } from "../../lib/goalDisplay";
 import GoalFundingSection from "./GoalFundingSection";
@@ -551,9 +558,9 @@ export default function GoalFormModal({
                 }
               />
               <span>
-                <span className="text-gray-800">Reduce safe-to-spend on linked account</span>
+                <span className="text-gray-800">{GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  Treat reserved goal money as unavailable for everyday spending.
+                  {GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP}
                 </span>
               </span>
             </label>
@@ -566,9 +573,9 @@ export default function GoalFormModal({
                 onChange={(e) => setForm((f) => ({ ...f, forecast_enabled: e.target.checked }))}
               />
               <span>
-                <span className="text-gray-800">Include in forecast</span>
+                <span className="text-gray-800">{GOAL_INCLUDE_IN_FORECAST_LABEL}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  Include planned goal contributions in future cash-flow projections.
+                  {GOAL_INCLUDE_IN_FORECAST_HELP}
                 </span>
               </span>
             </label>

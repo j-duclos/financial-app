@@ -1,4 +1,5 @@
 import type { Category, SpendingTargetPeriod, SpendingTargetType } from "@budget-app/shared";
+import { sortCategoriesForPicker } from "@budget-app/shared";
 
 export type SpendingLimitCategoryOption = {
   id: string;
@@ -33,15 +34,17 @@ export const SPENDING_TYPE_OPTIONS: {
 /** Expense categories for the limit picker — archived and duplicate names excluded. */
 export function expenseCategoriesForLimitPicker(categories: Category[]): Category[] {
   const seen = new Set<string>();
-  return categories
-    .filter((c) => c.category_type === "EXPENSE" && !c.is_archived)
-    .filter((c) => {
-      const key = c.name.trim().toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  return sortCategoriesForPicker(
+    categories
+      .filter((c) => c.category_type === "EXPENSE" && !c.is_archived)
+      .filter((c) => {
+        const key = c.name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }),
+    "EXPENSE"
+  );
 }
 
 export function spendingLimitCategoryPickerOptions(categories: Category[]): SpendingLimitCategoryOption[] {

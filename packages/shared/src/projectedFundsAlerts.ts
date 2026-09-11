@@ -94,3 +94,37 @@ export const NOTIFICATION_PERMISSION_COPY = {
   enable: "Enable notifications",
   notNow: "Not now",
 } as const;
+
+export type HouseholdRiskWarningKind = "negative" | "credit_limit";
+
+export type HouseholdRiskWarning = {
+  accountName: string;
+  date: string;
+  kind: HouseholdRiskWarningKind;
+};
+
+/**
+ * Map server-authored projected-funds alerts onto Transactions summary warnings.
+ * Does not inspect running_balance or reconstruct a ledger.
+ */
+export function householdRiskWarningsFromProjectedFundsAlerts(
+  alerts: readonly ProjectedFundsAlert[] | undefined | null
+): HouseholdRiskWarning[] {
+  const warnings: HouseholdRiskWarning[] = [];
+  for (const alert of activeProjectedFundsAlerts(alerts)) {
+    if (alert.alert_type === "INSUFFICIENT_FUNDS") {
+      warnings.push({
+        accountName: alert.account_name,
+        date: alert.occurrence_date,
+        kind: "negative",
+      });
+    } else if (alert.alert_type === "CREDIT_LIMIT_RISK") {
+      warnings.push({
+        accountName: alert.account_name,
+        date: alert.occurrence_date,
+        kind: "credit_limit",
+      });
+    }
+  }
+  return warnings.sort((a, b) => a.date.localeCompare(b.date) || a.accountName.localeCompare(b.accountName));
+}

@@ -314,14 +314,8 @@ export function buildLedgerRows(
       todayRowInserted = true;
     }
     const apiBal = transactionPostedLedgerBalance(txn);
-    if (apiBal != null) {
-      running = apiBal;
-    } else {
-      const amt = signedTransactionLedgerAmount(txn);
-      if (Number.isNaN(amt)) continue;
-      running = applyTimelineAmountToBalance(running, amt, isCredit);
-    }
-    rows.push({ type: "transaction", txn, balance: running });
+    if (apiBal != null) running = apiBal;
+    rows.push({ type: "transaction", txn, balance: apiBal });
   }
   if (!todayRowInserted) {
     const bal =
@@ -595,6 +589,14 @@ function transactionPostedLedgerBalance(txn: Transaction): number | null {
   return null;
 }
 
+function lastFiniteLedgerBalance(rows: { balance: number | null }[]): number | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const bal = rows[i].balance;
+    if (bal != null && Number.isFinite(bal)) return bal;
+  }
+  return null;
+}
+
 /** Signed amount for running-balance math on a timeline row. Prefer the stored sign. */
 export function signedTimelineLedgerAmount(row: TimelineRow): number {
   const raw = parseFloat(row.amount);
@@ -617,8 +619,10 @@ export function signedTransactionLedgerAmount(txn: Transaction): number {
 }
 
 /**
- * Apply a timeline amount to a running ledger balance.
- * Credit cards use positive running values as amount owed (charges up, payments down).
+ * Signed amount applied to a running balance (same sign as stored amount).
+ * Not used to display Transactions Pending/Upcoming Bal — those read balance_after.
+ * Remaining uses: unit tests of the helper, deprecated opening-inference helpers,
+ * and credit-card owed-at-date exclusion walks that are not the Transactions Bal column.
  */
 export function applyTimelineAmountToBalance(
   running: number,
@@ -637,25 +641,6 @@ export function undoTimelineAmountFromBalance(
 ): number {
   if (Number.isNaN(amount)) return running;
   return running - amount;
-}
-
-function assignPastBalancesFromTodayAnchor(
-  pastRows: Extract<LedgerRow, { type: "transaction_from_timeline" } | { type: "transaction" }>[],
-  todayBalance: number,
-  isCredit: boolean
-): { rows: typeof pastRows; startingBalance: number } {
-  let running = todayBalance;
-  const rows = [...pastRows];
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    const amt =
-      row.type === "transaction_from_timeline"
-        ? signedTimelineLedgerAmount(row.row)
-        : signedTransactionLedgerAmount(row.txn);
-    rows[i] = { ...row, balance: running };
-    running = undoTimelineAmountFromBalance(running, amt, isCredit);
-  }
-  return { rows, startingBalance: running };
 }
 
 /**
@@ -795,19 +780,13 @@ export function buildLedgerRowsFromTimeline(
 
   const pastLedgerRows: LedgerRow[] = [];
 
-  // Past rows: prefer backend running_balance on each row when present.
-  let running = hideReconciledStart ?? configuredOpening;
   for (const r of past) {
-    const apiBal =
+    const posted =
       r.running_balance != null && String(r.running_balance).trim() !== ""
         ? parseFloat(String(r.running_balance))
         : NaN;
-    if (Number.isFinite(apiBal)) {
-      running = apiBal;
-    } else {
-      running = applyTimelineAmountToBalance(running, signedTimelineLedgerAmount(r), isCredit);
-    }
-    pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance: running });
+    const balance = Number.isFinite(posted) ? posted : timelineRowLedgerBalance(r);
+    pastLedgerRows.push({ type: "transaction_from_timeline", row: r, balance });
   }
 
   rows.push(...pastLedgerRows);
@@ -819,9 +798,7 @@ export function buildLedgerRowsFromTimeline(
   }
 
   const todayBalance =
-    pastLedgerRows.length > 0
-      ? pastLedgerRows[pastLedgerRows.length - 1].balance
-      : hideReconciledStart ?? configuredOpening;
+    lastFiniteLedgerBalance(pastLedgerRows) ?? hideReconciledStart ?? configuredOpening;
   rows.push({ type: "today_balance", balance: todayBalance });
 
   for (const r of pending) {
@@ -845,25 +822,11 @@ export function buildLedgerRowsFromTimeline(
 /**
  * Past ledger from posted transactions; pending + upcoming from a narrow projection timeline.
  * Avoids building months of past timeline on the server while keeping 90-day forecast.
+ *
+ * Pending/Upcoming Bal is TimelineRow.balance_after only. Missing future rows must be
+ * fixed in the canonical backend timeline — the browser must not merge listTransactions
+ * or walk previous + amount.
  */
-/**
- * Future /transactions/ rows the timeline omitted. Only one-off posted activity
- * belongs here — rule-based and other PLANNED forecast occurrences are decided
- * by the canonical timeline (including paid-off card-payment skip).
- */
-export function shouldMergeFuturePostedTransaction(
-  txn: Transaction,
-  today: string
-): boolean {
-  if (txn.date <= today) return false;
-  const source = (txn.source || "").toUpperCase();
-  if (source === "INTEREST" || source === "RULE") return false;
-  if (txn.rule_id != null) return false;
-  const status = (txn.status || "").toUpperCase();
-  if (status === "PLANNED" && source !== "ONE_TIME") return false;
-  return true;
-}
-
 export function buildLedgerRowsFromPastAndUpcomingTimeline(
   pastTransactions: Transaction[],
   upcomingTimeline: TimelineRow[],
@@ -882,12 +845,6 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
      * are not reapplied on top of pastOpeningOverride.
      */
     checkpointPeriodEnd?: string | null;
-    /**
-     * Posted / planned rows dated after today. The past /transactions/ window ends
-     * today, so one-off future adds only show if the projection timeline includes
-     * them — merge any that the timeline omitted.
-     */
-    futurePostedTransactions?: Transaction[];
   }
 ): LedgerRow[] {
   const pastSource =
@@ -910,27 +867,20 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
       : configuredOpening;
 
   const rows: LedgerRow[] = [{ type: "starting_balance", balance: start }];
-  let running = start;
 
   const checkpointPeriodEnd = options?.checkpointPeriodEnd ?? null;
+  const pastLedgerRows: LedgerRow[] = [];
   for (const txn of pastTxns) {
     const sealed = transactionAlreadyInCheckpoint(txn, checkpointPeriodEnd);
-    let balance: number | null;
-    if (sealed) {
-      balance = null;
-    } else {
-      const amt = signedTransactionLedgerAmount(txn);
-      if (Number.isNaN(amt)) continue;
-      running = applyTimelineAmountToBalance(running, amt, isCredit);
-      balance = running;
-    }
-    rows.push({ type: "transaction", txn, balance });
+    const balance = sealed ? null : transactionPostedLedgerBalance(txn);
+    pastLedgerRows.push({ type: "transaction", txn, balance });
   }
+  rows.push(...pastLedgerRows);
 
   const todayBalance =
     options?.todayBalanceOverride != null && Number.isFinite(options.todayBalanceOverride)
       ? options.todayBalanceOverride
-      : running;
+      : lastFiniteLedgerBalance(pastLedgerRows) ?? start;
   rows.push({ type: "today_balance", balance: todayBalance });
 
   const visibleTimeline = upcomingTimeline.filter((r) =>
@@ -951,53 +901,13 @@ export function buildLedgerRowsFromPastAndUpcomingTimeline(
     });
   }
 
-  const futureRows: LedgerRow[] = future.map((r) => ({
-    type: "recurring" as const,
-    row: r,
-    balance: timelineRowLedgerBalance(r),
-  }));
-  const timelineTxnIds = new Set(
-    future
-      .map((r) => r.transaction_id)
-      .filter((id): id is number => id != null)
-      .map((id) => Number(id))
-  );
-  const extraFutureTxns = (options?.futurePostedTransactions ?? []).filter(
-    (t) => shouldMergeFuturePostedTransaction(t, today) && !timelineTxnIds.has(t.id)
-  );
-  for (const txn of extraFutureTxns) {
-    futureRows.push({ type: "transaction", txn, balance: null });
+  for (const r of future) {
+    rows.push({
+      type: "recurring",
+      row: r,
+      balance: timelineRowLedgerBalance(r),
+    });
   }
-  futureRows.sort((a, b) => {
-    const da = ledgerFutureRowDate(a) ?? "";
-    const db = ledgerFutureRowDate(b) ?? "";
-    if (da !== db) return da.localeCompare(db);
-    const ia = a.type === "transaction" ? a.txn.id : Number(a.row.transaction_id ?? 0);
-    const ib = b.type === "transaction" ? b.txn.id : Number(b.row.transaction_id ?? 0);
-    return ia - ib;
-  });
-
-  if (extraFutureTxns.length > 0) {
-    let walk =
-      pending.length > 0
-        ? timelineRowLedgerBalance(pending[pending.length - 1])
-        : todayBalance;
-    if (walk == null || !Number.isFinite(walk)) walk = todayBalance;
-    for (const row of futureRows) {
-      const amt =
-        row.type === "transaction"
-          ? signedTransactionLedgerAmount(row.txn)
-          : row.type === "recurring"
-            ? signedTimelineLedgerAmount(row.row)
-            : NaN;
-      if (!Number.isNaN(amt)) {
-        walk = applyTimelineAmountToBalance(walk, amt, isCredit);
-        row.balance = walk;
-      }
-    }
-  }
-
-  rows.push(...futureRows);
   return rows;
 }
 

@@ -274,6 +274,166 @@ def test_future_manual_transaction_completes_upcoming_checklist(fresh_client, fr
     assert body["steps"]["forecast_ready"] is True
 
 
+def _household_checking(user, name):
+    household = Household.objects.create(name=name)
+    HouseholdMembership.objects.create(
+        household=household, user=user, role=HouseholdMembership.Role.OWNER
+    )
+    account = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="Checking",
+        currency="USD",
+        starting_balance=Decimal("50.00"),
+    )
+    return household, account
+
+
+def test_today_transaction_does_not_complete_upcoming_checklist(fresh_client, fresh_user):
+    from django.utils import timezone
+
+    _, account = _household_checking(fresh_user, "Today Txn HH")
+    Transaction.objects.create(
+        account=account,
+        date=timezone.localdate(),
+        payee="Groceries",
+        amount=Decimal("-20.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+    )
+    body = _status(fresh_client).json()
+    assert body["steps"]["transaction"] is True
+    assert body["checklist"]["upcoming_transaction"] is False
+
+
+def test_rule_future_transaction_does_not_complete_upcoming_checklist(fresh_client, fresh_user):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _, account = _household_checking(fresh_user, "Rule Future HH")
+    Transaction.objects.create(
+        account=account,
+        date=timezone.localdate() + timedelta(days=2),
+        payee="Generated rent",
+        amount=Decimal("-1200.00"),
+        status=Transaction.Status.PLANNED,
+        source=Transaction.Source.RULE,
+    )
+    body = _status(fresh_client).json()
+    assert body["steps"]["transaction"] is True
+    assert body["checklist"]["upcoming_transaction"] is False
+
+
+def test_plaid_future_transaction_does_not_complete_upcoming_checklist(fresh_client, fresh_user):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _, account = _household_checking(fresh_user, "Plaid Future HH")
+    Transaction.objects.create(
+        account=account,
+        date=timezone.localdate() + timedelta(days=4),
+        payee="Imported anomaly",
+        amount=Decimal("-15.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.PLAID,
+    )
+    body = _status(fresh_client).json()
+    assert body["steps"]["transaction"] is True
+    assert body["checklist"]["upcoming_transaction"] is False
+
+
+def test_future_manual_income_transfer_and_card_payment_complete_upcoming_checklist(
+    fresh_client, fresh_user
+):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    tomorrow = timezone.localdate() + timedelta(days=1)
+    _, income_account = _household_checking(fresh_user, "Income Future HH")
+    Transaction.objects.create(
+        account=income_account,
+        date=tomorrow,
+        payee="Paycheck",
+        amount=Decimal("1800.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+    )
+    assert _status(fresh_client).json()["checklist"]["upcoming_transaction"] is True
+
+    transfer_user = User.objects.create_user(username="xfer_onboard", password="testpass123")
+    _, transfer_account = _household_checking(transfer_user, "Transfer Future HH")
+    transfer_client = APIClient()
+    transfer_client.force_authenticate(user=transfer_user)
+    Transaction.objects.create(
+        account=transfer_account,
+        date=tomorrow,
+        payee="Transfer",
+        amount=Decimal("-50.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+        transaction_type=Transaction.TransactionType.TRANSFER,
+    )
+    assert (
+        transfer_client.get("/api/onboarding/status/").json()["checklist"]["upcoming_transaction"]
+        is True
+    )
+
+    card_user = User.objects.create_user(username="card_onboard", password="testpass123")
+    _, card_account = _household_checking(card_user, "Card Future HH")
+    card_client = APIClient()
+    card_client.force_authenticate(user=card_user)
+    Transaction.objects.create(
+        account=card_account,
+        date=tomorrow,
+        payee="Credit card payment",
+        amount=Decimal("-80.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ACTUAL,
+        transaction_type=Transaction.TransactionType.CREDIT_CARD_PAYMENT,
+    )
+    assert card_client.get("/api/onboarding/status/").json()["checklist"]["upcoming_transaction"] is True
+
+
+def test_inactive_recurring_does_not_complete_checklist_recurring(fresh_client, fresh_user):
+    household, account = _household_checking(fresh_user, "Inactive Rule HH")
+    RecurringRule.objects.create(
+        household=household,
+        account=account,
+        name="Paused rent",
+        direction=RecurringRule.Direction.EXPENSE,
+        amount=Decimal("1200"),
+        frequency=RecurringRule.Frequency.MONTHLY_DAY,
+        interval=1,
+        start_date=date(2026, 1, 1),
+        active=False,
+    )
+    body = _status(fresh_client).json()
+    assert body["steps"]["recurring"] is True
+    assert body["steps"]["forecast_ready"] is True
+    assert body["checklist"]["recurring"] is False
+
+
+def test_active_recurring_completes_checklist_recurring(fresh_client, fresh_user):
+    household, account = _household_checking(fresh_user, "Active Rule HH")
+    RecurringRule.objects.create(
+        household=household,
+        account=account,
+        name="Paycheck",
+        direction=RecurringRule.Direction.INCOME,
+        amount=Decimal("2000"),
+        frequency=RecurringRule.Frequency.BIWEEKLY,
+        interval=1,
+        start_date=date(2026, 1, 2),
+        active=True,
+    )
+    body = _status(fresh_client).json()
+    assert body["checklist"]["recurring"] is True
+    assert body["steps"]["recurring"] is True
+
+
 def test_active_or_paused_goal_completes_goal_checklist(fresh_client, fresh_user):
     from goals.models import GoalBucket
 

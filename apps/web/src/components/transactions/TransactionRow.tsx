@@ -25,7 +25,6 @@ export type TransactionRowData = {
   accountId?: number | null;
   linkedTransactionId?: number | null;
   hasTransferDestination?: boolean;
-  hasTransferDestination?: boolean;
   readOnly?: boolean;
   /** Rule/one-time forecast occurrence — lifecycle action is Skip, not Delete. */
   plannedScheduled?: boolean;
@@ -59,7 +58,23 @@ export function reviewSelectionTotals(
     const amt = Number(row.amount);
     if (Number.isFinite(amt)) sum += amt;
   }
-  return { count: selectedIds.size, sum };
+  return { count: seen.size, sum };
+}
+
+/** Drop selected IDs that are no longer represented in the visible ledger. */
+export function pruneSelectedTransactionIds(
+  selectedIds: ReadonlySet<number>,
+  visibleIds: Iterable<number | null | undefined>
+): Set<number> {
+  const visible = new Set<number>();
+  for (const id of visibleIds) {
+    if (id != null) visible.add(id);
+  }
+  const next = new Set<number>();
+  for (const id of selectedIds) {
+    if (visible.has(id)) next.add(id);
+  }
+  return next;
 }
 
 type Props = {

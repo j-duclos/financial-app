@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ScrollView, Text } from "react-native";
 import type { Account, Category, RecurringRuleFrequency } from "@budget-app/shared";
 import { formatAccountOptionLabel } from "@budget-app/shared";
+import { categoryPickerOptions as buildCategoryPickerOptions } from "@/features/categories/categoryPickerOptions";
 import { BottomSheet, Button, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { todayStr } from "@/lib/dates";
@@ -79,11 +80,12 @@ export function NewRecurringSheet({
   );
 
   const categoryOptions: PickerOption[] = useMemo(
-    () => [
-      { id: "", title: "None" },
-      ...filteredCategories.map((c) => ({ id: String(c.id), title: c.name, searchText: c.name })),
-    ],
-    [filteredCategories]
+    () =>
+      buildCategoryPickerOptions(
+        filteredCategories,
+        isIncome ? "INCOME" : "EXPENSE"
+      ),
+    [filteredCategories, isIncome]
   );
 
   const selectedAccount = paymentAccounts.find((a) => String(a.id) === accountId);

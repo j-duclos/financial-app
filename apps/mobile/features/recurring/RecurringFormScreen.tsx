@@ -12,11 +12,14 @@ import {
   formatAccountOptionLabel,
   getAccountInstitutionSubtitle,
   getEffectiveDisplayName,
+  GETTING_STARTED_COPY,
   recurringSaveConsumesActiveSlot,
+  sortCategoriesForPicker,
 } from "@budget-app/shared";
-import { AppHeader, Button, EmptyState, ErrorState, Screen, SkeletonBlock, TextField } from "@/components/ui";
+import { AppHeader, Button, Card, EmptyState, ErrorState, Screen, SkeletonBlock, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
+import { isCalendarOnboardingSource } from "@/features/onboarding/gettingStartedRoutes";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
 import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
 import { todayStr } from "@/lib/dates";
@@ -216,9 +219,10 @@ export function RecurringFormScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; source?: string | string[] }>();
   const editingId = params.id ? Number(params.id) : null;
   const isEdit = editingId != null && Number.isInteger(editingId) && editingId > 0;
+  const fromOnboarding = !isEdit && isCalendarOnboardingSource(params.source);
   const {
     billing,
     billingLoading,
@@ -306,18 +310,18 @@ export function RecurringFormScreen() {
     [accountOptions, form.account_id]
   );
 
-  const categoryOptions: PickerOption[] = useMemo(
-    () => [
-      { id: "", title: "None", subtitle: "No category" },
-      ...categories.map((c) => ({
+  const categoryOptions: PickerOption[] = useMemo(() => {
+    const type = form.direction === "INCOME" ? "INCOME" : "EXPENSE";
+    return [
+      ...sortCategoriesForPicker(categories, type).map((c) => ({
         id: String(c.id),
         title: c.name,
         subtitle: c.category_type,
         searchText: c.name,
       })),
-    ],
-    [categories]
-  );
+      { id: "", title: "None", subtitle: "No category", searchText: "None No category" },
+    ];
+  }, [categories, form.direction]);
 
   const showTransferDestination =
     form.direction === "TRANSFER" || categoryAllowsTransferDestination(selectedCategory);
@@ -491,6 +495,13 @@ export function RecurringFormScreen() {
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
         >
+          {fromOnboarding ? (
+            <Card testID="onboarding-recurring-hint">
+              <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption }}>
+                {GETTING_STARTED_COPY.recurringOnboardingHelp}
+              </Text>
+            </Card>
+          ) : null}
           {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
 
           <TextField label="Name" value={form.name} onChangeText={(v) => set("name", v)} />

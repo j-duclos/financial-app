@@ -278,7 +278,7 @@ export function DashboardScreen() {
         testID="first-account-success"
         onPrimary={() => {
           gettingStarted.markFirstAccountSeen();
-          router.push("/transaction/new");
+          router.push(GETTING_STARTED_ROUTES.upcoming_transaction as never);
         }}
         onSecondary={gettingStarted.markFirstAccountSeen}
       />
@@ -291,9 +291,12 @@ export function DashboardScreen() {
         testID="first-transaction-forecast"
         onPrimary={() => {
           gettingStarted.markFirstTransactionSeen();
-          router.push("/(app)/(tabs)/calendar");
+          router.push(GETTING_STARTED_ROUTES.recurring as never);
         }}
-        onSecondary={gettingStarted.markFirstTransactionSeen}
+        onSecondary={() => {
+          gettingStarted.markFirstTransactionSeen();
+          router.push(GETTING_STARTED_ROUTES.calendar as never);
+        }}
       />
       <DashboardConceptHelpSheet topic={helpTopic} onClose={() => setHelpTopic(null)} />
     </>

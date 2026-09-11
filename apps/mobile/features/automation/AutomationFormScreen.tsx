@@ -10,7 +10,7 @@ import {
   updateRule,
 } from "@budget-app/api-client";
 import type { RecurringRule, RecurringRuleFrequency } from "@budget-app/shared";
-import { formatAccountOptionLabel } from "@budget-app/shared";
+import { formatAccountOptionLabel, sortCategoriesForPicker } from "@budget-app/shared";
 import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
@@ -209,6 +209,17 @@ export function AutomationFormScreen() {
   const categories = categoriesQuery.categories;
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const catName = selectedCategory?.name ?? "";
+  const categoryPickerType = form.direction === "INCOME" ? "INCOME" : "EXPENSE";
+  const categoryChipOptions = useMemo(
+    () => [
+      ...sortCategoriesForPicker(
+        categories.filter((c) => c.category_type === categoryPickerType),
+        categoryPickerType
+      ).map((c) => ({ value: String(c.id), label: c.name })),
+      { value: "", label: "None" },
+    ],
+    [categories, categoryPickerType]
+  );
   const transferAllowed = catName === "Credit Card Payment" || catName === "Bank Transfer";
   const creditCardAccounts = accounts.filter(
     (a) => a.account_type === "CREDIT" && a.id !== form.account_id
@@ -482,10 +493,7 @@ export function AutomationFormScreen() {
             {form.direction !== "TRANSFER" ? (
               <ChipRow
                 label="Category"
-                options={[
-                  { value: "", label: "None" },
-                  ...categories.map((c) => ({ value: String(c.id), label: c.name })),
-                ]}
+                options={categoryChipOptions}
                 selected={String(form.category_id ?? "")}
                 onSelect={(v) => {
                   set("category_id", v ? Number(v) : null);

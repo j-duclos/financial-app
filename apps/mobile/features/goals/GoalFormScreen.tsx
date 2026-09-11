@@ -8,6 +8,10 @@ import {
   getEffectiveDisplayName,
   goalFundingFormFromAllocation,
   goalFormHasErrors,
+  GOAL_INCLUDE_IN_FORECAST_HELP,
+  GOAL_INCLUDE_IN_FORECAST_LABEL,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL,
   GOAL_TYPE_OPTIONS,
   isDebtGoalType,
   validateGoalForm,
@@ -590,8 +594,8 @@ export function GoalFormScreen() {
             ) : null}
 
             <SwitchRow
-              label="Reserve contributions from safe-to-spend"
-              help="Keep this goal's planned contributions out of money available to spend"
+              label={GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL}
+              help={GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP}
               value={form.include_in_safe_to_spend}
               onValueChange={(include_in_safe_to_spend) =>
                 setForm((f) => ({ ...f, include_in_safe_to_spend }))
@@ -599,8 +603,8 @@ export function GoalFormScreen() {
             />
 
             <SwitchRow
-              label="Include in forecast"
-              help="Show this goal in cash-flow and balance projections"
+              label={GOAL_INCLUDE_IN_FORECAST_LABEL}
+              help={GOAL_INCLUDE_IN_FORECAST_HELP}
               value={form.forecast_enabled}
               onValueChange={(forecast_enabled) => setForm((f) => ({ ...f, forecast_enabled }))}
             />

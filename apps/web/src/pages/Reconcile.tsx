@@ -31,7 +31,7 @@ import {
 import { parseMoneyToCents, parseSignedBankBalanceCents, bankBalanceAmountString } from "../lib/moneyCents";
 import { selectedCountLabel, creditBankBalanceHint } from "../lib/reconcileWorkflow";
 import { reconcileSourceTooltip } from "../lib/reconcileSourceLabel";
-import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh } from "../lib/financialQueryRefresh";
+import { flushFinancialRefresh, scheduleAccountsRefresh, scheduleTimelineRefresh, cancelScheduledFinancialRefresh } from "../lib/financialQueryRefresh";
 import { lastReconciledLabel } from "../lib/reconcileHistoryDisplay";
 import { sliceIdsByAnchor } from "../lib/shiftClickSelection";
 import { useOperationalAccounts } from "../hooks/useOperationalAccounts";
@@ -81,6 +81,7 @@ export default function Reconcile() {
   const hasSetInitialAccount = useRef(false);
   const hasSetInitialPeriod = useRef(false);
   const queryClient = useQueryClient();
+  useEffect(() => () => cancelScheduledFinancialRefresh(), []);
 
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const { data: accountsData } = useOperationalAccounts();

@@ -31,7 +31,7 @@ export function logTransactionsPageLoadPlan(plan: TransactionsPageLoadPlan): voi
         : "getAccount=1 (balance+forecast_summary+health+selected Forecast Window)",
       `listAccounts=cached`,
       `listCategories=cached`,
-      `householdTimeline=${plan.householdTimelineEnabled ? "enabled (transfer/edit)" : "skipped"}`,
+      `householdTimeline=skipped (projected-funds-alerts)`,
       `hideReconciledPast=${plan.hideReconciledPast}`,
       plan.duplicateAccountCallsRemoved ? "duplicate getAccount removed=yes" : "",
     ]

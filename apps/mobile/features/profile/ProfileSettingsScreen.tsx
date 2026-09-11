@@ -43,6 +43,8 @@ import {
   TextField,
 } from "@/components/ui";
 import { getApiTargetDisplayLabel, getAppEnvironment } from "@/constants/env";
+import { ONBOARDING_STATUS_QUERY_KEY } from "@/lib/billing";
+import { resetGettingStartedEducation } from "@/features/onboarding/gettingStartedStorage";
 import {
   getAppVersionLabel,
   getPrivacyPolicyUrl,
@@ -560,6 +562,28 @@ export function ProfileSettingsScreen() {
                     appEnv: getAppEnvironment(),
                     apiTarget: getApiTargetDisplayLabel(),
                   })}
+                />
+                <SettingsRow
+                  title="Replay getting started"
+                  subtitle="Clears local onboarding education flags for this user"
+                  onPress={() => {
+                    const userId = auth.user?.id;
+                    if (userId == null) {
+                      Alert.alert("Not signed in", "Log in first, then try again.");
+                      return;
+                    }
+                    void resetGettingStartedEducation(userId)
+                      .then(() => {
+                        queryClient.invalidateQueries({ queryKey: ONBOARDING_STATUS_QUERY_KEY });
+                        Alert.alert(
+                          "Getting started reset",
+                          "Open Home to see the education sheets again. Welcome only appears when this account does not already have a forecast."
+                        );
+                      })
+                      .catch(() => {
+                        Alert.alert("Could not reset", "Try again, or reload the app.");
+                      });
+                  }}
                 />
               </SettingsGroup>
             </>

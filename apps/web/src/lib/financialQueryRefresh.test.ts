@@ -42,7 +42,13 @@ describe("financialQueryRefresh utilization preference", () => {
     expect(source).toMatch(/\["account-payoff"\]/);
   });
 
-  it("refetches future-posted transactions after a financial edit", () => {
-    expect(source).toMatch(/\["transactions", "future-posted"\]/);
+  it("refetches active financial queries once via invalidation after a mutation", () => {
+    const fnBody = source.slice(source.indexOf("export function refreshAfterTransactionEdit"));
+    const end = fnBody.indexOf("export function flushFinancialRefresh");
+    const body = end >= 0 ? fnBody.slice(0, end) : fnBody;
+    expect(body).toMatch(/cancelQueries\(\{ queryKey: \["timeline"\] \}\)/);
+    expect(body).toMatch(/invalidateFinancialQueries\(queryClient\)/);
+    expect(body).not.toMatch(/refetchQueries/);
+    expect(source).not.toMatch(/\["transactions", "future-posted"\]/);
   });
 });

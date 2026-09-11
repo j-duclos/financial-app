@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canSelectTransactionForBatchDelete,
   canSelectTransactionForReview,
+  pruneSelectedTransactionIds,
   reviewSelectionTotals,
   type TransactionRowData,
 } from "./TransactionRow";
@@ -87,6 +88,23 @@ describe("reviewSelectionTotals", () => {
     const totals = reviewSelectionTotals(new Set([1, 2]), rows);
     expect(totals.count).toBe(2);
     expect(totals.sum).toBeCloseTo(78.16, 2);
+  });
+
+  it("counts only selected IDs that are currently represented in the rows", () => {
+    const rows = [
+      baseRow({ transactionId: 1, amount: -21.84 }),
+      baseRow({ transactionId: 2, amount: 100 }),
+    ];
+    const totals = reviewSelectionTotals(new Set([1, 2, 99]), rows);
+    expect(totals.count).toBe(2);
+    expect(totals.sum).toBeCloseTo(78.16, 2);
+  });
+});
+
+describe("pruneSelectedTransactionIds", () => {
+  it("drops stale IDs that are no longer in the visible ledger", () => {
+    const next = pruneSelectedTransactionIds(new Set([1, 2, 99]), [1, 2, null]);
+    expect([...next].sort()).toEqual([1, 2]);
   });
 });
 

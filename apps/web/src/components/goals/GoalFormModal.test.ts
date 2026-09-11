@@ -2,6 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  GOAL_INCLUDE_IN_FORECAST_HELP,
+  GOAL_INCLUDE_IN_FORECAST_LABEL,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL,
+} from "@budget-app/shared";
 
 const source = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "GoalFormModal.tsx"),
@@ -34,9 +40,27 @@ describe("GoalFormModal", () => {
     expect(source).toMatch(/Linked account/);
     expect(source).toMatch(/Planned monthly contribution/);
     expect(source).toMatch(/Priority/);
-    expect(source).toMatch(/Reduce safe-to-spend on linked account/);
-    expect(source).toMatch(/Include in forecast/);
+    expect(source).toMatch(/GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL/);
+    expect(source).toMatch(/GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP/);
+    expect(source).toMatch(/checked=\{form\.include_in_safe_to_spend\}/);
+    expect(source).toMatch(/GOAL_INCLUDE_IN_FORECAST_LABEL/);
+    expect(source).toMatch(/checked=\{form\.forecast_enabled\}/);
     expect(source).toMatch(/validateGoalForm/);
+    expect(source).not.toMatch(/Reduce safe-to-spend on linked account/);
+    expect(source).not.toMatch(/safe-to-spend on linked/);
+  });
+
+  it("uses shared reserve-contribution copy and keeps forecast as a separate field", () => {
+    expect(GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL).toBe("Reserve planned contributions");
+    expect(GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP).toBe(
+      "Keep this goal's planned contributions separate from money available for everyday spending."
+    );
+    expect(GOAL_INCLUDE_IN_FORECAST_LABEL).toBe("Include in forecast");
+    expect(GOAL_INCLUDE_IN_FORECAST_HELP).toBe(
+      "Show this goal in cash-flow and balance projections."
+    );
+    expect(source).toMatch(/include_in_safe_to_spend: e\.target\.checked/);
+    expect(source).toMatch(/forecast_enabled: e\.target\.checked/);
   });
 
   it("keeps existing types, defaults, and create/edit actions", () => {

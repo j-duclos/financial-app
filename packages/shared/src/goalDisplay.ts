@@ -10,6 +10,15 @@ import type {
 import { formatCurrency } from "./utils";
 import { formatMonthYear, formatShortMonthDay } from "./dateDisplay";
 
+/** User-facing copy for the planned-contribution reservation toggle (presentation only). */
+export const GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL = "Reserve planned contributions";
+export const GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP =
+  "Keep this goal's planned contributions separate from money available for everyday spending.";
+
+export const GOAL_INCLUDE_IN_FORECAST_LABEL = "Include in forecast";
+export const GOAL_INCLUDE_IN_FORECAST_HELP =
+  "Show this goal in cash-flow and balance projections.";
+
 export const GOAL_TYPE_OPTIONS: { value: FinancialGoalType; label: string }[] = [
   { value: "emergency", label: "Emergency fund" },
   { value: "vacation", label: "Vacation" },

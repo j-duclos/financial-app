@@ -57,6 +57,12 @@ describe("RecurringFormScreen structure", () => {
     expect(formSrc).toContain('lifecycleStatus: "running"');
     expect(formSrc).toContain("start_date: todayStr()");
   });
+
+  it("shows onboarding recurring help only with source=onboarding", () => {
+    expect(formSrc).toContain("isCalendarOnboardingSource(params.source)");
+    expect(formSrc).toContain('testID="onboarding-recurring-hint"');
+    expect(formSrc).toContain("GETTING_STARTED_COPY.recurringOnboardingHelp");
+  });
 });
 
 describe("Recurring list UI structure", () => {

@@ -1,9 +1,21 @@
 export { ApiError } from "@budget-app/api-client";
 import { ApiError } from "@budget-app/api-client";
 
+const CREDENTIAL_FAILURE_RE =
+  /no active account|given credentials|unable to log in|invalid credentials/i;
+
+function isCredentialAuthFailure(message: string): boolean {
+  return CREDENTIAL_FAILURE_RE.test(message);
+}
+
 export function describeApiError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 401) return "Your session expired. Please sign in again.";
+    if (err.status === 401) {
+      if (isCredentialAuthFailure(err.message)) {
+        return "Incorrect username or password.";
+      }
+      return "Your session expired. Please sign in again.";
+    }
     if (err.status === 403) return "You do not have permission to do that.";
     if (err.status === 404) return "That resource was not found.";
     if (err.status === 422) return err.message || "Please check your input and try again.";
@@ -20,6 +32,14 @@ export function describeApiError(err: unknown): string {
     return err.message;
   }
   return "Something went wrong. Please try again.";
+}
+
+/** Login/register: a 401 is bad credentials, not an expired session. */
+export function describeAuthFormError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 401) {
+    return "Incorrect username or password.";
+  }
+  return describeApiError(err);
 }
 
 /** Map DRF validation messages embedded in ApiError.message when present. */

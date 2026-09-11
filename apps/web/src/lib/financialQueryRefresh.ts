@@ -6,6 +6,8 @@ const ACCOUNTS_DEBOUNCE_MS = 4000;
 
 let timelineTimer: ReturnType<typeof setTimeout> | null = null;
 let accountsTimer: ReturnType<typeof setTimeout> | null = null;
+let timelineRefreshClient: QueryClient | null = null;
+let accountsRefreshClient: QueryClient | null = null;
 
 /** Query prefixes that must go stale after a financial mutation. */
 export const FINANCIAL_QUERY_PREFIXES = [
@@ -60,9 +62,12 @@ export function scheduleTimelineRefresh(
   delayMs = TIMELINE_DEBOUNCE_MS
 ): void {
   if (timelineTimer) clearTimeout(timelineTimer);
+  timelineRefreshClient = queryClient;
   timelineTimer = setTimeout(() => {
     timelineTimer = null;
-    void queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
+    const client = timelineRefreshClient;
+    timelineRefreshClient = null;
+    if (client) void client.refetchQueries({ queryKey: ["timeline"], type: "active" });
   }, delayMs);
 }
 
@@ -71,48 +76,24 @@ export function scheduleAccountsRefresh(
   delayMs = ACCOUNTS_DEBOUNCE_MS
 ): void {
   if (accountsTimer) clearTimeout(accountsTimer);
+  accountsRefreshClient = queryClient;
   accountsTimer = setTimeout(() => {
     accountsTimer = null;
-    void queryClient.refetchQueries({ queryKey: ["accounts"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["account"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
+    const client = accountsRefreshClient;
+    accountsRefreshClient = null;
+    if (!client) return;
+    void client.refetchQueries({ queryKey: ["accounts"], type: "active" });
+    void client.refetchQueries({ queryKey: ["account"], type: "active" });
+    void client.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
+    void client.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
+    void client.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
+    void client.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
+    void client.refetchQueries({ queryKey: ["recommendations"], type: "active" });
   }, delayMs);
 }
 
-/** Immediate refresh after a transaction edit — authoritative timeline and account balances. */
-export function refreshAfterTransactionEdit(
-  queryClient: QueryClient,
-  opts?: {
-    refreshTimeline?: boolean;
-    refreshAccounts?: boolean;
-    skipTransactionsInvalidate?: boolean;
-  }
-): void {
-  invalidateFinancialQueries(queryClient);
-  if (!opts?.skipTransactionsInvalidate) {
-    void queryClient.refetchQueries({ queryKey: ["transactions"], type: "active" });
-  }
-  if (opts?.refreshTimeline !== false) {
-    void queryClient.cancelQueries({ queryKey: ["timeline"] });
-    void queryClient.refetchQueries({ queryKey: ["timeline"], type: "active" });
-  }
-  if (opts?.refreshAccounts) {
-    void queryClient.refetchQueries({ queryKey: ["accounts"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["account"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-fast"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["dashboard-summary-details"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["extended-cash-risk"], type: "active" });
-    void queryClient.refetchQueries({ queryKey: ["recommendations"], type: "active" });
-  }
-  void queryClient.refetchQueries({ queryKey: ["transactions", "future-posted"], type: "active" });
-}
-
-export function flushFinancialRefresh(queryClient: QueryClient): void {
+/** Drop pending Reconcile debounce timers so they cannot fire against a stale QueryClient. */
+export function cancelScheduledFinancialRefresh(): void {
   if (timelineTimer) {
     clearTimeout(timelineTimer);
     timelineTimer = null;
@@ -121,6 +102,26 @@ export function flushFinancialRefresh(queryClient: QueryClient): void {
     clearTimeout(accountsTimer);
     accountsTimer = null;
   }
+  timelineRefreshClient = null;
+  accountsRefreshClient = null;
+}
+
+/** Immediate refresh after a transaction edit — invalidate once; active queries refetch once. */
+export function refreshAfterTransactionEdit(
+  queryClient: QueryClient,
+  opts?: {
+    refreshTimeline?: boolean;
+    refreshAccounts?: boolean;
+    skipTransactionsInvalidate?: boolean;
+  }
+): void {
+  void opts;
+  void queryClient.cancelQueries({ queryKey: ["timeline"] });
+  invalidateFinancialQueries(queryClient);
+}
+
+export function flushFinancialRefresh(queryClient: QueryClient): void {
+  cancelScheduledFinancialRefresh();
   invalidateFinancialQueries(queryClient);
 }
 

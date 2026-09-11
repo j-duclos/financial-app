@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { isNoneCategoryPickerLabel } from "@budget-app/shared";
 import { BottomSheet } from "@/components/ui";
 import { useTheme } from "@/theme";
 
@@ -41,9 +42,15 @@ export function OptionsPickerSheet({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((opt) => {
+    const matches = options.filter((opt) => {
       const hay = (opt.searchText ?? `${opt.title} ${opt.subtitle ?? ""}`).toLowerCase();
       return hay.includes(q);
+    });
+    return [...matches].sort((a, b) => {
+      const noneA = isNoneCategoryPickerLabel(a.title);
+      const noneB = isNoneCategoryPickerLabel(b.title);
+      if (noneA !== noneB) return noneA ? 1 : -1;
+      return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
     });
   }, [options, query]);
 

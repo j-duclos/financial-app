@@ -14,6 +14,7 @@ import {
   type OnboardingStatus,
 } from "@budget-app/shared";
 import {
+  educationFlagsEqual,
   getGettingStartedEducationCache,
   gettingStartedEducationStorageKey,
   mergeGettingStartedEducation,
@@ -76,7 +77,8 @@ export function useGettingStartedEducation(opts: {
     const unsubscribe = subscribeGettingStartedEducation(() => {
       if (cancelled) return;
       const next = getGettingStartedEducationCache(userId);
-      if (next) setStored(next);
+      if (!next) return;
+      setStored((prev) => (prev != null && educationFlagsEqual(prev, next) ? prev : next));
     });
     return () => {
       cancelled = true;
@@ -109,21 +111,30 @@ export function useGettingStartedEducation(opts: {
 
   useEffect(() => {
     if (!hydrated || userId == null) return;
-    setStored((prev) => {
-      if (prev != null) return prev;
-      const seeded = seedGettingStartedEducation({
+    const forecastReady =
+      onboarding?.steps.forecast_ready === true || onboarding?.completed === true;
+    const next =
+      stored ??
+      seedGettingStartedEducation({
         stored: null,
         completion: dataCompletion,
-        forecastReady: onboarding?.steps.forecast_ready === true || onboarding?.completed === true,
+        forecastReady,
       });
-      void AsyncStorage.setItem(
-        gettingStartedEducationStorageKey(userId),
-        serializeGettingStartedEducation(seeded)
-      ).catch(() => undefined);
-      setGettingStartedEducationCache(userId, seeded);
-      return seeded;
-    });
-  }, [dataCompletion, hydrated, onboarding?.completed, onboarding?.steps.forecast_ready, userId]);
+    if (stored == null) {
+      setStored(next);
+    }
+    const cached = getGettingStartedEducationCache(userId);
+    if (cached && educationFlagsEqual(cached, next)) return;
+    if (cached && stored != null && !educationFlagsEqual(cached, stored)) {
+      // Cache was reset from outside this hook — do not clobber it with stale flags.
+      return;
+    }
+    setGettingStartedEducationCache(userId, next);
+    void AsyncStorage.setItem(
+      gettingStartedEducationStorageKey(userId),
+      serializeGettingStartedEducation(next)
+    ).catch(() => undefined);
+  }, [dataCompletion, hydrated, onboarding?.completed, onboarding?.steps.forecast_ready, stored, userId]);
 
   const persist = useCallback(
     (patch: Partial<GettingStartedEducationFlags>) => {
@@ -137,6 +148,7 @@ export function useGettingStartedEducation(opts: {
               onboarding?.steps.forecast_ready === true || onboarding?.completed === true,
           });
         const next = mergeGettingStartedEducation(base, patch);
+        if (prev != null && educationFlagsEqual(prev, next)) return prev;
         if (userId != null) {
           setGettingStartedEducationCache(userId, next);
           void AsyncStorage.setItem(
@@ -175,6 +187,7 @@ export function useGettingStartedEducation(opts: {
     shouldShowGettingStartedCard({
       completion,
       collapsed: flags.getting_started_collapsed,
+      educationFlags: flags,
     });
 
   return {
@@ -188,6 +201,7 @@ export function useGettingStartedEducation(opts: {
     markFirstAccountSeen: () => persist({ first_account_success_seen: true }),
     markFirstTransactionSeen: () => persist({ first_transaction_forecast_seen: true }),
     markCalendarOpened: () => persist({ calendar_intro_seen: true }),
+    markCalendarOnboardingHandoffSeen: () => persist({ calendar_onboarding_handoff_seen: true }),
     collapseChecklist: () => persist({ getting_started_collapsed: true }),
   };
 }

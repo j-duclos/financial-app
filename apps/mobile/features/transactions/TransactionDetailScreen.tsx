@@ -16,6 +16,7 @@ import {
   getEffectiveDisplayName,
   MATCH_BANK_TRANSACTION_LABEL,
   selectableImportMatchCandidates,
+  sortCategoriesForPicker,
   transactionSourceDisplayLabel,
 } from "@budget-app/shared";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -96,6 +97,17 @@ export function TransactionDetailScreen() {
     householdId,
     enabled: canChangeCategory && categorySheetOpen,
   });
+
+  const categoryPickerType = txn?.category?.category_type
+    ?? (txn?.direction === "INFLOW" ? "INCOME" : "EXPENSE");
+  const pickerCategories = useMemo(
+    () =>
+      sortCategoriesForPicker(
+        categories.filter((c) => c.category_type === categoryPickerType),
+        categoryPickerType
+      ),
+    [categories, categoryPickerType]
+  );
 
   const selectedCategoryName = useMemo(() => {
     if (categoryId == null) return "Uncategorized";
@@ -360,24 +372,7 @@ export function TransactionDetailScreen() {
         onClose={() => setCategorySheetOpen(false)}
       >
         <ScrollView>
-          <Pressable
-            onPress={() => selectCategory(null)}
-            style={{
-              paddingVertical: 14,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.border,
-            }}
-          >
-            <Text
-              style={{
-                color: categoryId == null ? theme.colors.tint : theme.colors.text,
-                ...theme.typography.bodyStrong,
-              }}
-            >
-              Uncategorized
-            </Text>
-          </Pressable>
-          {categories.map((c) => (
+          {pickerCategories.map((c) => (
             <Pressable
               key={c.id}
               onPress={() => selectCategory(c.id)}
@@ -397,6 +392,23 @@ export function TransactionDetailScreen() {
               </Text>
             </Pressable>
           ))}
+          <Pressable
+            onPress={() => selectCategory(null)}
+            style={{
+              paddingVertical: 14,
+              borderBottomWidth: 1,
+              borderBottomColor: theme.colors.border,
+            }}
+          >
+            <Text
+              style={{
+                color: categoryId == null ? theme.colors.tint : theme.colors.text,
+                ...theme.typography.bodyStrong,
+              }}
+            >
+              Uncategorized
+            </Text>
+          </Pressable>
         </ScrollView>
       </BottomSheet>
 

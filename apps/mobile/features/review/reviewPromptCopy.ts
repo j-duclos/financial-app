@@ -12,8 +12,6 @@ export const REVIEW_PROMPT_COPY = {
   feedbackBody: "We’d really appreciate your feedback.",
   feedbackPlaceholder: "What’s not working well?",
   feedbackCategoryLabel: "Category (optional)",
-  contactLabel: "May we contact you about this?",
-  contactHint: (email: string) => `We’ll use ${email}`,
   submitLabel: "Send feedback",
   thanksTitle: "Thanks for the feedback.",
   thanksBody: "We appreciate you helping us improve FlowSight.",

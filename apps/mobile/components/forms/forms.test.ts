@@ -35,6 +35,7 @@ describe("shared form components", () => {
     expect(optionsPicker).toMatch(/onSelect/);
     expect(optionsPicker).toMatch(/TextInput/);
     expect(optionsPicker).toMatch(/filtered\.length === 0/);
+    expect(optionsPicker).toMatch(/isNoneCategoryPickerLabel/);
   });
 
   it("DatePickerField preserves native date picker behavior", () => {

@@ -9,7 +9,7 @@ import { BrandLogo } from "@/components/brand";
 import { Button, Screen, TextField } from "@/components/ui";
 import { APP_TAGLINE } from "@budget-app/shared";
 import { useAuth } from "@/features/auth";
-import { describeApiError } from "@/services/api";
+import { describeAuthFormError } from "@/services/api";
 import { getApiBaseUrl, getApiConnectivityHint } from "@/constants/env";
 import { useTheme } from "@/theme";
 
@@ -38,7 +38,7 @@ export default function LoginScreen() {
         "/(app)/(tabs)";
       router.replace(destination as never);
     } catch (e: unknown) {
-      setError(describeApiError(e));
+      setError(describeAuthFormError(e));
     } finally {
       setSubmitting(false);
     }

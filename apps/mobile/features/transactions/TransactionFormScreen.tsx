@@ -11,7 +11,12 @@ import {
   updateTransaction,
 } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import { formatCurrency, getEffectiveDisplayName, GETTING_STARTED_COPY } from "@budget-app/shared";
+import {
+  GETTING_STARTED_HOME_ROUTE,
+  isOnboardingFutureTransactionMode,
+} from "@/features/onboarding/gettingStartedRoutes";
+import { categoryPickerOptions as buildCategoryPickerOptions } from "@/features/categories/categoryPickerOptions";
 import { AppHeader, Button, Card, ConfirmDialog, ErrorState, Screen, TextField } from "@/components/ui";
 import { DatePickerField } from "@/components/forms/DatePickerField";
 import { OptionsPickerSheet, type PickerOption } from "@/components/forms/OptionsPickerSheet";
@@ -23,7 +28,6 @@ import {
   todayStr,
 } from "@/lib/dates";
 import { resolveHouseholdId } from "@/lib/householdContext";
-import { isTransferCategoryName } from "@/lib/transactionsLedger";
 import {
   canDeleteTransaction,
   isTransferTransaction,
@@ -42,26 +46,28 @@ import {
   sanitizeUnsignedMoneyInput,
 } from "@/lib/moneyInput";
 import {
+  TRANSACTION_ENTRY_TYPE_OPTIONS,
   accountFieldLabel,
+  applyEntryTypeChange,
   canonicalCreateAmount,
   createTransactionButtonLabel,
+  destinationFieldLabel,
+  destinationPickerTitle,
+  defaultNewTransactionDateIso,
+  emptyTransactionForm,
+  entryTypeFromExistingTransaction,
+  filterDestinationAccounts,
+  internalCategoryIdForEntry,
+  isTransferLikeEntry,
+  onboardingFutureTransactionSaveHandoff,
   payeeOrSourceLabel,
-  transferAmount,
+  planNewTransactionSave,
+  type DestinationFilterAccount,
+  type TransactionEntryType,
+  type TransactionFormState,
+  transactionFormVisibleFields,
   validateTransactionForm,
 } from "./transactionForm";
-
-type TransactionEntryType = "expense" | "income" | "transfer";
-
-type FormState = {
-  account_id: number | "";
-  dateIso: string;
-  payee: string;
-  amount: string;
-  entryType: TransactionEntryType;
-  category_id: number | "";
-  memo: string;
-  transfer_to_account_id: number | "";
-};
 
 type PickerKind = "account" | "category" | "transferTo" | null;
 
@@ -73,16 +79,13 @@ function accountHouseholdId(account: Account | undefined): number | undefined {
   return undefined;
 }
 
-const emptyForm = (accountId?: number): FormState => ({
-  account_id: accountId ?? "",
-  dateIso: todayStr(),
-  payee: "",
-  amount: "",
-  entryType: "expense",
-  category_id: "",
-  memo: "",
-  transfer_to_account_id: "",
-});
+function toDestFilterAccount(account: Account): DestinationFilterAccount {
+  return {
+    id: account.id,
+    account_type: account.account_type,
+    householdId: accountHouseholdId(account),
+  };
+}
 
 function balanceSubtitle(account: Account | undefined): string | undefined {
   if (!account) return undefined;
@@ -99,6 +102,7 @@ export function TransactionFormScreen() {
     account?: string;
     id?: string;
     mode?: string;
+    source?: string;
     from?: string;
     to?: string;
     amount?: string;
@@ -108,12 +112,20 @@ export function TransactionFormScreen() {
   const isEdit = editId != null && editId > 0;
   const prefillAccount = Number(params.account);
   const transferMode = params.mode === "transfer";
+  const futureOnboardingMode = !isEdit && isOnboardingFutureTransactionMode(params);
   const presetFrom = Number(params.from);
   const presetTo = Number(params.to);
 
-  const [form, setForm] = useState<FormState>(() =>
-    emptyForm(Number.isInteger(prefillAccount) && prefillAccount > 0 ? prefillAccount : undefined)
-  );
+  const [form, setForm] = useState<TransactionFormState>(() => {
+    const seeded = emptyTransactionForm(
+      Number.isInteger(prefillAccount) && prefillAccount > 0 ? prefillAccount : undefined,
+      defaultNewTransactionDateIso({
+        isOnboardingFuture: isOnboardingFutureTransactionMode(params),
+        todayIso: todayStr(),
+      })
+    );
+    return seeded;
+  });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [picker, setPicker] = useState<PickerKind>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -155,9 +167,8 @@ export function TransactionFormScreen() {
     [accounts, form.transfer_to_account_id]
   );
   const selectedCategory = categories.find((c) => c.id === form.category_id);
-  const isTransferEntry = form.entryType === "transfer" || isTransferCategoryName(selectedCategory?.name);
-  const isCreditCardPayment =
-    isTransferEntry && selectedDestAccount?.account_type === "CREDIT";
+  const transferLike = isTransferLikeEntry(form.entryType);
+  const visible = transactionFormVisibleFields(form.entryType);
 
   const bankTransferCategory = useMemo(
     () => categories.find((c) => c.name === "Bank Transfer") ?? null,
@@ -189,21 +200,18 @@ export function TransactionFormScreen() {
   }, [isEdit, transferMode, presetFrom, presetTo, prefillAccount, params.amount, params.date]);
 
   useEffect(() => {
-    if (isEdit || form.entryType !== "transfer" || categories.length === 0) return;
-    const dest = selectedDestAccount;
-    const nextCategory =
-      dest?.account_type === "CREDIT" ? creditCardPaymentCategory : bankTransferCategory;
-    if (nextCategory) {
-      setForm((prev) =>
-        prev.category_id === "" ? { ...prev, category_id: nextCategory.id } : prev
-      );
-    }
+    if (isEdit || !isTransferLikeEntry(form.entryType) || categories.length === 0) return;
+    const nextId = internalCategoryIdForEntry(
+      form.entryType,
+      bankTransferCategory?.id ?? null,
+      creditCardPaymentCategory?.id ?? null
+    );
+    if (nextId == null) return;
+    setForm((prev) => (prev.category_id === nextId ? prev : { ...prev, category_id: nextId }));
   }, [
     isEdit,
     form.entryType,
     categories.length,
-    selectedDestAccount?.id,
-    selectedDestAccount?.account_type,
     bankTransferCategory,
     creditCardPaymentCategory,
   ]);
@@ -212,13 +220,12 @@ export function TransactionFormScreen() {
     const txn = txnQuery.data;
     if (!txn) return;
     const abs = Math.abs(parseFloat(txn.amount));
-    const xfer = isTransferCategoryName(txn.category?.name);
     setForm({
       account_id: txn.account?.id ?? txn.account_id ?? "",
       dateIso: txn.date.slice(0, 10),
       payee: txn.payee,
       amount: Number.isFinite(abs) ? String(abs) : "",
-      entryType: xfer ? "transfer" : txn.direction === "INFLOW" ? "income" : "expense",
+      entryType: entryTypeFromExistingTransaction(txn),
       category_id: txn.category?.id ?? txn.category_id ?? "",
       memo: txn.memo ?? "",
       transfer_to_account_id: txn.transfer_to_account?.id ?? "",
@@ -244,14 +251,17 @@ export function TransactionFormScreen() {
     onError: (err) => Alert.alert("Delete failed", describeApiError(err)),
   });
 
+  const destFilterAccounts = useMemo(
+    () => accounts.map(toDestFilterAccount),
+    [accounts]
+  );
+
   const transferDestinations = useMemo((): Account[] => {
-    if (!selectedAccount) return [];
-    const hid = accountHouseholdId(selectedAccount);
-    return accounts.filter((a) => {
-      if (accountHouseholdId(a) !== hid) return false;
-      return a.id !== selectedAccount.id;
-    });
-  }, [accounts, selectedAccount]);
+    const allowed = new Set(
+      filterDestinationAccounts(destFilterAccounts, form.account_id, form.entryType).map((a) => a.id)
+    );
+    return accounts.filter((a) => allowed.has(a.id));
+  }, [accounts, destFilterAccounts, form.account_id, form.entryType]);
 
   const accountPickerOptions = useMemo(
     (): PickerOption[] =>
@@ -266,15 +276,12 @@ export function TransactionFormScreen() {
 
   const categoryPickerOptions = useMemo(
     (): PickerOption[] =>
-      categories
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((c) => ({
-          id: String(c.id),
-          title: c.name,
-          searchText: c.name,
-        })),
-    [categories]
+      buildCategoryPickerOptions(
+        categories,
+        form.entryType === "income" ? "INCOME" : "EXPENSE",
+        false
+      ),
+    [categories, form.entryType]
   );
 
   const transferDestOptions = useMemo(
@@ -293,12 +300,34 @@ export function TransactionFormScreen() {
       const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(form.dateIso)
         ? form.dateIso
         : parseInputDateToIso(form.dateIso);
+
+      if (!isEdit) {
+        const plan = planNewTransactionSave({
+          form,
+          isoDate: isoDate || "",
+          destAccountType: selectedDestAccount?.account_type ?? null,
+          bankTransferCategoryId: bankTransferCategory?.id ?? null,
+          creditCardPaymentCategoryId: creditCardPaymentCategory?.id ?? null,
+        });
+        if (!plan.ok) {
+          setFieldErrors(plan.errors);
+          const err = new Error("validation");
+          (err as { code?: string }).code = "validation";
+          throw err;
+        }
+        if (plan.api === "createTransfer") {
+          return createTransfer(plan.body);
+        }
+        return createTransaction(plan.body);
+      }
+
       const nextErrors = validateTransactionForm({
         entryType: form.entryType,
         accountId: form.account_id,
         transferToAccountId: form.transfer_to_account_id,
         dateIso: isoDate || "",
         amount: form.amount,
+        destAccountType: selectedDestAccount?.account_type ?? null,
       });
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
@@ -310,25 +339,6 @@ export function TransactionFormScreen() {
         throw new Error("Account and date are required");
       }
 
-      if (isTransferEntry && !isEdit) {
-        if (typeof form.transfer_to_account_id !== "number") {
-          throw new Error("Destination account is required for transfers");
-        }
-        const xferCategory = isCreditCardPayment ? creditCardPaymentCategory : bankTransferCategory;
-        return createTransfer({
-          from_account: form.account_id,
-          to_account: form.transfer_to_account_id,
-          amount: transferAmount(form.amount),
-          date: isoDate,
-          payee: isCreditCardPayment ? "Credit card payment" : "Transfer",
-          memo: form.memo,
-          from_category_id:
-            typeof form.category_id === "number"
-              ? form.category_id
-              : xferCategory?.id ?? null,
-        });
-      }
-
       const signedAmount = canonicalCreateAmount(form.entryType, form.amount);
 
       const body = {
@@ -338,18 +348,31 @@ export function TransactionFormScreen() {
         amount: signedAmount,
         category_id: typeof form.category_id === "number" ? form.category_id : null,
         memo: form.memo,
-        ...(isEdit && isTransferEntry && typeof form.transfer_to_account_id === "number"
+        ...(transferLike && typeof form.transfer_to_account_id === "number"
           ? { transfer_to_account_id: form.transfer_to_account_id }
           : {}),
       };
 
-      if (isEdit && editId) {
+      if (editId) {
         return updateTransaction(editId, body);
       }
       return createTransaction(body);
     },
     onSuccess: () => {
       refreshAfterTransactionEdit(queryClient);
+      const isoDate = parseInputDateToIso(form.dateIso) ?? form.dateIso;
+      const handoff = onboardingFutureTransactionSaveHandoff({
+        isOnboardingFuture: futureOnboardingMode,
+        dateIso: isoDate,
+        todayIso: todayStr(),
+      });
+      if (handoff === "home") {
+        router.replace(GETTING_STARTED_HOME_ROUTE as never);
+        return;
+      }
+      if (handoff === "saved_not_future") {
+        Alert.alert(GETTING_STARTED_COPY.futureTransactionSavedNotFuture);
+      }
       router.back();
     },
     onError: (err) => {
@@ -364,7 +387,7 @@ export function TransactionFormScreen() {
     },
   });
 
-  const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
+  const setField = <K extends keyof TransactionFormState>(key: K, value: TransactionFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setFieldErrors((prev) => {
       const next = { ...prev };
@@ -374,12 +397,17 @@ export function TransactionFormScreen() {
   };
 
   const onSelectEntryType = (entryType: TransactionEntryType) => {
-    setForm((prev) => ({
-      ...prev,
-      entryType,
-      transfer_to_account_id: entryType === "transfer" ? prev.transfer_to_account_id : "",
-      category_id: entryType === "transfer" ? "" : prev.category_id,
-    }));
+    setForm((prev) =>
+      applyEntryTypeChange({
+        prev,
+        nextType: entryType,
+        destAccountType: selectedDestAccount?.account_type ?? null,
+        selectedCategoryName: selectedCategory?.name ?? null,
+        bankTransferCategoryId: bankTransferCategory?.id ?? null,
+        creditCardPaymentCategoryId: creditCardPaymentCategory?.id ?? null,
+      })
+    );
+    setFieldErrors({});
   };
 
   if (isEdit && txnQuery.isLoading) {
@@ -400,12 +428,11 @@ export function TransactionFormScreen() {
   }
 
   const typeChip = (label: string, type: TransactionEntryType) => (
-    <View style={{ flex: 1 }}>
+    <View key={type} style={{ flexGrow: 1, flexBasis: "46%" }}>
       <Button
         label={label}
         variant={form.entryType === type ? "primary" : "secondary"}
         onPress={() => onSelectEntryType(type)}
-        disabled={isEdit && isTransferEntry && type !== "transfer"}
       />
     </View>
   );
@@ -413,6 +440,22 @@ export function TransactionFormScreen() {
   return (
     <Screen scroll>
       <AppHeader title={isEdit ? "Edit transaction" : "Add transaction"} onBack={() => router.back()} />
+      {futureOnboardingMode ? (
+        <Card testID="onboarding-future-transaction-hint" style={{ marginBottom: theme.spacing.md }}>
+          <Text style={{ color: theme.colors.text, ...theme.typography.headline }}>
+            {GETTING_STARTED_COPY.futureTransactionFormTitle}
+          </Text>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              ...theme.typography.caption,
+              marginTop: theme.spacing.sm,
+            }}
+          >
+            {GETTING_STARTED_COPY.futureTransactionFormBody}
+          </Text>
+        </Card>
+      ) : null}
       {lockMessage ? (
         <Text style={{ color: theme.colors.warning, ...theme.typography.caption, marginBottom: theme.spacing.md }}>
           {lockMessage}
@@ -456,10 +499,8 @@ export function TransactionFormScreen() {
             <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
               Transaction type
             </Text>
-            <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.spacing.sm }}>
-              {typeChip("Expense", "expense")}
-              {typeChip("Income", "income")}
-              {typeChip("Transfer", "transfer")}
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: theme.spacing.sm }}>
+              {TRANSACTION_ENTRY_TYPE_OPTIONS.map((opt) => typeChip(opt.label, opt.type))}
             </View>
           </>
         ) : null}
@@ -476,7 +517,7 @@ export function TransactionFormScreen() {
           error={fieldErrors.amount}
         />
 
-        {!isTransferEntry ? (
+        {visible.payee || visible.source ? (
           <TextField
             label={payeeOrSourceLabel(form.entryType)}
             value={form.payee}
@@ -485,7 +526,7 @@ export function TransactionFormScreen() {
           />
         ) : null}
 
-        {!isTransferEntry ? (
+        {visible.category ? (
           <SelectField
             label="Category"
             value={selectedCategory?.name ?? null}
@@ -495,12 +536,12 @@ export function TransactionFormScreen() {
           />
         ) : null}
 
-        {isTransferEntry ? (
+        {visible.destination ? (
           <>
             <SelectField
-              label={isCreditCardPayment ? "To credit account" : "To account"}
+              label={destinationFieldLabel(form.entryType)}
               value={selectedDestAccount ? getEffectiveDisplayName(selectedDestAccount) : null}
-              placeholder="Select account"
+              placeholder={form.entryType === "card_payment" ? "Select credit card" : "Select account"}
               onPress={() => setPicker("transferTo")}
               error={fieldErrors.transfer_to_account_id}
             />
@@ -509,12 +550,7 @@ export function TransactionFormScreen() {
                 {balanceSubtitle(selectedDestAccount) ?? "Balance unavailable"}
               </Text>
             ) : null}
-            {isCreditCardPayment ? (
-              <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                Transfer / Card payment
-              </Text>
-            ) : null}
-            {selectedAccount && form.dateIso ? (
+            {visible.transferPreview && selectedAccount && form.dateIso ? (
               <TransferSourceBalancePreview
                 sourceAccount={selectedAccount}
                 destinationAccountId={
@@ -551,7 +587,7 @@ export function TransactionFormScreen() {
 
       <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.md }}>
         <Button
-          label={isEdit ? "Save changes" : createTransactionButtonLabel(form.entryType, false)}
+          label={createTransactionButtonLabel(form.entryType, isEdit)}
           onPress={() => saveMutation.mutate()}
           loading={saveMutation.isPending}
           disabled={Boolean(lockMessage?.includes("Reconciled"))}
@@ -588,10 +624,24 @@ export function TransactionFormScreen() {
         searchPlaceholder="Search accounts"
         onClose={() => setPicker(null)}
         onSelect={(id) => {
-          setField("account_id", Number(id));
-          if (Number(id) === form.transfer_to_account_id) {
-            setField("transfer_to_account_id", "");
-          }
+          const nextId = Number(id);
+          setForm((prev) => {
+            const dests = filterDestinationAccounts(destFilterAccounts, nextId, prev.entryType);
+            const destStillValid =
+              typeof prev.transfer_to_account_id === "number" &&
+              dests.some((d) => d.id === prev.transfer_to_account_id);
+            return {
+              ...prev,
+              account_id: nextId,
+              transfer_to_account_id: destStillValid ? prev.transfer_to_account_id : "",
+            };
+          });
+          setFieldErrors((prev) => {
+            const next = { ...prev };
+            delete next.account_id;
+            delete next.transfer_to_account_id;
+            return next;
+          });
         }}
       />
 
@@ -607,7 +657,7 @@ export function TransactionFormScreen() {
 
       <OptionsPickerSheet
         visible={picker === "transferTo"}
-        title={isCreditCardPayment ? "Credit account" : "Transfer to"}
+        title={destinationPickerTitle(form.entryType)}
         options={transferDestOptions}
         selectedId={
           typeof form.transfer_to_account_id === "number"
@@ -615,7 +665,11 @@ export function TransactionFormScreen() {
             : null
         }
         searchPlaceholder="Search accounts"
-        emptyMessage="No valid destination accounts"
+        emptyMessage={
+          form.entryType === "card_payment"
+            ? "No credit cards in this household"
+            : "No valid destination accounts"
+        }
         onClose={() => setPicker(null)}
         onSelect={(id) => setField("transfer_to_account_id", Number(id))}
       />

@@ -11,8 +11,11 @@ import {
   gettingStartedCompletedCount,
   homeEducationPriority,
   isGettingStartedComplete,
+  isOnboardingFutureTransactionDate,
+  qualifiesOnboardingFutureTransaction,
   seedGettingStartedEducation,
   shouldShowCalendarIntro,
+  shouldShowCalendarOnboardingHandoff,
   shouldShowFirstAccountSuccess,
   shouldShowFirstTransactionForecast,
   shouldShowGettingStartedCard,
@@ -71,7 +74,7 @@ describe("getting started checklist completion", () => {
     expect(gettingStartedCompletedCount(next)).toBe(1);
   });
 
-  it("marks an upcoming transaction from checklist, not a past-only fallback when checklist exists", () => {
+  it("marks an upcoming transaction from checklist, not a past-only or any-transaction fallback", () => {
     const next = completionFromOnboardingStatus(
       status({
         steps: { account: true, transaction: true, recurring: false, forecast_ready: true },
@@ -87,17 +90,18 @@ describe("getting started checklist completion", () => {
     expect(next.upcoming_transaction).toBe(false);
   });
 
-  it("falls back to onboarding transaction existence when checklist is absent", () => {
+  it("does not treat generic transaction existence as a future transaction when checklist is absent", () => {
     const next = completionFromOnboardingStatus(
       status({
         steps: { account: true, transaction: true, recurring: false, forecast_ready: true },
       }),
       { calendarOpened: false }
     );
-    expect(next.upcoming_transaction).toBe(true);
+    expect(next.upcoming_transaction).toBe(false);
+    expect(next.account).toBe(true);
   });
 
-  it("marks recurring and goal from checklist flags", () => {
+  it("marks recurring from checklist flags and ignores goals for completion", () => {
     const next = completionFromOnboardingStatus(
       status({
         checklist: {
@@ -110,7 +114,8 @@ describe("getting started checklist completion", () => {
       { calendarOpened: false }
     );
     expect(next.recurring).toBe(true);
-    expect(next.goal).toBe(true);
+    expect(next).not.toHaveProperty("goal");
+    expect(isGettingStartedComplete({ ...next, calendar: true })).toBe(true);
   });
 
   it("marks the calendar step from local open state", () => {
@@ -118,28 +123,26 @@ describe("getting started checklist completion", () => {
     expect(next.calendar).toBe(true);
   });
 
-  it("hides the card when all five items are complete", () => {
+  it("hides the card when all four items are complete", () => {
     const next = completion({
       account: true,
       upcoming_transaction: true,
       recurring: true,
       calendar: true,
-      goal: true,
     });
     expect(isGettingStartedComplete(next)).toBe(true);
     expect(shouldShowGettingStartedCard({ completion: next, collapsed: false })).toBe(false);
   });
 
-  it("allows collapse after 4 of 5 and honors it", () => {
+  it("allows collapse after 3 of 4 and honors it", () => {
     const next = completion({
       account: true,
       upcoming_transaction: true,
       recurring: true,
-      calendar: true,
-      goal: false,
+      calendar: false,
     });
     expect(canCollapseGettingStarted(next)).toBe(true);
-    expect(GETTING_STARTED_COLLAPSE_THRESHOLD).toBe(4);
+    expect(GETTING_STARTED_COLLAPSE_THRESHOLD).toBe(3);
     expect(shouldShowGettingStartedCard({ completion: next, collapsed: true })).toBe(false);
     expect(shouldShowGettingStartedCard({ completion: next, collapsed: false })).toBe(true);
   });
@@ -150,19 +153,25 @@ describe("getting started checklist completion", () => {
     expect(shouldShowGettingStartedCard({ completion: next, collapsed: true })).toBe(true);
   });
 
-  it("reappears if completion drops after previously finishing", () => {
-    const finished = completion({
+  it("keeps previously finished users completed without requiring a goal", () => {
+    const partial = completion({
       account: true,
-      upcoming_transaction: true,
+      upcoming_transaction: false,
       recurring: true,
       calendar: true,
-      goal: true,
     });
-    expect(shouldShowGettingStartedCard({ completion: finished, collapsed: false })).toBe(false);
-    const afterGoalDeleted = { ...finished, goal: false };
-    expect(shouldShowGettingStartedCard({ completion: afterGoalDeleted, collapsed: false })).toBe(
-      true
-    );
+    expect(isGettingStartedComplete(partial)).toBe(false);
+    expect(
+      shouldShowGettingStartedCard({
+        completion: partial,
+        collapsed: true,
+        educationFlags: {
+          getting_started_collapsed: true,
+          calendar_intro_seen: true,
+          home_forecast_intro_seen: true,
+        },
+      })
+    ).toBe(false);
   });
 });
 
@@ -205,6 +214,18 @@ describe("getting started education prompts", () => {
     expect(shouldShowCalendarIntro({ calendarIntroSeen: true })).toBe(false);
   });
 
+  it("shows calendar onboarding handoff only with onboarding context and unseen flag", () => {
+    expect(
+      shouldShowCalendarOnboardingHandoff({ fromOnboarding: true, handoffSeen: false })
+    ).toBe(true);
+    expect(
+      shouldShowCalendarOnboardingHandoff({ fromOnboarding: true, handoffSeen: true })
+    ).toBe(false);
+    expect(
+      shouldShowCalendarOnboardingHandoff({ fromOnboarding: false, handoffSeen: false })
+    ).toBe(false);
+  });
+
   it("does not show all home prompts at once", () => {
     expect(
       homeEducationPriority({
@@ -243,6 +264,7 @@ describe("getting started education prompts", () => {
     expect(seeded.first_account_success_seen).toBe(true);
     expect(seeded.first_transaction_forecast_seen).toBe(true);
     expect(seeded.calendar_intro_seen).toBe(true);
+    expect(seeded.calendar_onboarding_handoff_seen).toBe(true);
     expect(seeded.getting_started_collapsed).toBe(true);
   });
 
@@ -278,10 +300,63 @@ describe("getting started copy", () => {
     expect(GETTING_STARTED_COPY.checklistIntro).toMatch(/what happens next/);
     expect(GETTING_STARTED_STEPS.map((step) => step.title)).toEqual([
       "Create your first account",
-      "Add an upcoming transaction",
-      "Add a recurring bill or income",
+      "Add a future transaction",
+      "Add recurring income or a bill",
       "View your forecast calendar",
-      "Create a goal",
     ]);
+    expect(GETTING_STARTED_STEPS).toHaveLength(4);
+    expect(GETTING_STARTED_STEPS.some((step) => step.id === "goal")).toBe(false);
+    expect(GETTING_STARTED_STEP_COUNT).toBe(4);
+    expect(GETTING_STARTED_COPY.firstTransactionTitle).toBe("This is your forecast");
+    expect(GETTING_STARTED_COPY.firstTransactionCta).toBe("Add recurring income or bill");
+    expect(GETTING_STARTED_COPY.calendarCompleteTitle).toBe("You're ready");
+    expect(GETTING_STARTED_COPY.calendarCompletePrimary).toBe("Go to Home");
+    expect(GETTING_STARTED_COPY.optionalGoalsHint).toMatch(/Create a savings or debt goal/);
+  });
+
+  it("completes the checklist without a goal", () => {
+    const next = completion({
+      account: true,
+      upcoming_transaction: true,
+      recurring: true,
+      calendar: true,
+    });
+    expect(isGettingStartedComplete(next)).toBe(true);
+    expect(gettingStartedCompletedCount(next)).toBe(4);
+  });
+
+  it("qualifies only manually created dates after today", () => {
+    const today = "2026-09-11";
+    expect(isOnboardingFutureTransactionDate("2026-09-12", today)).toBe(true);
+    expect(isOnboardingFutureTransactionDate("2026-09-11", today)).toBe(false);
+    expect(isOnboardingFutureTransactionDate("2026-09-10", today)).toBe(false);
+    expect(
+      qualifiesOnboardingFutureTransaction({
+        dateIso: "2026-09-12",
+        todayIso: today,
+        source: "ACTUAL",
+      })
+    ).toBe(true);
+    expect(
+      qualifiesOnboardingFutureTransaction({
+        dateIso: "2026-09-12",
+        todayIso: today,
+        source: "ONE_TIME",
+      })
+    ).toBe(true);
+    expect(
+      qualifiesOnboardingFutureTransaction({
+        dateIso: "2026-09-12",
+        todayIso: today,
+        source: "PLAID",
+      })
+    ).toBe(false);
+    expect(
+      qualifiesOnboardingFutureTransaction({
+        dateIso: "2026-09-12",
+        todayIso: today,
+        source: "RULE",
+      })
+    ).toBe(false);
   });
 });

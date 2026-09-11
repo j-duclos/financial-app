@@ -31,3 +31,4 @@ export * from "./calendarSafeUntilDisplay";
 export * from "./accountsProgressiveLoading";
 export * from "./recommendationNavigation";
 export * from "./projectedFundsAlerts";
+export * from "./categoryPickerOrder";

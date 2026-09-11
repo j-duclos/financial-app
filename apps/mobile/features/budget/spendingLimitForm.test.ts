@@ -35,7 +35,7 @@ describe("expenseCategoriesForLimitPicker", () => {
   const groceriesDup = cat({ id: 5, name: "Groceries" });
   const careCredit = cat({ id: 6, name: "Care Credit" });
 
-  it("keeps expense categories only, excludes archived, de-duplicates names, and sorts alphabetically", () => {
+  it("keeps expense categories only, excludes archived, de-duplicates names, and uses preferred picker order", () => {
     const result = expenseCategoriesForLimitPicker([
       savor,
       salary,
@@ -44,8 +44,8 @@ describe("expenseCategoriesForLimitPicker", () => {
       groceries,
       careCredit,
     ]);
-    expect(result.map((c) => c.name)).toEqual(["Care Credit", "Groceries", "Savor"]);
-    expect(result.map((c) => c.id)).toEqual([6, 5, 2]);
+    expect(result.map((c) => c.name)).toEqual(["Groceries", "Care Credit", "Savor"]);
+    expect(result.map((c) => c.id)).toEqual([5, 6, 2]);
   });
 });
 

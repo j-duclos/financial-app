@@ -219,14 +219,13 @@ export function ReviewPromptHost({ children }: { children?: React.ReactNode }) {
   }, [closeFlow, patchState, queryClient, stateQuery.data]);
 
   const onSubmitFeedback = useCallback(
-    async (payload: { message: string; category: string; allowContact: boolean }) => {
+    async (payload: { message: string; category: string }) => {
       const platform = Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown";
       await sendFeedback.mutateAsync({
         source: "mobile",
         platform,
         category: (payload.category || "") as FeedbackPayload["category"],
         message: payload.message,
-        allow_contact: payload.allowContact,
         ...appVersionMeta(),
       });
       if (step === "feedback") {
@@ -254,7 +253,6 @@ export function ReviewPromptHost({ children }: { children?: React.ReactNode }) {
       />
       <FeedbackSheet
         visible={step === "feedback" || step === "manual-feedback"}
-        accountEmail={auth.profile?.email}
         submitting={sendFeedback.isPending}
         onClose={closeFlow}
         onSubmit={onSubmitFeedback}

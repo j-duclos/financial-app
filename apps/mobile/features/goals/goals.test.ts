@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 import type { FinancialGoal } from "@budget-app/shared";
 import {
   formatGoalProgressSummary,
+  GOAL_INCLUDE_IN_FORECAST_HELP,
+  GOAL_INCLUDE_IN_FORECAST_LABEL,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP,
+  GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL,
   goalDetailAdvancedForecastRows,
   goalDetailForecastRows,
   goalDetailPrimaryPaceLines,
@@ -237,6 +241,35 @@ describe("Goal form simplification", () => {
     expect(payload.linked_account).toBe(2);
   });
 
+  it("maps reserve planned contributions to include_in_safe_to_spend without changing forecast", () => {
+    expect(GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL).toBe("Reserve planned contributions");
+    expect(GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP).toMatch(
+      /separate from money available for everyday spending/
+    );
+    expect(GOAL_INCLUDE_IN_FORECAST_LABEL).toBe("Include in forecast");
+    expect(GOAL_INCLUDE_IN_FORECAST_HELP).toMatch(/cash-flow and balance projections/);
+
+    const reservedOff = buildGoalBucketPayload(1, {
+      ...emptyGoalForm,
+      name: "Emergency",
+      target_amount: "10000",
+      linked_account: 2,
+      include_in_safe_to_spend: false,
+    });
+    expect(reservedOff.include_in_safe_to_spend).toBe(false);
+    expect(reservedOff.forecast_enabled).toBe(true);
+
+    const forecastOff = buildGoalBucketPayload(1, {
+      ...emptyGoalForm,
+      name: "Emergency",
+      target_amount: "10000",
+      linked_account: 2,
+      forecast_enabled: false,
+    });
+    expect(forecastOff.forecast_enabled).toBe(false);
+    expect(forecastOff.include_in_safe_to_spend).toBe(true);
+  });
+
   it("uses account picker sheet and date picker instead of chips/typed ISO", () => {
     expect(goalFormSource).toMatch(/@\/components\/forms/);
     expect(goalFormSource).toMatch(/Advanced options/);
@@ -248,8 +281,13 @@ describe("Goal form simplification", () => {
   it("hides advanced financial-engine settings by default", () => {
     expect(goalFormSource).toMatch(/advancedOpen/);
     expect(goalFormSource).toMatch(/Auto-fund on payday/);
-    expect(goalFormSource).toMatch(/Reserve contributions from safe-to-spend/);
-    expect(goalFormSource).toMatch(/Include in forecast/);
+    expect(goalFormSource).toMatch(/GOAL_RESERVE_PLANNED_CONTRIBUTIONS_LABEL/);
+    expect(goalFormSource).toMatch(/GOAL_RESERVE_PLANNED_CONTRIBUTIONS_HELP/);
+    expect(goalFormSource).toMatch(/value=\{form\.include_in_safe_to_spend\}/);
+    expect(goalFormSource).toMatch(/GOAL_INCLUDE_IN_FORECAST_LABEL/);
+    expect(goalFormSource).toMatch(/value=\{form\.forecast_enabled\}/);
+    expect(goalFormSource).not.toMatch(/safe-to-spend/);
+    expect(goalFormSource).not.toMatch(/safe to spend/);
     expect(goalFormSource).toMatch(/Priority/);
     expect(goalFormSource).toMatch(/High/);
     expect(goalFormSource).toMatch(/Normal/);

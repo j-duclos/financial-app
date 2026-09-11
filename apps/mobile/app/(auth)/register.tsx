@@ -5,7 +5,7 @@ import { BrandLogo } from "@/components/brand";
 import { Button, Screen, TextField } from "@/components/ui";
 import { APP_TAGLINE } from "@budget-app/shared";
 import { useAuth } from "@/features/auth";
-import { describeApiError } from "@/services/api";
+import { describeAuthFormError } from "@/services/api";
 import { useTheme } from "@/theme";
 
 export default function RegisterScreen() {
@@ -29,7 +29,7 @@ export default function RegisterScreen() {
       await register(username, password, email.trim());
       router.replace("/(app)/(tabs)");
     } catch (e: unknown) {
-      setError(describeApiError(e));
+      setError(describeAuthFormError(e));
     } finally {
       setSubmitting(false);
     }

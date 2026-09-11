@@ -2,7 +2,12 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatAccountOptionLabel } from "@budget-app/shared";
-import type { Transaction, TimelineRow } from "@budget-app/shared";
+import {
+  PROJECTED_FUNDS_ALERTS_QUERY_KEY,
+  householdRiskWarningsFromProjectedFundsAlerts,
+  type Transaction,
+  type TimelineRow,
+} from "@budget-app/shared";
 import {
   listTransactions,
   listAccounts,
@@ -19,6 +24,7 @@ import {
   getTransaction,
   resolveExpectedAsImported,
   resolveRuleOccurrence,
+  listProjectedFundsAlerts,
   getAccountPayoff,
   getReconcileSetup,
   ApiError,
@@ -36,6 +42,7 @@ import InlineAddRow, { type InlineAddForm } from "../components/transactions/Inl
 import {
   canSelectTransactionForBatchDelete,
   reviewSelectionTotals,
+  pruneSelectedTransactionIds,
   timelineRowToData,
   transactionToData,
   type TransactionRowData,
@@ -93,7 +100,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 import { accountLifecycleStatus } from "../lib/accountOrganization";
 import { refreshAfterTransactionEdit } from "../lib/financialQueryRefresh";
-import { collectPaginatedResults } from "../lib/collectPaginatedResults";
 import {
   projectedPreviewViewState,
   projectedTransferBalancesViewState,
@@ -399,41 +405,8 @@ export default function Transactions() {
     () => txnsData?.pages.flatMap((p) => p.results) ?? [],
     [txnsData?.pages]
   );
-
-  /** One-off rows dated after today — not in the past listTransactions window. */
-  const { data: futurePostedTxnsData } = useQuery({
-    queryKey: [
-      "transactions",
-      "future-posted",
-      accountId || undefined,
-      addDaysToIsoDate(todayStr(), 1),
-      upcomingRange.end,
-      hideReconciledPast,
-    ],
-    queryFn: async () => {
-      const results = await collectPaginatedResults((page) =>
-        listTransactions({
-          account: accountId as number,
-          date_after: addDaysToIsoDate(todayStr(), 1),
-          date_before: upcomingRange.end,
-          page,
-          page_size: WEB_LEDGER_PAGE_SIZE,
-          ordering: "date,id",
-          ...(hideReconciledPast ? { reconciled: false } : { show_reconciled: true }),
-        })
-      );
-      return { results };
-    },
-    enabled: typeof accountId === "number" && !!upcomingRange.end,
-    staleTime: 15_000,
-    refetchOnWindowFocus: false,
-  });
-  const futurePostedTransactions = useMemo(
-    () => futurePostedTxnsData?.results ?? [],
-    [futurePostedTxnsData?.results]
-  );
   const hasUserTransactions =
-    transactions.length > 0 || futurePostedTransactions.length > 0;
+    transactions.length > 0 || (ledgerTimelineData?.timeline?.length ?? 0) > 0;
   const showTransactionsEmpty =
     typeof accountId === "number" &&
     !txnsPending &&
@@ -466,8 +439,6 @@ export default function Transactions() {
         ? account.household
         : categoryHouseholdId;
 
-  const householdTimelineEnabled = householdId != null;
-
   useEffect(() => {
     if (typeof accountId !== "number") return;
     logTransactionsPageLoadPlan({
@@ -476,7 +447,7 @@ export default function Transactions() {
       upcomingRange,
       forecastRange,
       hideReconciledPast,
-      householdTimelineEnabled,
+      householdTimelineEnabled: false,
       duplicateAccountCallsRemoved: true,
       forecastSummaryDeferred: true,
     });
@@ -487,7 +458,6 @@ export default function Transactions() {
     upcomingRange,
     forecastRange,
     hideReconciledPast,
-    householdTimelineEnabled,
     householdId,
   ]);
 
@@ -606,26 +576,11 @@ export default function Transactions() {
     );
   }, [account, accountId, accounts, selectedCategory?.name]);
 
-  const { data: householdTimelineData } = useQuery({
-    queryKey: [
-      "timeline",
-      "household",
-      upcomingRange.start,
-      upcomingRange.end,
-      forecastRange,
-      householdId,
-      todayStr(),
-    ],
-    queryFn: () =>
-      getTimeline({
-        start: upcomingRange.start,
-        end: upcomingRange.end,
-        as_of: todayStr(),
-        household_id: householdId ?? undefined,
-      }),
-    enabled: householdTimelineEnabled,
-    staleTime: 120_000,
-    placeholderData: keepPreviousData,
+  const { data: projectedFundsAlertsData } = useQuery({
+    queryKey: [...PROJECTED_FUNDS_ALERTS_QUERY_KEY, "transactions-page", householdId],
+    queryFn: () => listProjectedFundsAlerts({ active: true, page_size: 50 }),
+    enabled: householdId != null,
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
 
@@ -889,77 +844,15 @@ export default function Transactions() {
   const [awaitingTimelineRecalc, setAwaitingTimelineRecalc] = useState(false);
   const [occurrenceResolving, setOccurrenceResolving] = useState(false);
 
-  const accountsForHousehold = useMemo(() => {
-    if (householdId == null) return [];
-    return accounts.filter((a) => {
-      const ahId =
-        typeof a.household === "object" && a.household != null && "id" in a.household
-          ? (a.household as { id: number }).id
-          : typeof a.household === "number"
-            ? a.household
-            : null;
-      const st = a.status ?? (a.archived ? "archived" : "active");
-      return ahId === householdId && st === "active";
-    });
-  }, [accounts, householdId]);
-
-  const today = todayStr();
-  const householdTimelineByAccount = useMemo(
-    () => indexTimelineRowsByAccount(householdTimelineData?.timeline),
-    [householdTimelineData?.timeline]
-  );
   const ledgerTimelineByAccount = useMemo(
     () => indexTimelineRowsByAccount(ledgerTimelineData?.timeline),
     [ledgerTimelineData?.timeline]
   );
 
-  /** For each non-credit account: first date on or after today when balance goes negative (if any). */
-  const negativeBalanceWarnings = useMemo(() => {
-    const nonCredit = accountsForHousehold.filter((a) => String((a.account_type ?? "").toUpperCase()) !== "CREDIT");
-    const warnings: { accountName: string; date: string }[] = [];
-    for (const acc of nonCredit) {
-      const futureRows = (householdTimelineByAccount.get(Number(acc.id)) ?? [])
-        .filter((r) => r.date >= today)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      const firstNegative = futureRows.find((r) => parseFloat(r.running_balance) < 0);
-      if (firstNegative) {
-        warnings.push({
-          accountName: acc.name,
-          date: firstNegative.date,
-        });
-      }
-    }
-    return warnings.sort((a, b) => a.date.localeCompare(b.date));
-  }, [householdTimelineByAccount, accountsForHousehold, today]);
-
-  /** For each credit account with a limit: first date on or after today when balance goes over the credit limit (debt exceeds limit). */
-  const creditLimitWarnings = useMemo(() => {
-    const creditAccounts = accountsForHousehold.filter(
-      (a) =>
-        String((a.account_type ?? "").toUpperCase()) === "CREDIT" &&
-        a.credit_limit != null &&
-        String(a.credit_limit).trim() !== ""
-    );
-    const warnings: { accountName: string; date: string }[] = [];
-    for (const acc of creditAccounts) {
-      const limit = parseFloat(String(acc.credit_limit));
-      if (Number.isNaN(limit) || limit <= 0) continue;
-      const futureRows = (householdTimelineByAccount.get(Number(acc.id)) ?? [])
-        .filter((r) => r.date >= today)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      const firstOverLimit = futureRows.find((r) => {
-        const bal = parseFloat(r.running_balance);
-        return bal < -limit;
-      });
-      if (firstOverLimit) {
-        warnings.push({
-          accountName: acc.name,
-          date: firstOverLimit.date,
-        });
-      }
-    }
-    return warnings.sort((a, b) => a.date.localeCompare(b.date));
-  }, [householdTimelineByAccount, accountsForHousehold, today]);
+  const householdWarnings = useMemo(
+    () => householdRiskWarningsFromProjectedFundsAlerts(projectedFundsAlertsData?.results),
+    [projectedFundsAlertsData?.results]
+  );
 
   const ledgerRows = useMemo(() => {
     if (!account || typeof accountId !== "number" || !accountMatchesSelection) return [];
@@ -1019,7 +912,6 @@ export default function Transactions() {
         checkpointPeriodEnd: hasPastOpeningOverride
           ? reconcileSetupData?.last_reconcile_period_end ?? null
           : null,
-        futurePostedTransactions,
       }
     );
   }, [
@@ -1040,7 +932,6 @@ export default function Transactions() {
     reconcileSetupData?.min_start_date,
     reconcileSetupFetching,
     ledgerTimelineFetching,
-    futurePostedTransactions,
   ]);
 
   const accountTimeline = useMemo(() => {
@@ -1115,6 +1006,23 @@ export default function Transactions() {
     [selectedTransactionIds, ledgerReviewRows]
   );
 
+  useEffect(() => {
+    setSelectedTransactionIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = pruneSelectedTransactionIds(
+        prev,
+        ledgerReviewRows.map((row) => row.transactionId)
+      );
+      if (next.size === prev.size) {
+        for (const id of next) {
+          if (!prev.has(id)) return next;
+        }
+        return prev;
+      }
+      return next;
+    });
+  }, [ledgerReviewRows]);
+
   const selectedDeletableIds = useMemo(
     () =>
       ledgerReviewRows
@@ -1184,10 +1092,8 @@ export default function Transactions() {
 
   const createTransferMu = useMutation({
     mutationFn: (body: Parameters<typeof createTransfer>[0]) => createTransfer(body),
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       afterFinancialEdit({ refreshAccounts: true });
-      void queryClient.refetchQueries({ queryKey: ["account", variables.from_account], type: "active" });
-      void queryClient.refetchQueries({ queryKey: ["account", variables.to_account], type: "active" });
     },
   });
 
@@ -1217,12 +1123,8 @@ export default function Transactions() {
       setAwaitingTimelineRecalc(true);
 
       await queryClient.cancelQueries({ queryKey: transactionsQueryKey });
-      await queryClient.cancelQueries({ queryKey: ["transactions", "future-posted"] });
       await queryClient.cancelQueries({ queryKey: ["timeline"] });
       const previousTxns = queryClient.getQueryData(transactionsQueryKey);
-      const previousFuturePosted = queryClient.getQueriesData({
-        queryKey: ["transactions", "future-posted"],
-      });
       const previousTimelines = queryClient.getQueriesData({ queryKey: ["timeline"] });
       const linkedId = (editing as { linked_transaction_id?: number | null } | null)?.linked_transaction_id;
       const patchTxn = (t: Transaction) => {
@@ -1272,17 +1174,10 @@ export default function Transactions() {
           };
         }
       );
-      queryClient.setQueriesData(
-        { queryKey: ["transactions", "future-posted"] },
-        (old: { results?: Transaction[] } | undefined) => {
-          if (!old?.results) return old;
-          return { ...old, results: old.results.map(patchTxn) };
-        }
-      );
-      if (data.amount != null) {
-        const nextAmt = parseFloat(data.amount);
+      if (data.amount != null || data.date != null || data.payee != null) {
+        const nextAmt = data.amount != null ? parseFloat(data.amount) : NaN;
         const nextType =
-          Number.isFinite(nextAmt) && nextAmt >= 0 ? "INFLOW" : "OUTFLOW";
+          data.amount != null && Number.isFinite(nextAmt) && nextAmt >= 0 ? "INFLOW" : "OUTFLOW";
         queryClient.setQueriesData(
           { queryKey: ["timeline"] },
           (old: { timeline?: TimelineRow[] } | undefined) => {
@@ -1293,8 +1188,10 @@ export default function Transactions() {
                 row.transaction_id === id
                   ? {
                       ...row,
-                      amount: data.amount as string,
-                      type: nextType,
+                      ...(data.amount != null
+                        ? { amount: data.amount as string, type: nextType }
+                        : {}),
+                      ...(data.amount != null || data.date != null ? { balance_after: null } : {}),
                       ...(data.date != null ? { date: data.date } : {}),
                       ...(data.payee != null ? { description: data.payee } : {}),
                     }
@@ -1307,7 +1204,6 @@ export default function Transactions() {
       return {
         ...snapshot,
         previousTxns,
-        previousFuturePosted,
         previousTimelines,
         transactionsQueryKey,
       };
@@ -1316,11 +1212,6 @@ export default function Transactions() {
       setAwaitingTimelineRecalc(false);
       if (context?.previousTxns != null && context?.transactionsQueryKey) {
         queryClient.setQueryData(context.transactionsQueryKey, context.previousTxns);
-      }
-      if (context?.previousFuturePosted) {
-        for (const [key, data] of context.previousFuturePosted) {
-          queryClient.setQueryData(key, data);
-        }
       }
       if (context?.previousTimelines) {
         for (const [key, data] of context.previousTimelines) {
@@ -1336,10 +1227,9 @@ export default function Transactions() {
       const msg = err instanceof ApiError ? `${err.status}: ${err.message}` : err.message;
       setDeleteError(msg || "Failed to save transaction");
     },
-    onSuccess: async (updatedTxn, variables) => {
+    onSuccess: async (_updatedTxn, variables) => {
       setDeleteError(null);
       const newAccountId = variables.data.account_id;
-      const syncedToAccountId = (updatedTxn as { synced_to_account_id?: number }).synced_to_account_id;
       const affectsBalances =
         variables.data.amount != null ||
         variables.data.date != null ||
@@ -1348,17 +1238,7 @@ export default function Transactions() {
         refreshAccounts: affectsBalances,
         skipTransactionsInvalidate: affectsBalances,
       });
-      if (affectsBalances) {
-        void queryClient.invalidateQueries({ queryKey: ["transactions", "future-posted"] });
-        void queryClient.refetchQueries({
-          queryKey: ["transactions", "future-posted"],
-          type: "active",
-        });
-      }
       if (newAccountId != null && newAccountId !== accountId) setAccountId(newAccountId);
-      if (syncedToAccountId != null) {
-        void queryClient.refetchQueries({ queryKey: ["account", syncedToAccountId], type: "active" });
-      }
     },
   });
 
@@ -1851,14 +1731,6 @@ export default function Transactions() {
 
   const currency = account?.currency ?? "USD";
   const isCredit = isCreditAccount;
-
-  const householdWarnings = useMemo(
-    () => [
-      ...negativeBalanceWarnings.map((w) => ({ ...w, kind: "negative" as const })),
-      ...creditLimitWarnings.map((w) => ({ ...w, kind: "credit_limit" as const })),
-    ],
-    [negativeBalanceWarnings, creditLimitWarnings]
-  );
 
   function confirmDelete(id: number, label: string) {
     setDeleteError(null);

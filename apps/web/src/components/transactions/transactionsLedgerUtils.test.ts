@@ -37,7 +37,6 @@ import {
   filterPastTransactionsAfterReconcileClose,
   transactionAlreadyInCheckpoint,
   buildLedgerRowsFromPastAndUpcomingTimeline,
-  shouldMergeFuturePostedTransaction,
   projectionTimelineRangeForAsOf,
   addDaysToIsoDate,
   maxIsoDate,
@@ -216,7 +215,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(future[0].type).toBe("recurring");
   });
 
-  it("shows posted future transactions even when the projection timeline omitted them", () => {
+  it("does not merge omitted future listTransactions rows into Upcoming", () => {
     const today = "2026-09-04";
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [],
@@ -249,37 +248,15 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       today,
       1678.78,
       false,
-      {
-        todayBalanceOverride: 1678.78,
-        futurePostedTransactions: [
-          {
-            id: 9001,
-            date: "2026-10-05",
-            payee: "Bill 1",
-            amount: "-850.00",
-            direction: "OUTFLOW",
-            source: "ACTUAL",
-            status: "CLEARED",
-          } as never,
-          {
-            id: 9002,
-            date: "2026-10-05",
-            payee: "Bill 2",
-            amount: "-850.00",
-            direction: "OUTFLOW",
-            source: "ACTUAL",
-            status: "CLEARED",
-          } as never,
-        ],
-      }
+      { todayBalanceOverride: 1678.78 }
     );
     const future = splitLedgerSections(rows).future;
     const payees = future.map((r) =>
       r.type === "transaction" ? r.txn.payee : r.row.description
     );
-    expect(payees).toEqual(["OpenAI", "Bill 1", "Bill 2", "Move to savings"]);
-    const savings = future[future.length - 1];
-    expect(savings.balance).toBeCloseTo(-1733.06, 2);
+    expect(payees).toEqual(["OpenAI", "Move to savings"]);
+    expect(future[0].balance).toBe(1656.94);
+    expect(future[1].balance).toBe(-33.06);
   });
 
   it("does not re-merge skipped rule-based card payments the timeline omitted", () => {
@@ -289,50 +266,13 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       [],
       today,
       5000,
-      false,
-      {
-        futurePostedTransactions: [
-          {
-            id: 75,
-            date: "2026-10-25",
-            payee: "Savor C/C Payment (Savor)",
-            amount: "-100.00",
-            direction: "OUTFLOW",
-            source: "RULE",
-            status: "PLANNED",
-            rule_id: 75,
-          } as never,
-          {
-            id: 76,
-            date: "2026-10-25",
-            payee: "Savor C/C Payment (Savor)",
-            amount: "100.00",
-            direction: "INFLOW",
-            source: "ACTUAL",
-            status: "PLANNED",
-          } as never,
-        ],
-      }
+      false
     );
     const future = splitLedgerSections(rows).future;
     expect(future).toEqual([]);
-    expect(
-      shouldMergeFuturePostedTransaction(
-        {
-          id: 75,
-          date: "2026-10-25",
-          payee: "Savor C/C Payment",
-          amount: "-100.00",
-          source: "RULE",
-          status: "PLANNED",
-          rule_id: 75,
-        } as never,
-        today
-      )
-    ).toBe(false);
   });
 
-  it("computes past balance from opening + amount even when API running_balance is stale", () => {
+  it("uses backend running_balance on past rows instead of reconstructing from amount", () => {
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [
         {
@@ -357,11 +297,11 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const past = sections.past[0];
     expect(past.type).toBe("transaction");
     if (past.type === "transaction") {
-      expect(past.balance).toBeCloseTo(1499.38, 2);
+      expect(past.balance).toBeCloseTo(1828.4, 2);
     }
   });
 
-  it("continues upcoming balances from the last past row (no API balance jump)", () => {
+  it("uses canonical Upcoming balance_after without continuing from the last past row", () => {
     const today = todayStr();
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [
@@ -371,6 +311,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           payee: "Coffee",
           amount: "-5.00",
           source: "PLAID",
+          running_balance: "1000",
         } as never,
       ],
       [
@@ -472,6 +413,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       amount: "-4.00",
       status: "CLEARED",
       source: "PLAID",
+      running_balance: "996",
     } as never;
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [plannedBill, posted],
@@ -536,6 +478,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           source: "ACTUAL",
           transfer_group_id: 3,
           linked_transaction_id: 71,
+          running_balance: "800",
         } as never,
       ],
       [
@@ -579,6 +522,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-142.18",
           status: "CLEARED",
           source: "PLAID",
+          running_balance: "-252.19",
         } as never,
       ],
       [
@@ -613,7 +557,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
       [
         { id: 1, date: "2026-05-05", payee: "AT&T", amount: "-257.08", status: "CLEARED", reconciled: true } as never,
         { id: 2, date: "2026-06-02", payee: "INTEREST", amount: "-19.87", status: "CLEARED", reconciled: true } as never,
-        { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", status: "CLEARED", reconciled: false } as never,
+        { id: 3, date: "2026-06-04", payee: "Cursor", amount: "-65.52", status: "CLEARED", reconciled: false, running_balance: "-824.83" } as never,
       ],
       [],
       "2026-06-27",
@@ -634,7 +578,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     const periodEnd = "2026-08-17";
     const rows = buildLedgerRowsFromPastAndUpcomingTimeline(
       [
-        { id: 1, date: "2026-08-17", payee: "Coffee", amount: "-4.50", status: "CLEARED", reconciled: false } as never,
+        { id: 1, date: "2026-08-17", payee: "Coffee", amount: "-4.50", status: "CLEARED", reconciled: false, running_balance: "95.50" } as never,
       ],
       [],
       periodEnd,
@@ -684,6 +628,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-10.01",
           status: "CLEARED",
           reconciled: false,
+          running_balance: "1818.39",
         } as never,
       ],
       [],
@@ -724,6 +669,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-10.01",
           status: "CLEARED",
           reconciled: false,
+          running_balance: "1818.39",
         } as never,
       ],
       [],
@@ -775,7 +721,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.past[1].balance).toBeCloseTo(-1171.96, 2);
   });
 
-  it("show-all accumulates sequentially and ignores bogus stored reconciled_balance", () => {
+  it("show-all uses API running_balance instead of stored reconciled_balance", () => {
     const rows = buildLedgerRowsFromTimeline(
       [
         {
@@ -785,6 +731,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           type: "OUTFLOW",
           reconciled: true,
           reconciled_balance: "-162.39",
+          running_balance: "-162.39",
           account_id: 7,
           status: "RECONCILED",
         } as never,
@@ -794,8 +741,9 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "162.39",
           type: "INFLOW",
           reconciled: true,
-          // Wrong stored value — must not win over sequential math.
+          // Wrong stored value — must not win over backend running_balance.
           reconciled_balance: "162.39",
+          running_balance: "0",
           account_id: 7,
           status: "RECONCILED",
         } as never,
@@ -805,6 +753,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-346.02",
           type: "OUTFLOW",
           reconciled: false,
+          running_balance: "-346.02",
           account_id: 7,
           status: "CLEARED",
         } as never,
@@ -824,7 +773,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
     expect(sections.past[2].balance).toBeCloseTo(-346.02, 2);
   });
 
-  it("show-all walks from opening through reconciled and unreconciled rows", () => {
+  it("show-all uses API running_balance through reconciled and unreconciled rows", () => {
     const rows = buildLedgerRowsFromTimeline(
       [
         {
@@ -834,6 +783,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           type: "OUTFLOW",
           reconciled: true,
           reconciled_balance: "-1301.96",
+          running_balance: "-1301.96",
           account_id: 6,
           status: "RECONCILED",
         } as never,
@@ -843,6 +793,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-550.00",
           type: "OUTFLOW",
           reconciled: false,
+          running_balance: "-1851.96",
           account_id: 6,
           status: "CLEARED",
         } as never,
@@ -852,6 +803,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "200.00",
           type: "INFLOW",
           reconciled: false,
+          running_balance: "-1651.96",
           account_id: 6,
           status: "CLEARED",
         } as never,
@@ -861,6 +813,7 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline", () => {
           amount: "-70.00",
           type: "OUTFLOW",
           reconciled: false,
+          running_balance: "-1721.96",
           account_id: 6,
           status: "CLEARED",
         } as never,
@@ -1819,7 +1772,7 @@ describe("creditOwedAsOfDateFromTimeline", () => {
 });
 
 describe("buildLedgerRows fallback", () => {
-  it("uses transaction direction when computing fallback ledger balances", () => {
+  it("uses backend running_balance when computing fallback ledger balances", () => {
     const rows = buildLedgerRows(
       [
         {
@@ -1828,6 +1781,7 @@ describe("buildLedgerRows fallback", () => {
           payee: "Groceries",
           amount: "50",
           direction: "OUTFLOW",
+          running_balance: "-50",
         } as never,
         {
           id: 2,
@@ -1835,6 +1789,7 @@ describe("buildLedgerRows fallback", () => {
           payee: "Paycheck",
           amount: "100",
           direction: "INFLOW",
+          running_balance: "50",
         } as never,
       ],
       0,

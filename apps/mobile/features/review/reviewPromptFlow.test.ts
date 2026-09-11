@@ -63,6 +63,10 @@ describe("negative feedback flow", () => {
     );
     expect(host).toMatch(/submitFeedback/);
     expect(host).toMatch(/source: "mobile"/);
+    expect(feedback).not.toMatch(/May we contact you/);
+    expect(feedback).not.toMatch(/allowContact/);
+    expect(feedback).not.toMatch(/accountEmail/);
+    expect(host).not.toMatch(/allow_contact/);
     expect(feedback).toMatch(/REVIEW_PROMPT_COPY\.thanksTitle/);
     expect(REVIEW_PROMPT_COPY.thanksTitle).toBe("Thanks for the feedback.");
     const negativeHandler = host.slice(host.indexOf("const onNo"), host.indexOf("const onMaybeLater"));
