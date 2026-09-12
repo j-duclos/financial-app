@@ -368,7 +368,10 @@ class TestBuildTimeline:
     def test_savings_interest_income_appears_on_cycle_end(self, user, household, db):
         """With interest_cycle_end_day and interest_rate set, next cycle end gets one Projected Interest Income row."""
         from datetime import timedelta
-        today = date.today()
+
+        from django.utils import timezone
+
+        today = timezone.localdate()
         start = today
         end = today + timedelta(days=90)
         savings = Account.objects.create(
@@ -386,14 +389,31 @@ class TestBuildTimeline:
             category_type=Category.CategoryType.INCOME,
             defaults={"sort_order": 6},
         )
-        rows = build_timeline(user, start, end, account_id=savings.id)
+        txn_before = Transaction.objects.filter(account=savings).count()
+        rows = build_timeline(
+            user, start, end, account_id=savings.id, as_of_date=today, projection_only=True
+        )
+        assert Transaction.objects.filter(account=savings).count() == txn_before
+        assert not Transaction.objects.filter(
+            account=savings, source=Transaction.Source.INTEREST
+        ).exists()
         interest_rows = [
             r for r in rows
             if r.get("source") == "interest" and r.get("description") == "Projected Interest Income"
         ]
-        assert len(interest_rows) >= 1, "expected at least one projected interest income row for savings"
+        assert len(interest_rows) == 1, (
+            "expected exactly one projected interest income row for the next cycle"
+        )
         first = interest_rows[0]
+        from timeline.services.ledger import _cycle_end_dates_in_range
+
+        future_cycles = [
+            d for d in _cycle_end_dates_in_range(1, start, end, on_or_after=None) if d > today
+        ]
+        assert future_cycles, "next cycle end must fall inside the 90-day forecast horizon"
+        assert first["date"] == min(future_cycles)
         assert first["amount"] > 0
+        assert first.get("transaction_id") is None
         assert first["account_id"] == savings.id
         assert first["category_name"] == "Interest Income"
         assert first["type"] == "INFLOW"
@@ -532,7 +552,10 @@ class TestBuildTimeline:
     ):
         """When a recurring payment zeroes the balance before the interest cycle end, do not show projected interest."""
         from datetime import timedelta
-        today = date.today()
+
+        from django.utils import timezone
+
+        today = timezone.localdate()
         start = today
         end = today + timedelta(days=90)
         credit = Account.objects.create(
@@ -559,11 +582,11 @@ class TestBuildTimeline:
             source=Transaction.Source.ACTUAL,
         )
         # Recurring rule: $2 payment tomorrow (zeroes balance before April 1)
-        pay_cat = Category.objects.create(
+        Category.objects.get_or_create(
             household=household,
             name="Credit Card Payment",
             category_type=Category.CategoryType.EXPENSE,
-            sort_order=1,
+            defaults={"sort_order": 1},
         )
         RecurringRule.objects.create(
             household=household,
@@ -578,7 +601,12 @@ class TestBuildTimeline:
             start_date=today,
             active=True,
         )
-        rows = build_timeline(user, start, end, account_id=credit.id)
+        rows = build_timeline(user, start, end, account_id=credit.id, as_of_date=today)
+        pay_rows = [
+            r for r in rows
+            if r.get("rule_id") and r.get("account_id") == credit.id and r.get("amount") == Decimal("2.00")
+        ]
+        assert pay_rows, "scheduled payoff payment must appear on the card before interest is evaluated"
         interest_rows = [
             r for r in rows
             if r.get("source") == "interest" and r.get("description") == "Projected Interest"
@@ -1108,7 +1136,9 @@ class TestBuildTimeline:
         """DB already has PLANNED rule legs; Chase-only view must hide the checking outflow."""
         from datetime import timedelta
 
-        today = date.today()
+        from django.utils import timezone
+
+        today = timezone.localdate()
         start = today
         end = today + timedelta(days=120)
         bank = Account.objects.create(
@@ -1174,9 +1204,12 @@ class TestBuildTimeline:
             source=Transaction.Source.RULE,
             rule=rule,
         )
-        rows = build_timeline(user, start, end, account_id=bank.id)
+        rows = build_timeline(user, start, end, account_id=bank.id, as_of_date=today)
         leaked = [r for r in rows if r.get("rule_id") == rule.id and r.get("account_id") == bank.id]
         assert len(leaked) == 0, f"expected no projected min on bank when card clear; got {leaked}"
+        assert not any(
+            r.get("account_id") == card.id and r.get("rule_id") == rule.id for r in rows
+        )
 
     def test_multi_card_zero_balance_purges_materialized_transfer_pairs(
         self, user, household, db
@@ -1184,7 +1217,9 @@ class TestBuildTimeline:
         """Several paid-off cards: materialized min pairs disappear and TransferGroups are deleted."""
         from datetime import timedelta
 
-        today = date.today()
+        from django.utils import timezone
+
+        today = timezone.localdate()
         start = today
         end = today + timedelta(days=90)
         bank = Account.objects.create(
@@ -1263,13 +1298,71 @@ class TestBuildTimeline:
                 transfer_group=tg,
             )
 
-        rows = build_timeline(user, start, end, account_id=bank.id)
+        debt_card = Account.objects.create(
+            household=household,
+            account_type=Account.AccountType.CREDIT,
+            name="Still Owes",
+            currency="USD",
+            starting_balance=Decimal("-200.00"),
+        )
+        debt_rule = RecurringRule.objects.create(
+            household=household,
+            name="Still Owes C/C Payment",
+            account=bank,
+            transfer_to_account=debt_card,
+            category=cat,
+            direction=RecurringRule.Direction.EXPENSE,
+            amount=Decimal("25.00"),
+            currency="USD",
+            frequency=RecurringRule.Frequency.MONTHLY_DAY,
+            interval=1,
+            day_of_month=dom,
+            start_date=today,
+            active=True,
+        )
+        debt_occ = list(generate_rule_occurrences(debt_rule, start, end))
+        assert debt_occ
+        debt_pay = debt_occ[0]
+        debt_tg = TransferGroup.objects.create(
+            household=household,
+            from_account=bank,
+            to_account=debt_card,
+            amount=Decimal("25.00"),
+            scheduled_date=debt_pay,
+            status=TransferGroup.Status.PLANNED,
+        )
+        Transaction.objects.create(
+            account=bank,
+            date=debt_pay,
+            payee=debt_rule.name,
+            amount=Decimal("-25.00"),
+            category=cat,
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=debt_rule,
+            transfer_group=debt_tg,
+        )
+        Transaction.objects.create(
+            account=debt_card,
+            date=debt_pay,
+            payee=debt_rule.name,
+            amount=Decimal("25.00"),
+            status=Transaction.Status.PLANNED,
+            source=Transaction.Source.RULE,
+            rule=debt_rule,
+            transfer_group=debt_tg,
+        )
+
+        rows = build_timeline(user, start, end, account_id=bank.id, as_of_date=today)
         for rule in rules:
             leaked = [r for r in rows if r.get("rule_id") == rule.id]
             assert len(leaked) == 0, f"expected no rows for {rule.name}; got {leaked}"
             assert not Transaction.objects.filter(rule=rule, source=Transaction.Source.RULE).exists()
         for tg in groups:
             assert not TransferGroup.objects.filter(pk=tg.pk).exists()
+        kept = [r for r in rows if r.get("rule_id") == debt_rule.id and r.get("account_id") == bank.id]
+        assert len(kept) >= 1, "a card with genuine debt must still produce its payment"
+        assert TransferGroup.objects.filter(pk=debt_tg.pk).exists()
 
     def test_card_with_debt_keeps_materialized_minimum(self, user, household, db):
         """Regression: a card that still owes keeps its planned minimum transfer pair."""
@@ -1883,7 +1976,9 @@ class TestBuildTimeline:
         """If only the checking outflow exists (no +leg on the card), use rule.transfer_to_account."""
         from datetime import timedelta
 
-        today = date.today()
+        from django.utils import timezone
+
+        today = timezone.localdate()
         start = today
         end = today + timedelta(days=90)
         bank = Account.objects.create(
@@ -1940,10 +2035,20 @@ class TestBuildTimeline:
             source=Transaction.Source.RULE,
             rule=rule,
         )
-        rows = build_timeline(user, start, end, account_id=bank.id)
+        ordinary = Transaction.objects.create(
+            account=bank,
+            date=pay_date,
+            payee="Groceries",
+            amount=Decimal("-12.00"),
+            category=cat,
+            status=Transaction.Status.CLEARED,
+            source=Transaction.Source.ACTUAL,
+        )
+        rows = build_timeline(user, start, end, account_id=bank.id, as_of_date=today)
         leaked = [r for r in rows if r.get("rule_id") == rule.id]
         assert len(leaked) == 0, f"expected orphan leg hidden/purged; got {leaked}"
         assert not Transaction.objects.filter(rule_id=rule.id, date=pay_date).exists()
+        assert any(r.get("transaction_id") == ordinary.id for r in rows)
 
     def test_monthly_minimum_continues_while_card_still_owes_despite_projected_interest_later(
         self, user, household, db

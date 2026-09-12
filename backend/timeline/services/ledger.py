@@ -3817,22 +3817,22 @@ def _build_timeline_impl(
             )
             if interest_amount is None or interest_amount <= 0:
                 continue
-                rows.append({
-                    "date": cycle_end,
-                    "description": "Projected Interest Income",
-                    "account_id": acc.id,
-                    "account_name": acc.effective_display_name,
-                    "category_id": cat_id,
-                    "category_name": cat_name,
-                    "amount": interest_amount,
-                    "type": "INFLOW",
-                    "status": "planned",
-                    "source": "interest",
-                    "rule_id": None,
-                    "transaction_id": None,
-                    "sort_key": (cycle_end, 2, acc.id),
-                    **_timeline_row_meta(None),
-                })
+            rows.append({
+                "date": cycle_end,
+                "description": "Projected Interest Income",
+                "account_id": acc.id,
+                "account_name": acc.effective_display_name,
+                "category_id": cat_id,
+                "category_name": cat_name,
+                "amount": interest_amount,
+                "type": "INFLOW",
+                "status": "planned",
+                "source": "interest",
+                "rule_id": None,
+                "transaction_id": None,
+                "sort_key": (cycle_end, 2, acc.id),
+                **_timeline_row_meta(None),
+            })
         phase_end(timer, _phase_interest)
 
         _phase_scenario = phase_start(timer, "scenario_rows")
