@@ -29,7 +29,12 @@ def perf_print(message: str) -> None:
     """Emit a [PERF] line to stdout for Render log visibility."""
     if not perf_enabled():
         return
-    print(message, flush=True)
+    try:
+        print(message, flush=True)
+    except OSError:
+        # Windows can raise Errno 22 once the console handle goes stale.
+        # Perf logs must never turn a successful request into a 500.
+        return
 
 _build_timeline_call_count: ContextVar[int] = ContextVar("build_timeline_call_count", default=0)
 _build_timeline_callers: ContextVar[list[str]] = ContextVar("build_timeline_callers", default=[])
