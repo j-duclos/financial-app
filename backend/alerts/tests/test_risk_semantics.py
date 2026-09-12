@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
-from django.utils import timezone
 
 from accounts.models import Account
 from alerts.models import ProjectedFundsAlert
@@ -140,7 +140,8 @@ def test_transfer_risk_is_source_leg_only(user, household):
         include_in_forecast=True,
     )
     due = TODAY + timedelta(days=2)
-    create_transfer(user, checking.id, savings.id, Decimal("500.00"), due, payee="Move to Savings")
+    with patch("transactions.services.posting.timezone.localdate", return_value=TODAY):
+        create_transfer(user, checking.id, savings.id, Decimal("500.00"), due, payee="Move to Savings")
     _eval(household)
     alerts = list(ProjectedFundsAlert.objects.filter(household=household, resolved_at__isnull=True))
     assert len(alerts) == 1
@@ -161,7 +162,8 @@ def test_credit_card_payment_evaluates_funding_account_once(user, household):
         include_in_forecast=True,
     )
     due = TODAY + timedelta(days=1)
-    create_transfer(user, checking.id, card.id, Decimal("250.00"), due, payee="Card payment")
+    with patch("transactions.services.posting.timezone.localdate", return_value=TODAY):
+        create_transfer(user, checking.id, card.id, Decimal("250.00"), due, payee="Card payment")
     _eval(household)
     alerts = list(ProjectedFundsAlert.objects.filter(household=household, resolved_at__isnull=True))
     assert len(alerts) == 1

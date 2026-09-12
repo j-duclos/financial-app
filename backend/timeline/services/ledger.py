@@ -410,20 +410,26 @@ def forecast_account_balance_metrics(
     today: date,
     end_date: date,
     minimum_buffer: Decimal,
+    account: Account | None = None,
+    ledger_anchor: Decimal | None = None,
 ) -> dict[str, Any]:
     """
     Ledger-aligned balance projection for one account (matches Transactions Bal).
 
     Reduces over canonical ``balance_after`` on forecast rows — does not perform an
     independent balance walk.
-    """
-    acc = Account.objects.filter(pk=account_id).first()
-    if acc is not None:
-        from transactions.services.reconciliation import ledger_today_balance_before_pending
 
-        ledger_anchor = ledger_today_balance_before_pending(acc, today)
-    else:
-        ledger_anchor = _balance_at_end_of_date(account_id, today - timedelta(days=1))
+    Pass ``ledger_anchor`` (and optionally ``account``) to skip a per-call
+    posted-balance query when the caller already resolved it.
+    """
+    if ledger_anchor is None:
+        acc = account if account is not None else Account.objects.filter(pk=account_id).first()
+        if acc is not None:
+            from transactions.services.reconciliation import ledger_today_balance_before_pending
+
+            ledger_anchor = ledger_today_balance_before_pending(acc, today)
+        else:
+            ledger_anchor = _balance_at_end_of_date(account_id, today - timedelta(days=1))
 
     from timeline.services.ledger_section_balances import (
         forecast_balance_metrics_from_transactions_ledger,

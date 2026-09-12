@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from core.models import Household, HouseholdMembership
 from accounts.models import Account
@@ -198,7 +199,7 @@ class TestClearAllTransactionsForAccount(TestCase):
                 account=self.checking, status=Reconciliation.Status.COMPLETED, is_active=True
             ).exists()
         )
-        self.assertEqual(min_reconcile_start_date(self.checking), date.today())
+        self.assertEqual(min_reconcile_start_date(self.checking), timezone.localdate())
 
     def test_clear_resets_plaid_sync_cursor_for_linked_item(self):
         from plaid_link.models import PlaidItem, PlaidLinkedAccount

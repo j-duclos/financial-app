@@ -15,6 +15,8 @@ from accounts.models import Account
 from accounts.services.account_health import (
     HEALTH_STATUS_CRITICAL,
     HEALTH_STATUS_RISK,
+    REASON_FORECAST_BELOW_BUFFER,
+    REASON_FORECAST_NEGATIVE,
     _cash_health,
     calculate_account_health_for_accounts,
 )
@@ -151,9 +153,10 @@ def test_aug_28_buffer_risk_not_projected_negative(user, main):
         user, [main], as_of_date=AS_OF, days=FORECAST_DAYS, timeline_rows=rows
     )
     forecast = summaries[main.id]
-    status, reason, risk_date, details = _cash_health(main, forecast, AS_OF, rows)
+    status, reason, reason_code, risk_date, details = _cash_health(main, forecast, AS_OF, rows)
 
     assert status == HEALTH_STATUS_RISK
+    assert reason_code == REASON_FORECAST_BELOW_BUFFER
     assert details["actual_balance_negative"] is False
     assert details["shortfall_type"] == "buffer"
     assert risk_date == AUG_28
@@ -201,8 +204,9 @@ def test_sep_4_actual_negative_wins_over_buffer_date(user, main):
     assert forecast["lowest_projected_balance_date"] == SEP_4.isoformat()
     assert forecast["first_below_buffer_date"] == AUG_28.isoformat()
 
-    status, reason, risk_date, details = _cash_health(main, forecast, AS_OF, rows)
+    status, reason, reason_code, risk_date, details = _cash_health(main, forecast, AS_OF, rows)
     assert status == HEALTH_STATUS_CRITICAL
+    assert reason_code == REASON_FORECAST_NEGATIVE
     assert details["shortfall_type"] == "actual_balance"
     assert details["actual_balance_negative"] is True
     assert risk_date == SEP_4

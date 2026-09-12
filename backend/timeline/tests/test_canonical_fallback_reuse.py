@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Account
@@ -131,7 +132,7 @@ def test_goal_future_balance_reuses_warm_canonical(user, household, checking):
 
 @pytest.mark.django_db
 def test_transfer_simulation_baseline_reuses_warm_canonical(user, household, checking):
-    today = date.today()
+    today = timezone.localdate()
     # 6m horizon ≈ 183 days depending on helper
     from timeline.services.transfer_simulation import _horizon_to_end
 
@@ -156,7 +157,7 @@ def test_transfer_simulation_ephemeral_still_builds(user, household, checking):
     """Hypothetical transfer must build once even when baseline is a canonical HIT."""
     from timeline.services.transfer_simulation import simulate_transfer_impact
 
-    today = date.today()
+    today = timezone.localdate()
     savings = Account.objects.create(
         household=household,
         account_type=Account.AccountType.SAVINGS,

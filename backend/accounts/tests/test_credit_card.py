@@ -17,7 +17,7 @@ from accounts.services.credit_card import (
     sync_current_balance_from_ledger,
 )
 from transactions.models import Transaction, TransferGroup
-from transactions.services.matching import match_imported_transaction
+from transactions.services.matching import ledger_visible_transactions, match_imported_transaction
 from transactions.services.posting import create_transfer, post_transaction
 
 User = get_user_model()
@@ -271,10 +271,43 @@ class TestPlaidAutopayMatch:
             plaid_transaction_id="plaid-test-autopay-1",
             imported_description="CAPITAL ONE ONLINE PMT",
         )
+        group_id = planned.transfer_group_id
+        dest_leg = Transaction.objects.filter(
+            transfer_group_id=group_id,
+            account=credit_card,
+            amount=Decimal("150.00"),
+        ).first()
+        assert dest_leg is not None
+
         m = match_imported_transaction(imported)
-        assert m is not None
+        planned.refresh_from_db()
         imported.refresh_from_db()
-        assert imported.import_match_status == Transaction.ImportMatchStatus.MATCHED
+        dest_leg.refresh_from_db()
+
+        assert planned.transfer_group_id == group_id
+        assert dest_leg.transfer_group_id == group_id
+        assert dest_leg.account_id == credit_card.id
+
+        visible_source = list(
+            ledger_visible_transactions(
+                Transaction.objects.filter(account=checking, amount=Decimal("-150.00"))
+            )
+        )
+        assert len(visible_source) == 1
+        authoritative = visible_source[0]
+        assert authoritative.transfer_group_id == group_id
+        assert (authoritative.plaid_transaction_id or "") == "plaid-test-autopay-1"
+
+        if m is None:
+            # Transfer-leg merge: planned source absorbs the bank id; Plaid row is hidden.
+            assert imported.import_match_status == Transaction.ImportMatchStatus.DUPLICATE
+            assert planned.pk == authoritative.pk
+            assert planned.import_match_status == Transaction.ImportMatchStatus.MATCHED
+        else:
+            # Generic match: Plaid stays visible; planned source is suppressed.
+            assert imported.import_match_status == Transaction.ImportMatchStatus.MATCHED
+            assert imported.pk == authoritative.pk
+            assert m.planned_transaction_id == planned.pk
 
 
 @pytest.mark.django_db

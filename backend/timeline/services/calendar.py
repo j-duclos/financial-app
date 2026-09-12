@@ -106,6 +106,7 @@ from insights.services.day_lowest_balance import (
 )
 from insights.services.day_recovery import attach_recovery_to_days
 from timeline.services.ledger import (
+    build_forecast_projection_timeline,
     build_timeline,
     forecast_account_balance_metrics,
     row_participates_in_ledger_walk,
@@ -536,6 +537,24 @@ def _load_calendar_timeline_rows(
     effective_end = min(end_date, forecast_end)
     merged: list[dict] = []
     forecast_ledger_rows: list[dict] = []
+
+    if ephemeral_events:
+        # Hypothetical overlays must not read or write the normal canonical cache.
+        forecast_rows = build_forecast_projection_timeline(
+            user,
+            today=today,
+            end_date=forecast_end,
+            scenario_id=scenario_id,
+            household_id=household_id,
+            caller="timeline_calendar_ephemeral",
+            ephemeral_events=ephemeral_events,
+        )
+        forecast_ledger_rows = list(forecast_rows)
+        for row in forecast_rows:
+            rd = _parse_date(row.get("date"))
+            if rd is not None and today <= rd <= effective_end:
+                merged.append(row)
+        return merged, forecast_ledger_rows
 
     if start_date < today:
         hist_end = min(today - timedelta(days=1), end_date)
@@ -971,21 +990,27 @@ def build_timeline_calendar(
         from transactions.services.reconciliation import ledger_today_balance_before_pending
 
         forecast_end = today + timedelta(days=resolved_forecast_days)
+        cash_accounts = [accounts_by_id[aid] for aid in cash_ids if aid in accounts_by_id]
+        ledger_anchors = {
+            acc.id: ledger_today_balance_before_pending(acc, today) for acc in cash_accounts
+        }
         for aid in cash_ids:
             acc = accounts_by_id.get(aid)
             if not acc:
                 continue
+            current_balance = ledger_anchors[aid]
             metrics = forecast_account_balance_metrics(
                 forecast_ledger_rows,
                 account_id=aid,
                 today=today,
                 end_date=forecast_end,
                 minimum_buffer=_decimal(acc.minimum_buffer or 0),
+                account=acc,
+                ledger_anchor=current_balance,
             )
             lowest = metrics["lowest"]
             lowest_date = metrics["lowest_date"]
             minimum_buffer = _decimal(acc.minimum_buffer or 0)
-            current_balance = ledger_today_balance_before_pending(acc, today)
             available = lowest - minimum_buffer
             status = _risk_status(lowest, available, minimum_buffer, current_balance)
             if status in (RISK_STATUS_CRITICAL, RISK_STATUS_RISK):

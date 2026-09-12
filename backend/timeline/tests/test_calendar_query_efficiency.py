@@ -288,14 +288,14 @@ def test_account_date_grouping_does_not_rescan_full_timeline(user, household, mo
     checkings = [_make_checking(household, f"Scan {i}") for i in range(4)]
     import timeline.services.calendar as cal
 
-    orig = cal.is_superseded_planned_row
+    orig = cal.row_participates_in_ledger_walk
     scanned_lengths: list[int] = []
 
     def wrapped(row, account_rows):
         scanned_lengths.append(len(account_rows))
         return orig(row, account_rows)
 
-    monkeypatch.setattr(cal, "is_superseded_planned_row", wrapped)
+    monkeypatch.setattr(cal, "row_participates_in_ledger_walk", wrapped)
 
     rows = []
     for acc in checkings:
@@ -314,6 +314,8 @@ def test_account_date_grouping_does_not_rescan_full_timeline(user, household, mo
                     "transaction_id": None,
                     "category_name": "Rent",
                     "transaction_type": "EXPENSE",
+                    "balance_after": Decimal("90"),
+                    "running_balance": Decimal("90"),
                 }
             )
             rows.append(
@@ -329,6 +331,8 @@ def test_account_date_grouping_does_not_rescan_full_timeline(user, household, mo
                     "transaction_id": 1000 + day_offset,
                     "category_name": "Rent",
                     "transaction_type": "EXPENSE",
+                    "balance_after": Decimal("90"),
+                    "running_balance": Decimal("90"),
                 }
             )
 

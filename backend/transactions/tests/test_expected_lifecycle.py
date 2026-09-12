@@ -268,11 +268,27 @@ class TestPlaidMatch(ExpectedLifecycleFixture):
         candidates = find_import_candidates_for_planned(planned)
         self.assertEqual(len(candidates), 1)
 
+    def _payroll_rule(self) -> RecurringRule:
+        return RecurringRule.objects.create(
+            household=self.h,
+            account=self.acc,
+            name="Payroll",
+            direction=RecurringRule.Direction.INCOME,
+            amount=Decimal("1835.52"),
+            frequency=RecurringRule.Frequency.WEEKLY,
+            start_date=date(2026, 1, 1),
+            active=True,
+        )
+
     def test_import_candidates_include_sibling_matched_plaid_import(self):
         """Payroll imported 07-02 matched to scheduled 07-02 — 07-03 expected still offers that import."""
-        early = self._expected_planned()
-        early.date = date(2026, 7, 2)
-        early.save(update_fields=["date"])
+        payroll_rule = self._payroll_rule()
+        early = self._planned_rule_row(
+            date(2026, 7, 2),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            rule=payroll_rule,
+        )
         imported = Transaction.objects.create(
             account=self.acc,
             date=date(2026, 7, 2),
@@ -291,7 +307,7 @@ class TestPlaidMatch(ExpectedLifecycleFixture):
             amount=Decimal("1835.52"),
             status=Transaction.Status.PLANNED,
             source=Transaction.Source.RULE,
-            rule=self.rule,
+            rule=payroll_rule,
         )
         candidates = find_import_candidates_for_planned(late)
         self.assertEqual(len(candidates), 1)
@@ -301,9 +317,13 @@ class TestPlaidMatch(ExpectedLifecycleFixture):
         """Matched planned twin hidden from ledger must still shadow the next-day duplicate."""
         from transactions.services.matching import ledger_visible_transactions, shadowed_rule_occurrence_ids
 
-        early = self._expected_planned()
-        early.date = date(2026, 7, 2)
-        early.save(update_fields=["date"])
+        payroll_rule = self._payroll_rule()
+        early = self._planned_rule_row(
+            date(2026, 7, 2),
+            payee="2930 JOHN GALT S PAYROLL PPD ID: 14409866",
+            amount=Decimal("1835.52"),
+            rule=payroll_rule,
+        )
         imported = Transaction.objects.create(
             account=self.acc,
             date=date(2026, 7, 2),
@@ -321,7 +341,7 @@ class TestPlaidMatch(ExpectedLifecycleFixture):
             amount=Decimal("1835.52"),
             status=Transaction.Status.PLANNED,
             source=Transaction.Source.RULE,
-            rule=self.rule,
+            rule=payroll_rule,
         )
         visible = list(
             ledger_visible_transactions(

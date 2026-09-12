@@ -91,7 +91,8 @@ def _action_center_rec(card, owed: Decimal):
 @pytest.mark.django_db
 @pytest.mark.parametrize("target", [Decimal("10"), Decimal("30"), Decimal("50")])
 def test_action_center_accounts_dashboard_agree_on_target_payment(user, venture, target):
-    owed = Decimal("4918.50")
+    """Below the credit limit but above the configured target — recommend that target."""
+    owed = Decimal("4000.00")
     venture.target_utilization_percent = target
     venture.save(update_fields=["target_utilization_percent"])
     _set_owed(user, venture, owed)

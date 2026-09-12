@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
+from django.core.exceptions import ValidationError
+from django.db.models import DateField
 from django.utils import timezone
 
 from goals.models import GoalBucket, GoalContribution
 from goals.services import _decimal, _quantize_money
 from transactions.models import Transaction
+
+_DATE_FIELD = DateField()
+
+
+def _as_contribution_date(value) -> date | None:
+    """Normalize txn.date from DateField, datetime, or ISO text. Invalid values are ignored."""
+    if value is None or value == "":
+        return None
+    try:
+        converted = _DATE_FIELD.to_python(value)
+    except (ValidationError, TypeError, ValueError):
+        return None
+    if converted is None:
+        return None
+    if isinstance(converted, datetime):
+        return converted.date()
+    if isinstance(converted, date):
+        return converted
+    return None
+
 
 ACTIVE_BUCKET_STATUSES = (GoalBucket.Status.ACTIVE, GoalBucket.Status.PAUSED)
 
@@ -53,8 +77,10 @@ def clear_goal_contribution_for_transaction(txn) -> None:
 
 def _eligible_for_linked_contribution(txn: Transaction) -> bool:
     """Only posted history counts — not forecast/planned rows scheduled for later."""
-    today = timezone.localdate()
-    if txn.date > today:
+    txn_date = _as_contribution_date(getattr(txn, "date", None))
+    if txn_date is None:
+        return False
+    if txn_date > timezone.localdate():
         return False
     if txn.status == Transaction.Status.PLANNED:
         return False
@@ -63,7 +89,8 @@ def _eligible_for_linked_contribution(txn: Transaction) -> bool:
 
 def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | None:
     """Mirror eligible ledger rows on the goal's linked account as contributions."""
-    if not _eligible_for_linked_contribution(txn):
+    contrib_date = _as_contribution_date(getattr(txn, "date", None))
+    if contrib_date is None or not _eligible_for_linked_contribution(txn):
         clear_goal_contribution_for_transaction(txn)
         return None
     bucket = active_bucket_for_linked_account(txn.account_id)
@@ -77,7 +104,7 @@ def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | Non
             "bucket": bucket,
             "account_id": txn.account_id,
             "amount": amount,
-            "date": txn.date,
+            "date": contrib_date,
             "source": GoalContribution.Source.AUTO,
         },
     )
@@ -85,7 +112,7 @@ def sync_linked_goal_contribution_for_transaction(txn) -> GoalContribution | Non
         contrib.bucket = bucket
         contrib.account_id = txn.account_id
         contrib.amount = amount
-        contrib.date = txn.date
+        contrib.date = contrib_date
         contrib.source = GoalContribution.Source.AUTO
         contrib.save(
             update_fields=["bucket", "account_id", "amount", "date", "source"]

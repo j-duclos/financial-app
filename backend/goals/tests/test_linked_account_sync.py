@@ -1,14 +1,19 @@
 """Linked-account goal sync must not treat forecast rows as contributions."""
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from accounts.models import Account
 from core.models import Household, HouseholdMembership
-from goals.linked_account_sync import sync_linked_goal_contribution_for_transaction
+from goals.linked_account_sync import (
+    _eligible_for_linked_contribution,
+    sync_linked_goal_contribution_for_transaction,
+)
 from goals.models import GoalBucket, GoalContribution
 from transactions.models import Transaction
 from transactions.services.posting import post_transaction
@@ -75,3 +80,44 @@ def test_cleared_past_transaction_creates_contribution(user, savings, bucket):
     assert contrib is not None
     assert contrib.amount == Decimal("150")
     assert contrib.date == AS_OF - timedelta(days=3)
+    assert isinstance(contrib.date, date)
+
+
+def test_eligible_accepts_datetime_date():
+    today = timezone.localdate()
+    txn = SimpleNamespace(date=today, status=Transaction.Status.CLEARED)
+    assert _eligible_for_linked_contribution(txn) is True
+
+
+def test_eligible_accepts_iso_date_string():
+    today = timezone.localdate()
+    txn = SimpleNamespace(date=today.isoformat(), status=Transaction.Status.CLEARED)
+    assert _eligible_for_linked_contribution(txn) is True
+
+
+def test_eligible_rejects_invalid_date_text():
+    txn = SimpleNamespace(date="not-a-date", status=Transaction.Status.CLEARED)
+    assert _eligible_for_linked_contribution(txn) is False
+
+
+def test_eligible_rejects_future_date():
+    future = timezone.localdate() + timedelta(days=3)
+    txn = SimpleNamespace(date=future, status=Transaction.Status.CLEARED)
+    assert _eligible_for_linked_contribution(txn) is False
+
+
+def test_eligible_rejects_planned_transaction():
+    today = timezone.localdate()
+    txn = SimpleNamespace(date=today, status=Transaction.Status.PLANNED)
+    assert _eligible_for_linked_contribution(txn) is False
+
+
+@pytest.mark.django_db
+def test_sync_stores_real_date_from_iso_string(user, savings, bucket):
+    today = timezone.localdate()
+    txn = post_transaction(user, savings.id, today, "ISO save", Decimal("40"))
+    txn.date = today.isoformat()
+    contrib = sync_linked_goal_contribution_for_transaction(txn)
+    assert contrib is not None
+    assert contrib.date == today
+    assert isinstance(contrib.date, date)

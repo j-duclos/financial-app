@@ -308,21 +308,25 @@ def test_base_calendar_built_once_for_multiple_transfer_suggestions(user, househ
         ) as mock_calendar:
             mock_calendar.return_value = {"days": [], "summary": {}}
             with patch(
-                "timeline.services.transfer_simulation.build_timeline",
-                return_value=[],
+                "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline",
+                return_value=([], True),
             ):
                 with patch(
-                    "timeline.services.resolve_risk.simulate_transfer_impact",
-                    side_effect=lambda *args, **kwargs: {
-                        "base_horizon_lowest_projected_balance": "-500.00",
-                        "simulated_horizon_lowest_projected_balance": "0.00",
-                        "simulated_horizon_lowest_date": today.isoformat(),
-                        "risk_resolved": True,
-                        "result_status": "resolved",
-                        "transfer_date": today.isoformat(),
-                    },
+                    "timeline.services.transfer_simulation.build_forecast_projection_timeline",
+                    return_value=[],
                 ):
-                    build_resolve_risk_plan(user, checking.id, days=30)
+                    with patch(
+                        "timeline.services.resolve_risk.simulate_transfer_impact",
+                        side_effect=lambda *args, **kwargs: {
+                            "base_horizon_lowest_projected_balance": "-500.00",
+                            "simulated_horizon_lowest_projected_balance": "0.00",
+                            "simulated_horizon_lowest_date": today.isoformat(),
+                            "risk_resolved": True,
+                            "result_status": "resolved",
+                            "transfer_date": today.isoformat(),
+                        },
+                    ):
+                        build_resolve_risk_plan(user, checking.id, days=30)
 
     base_calls = [
         c
@@ -375,7 +379,7 @@ def test_unrelated_account_forecasts_not_recalculated_each_simulation(user, hous
         return {"lowest_projected_balance": "0"}
 
     with patch(
-        "timeline.services.transfer_simulation.build_timeline",
+        "timeline.services.transfer_simulation.build_forecast_projection_timeline",
         return_value=[],
     ):
         with patch(

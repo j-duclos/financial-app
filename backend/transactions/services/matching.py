@@ -829,7 +829,6 @@ def _planned_candidate_base_qs(imported: Transaction) -> QuerySet[Transaction]:
         )
         .exclude(pk=imported.pk)
         .exclude(source__in=[Transaction.Source.PLAID, Transaction.Source.INTEREST, Transaction.Source.SYSTEM])
-        .exclude(transfer_group_id__isnull=False)
         .filter(
             Q(source=Transaction.Source.RULE)
             | Q(source__in=[Transaction.Source.ACTUAL, Transaction.Source.ONE_TIME])

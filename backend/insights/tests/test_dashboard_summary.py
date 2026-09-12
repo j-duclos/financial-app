@@ -30,7 +30,12 @@ from insights.services.dashboard_summary import (
     build_dashboard_summary_fast,
     _next_safe_to_spend_issue,
 )
-from accounts.services.account_health import _cash_health
+from accounts.services.account_health import (
+    REASON_FORECAST_BELOW_BUFFER,
+    REASON_FORECAST_NEGATIVE,
+    REASON_SPENDING_CUSHION_SHORT,
+    _cash_health,
+)
 from accounts.services.available_to_spend import dashboard_safe_to_spend_aggregate, calculate_forecast_summaries_for_accounts
 from transactions.models import Transaction
 
@@ -584,12 +589,13 @@ def test_cash_health_case_a_actual_balance_negative(checking):
         "bucket_allocation": "0",
         "balance_on_risk_date": "-500",
     }
-    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    status, reason, reason_code, risk_date, details = _cash_health_from_forecast(checking, forecast)
     assert status == HEALTH_STATUS_CRITICAL
+    assert reason_code == REASON_FORECAST_NEGATIVE
     assert details["actual_balance_negative"] is True
     assert details["spending_cushion_negative"] is False
     assert details["shortfall_type"] == "actual_balance"
-    assert "below zero" in (reason or "").lower()
+    assert "projected negative" in (reason or "").lower()
     assert risk_date == date(2025, 7, 8)
     assert (
         _short_attention_reason(reason, risk_date.isoformat(), status, details=details)
@@ -608,8 +614,9 @@ def test_cash_health_case_b_spending_cushion_only(checking):
         "bucket_allocation": "1000",
         "balance_on_risk_date": "500",
     }
-    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    status, reason, reason_code, risk_date, details = _cash_health_from_forecast(checking, forecast)
     assert status == HEALTH_STATUS_CRITICAL
+    assert reason_code == REASON_SPENDING_CUSHION_SHORT
     assert details["actual_balance_negative"] is False
     assert details["spending_cushion_negative"] is True
     assert details["shortfall_type"] == "reserved_savings"
@@ -640,7 +647,8 @@ def test_cash_health_case_c_below_buffer_not_negative(checking):
         "bucket_allocation": "0",
         "balance_on_risk_date": "300",
     }
-    status, reason, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    status, reason, reason_code, risk_date, details = _cash_health_from_forecast(checking, forecast)
+    assert reason_code == REASON_FORECAST_BELOW_BUFFER
     assert details["actual_balance_negative"] is False
     assert details["spending_cushion_negative"] is False
     assert details["shortfall_type"] == "buffer"
@@ -663,7 +671,8 @@ def test_attention_spending_cushion_wording_not_projected_negative(user, checkin
         "bucket_allocation": "1700",
         "balance_on_risk_date": "1200.00",
     }
-    status, reason, risk_date, details = _cash_health(checking, forecast, AS_OF, None)
+    status, reason, reason_code, risk_date, details = _cash_health(checking, forecast, AS_OF, None)
+    assert reason_code == REASON_SPENDING_CUSHION_SHORT
     health_by_id = {
         checking.id: {
             "status": status,
@@ -751,19 +760,22 @@ def _set_credit_owed(user, card, owed: Decimal, as_of=AS_OF):
 
 
 def test_attention_credit_utilization_action(user, credit_card):
-    _set_credit_owed(user, credit_card, Decimal("4900"))
+    """Over-limit cards recommend paying down to the limit; target stays in the payload."""
+    _set_credit_owed(user, credit_card, Decimal("5400"))
     summary = build_dashboard_summary(user, days=30, as_of_date=AS_OF)
     attention = [a for a in summary["attention"] if a["account_id"] == credit_card.id]
     assert len(attention) == 1
     item = attention[0]
-    assert "Utilization" in item["reason"]
+    reason = (item["reason"] or "").lower()
+    assert "utilization is 108%" in reason
     assert item.get("target_utilization_percent") is not None
+    assert Decimal(item["target_utilization_percent"]) == Decimal("10")
     assert item["secondary_action"]["type"] == "make_payment"
     assert item["secondary_action"]["label"] == "Make payment"
     action = item["recommended_action"] or ""
     assert "Pay $" in action
-    assert "10% target" in action.lower()
-    assert item["amount"] is not None
+    assert "get below limit" in action.lower()
+    assert Decimal(item["amount"]) == Decimal("400.00")
 
 
 def test_attention_earliest_risk_date_within_same_severity(
@@ -807,13 +819,17 @@ def test_attention_items_include_account_metadata(user, credit_card):
     assert item["url"].startswith("/accounts?account=")
 
 
-def test_dashboard_summary_builds_timeline_once(user, checking):
-    """Dashboard assembly builds the forecast timeline once and passes it to dependents."""
+def test_dashboard_summary_acquires_canonical_timeline_once(user, checking):
+    """Dashboard assembly acquires the canonical forecast timeline once and shares it."""
     from contextlib import ExitStack
 
+    shared_rows: list = []
     with ExitStack() as stack:
-        mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
+        mock_canonical = stack.enter_context(
+            patch(
+                "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline",
+                return_value=(shared_rows, False),
+            )
         )
         mock_forecast = stack.enter_context(
             patch(
@@ -862,11 +878,11 @@ def test_dashboard_summary_builds_timeline_once(user, checking):
         mock_rec_ctx.return_value = object()
         _build_dashboard_summary(user, days=30, as_of_date=AS_OF)
 
-    assert mock_build.call_count == 1
-    assert mock_build.call_args.kwargs.get("caller") == "dashboard_summary"
-    assert mock_build.call_args.kwargs["today"] == AS_OF
-    assert mock_build.call_args.kwargs["end_date"] == AS_OF + timedelta(days=30)
-    shared_rows = mock_build.return_value
+    assert mock_canonical.call_count == 1
+    kwargs = mock_canonical.call_args.kwargs
+    assert kwargs["today"] == AS_OF
+    assert kwargs["forecast_days"] == 30
+    assert kwargs["caller"] == "dashboard_summary"
     assert mock_forecast.call_args.kwargs["timeline_rows"] is shared_rows
     assert mock_health.call_args.kwargs["timeline_rows"] is shared_rows
     assert mock_upcoming.call_args.kwargs["timeline_rows"] is shared_rows
@@ -1092,19 +1108,18 @@ def test_build_upcoming_events_uses_timeline_running_balance(user, checking):
     assert by_desc["Rent"]["projected_balance"] == "1647.33"
 
 
-def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
-    """Dashboard build_timeline uses today → today+days, not a fixed long horizon."""
+def test_dashboard_canonical_timeline_uses_selected_forecast_days(user, checking):
+    """Canonical dashboard timeline uses the requested forecast_days horizon."""
     from contextlib import ExitStack
 
-    for days, expected_end in (
-        (30, AS_OF + timedelta(days=30)),
-        (60, AS_OF + timedelta(days=60)),
-        (90, AS_OF + timedelta(days=90)),
-        (180, AS_OF + timedelta(days=180)),
-    ):
+    for days in (30, 60, 90, 180):
+        shared_rows: list = []
         with ExitStack() as stack:
-            mock_build = stack.enter_context(
-                patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
+            mock_canonical = stack.enter_context(
+                patch(
+                    "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline",
+                    return_value=(shared_rows, False),
+                )
             )
             stack.enter_context(
                 patch(
@@ -1153,8 +1168,11 @@ def test_dashboard_timeline_end_matches_selected_forecast_days(user, checking):
             mock_rec_ctx.return_value = object()
             _build_dashboard_summary(user, days=days, as_of_date=AS_OF)
 
-        assert mock_build.call_args.kwargs["today"] == AS_OF
-        assert mock_build.call_args.kwargs["end_date"] == expected_end
+        assert mock_canonical.call_count == 1
+        kwargs = mock_canonical.call_args.kwargs
+        assert kwargs["today"] == AS_OF
+        assert kwargs["forecast_days"] == days
+        assert kwargs["caller"] == "dashboard_summary"
 
 
 def test_forecast_summaries_reuse_precomputed_timeline(user, checking):
@@ -1172,9 +1190,10 @@ def test_forecast_summaries_reuse_precomputed_timeline(user, checking):
 
 
 def test_account_health_reuse_precomputed_timeline(user, checking):
-    """Passing timeline_rows skips duplicate build_timeline in health batch."""
-    with patch("accounts.services.account_health.build_timeline") as mock_build:
-        mock_build.return_value = []
+    """Passing timeline_rows skips another canonical timeline acquisition."""
+    with patch(
+        "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline"
+    ) as mock_canonical:
         from accounts.services.account_health import calculate_account_health_for_accounts
 
         calculate_account_health_for_accounts(
@@ -1184,7 +1203,7 @@ def test_account_health_reuse_precomputed_timeline(user, checking):
             days=30,
             timeline_rows=[],
         )
-        mock_build.assert_not_called()
+        mock_canonical.assert_not_called()
 
 
 @pytest.mark.django_db

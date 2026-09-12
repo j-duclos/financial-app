@@ -199,13 +199,15 @@ def get_or_build_canonical_forecast_timeline(
             return cached, True
 
         if forecast_days > _SEED_FORECAST_DAYS and scenario_id is None:
-            seed, _ = get_or_build_canonical_forecast_timeline(
+            # Reuse a warm 30-day seed when one already exists. Never recurse into
+            # this provider to *create* a seed — that would be a second forecast
+            # build for the same request.
+            seed = peek_canonical_forecast_timeline(
                 user,
                 today=today,
                 forecast_days=_SEED_FORECAST_DAYS,
                 household_id=household_id,
                 scenario_id=None,
-                caller=caller,
             )
             if seed:
                 build_start = time.perf_counter()

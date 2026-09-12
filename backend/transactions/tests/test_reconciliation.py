@@ -74,7 +74,7 @@ class TestReconciliationCalculations:
         post_transaction(
             user=user,
             account_id=account.pk,
-            date=date.today(),
+            date=timezone.localdate(),
             payee="Coffee",
             amount=Decimal("-5.00"),
         )
@@ -84,14 +84,14 @@ class TestReconciliationCalculations:
         t1 = post_transaction(
             user=user,
             account_id=account.pk,
-            date=date.today(),
+            date=timezone.localdate(),
             payee="Deposit",
             amount=Decimal("50.00"),
         )
         t2 = post_transaction(
             user=user,
             account_id=account.pk,
-            date=date.today(),
+            date=timezone.localdate(),
             payee="Gas",
             amount=Decimal("-20.00"),
         )
@@ -108,7 +108,7 @@ class TestReconciliationCalculations:
         t1 = post_transaction(
             user=user,
             account_id=account.pk,
-            date=date.today(),
+            date=timezone.localdate(),
             payee="Paycheck",
             amount=Decimal("500.00"),
         )
@@ -119,8 +119,8 @@ class TestReconciliationCalculations:
             user=user,
             bank_current_balance=bank,
             checked_transaction_ids=[t1.pk],
-            period_start=date.today(),
-            period_end=date.today(),
+            period_start=timezone.localdate(),
+            period_end=timezone.localdate(),
         )
         t1.refresh_from_db()
         assert rec.status == Reconciliation.Status.COMPLETED
@@ -344,7 +344,7 @@ class TestReconciliationCalculations:
         t1 = post_transaction(
             user=user,
             account_id=account.pk,
-            date=date.today(),
+            date=timezone.localdate(),
             payee="Snack",
             amount=Decimal("-3.00"),
         )
@@ -354,13 +354,13 @@ class TestReconciliationCalculations:
                 user=user,
                 bank_current_balance=Decimal("999.00"),
                 checked_transaction_ids=[t1.pk],
-                period_start=date.today(),
-                period_end=date.today(),
+                period_start=timezone.localdate(),
+                period_end=timezone.localdate(),
             )
 
 
 def test_reconcile_setup_all_reconciled_through_today(auth_client, account, user):
-    today = date.today()
+    today = timezone.localdate()
     txn = post_transaction(
         user=user,
         account_id=account.pk,
@@ -386,7 +386,7 @@ def test_reconcile_setup_all_reconciled_through_today(auth_client, account, user
 
 def test_reconcile_setup_after_same_day_imports_post_reconcile(auth_client, account, user):
     """New unreconciled rows on the last reconciled day must not 400 the setup endpoint."""
-    today = date.today()
+    today = timezone.localdate()
     txn = post_transaction(
         user=user,
         account_id=account.pk,
@@ -572,14 +572,14 @@ def test_reconcile_setup_clamps_period_end_after_today(auth_client, account, use
     )
     assert r.status_code == 200, r.data
     body = r.json()
-    assert body["period_end_date"] == date.today().isoformat()
+    assert body["period_end_date"] == timezone.localdate().isoformat()
 
 
 def test_reconcile_complete_api(auth_client, account, user):
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="Interest",
         amount=Decimal("10.00"),
     )
@@ -590,8 +590,8 @@ def test_reconcile_complete_api(auth_client, account, user):
             "account_id": account.pk,
             "bank_current_balance": bank,
             "checked_transaction_ids": [t1.pk],
-            "period_start_date": date.today().isoformat(),
-            "period_end_date": date.today().isoformat(),
+            "period_start_date": timezone.localdate().isoformat(),
+            "period_end_date": timezone.localdate().isoformat(),
         },
         format="json",
     )
@@ -606,7 +606,7 @@ def test_reconcile_complete_api_rejects_bad_balance(auth_client, account, user):
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="Fee",
         amount=Decimal("-2.00"),
     )
@@ -616,8 +616,8 @@ def test_reconcile_complete_api_rejects_bad_balance(auth_client, account, user):
             "account_id": account.pk,
             "bank_current_balance": "500.00",
             "checked_transaction_ids": [t1.pk],
-            "period_start_date": date.today().isoformat(),
-            "period_end_date": date.today().isoformat(),
+            "period_start_date": timezone.localdate().isoformat(),
+            "period_end_date": timezone.localdate().isoformat(),
         },
         format="json",
     )
@@ -790,7 +790,7 @@ def test_reconcile_session_undo_api(auth_client, account, user):
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="Refund",
         amount=Decimal("12.00"),
     )
@@ -799,8 +799,8 @@ def test_reconcile_session_undo_api(auth_client, account, user):
         user=user,
         bank_current_balance=Decimal("1012.00"),
         checked_transaction_ids=[t1.pk],
-        period_start=date.today(),
-        period_end=date.today(),
+        period_start=timezone.localdate(),
+        period_end=timezone.localdate(),
     )
     r = auth_client.post(f"/api/reconcile/sessions/{rec.pk}/undo/", {}, format="json")
     assert r.status_code == 200, r.data
@@ -1231,8 +1231,8 @@ def test_reconcile_setup_isolates_other_users_account(auth_client, account, hous
             "account_id": other_acct.pk,
             "bank_current_balance": "50.00",
             "checked_transaction_ids": [],
-            "period_start_date": date.today().isoformat(),
-            "period_end_date": date.today().isoformat(),
+            "period_start_date": timezone.localdate().isoformat(),
+            "period_end_date": timezone.localdate().isoformat(),
         },
         format="json",
     )
@@ -1303,7 +1303,7 @@ def test_reconcile_setup_uses_imported_description_when_memo_empty(auth_client, 
     txn = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="AfterPay",
         amount=Decimal("-12.00"),
     )
@@ -1314,8 +1314,8 @@ def test_reconcile_setup_uses_imported_description_when_memo_empty(auth_client, 
         "/api/reconcile/setup/",
         {
             "account_id": account.pk,
-            "start": date.today().isoformat(),
-            "end": date.today().isoformat(),
+            "start": timezone.localdate().isoformat(),
+            "end": timezone.localdate().isoformat(),
         },
     )
     assert r.status_code == 200
@@ -1328,14 +1328,14 @@ def test_complete_uses_decimal_cents_not_float(account, user):
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="A",
         amount=Decimal("0.10"),
     )
     t2 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="B",
         amount=Decimal("0.20"),
     )
@@ -1344,8 +1344,8 @@ def test_complete_uses_decimal_cents_not_float(account, user):
         user=user,
         bank_current_balance=Decimal("1000.30"),
         checked_transaction_ids=[t1.pk, t2.pk],
-        period_start=date.today(),
-        period_end=date.today(),
+        period_start=timezone.localdate(),
+        period_end=timezone.localdate(),
     )
     assert rec.final_reconciled_balance == Decimal("1000.30")
     assert rec.difference == Decimal("0")
@@ -1355,7 +1355,7 @@ def test_complete_rolls_back_when_integrity_sync_fails(account, user, monkeypatc
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="Atomic",
         amount=Decimal("5.00"),
     )
@@ -1373,8 +1373,8 @@ def test_complete_rolls_back_when_integrity_sync_fails(account, user, monkeypatc
             user=user,
             bank_current_balance=Decimal("1005.00"),
             checked_transaction_ids=[t1.pk],
-            period_start=date.today(),
-            period_end=date.today(),
+            period_start=timezone.localdate(),
+            period_end=timezone.localdate(),
         )
     assert Reconciliation.objects.count() == 0
     t1.refresh_from_db()
@@ -1386,7 +1386,7 @@ def test_reconciled_transaction_cannot_be_edited(account, user):
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="Locked",
         amount=Decimal("-1.00"),
     )
@@ -1395,8 +1395,8 @@ def test_reconciled_transaction_cannot_be_edited(account, user):
         user=user,
         bank_current_balance=Decimal("999.00"),
         checked_transaction_ids=[t1.pk],
-        period_start=date.today(),
-        period_end=date.today(),
+        period_start=timezone.localdate(),
+        period_end=timezone.localdate(),
     )
     from rest_framework.exceptions import ValidationError
     from transactions.services.immutability import reject_if_reconciled
@@ -1410,7 +1410,7 @@ def test_session_history_stores_calculated_ending_balance(auth_client, account, 
     t1 = post_transaction(
         user=user,
         account_id=account.pk,
-        date=date.today(),
+        date=timezone.localdate(),
         payee="History",
         amount=Decimal("25.00"),
     )
@@ -1419,8 +1419,8 @@ def test_session_history_stores_calculated_ending_balance(auth_client, account, 
         user=user,
         bank_current_balance=Decimal("1025.00"),
         checked_transaction_ids=[t1.pk],
-        period_start=date.today(),
-        period_end=date.today(),
+        period_start=timezone.localdate(),
+        period_end=timezone.localdate(),
     )
     r = auth_client.get(f"/api/reconcile/sessions/{rec.pk}/")
     assert r.status_code == 200
