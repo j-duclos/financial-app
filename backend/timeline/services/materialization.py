@@ -22,7 +22,11 @@ from common.services.cache import invalidate_financial_cache_for_household, inva
 from common.services.profiler import enter_materialization_context, exit_materialization_context, perf_enabled, perf_print
 from core.utils import get_households_for_user
 from timeline.models import RecurringRule
-from timeline.services.ledger import build_timeline, repair_unlinked_rule_transfer_pairs
+from timeline.services.ledger import (
+    build_timeline,
+    repair_rule_transfer_leg_amounts,
+    repair_unlinked_rule_transfer_pairs,
+)
 from timeline.services.rule_cleanup import delete_future_materialized_transactions_for_rule
 from timeline.services.rule_schedule import promote_due_schedules
 from transactions.models import Transaction

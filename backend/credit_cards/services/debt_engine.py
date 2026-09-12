@@ -28,6 +28,7 @@ from django.core.cache import cache
 from accounts.models import Account
 from accounts.services.account_health import _target_utilization_percent
 from accounts.services.account_health_constants import DEFAULT_TARGET_UTILIZATION_PERCENT
+from accounts.services.credit_card import ledger_owed_balance
 from accounts.services.minimum_payment import resolve_effective_minimum_payment
 from common.services.cache import (
     DEBT_PAYOFF_PROJECTION_CACHE_SECONDS,
