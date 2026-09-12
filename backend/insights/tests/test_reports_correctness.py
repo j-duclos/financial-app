@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -54,20 +55,25 @@ def test_all_report_sections_use_selected_month(auth_client, household, user, mo
 
 @pytest.mark.django_db
 def test_august_2026_goals_history_excludes_future_as_actual(auth_client, household, user):
-    seed_reports_world(household, user)
-    res = auth_client.get("/api/buckets/reports/?months=12&month=2026-08")
+    as_of = date(2026, 8, 20)
+    with patch("django.utils.timezone.localdate", return_value=as_of):
+        seed_reports_world(household, user)
+        res = auth_client.get("/api/buckets/reports/?months=12&month=2026-08")
     assert res.status_code == 200
     data = res.json()
     assert data["history_start"] == "2025-09-01"
     assert data["history_end"] == "2026-08-31"
     actual_months = {row["month"] for row in data["monthly_funding"]}
+    # 2026-11 is after the August report window and after as-of — forecast, not actual history.
     assert "2026-11" not in actual_months
+    assert all(row["month"] <= "2026-08" for row in data["monthly_funding"])
     assert all(row["kind"] == "actual" for row in data["monthly_funding"])
     assert "2026-05" in actual_months
     assert "2026-08" in actual_months
     projected_months = {row["month"] for row in data["projected_monthly_funding"]}
-    assert "2026-11" in projected_months
+    assert "2026-11" not in projected_months
     assert all(row["kind"] == "projected" for row in data["projected_monthly_funding"])
+    assert all(row["month"] > "2026-08" for row in data["projected_monthly_funding"])
     july = next(row for row in data["monthly_funding"] if row["month"] == "2026-07")
     assert Decimal(july["total"]) == Decimal("-50.00")
     assert Decimal(july["released"]) == Decimal("50.00")

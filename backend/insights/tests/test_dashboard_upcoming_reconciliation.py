@@ -16,7 +16,7 @@ from insights.services.dashboard_summary import (
     build_upcoming_events,
 )
 from insights.services.dashboard_upcoming import build_upcoming_groups, load_transfer_rule_context
-from timeline.services.ledger import build_timeline
+from timeline.services.ledger import build_forecast_projection_timeline, build_timeline
 from transactions.models import Reconciliation, Transaction
 from transactions.services.posting import create_transfer
 
@@ -153,22 +153,27 @@ def reconciled_main_scenario(user, main, expense_category):
     return main
 
 
-def test_dashboard_timeline_uses_exclude_reconciled_past(user):
+def test_dashboard_timeline_uses_exclude_reconciled_past(user, reconciled_main_scenario):
+    """Dashboard forecast uses the canonical recon-aware provider, not starting-balance replay."""
+    main = reconciled_main_scenario
     today = AS_OF
-    end = today + timedelta(days=30)
-    with patch("timeline.services.ledger.build_timeline", return_value=[]) as mock_build:
-        _build_dashboard_timeline(user, today=today, end_date=end, caller="dashboard_summary")
-    mock_build.assert_called_once_with(
-        user,
-        start_date=today,
-        end_date=end,
-        as_of_date=today,
-        scenario_id=None,
-        account_id=None,
-        projection_only=True,
-        exclude_reconciled_past=True,
-        caller="dashboard_summary",
+    end = JUL_13
+    with patch(
+        "insights.services.dashboard_summary.build_forecast_projection_timeline",
+        wraps=build_forecast_projection_timeline,
+    ) as mock_forecast:
+        rows = _build_dashboard_timeline(
+            user, today=today, end_date=end, caller="dashboard_summary"
+        )
+    mock_forecast.assert_called_once()
+    kwargs = mock_forecast.call_args.kwargs
+    assert kwargs["today"] == today
+    assert kwargs["end_date"] == end
+    assert kwargs["caller"] == "dashboard_summary"
+    assert not any(
+        "historical deposit" in (row.get("description") or "").lower() for row in rows
     )
+    assert _row_balance(rows, main.id, "Henry") == Decimal("109.55")
 
 
 def test_reconciled_account_upcoming_balances_match_transactions_ledger(
@@ -358,7 +363,7 @@ def test_actual_negative_balance_still_surfaces_risk(user, household, expense_ca
 def test_legacy_starting_balance_replay_differs_from_reconciliation_aware(
     user, reconciled_main_scenario
 ):
-    """Without exclude_reconciled_past, replay from starting_balance diverges (regression guard)."""
+    """Naive starting-balance + all-history replay is not the canonical checkpoint walk."""
     main = reconciled_main_scenario
     end = JUL_13
 
@@ -372,18 +377,13 @@ def test_legacy_starting_balance_replay_differs_from_reconciliation_aware(
         account_id=main.id,
         caller="timeline_page",
     )
-    legacy_rows = build_timeline(
-        user,
-        start_date=AS_OF,
-        end_date=end,
-        as_of_date=AS_OF,
-        projection_only=True,
-        exclude_reconciled_past=False,
-        account_id=main.id,
-        caller="legacy_dashboard",
-    )
-
     aware = _row_balance(aware_rows, main.id, "Henry")
-    legacy = _row_balance(legacy_rows, main.id, "Henry")
     assert aware == Decimal("109.55")
-    assert legacy != aware
+
+    naive = Decimal(str(main.starting_balance or 0))
+    for txn in Transaction.objects.filter(account=main, date__lte=end).order_by("date", "id"):
+        naive += Decimal(str(txn.amount))
+    naive = naive.quantize(Decimal("0.01"))
+    # Historical deposit predates the Jul 10 checkpoint; double-replay must diverge.
+    assert naive == Decimal("109.57")
+    assert naive != aware

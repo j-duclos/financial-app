@@ -99,17 +99,26 @@ def test_future_effective_change_keeps_amount_until_date(api_client, user, house
     rule.refresh_from_db()
     assert rule.amount == Decimal("2000.00")
 
-    before = today + timedelta(days=1)
-    while before.weekday() != 4 or before >= effective:
-        before += timedelta(days=1)
-    assert before < effective
+    end = effective + timedelta(days=90)
+    occ = generate_rule_occurrence_dates(rule, today, end)
+    before_dates = [d for d in occ if d < effective]
+    after_dates = [d for d in occ if d >= effective]
+    assert before_dates, "need an occurrence immediately before the scheduled change"
+    assert after_dates, "need an occurrence on or after effective_from"
+    before = before_dates[-1]
+    after = after_dates[0]
+    assert before < effective <= after
     assert resolve_rule_params(rule, before).amount == Decimal("2000.00")
     assert resolve_rule_params(rule, effective).amount == Decimal("2200.00")
+    assert resolve_rule_params(rule, after).amount == Decimal("2200.00")
 
-    end = effective + timedelta(days=90)
-    build_timeline(user, today, end, account_id=acct.id)
+    txn_before = Transaction.objects.filter(rule=rule).count()
+    build_timeline(user, today, end, account_id=acct.id, as_of_date=today, projection_only=True)
+    assert Transaction.objects.filter(rule=rule).count() == txn_before
+
+    build_timeline(user, today, end, account_id=acct.id, as_of_date=today)
     before_txn = Transaction.objects.filter(rule=rule, date=before).first()
-    after_txn = Transaction.objects.filter(rule=rule, date=effective).first()
+    after_txn = Transaction.objects.filter(rule=rule, date=after).first()
     assert before_txn is not None
     assert before_txn.amount == Decimal("2000.00")
     assert after_txn is not None
