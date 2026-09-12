@@ -61,7 +61,17 @@ describe("request-flow cache consolidation", () => {
     expect(data).not.toMatch(/listScenarioOneTimeEvents/);
     expect(data).not.toMatch(/listScenarioCategoryShocks/);
     expect(data).not.toMatch(/listScenarioAddedRecurring/);
-    expect(whatIfQueryKeys.scenarioChanges(3)).toEqual(["what-if-scenario-changes", 3]);
+    expect(whatIfQueryKeys.scenarioChanges(3, 7)).toEqual([
+      "what-if-scenario-changes",
+      7,
+      3,
+    ]);
+
+    expect(whatIfQueryKeys.scenarioChanges(3)).toEqual([
+      "what-if-scenario-changes",
+      null,
+      3,
+    ]);
   });
 
   it("account-options key is household-scoped for cache sharing", () => {
