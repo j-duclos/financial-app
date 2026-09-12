@@ -361,6 +361,21 @@ def ledger_today_balance_before_pending(
     return posted_ledger_running_after_walk(account, as_of=_as_of_date(as_of))
 
 
+def ledger_today_balances_before_pending(
+    accounts: Iterable[Account],
+    as_of: Optional[date] = None,
+) -> dict[int, Decimal]:
+    """Bulk posted-before-pending anchors — same walk as the single-account helper."""
+    from transactions.services.historical_ledger import posted_balances_before_pending_for_accounts
+
+    account_list = list(accounts)
+    if not account_list:
+        return {}
+    return posted_balances_before_pending_for_accounts(
+        account_list, as_of=_as_of_date(as_of)
+    )
+
+
 def unreconciled_transactions_qs(
     account: Account,
     as_of: Optional[date] = None,

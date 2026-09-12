@@ -151,14 +151,13 @@ def _resolve_ledger_anchors(
             for aid in account_ids
         }
     from accounts.models import Account
-    from transactions.services.reconciliation import ledger_today_balance_before_pending
+    from transactions.services.reconciliation import ledger_today_balances_before_pending
 
-    resolved: dict[int, Decimal] = {}
-    for acc in Account.objects.filter(pk__in=account_ids):
-        resolved[acc.id] = ledger_today_balance_before_pending(acc, today).quantize(
-            Decimal("0.01")
-        )
-    return resolved
+    accounts = list(Account.objects.filter(pk__in=account_ids))
+    return {
+        aid: bal.quantize(Decimal("0.01"))
+        for aid, bal in ledger_today_balances_before_pending(accounts, today).items()
+    }
 
 
 def occurrence_insert_sort_key(

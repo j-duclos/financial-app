@@ -13,6 +13,7 @@ Pipeline:
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -55,14 +56,21 @@ def _timeline_row_from_transaction(txn: Transaction) -> dict:
     }
 
 
-def historical_walk_opening_balance(account: Account, as_of: date) -> Decimal:
+def historical_walk_opening_balance(
+    account: Account,
+    as_of: date,
+    *,
+    reconciliation=None,
+) -> Decimal:
     """Balance immediately before the first post-checkpoint unreconciled ledger row."""
     from transactions.services.checkpoints import (
         bulk_latest_completed_reconciliations,
         checkpoint_signed_balance,
     )
 
-    rec = bulk_latest_completed_reconciliations([account.pk], as_of).get(account.pk)
+    rec = reconciliation
+    if rec is None:
+        rec = bulk_latest_completed_reconciliations([account.pk], as_of).get(account.pk)
     if rec is not None:
         return checkpoint_signed_balance(rec, account).quantize(Decimal("0.01"))
     if account.starting_balance is not None:
@@ -77,12 +85,18 @@ def iter_historical_ledger_steps(
     account: Account,
     *,
     as_of: date,
+    txns: list[Transaction] | None = None,
+    reconciliation=None,
+    opening: Decimal | None = None,
 ) -> tuple[Decimal, list[HistoricalLedgerStep]]:
     """
     Walk canonical historical ledger rows through ``as_of``.
 
     Returns (opening_balance, steps) where each participating step's ``balance_after``
     is the displayed Recent Balance for that transaction.
+
+    Pass preloaded ``txns`` / ``reconciliation`` / ``opening`` to avoid per-account SQL
+    when a caller already bulk-loaded the same inputs.
     """
     from timeline.services.canonical_ledger import row_participates_financially
     from timeline.services.ledger_section_balances import is_pending_expected_timeline_row
@@ -91,15 +105,19 @@ def iter_historical_ledger_steps(
 
     from transactions.services.checkpoints import bulk_latest_completed_reconciliations, post_checkpoint_q
 
-    opening = historical_walk_opening_balance(account, as_of)
-    rec = bulk_latest_completed_reconciliations([account.pk], as_of).get(account.pk)
-    q = Transaction.objects.filter(account=account, date__lte=as_of, reconciled=False)
-    if rec is not None and rec.period_end_date is not None:
-        q = q.filter(post_checkpoint_q(rec.period_end_date))
-    txns = list(
-        ledger_visible_transactions(q).order_by("date", "id").select_related("account")
-    )
-    txns = filter_superseded_planned_transactions(txns)
+    rec = reconciliation
+    if rec is None and (opening is None or txns is None):
+        rec = bulk_latest_completed_reconciliations([account.pk], as_of).get(account.pk)
+    if opening is None:
+        opening = historical_walk_opening_balance(account, as_of, reconciliation=rec)
+    if txns is None:
+        q = Transaction.objects.filter(account=account, date__lte=as_of, reconciled=False)
+        if rec is not None and rec.period_end_date is not None:
+            q = q.filter(post_checkpoint_q(rec.period_end_date))
+        txns = list(
+            ledger_visible_transactions(q).order_by("date", "id").select_related("account")
+        )
+    txns = filter_superseded_planned_transactions(list(txns))
     timeline_rows = [_timeline_row_from_transaction(t) for t in txns]
 
     running = opening
@@ -125,6 +143,61 @@ def iter_historical_ledger_steps(
             )
         )
     return opening, steps
+
+
+def posted_balances_before_pending_for_accounts(
+    accounts: Collection[Account],
+    *,
+    as_of: date,
+) -> dict[int, Decimal]:
+    """Posted-before-pending anchors for many accounts with one checkpoint + one txn query.
+
+    Uses the same walk as ``iter_historical_ledger_steps`` / ``ledger_today_balance_before_pending``.
+    """
+    from django.db.models import Q
+
+    from transactions.services.checkpoints import (
+        bulk_latest_completed_reconciliations,
+        post_checkpoint_q,
+    )
+    from transactions.services.matching import ledger_visible_transactions
+
+    account_list = list(accounts)
+    if not account_list:
+        return {}
+
+    ids = [acc.pk for acc in account_list]
+    recs = bulk_latest_completed_reconciliations(ids, as_of)
+    q = Q()
+    for acc in account_list:
+        part = Q(account_id=acc.pk, date__lte=as_of, reconciled=False)
+        rec = recs.get(acc.pk)
+        if rec is not None and rec.period_end_date is not None:
+            part &= post_checkpoint_q(rec.period_end_date)
+        q |= part
+    all_txns = list(
+        ledger_visible_transactions(Transaction.objects.filter(q))
+        .order_by("account_id", "date", "id")
+        .select_related("account")
+    )
+    by_account: dict[int, list[Transaction]] = defaultdict(list)
+    for txn in all_txns:
+        by_account[txn.account_id].append(txn)
+
+    result: dict[int, Decimal] = {}
+    for acc in account_list:
+        rec = recs.get(acc.pk)
+        opening = historical_walk_opening_balance(acc, as_of, reconciliation=rec)
+        _, steps = iter_historical_ledger_steps(
+            acc,
+            as_of=as_of,
+            txns=by_account.get(acc.pk, []),
+            reconciliation=rec,
+            opening=opening,
+        )
+        participating = [step for step in steps if step.participates]
+        result[acc.pk] = participating[-1].balance_after if participating else opening
+    return result
 
 
 def running_balances_after_historical_walk(

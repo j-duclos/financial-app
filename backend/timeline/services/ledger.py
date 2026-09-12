@@ -314,20 +314,21 @@ def forecast_lowest_balance_from_rows(
     from timeline.services.ledger_section_balances import (
         forecast_balance_metrics_from_transactions_ledger,
     )
-    from transactions.services.reconciliation import ledger_today_balance_before_pending
+    from transactions.services.reconciliation import ledger_today_balances_before_pending
+
+    accounts = list(Account.objects.filter(pk__in=account_ids))
+    try:
+        anchors = ledger_today_balances_before_pending(accounts, today)
+    except Exception:
+        anchors = {}
 
     global_low: Decimal | None = None
     global_date: date | None = None
     global_aid: int | None = None
 
     for aid in account_ids:
-        acc = Account.objects.filter(pk=aid).first()
-        if acc is not None:
-            try:
-                anchor = ledger_today_balance_before_pending(acc, today)
-            except Exception:
-                anchor = opening.get(aid, Decimal("0"))
-        else:
+        anchor = anchors.get(aid)
+        if anchor is None:
             anchor = opening.get(aid, Decimal("0"))
         metrics = forecast_balance_metrics_from_transactions_ledger(
             rows,

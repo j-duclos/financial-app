@@ -1,4 +1,5 @@
 """Tests for dashboard Available Credit bulk balance optimization."""
+import re
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -30,6 +31,16 @@ from transactions.models import Transaction
 
 User = get_user_model()
 AS_OF = date(2025, 5, 1)
+
+
+def _transaction_data_query_count(queries) -> int:
+    """Count SQL whose primary FROM table is transactions_transaction."""
+    count = 0
+    for query in queries:
+        low = query["sql"].lower().replace('"', "").replace("`", "")
+        if re.search(r"\bfrom\s+transactions_transaction\b", low):
+            count += 1
+    return count
 
 
 @pytest.fixture
@@ -259,8 +270,8 @@ def test_performance_old_vs_new_available_credit_queries(household, credit_card)
         balance_map = bulk_signed_ledger_balances(cards, AS_OF)
         _compute_available_credit(cards, today=AS_OF, balance_by_account=balance_map)
 
-    old_queries = len(old_ctx.captured_queries)
-    new_queries = len(new_ctx.captured_queries)
+    old_queries = _transaction_data_query_count(old_ctx.captured_queries)
+    new_queries = _transaction_data_query_count(new_ctx.captured_queries)
     assert old_queries >= len(cards)
     assert new_queries == 1
     assert old_queries > new_queries
@@ -283,5 +294,5 @@ def test_load_dashboard_balance_maps_single_query_for_credit_cards(credit_card):
             [credit_card], today=AS_OF, include_prior=False
         )
     assert prior_map is None
-    assert len(ctx.captured_queries) == 1
+    assert _transaction_data_query_count(ctx.captured_queries) == 1
     assert today_map[credit_card.pk] == signed_ledger_balance(credit_card, AS_OF)

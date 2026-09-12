@@ -113,6 +113,37 @@ def test_bulk_signed_ledger_balances_bounded_queries(checking, credit_card):
     assert len(ctx.captured_queries) <= 3
 
 
+def test_ledger_today_balances_before_pending_matches_single_and_is_bulk(
+    checking, credit_card
+):
+    from transactions.services.reconciliation import (
+        ledger_today_balance_before_pending,
+        ledger_today_balances_before_pending,
+    )
+
+    today = date.today()
+    Transaction.objects.create(
+        account=checking,
+        date=today,
+        payee="Spend",
+        amount=Decimal("-40"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+    )
+    accounts = [checking, credit_card]
+    with CaptureQueriesContext(connection) as ctx:
+        bulk = ledger_today_balances_before_pending(accounts, today)
+    txn_queries = sum(
+        1
+        for q in ctx.captured_queries
+        if "from transactions_transaction" in q["sql"].lower().replace('"', "")
+        and "transactionmatch" not in q["sql"].lower()
+    )
+    assert txn_queries == 1
+    assert bulk[checking.pk] == ledger_today_balance_before_pending(checking, today)
+    assert bulk[credit_card.pk] == ledger_today_balance_before_pending(credit_card, today)
+
+
 def test_credit_owed_from_signed_balance():
     assert credit_owed_from_signed_balance(Decimal("100")) == Decimal("0")
     assert credit_owed_from_signed_balance(Decimal("-250")) == Decimal("250")

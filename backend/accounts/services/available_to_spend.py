@@ -234,6 +234,7 @@ def _calculate_account_forecast_summary(
     days: int = DEFAULT_FORECAST_DAYS,
     timeline_rows: Optional[list[dict]] = None,
     bucket_reserve: Decimal | None = None,
+    ledger_anchor: Decimal | None = None,
 ) -> dict[str, Any]:
     """Uncached forecast summary for one account."""
     days = normalize_forecast_days(days)
@@ -264,7 +265,9 @@ def _calculate_account_forecast_summary(
 
     from transactions.services.reconciliation import ledger_today_balance_before_pending
 
-    current_balance = ledger_today_balance_before_pending(account, today)
+    if ledger_anchor is None:
+        ledger_anchor = ledger_today_balance_before_pending(account, today)
+    current_balance = ledger_anchor
 
     if timeline_rows is None:
         timeline_rows = build_forecast_projection_timeline(
@@ -284,6 +287,8 @@ def _calculate_account_forecast_summary(
         today=today,
         end_date=window_end,
         minimum_buffer=minimum_buffer,
+        account=account,
+        ledger_anchor=current_balance,
     )
     lowest = metrics["lowest"]
     lowest_date = metrics["lowest_date"]
@@ -679,6 +684,9 @@ def _calculate_forecast_summaries_for_accounts(
     bucket_reserve_by_account = bucket_reserves_by_account(
         user, supported_ids, today=today
     )
+    from transactions.services.reconciliation import ledger_today_balances_before_pending
+
+    ledger_anchors = ledger_today_balances_before_pending(supported, today)
 
     result: dict[int, dict[str, Any]] = {}
     _phase_summaries = phase_start(timer, "account_summaries")
@@ -697,6 +705,7 @@ def _calculate_forecast_summaries_for_accounts(
                 days=days,
                 timeline_rows=rows_by_account.get(account.id, []),
                 bucket_reserve=bucket_reserve_by_account.get(account.id, Decimal("0")),
+                ledger_anchor=ledger_anchors.get(account.id),
             )
         else:
             result[account.id] = _calculate_account_forecast_summary(

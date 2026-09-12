@@ -1,4 +1,5 @@
 """Tests for dashboard Available Cash bulk balance optimization."""
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
@@ -29,6 +30,21 @@ from transactions.models import Transaction
 
 User = get_user_model()
 AS_OF = date(2025, 5, 1)
+
+
+def _transaction_data_query_count(queries) -> int:
+    """Count SQL whose primary FROM table is transactions_transaction.
+
+    Checkpoint lookups hit ``transactions_reconciliation`` and must not be
+    counted as a second ledger-row query.
+    """
+    count = 0
+    for query in queries:
+        low = query["sql"].lower().replace('"', "").replace("`", "")
+        # Word-boundary so transactions_transactionmatch is not counted.
+        if re.search(r"\bfrom\s+transactions_transaction\b", low):
+            count += 1
+    return count
 
 
 @pytest.fixture
@@ -168,8 +184,10 @@ def test_top_summary_shares_one_balance_snapshot(checking, savings, credit_card)
 def test_bulk_balance_map_uses_one_transaction_query_per_date(checking, savings):
     accounts = [checking, savings]
     with CaptureQueriesContext(connection) as ctx:
-        bulk_signed_ledger_balances(accounts, AS_OF)
-    assert len(ctx.captured_queries) == 1
+        balance_map = bulk_signed_ledger_balances(accounts, AS_OF)
+    assert _transaction_data_query_count(ctx.captured_queries) == 1
+    assert balance_map[checking.pk] == signed_ledger_balance(checking, AS_OF)
+    assert balance_map[savings.pk] == signed_ledger_balance(savings, AS_OF)
 
 
 def test_dashboard_fast_top_summary_matches_ledger_formula(
@@ -251,8 +269,9 @@ def test_load_dashboard_balance_maps_skips_prior_when_not_requested(checking, sa
             accounts, today=AS_OF, include_prior=False
         )
     assert prior_map is None
-    assert len(ctx.captured_queries) == 1
+    assert _transaction_data_query_count(ctx.captured_queries) == 1
     assert today_map[checking.pk] == signed_ledger_balance(checking, AS_OF)
+    assert today_map[savings.pk] == signed_ledger_balance(savings, AS_OF)
 
 
 def test_performance_old_vs_new_top_summary_queries(user, household, checking, savings):
@@ -285,8 +304,8 @@ def test_performance_old_vs_new_top_summary_queries(user, household, checking, s
         balance_map = bulk_signed_ledger_balances(active, AS_OF)
         _compute_top_summary(active, {}, today=AS_OF, balance_by_account=balance_map)
 
-    old_queries = len(old_ctx.captured_queries)
-    new_queries = len(new_ctx.captured_queries)
+    old_queries = _transaction_data_query_count(old_ctx.captured_queries)
+    new_queries = _transaction_data_query_count(new_ctx.captured_queries)
     eligible = sum(1 for a in active if _counts_toward_liquid_cash(a))
     # Old path hits ledger per account for snapshot (today + prior) plus liquid cash.
     assert old_queries >= eligible
