@@ -312,11 +312,8 @@ def test_profile_whatif_comparison(auth_client, household, user):
             f"forecast={stats['forecast']} health={stats['health']} rec_ctx={stats['rec_ctx']}"
         )
         assert stats["writes"] == 0
-        assert stats["timeline_builds"] == 2
-        assert stats["timeline_callers"] == [
-            "scenario_comparison_base",
-            "scenario_comparison_base_extend",
-        ]
+        assert stats["timeline_builds"] == 1
+        assert stats["timeline_callers"] == ["scenario_comparison_base"]
         assert stats["scenario_derive"] == 1
         assert stats["forecast"] == 2
         assert stats["health"] == 2
@@ -341,7 +338,7 @@ def test_compare_get_does_not_mutate_real_state(auth_client, household, user):
 def test_compare_reuses_timelines_for_forecasts_health_and_recs(auth_client, household, user):
     world = seed_whatif_world(household, user)
     stats = _profile_compare(auth_client, world["scenario"].id, household.id, "12m")
-    assert stats["timeline_builds"] == 2
+    assert stats["timeline_builds"] == 1
     assert stats["scenario_derive"] == 1
     assert stats["forecast"] == 2
     assert stats["rec_ctx"] == 1
@@ -589,7 +586,7 @@ def test_query_count_does_not_scale_with_per_account_forecast_rebuilds(auth_clie
     stats_25 = _profile_compare(auth_client, world["scenario"].id, household.id, "3m")
 
     for stats in (stats_3, stats_10, stats_25):
-        assert stats["timeline_builds"] == 2
+        assert stats["timeline_builds"] == 1
         assert stats["scenario_derive"] == 1
         assert stats["forecast"] == 2
         assert stats["writes"] == 0

@@ -193,7 +193,9 @@ def row_participates_financially(row: dict, account_rows: list[dict]) -> bool:
     """
     if "financially_active" in row:
         return bool(row["financially_active"])
-    if is_superseded_planned_row(row, account_rows):
+    # Unannotated rows (synthetic tests, in-memory walks): decide from account_rows only.
+    # Production resolve_canonical_financial_state still uses the DB fallback when needed.
+    if is_superseded_planned_row(row, account_rows, allow_db_fallback=False):
         return False
     if is_shadowed_by_matched_rule_sibling(row, account_rows):
         return False

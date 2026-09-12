@@ -1830,7 +1830,12 @@ def annotate_financially_active_rows(rows: list[dict]) -> None:
     resolve_canonical_financial_state(rows)
 
 
-def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
+def is_superseded_planned_row(
+    row: dict,
+    account_rows: list[dict],
+    *,
+    allow_db_fallback: bool = True,
+) -> bool:
     """Skip PLANNED rows when a matching CLEARED/RECONCILED posting exists same day (matches web ledger)."""
     if _is_paired_transfer_timeline_row(row):
         return False
@@ -1863,6 +1868,8 @@ def is_superseded_planned_row(row: dict, account_rows: list[dict]) -> bool:
             return True
         if _planned_and_posting_likely_same(row, other):
             return True
+    if not allow_db_fallback:
+        return False
     return _planned_row_superseded_by_db_posting(row)
 
 

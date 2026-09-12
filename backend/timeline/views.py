@@ -568,14 +568,34 @@ class ScenarioViewSet(ModelViewSet):
         """Aggregate scenario edits for mobile read path (one request vs four)."""
         scenario = self.get_object()
         overrides_qs = ScenarioRuleOverride.objects.filter(scenario=scenario).select_related(
-            "rule", "rule__account", "rule__category", "override_account", "override_category"
+            "rule",
+            "rule__account",
+            "rule__account__household",
+            "rule__category",
+            "rule__transfer_to_account",
+            "override_account",
+            "override_account__household",
+            "override_category",
+        ).prefetch_related(
+            Prefetch(
+                "rule__schedules",
+                queryset=RecurringRuleSchedule.objects.order_by("effective_from", "id"),
+            )
         )
         events_qs = ScenarioOneTimeEvent.objects.filter(scenario=scenario).select_related(
-            "account", "transfer_to_account", "category"
+            "account",
+            "account__household",
+            "transfer_to_account",
+            "transfer_to_account__household",
+            "category",
         )
         shocks_qs = ScenarioCategoryShock.objects.filter(scenario=scenario).select_related("category")
         added_qs = ScenarioAddedRecurring.objects.filter(scenario=scenario).select_related(
-            "account", "transfer_to_account", "category"
+            "account",
+            "account__household",
+            "transfer_to_account",
+            "transfer_to_account__household",
+            "category",
         )
         ctx = {"request": request}
         return Response(
