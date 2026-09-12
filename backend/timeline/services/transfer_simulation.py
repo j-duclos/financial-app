@@ -26,7 +26,7 @@ from accounts.services.available_to_spend import (
 from core.utils import get_households_for_user
 from timeline.models import ScenarioOneTimeEvent
 from timeline.services.calendar import build_timeline_calendar
-from timeline.services.ledger import build_timeline
+from timeline.services.ledger import build_forecast_projection_timeline
 from timeline.services.scenario_comparison import _horizon_to_end
 
 logger = logging.getLogger(__name__)
@@ -145,14 +145,12 @@ def prepare_transfer_simulation_context(
                 caller="transfer_simulation_base",
             )
         else:
-            timeline_rows = build_timeline(
+            timeline_rows = build_forecast_projection_timeline(
                 user,
-                start_date=today,
+                today=today,
                 end_date=end_date,
                 scenario_id=scenario_id,
                 household_id=resolved_household,
-                as_of_date=today,
-                projection_only=True,
                 caller="transfer_simulation_base",
             )
 
@@ -424,16 +422,14 @@ def simulate_transfer_impact(
         amount=amt,
         transfer_date=transfer_date,
     )
-    sim_timeline_rows = build_timeline(
+    sim_timeline_rows = build_forecast_projection_timeline(
         user,
-        start_date=today,
+        today=today,
         end_date=end_date,
         scenario_id=scenario_id,
         household_id=resolved_household,
-        as_of_date=today,
-        ephemeral_events=ephemeral,
-        projection_only=True,
         caller="transfer_simulation_scenario",
+        ephemeral_events=ephemeral,
     )
     sim_calendar = build_timeline_calendar(
         user,

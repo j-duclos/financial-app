@@ -15,6 +15,15 @@ AS_OF = date(2025, 5, 1)
 
 
 @pytest.fixture
+def freeze_materialization_today(monkeypatch):
+    """Pin materialization's localdate to AS_OF so May 2025 fixture dates stay future."""
+    monkeypatch.setattr(
+        "timeline.services.materialization.timezone.localdate",
+        lambda: AS_OF,
+    )
+
+
+@pytest.fixture
 def user(db):
     from django.contrib.auth import get_user_model
 
@@ -69,7 +78,9 @@ def monthly_rule(db, household, checking, expense_category):
 
 
 @pytest.mark.django_db
-def test_materialize_creates_future_rule_transactions(user, monthly_rule):
+def test_materialize_creates_future_rule_transactions(
+    user, monthly_rule, freeze_materialization_today
+):
     before = Transaction.objects.filter(rule=monthly_rule).count()
     summary = materialize_recurring_transactions_for_user(
         user,
@@ -84,7 +95,7 @@ def test_materialize_creates_future_rule_transactions(user, monthly_rule):
 
 
 @pytest.mark.django_db
-def test_materialize_is_idempotent(user, monthly_rule):
+def test_materialize_is_idempotent(user, monthly_rule, freeze_materialization_today):
     materialize_recurring_transactions_for_user(
         user,
         through_date=AS_OF + timedelta(days=60),
@@ -99,6 +110,22 @@ def test_materialize_is_idempotent(user, monthly_rule):
     count_after_second = Transaction.objects.filter(rule=monthly_rule).count()
     assert count_after_second == count_after_first
     assert second["transactions_created"] == 0
+
+
+@pytest.mark.django_db
+def test_expired_through_date_is_clamped_to_today(
+    user, monthly_rule, freeze_materialization_today
+):
+    """Past through_date is raised to today; no historical window is materialized."""
+    expired = AS_OF - timedelta(days=30)
+    summary = materialize_recurring_transactions_for_user(
+        user,
+        through_date=expired,
+        rule_ids=[monthly_rule.pk],
+    )
+    created = list(Transaction.objects.filter(rule=monthly_rule).values_list("date", flat=True))
+    assert summary["rules_processed"] == 1
+    assert created == [AS_OF]
 
 
 @pytest.mark.django_db

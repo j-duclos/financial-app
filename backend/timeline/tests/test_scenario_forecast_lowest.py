@@ -155,15 +155,15 @@ def test_forecast_lowest_helper_matches_calendar(user, hh, checking):
         household_id=hh.id,
         as_of_date=today,
     )
-    from timeline.services.ledger import build_timeline
+    from timeline.services.ledger import build_forecast_projection_timeline
 
-    timeline_rows = build_timeline(
+    timeline_rows = build_forecast_projection_timeline(
         user,
-        start_date=today,
+        today=today,
         end_date=end,
+        caller="test_scenario_forecast_lowest",
         account_id=checking.id,
         household_id=hh.id,
-        as_of_date=today,
     )
     helper_low, _, _ = forecast_lowest_balance_from_rows(
         timeline_rows,

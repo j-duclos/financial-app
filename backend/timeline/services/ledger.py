@@ -2551,6 +2551,7 @@ def build_forecast_projection_timeline(
     household_id: Optional[int] = None,
     start_date: Optional[date] = None,
     opening_balances: Optional[dict[int, Decimal]] = None,
+    ephemeral_events: Optional[list] = None,
 ) -> list[dict]:
     """
     Canonical forward forecast timeline for Dashboard, Action Center, and account forecasts.
@@ -2576,6 +2577,7 @@ def build_forecast_projection_timeline(
         exclude_reconciled_past=True,
         caller=caller,
         opening_balances=opening_balances,
+        ephemeral_events=ephemeral_events,
     )
     from timeline.services.canonical_ledger import build_canonical_ledger_with_balances
 

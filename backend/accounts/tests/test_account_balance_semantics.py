@@ -200,12 +200,12 @@ def test_recent_running_balance_matches_posted_before_pending_anchor(checking):
 @pytest.mark.django_db
 def test_reconciled_account_forecast_anchor_matches_posted_walk(user, checking):
     """
-    Regression: forecast anchor must use the same post-checkpoint ledger walk as Recent.
+    Forecast anchor must match the posted-before-pending walk.
 
-    The removed reconcile branch only summed *unreconciled* rows after the checkpoint.
-    Reconciled ledger-visible rows dated after ``period_end`` are included in
-    ``posted_ledger_running_after_walk`` (via TimelineBalanceCache) but were skipped
-    by ``unreconciled_transactions_qs``, producing a wrong anchor (e.g. -57.77 vs 1784.18).
+    Historical ledger opens at the completed checkpoint and walks only
+    unreconciled post-checkpoint rows. A sealed (reconciled) paycheck after
+    ``period_end`` is not reapplied. That posted-before-pending value is the
+    Pending → Upcoming ``balance_after`` anchor.
     """
     from datetime import date as date_cls
 
@@ -214,9 +214,9 @@ def test_reconciled_account_forecast_anchor_matches_posted_walk(user, checking):
 
     today = date_cls(2026, 8, 27)
     period_end = date_cls(2026, 8, 10)
-    anchor = Decimal("1784.18")
+    anchor = Decimal("300.00")
     first_amount = Decimal("1500.00")
-    first_balance_after = Decimal("3284.18")
+    first_balance_after = Decimal("1800.00")
 
     rec = Reconciliation.objects.create(
         user=user,
@@ -232,7 +232,7 @@ def test_reconciled_account_forecast_anchor_matches_posted_walk(user, checking):
         is_active=True,
         completed_at=timezone.now(),
     )
-    # Reconciled post-checkpoint row: in canonical walk, excluded from old unreconciled branch.
+    # Sealed after period_end: already in the reconciled world, not reapplied to the walk.
     Transaction.objects.create(
         account=checking,
         date=date_cls(2026, 8, 15),

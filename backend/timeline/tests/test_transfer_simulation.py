@@ -118,7 +118,7 @@ def test_horizon_improvement_equals_simulated_minus_base(user, checking, savings
     )
     prepared.base_calendar = base_calendar
     with patch(
-        "timeline.services.transfer_simulation.build_timeline",
+        "timeline.services.transfer_simulation.build_forecast_projection_timeline",
         return_value=[],
     ):
         with patch(
@@ -145,47 +145,47 @@ def test_horizon_improvement_equals_simulated_minus_base(user, checking, savings
 def test_prepared_context_builds_base_timeline_once(user, checking, savings):
     today = date.today()
     with patch(
-        "timeline.services.transfer_simulation.build_timeline",
-        return_value=[],
-    ) as mock_timeline:
+        "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline",
+        return_value=([], True),
+    ) as mock_canonical:
         with patch(
-            "timeline.services.transfer_simulation.build_timeline_calendar",
-            return_value={"days": [], "summary": {}},
-        ):
-            prepared = prepare_transfer_simulation_context(
-                user,
-                horizon="14d",
-                as_of_date=today,
-                household_id=checking.household_id,
-                accounts=[checking, savings],
-                accounts_by_id={checking.id: checking, savings.id: savings},
-            )
-            simulate_transfer_impact(
-                user,
-                from_account_id=savings.id,
-                to_account_id=checking.id,
-                amount=Decimal("50"),
-                transfer_date=today,
-                prepared_context=prepared,
-            )
-            simulate_transfer_impact(
-                user,
-                from_account_id=savings.id,
-                to_account_id=checking.id,
-                amount=Decimal("75"),
-                transfer_date=today,
-                prepared_context=prepared,
-            )
+            "timeline.services.transfer_simulation.build_forecast_projection_timeline",
+            return_value=[],
+        ) as mock_forecast:
+            with patch(
+                "timeline.services.transfer_simulation.build_timeline_calendar",
+                return_value={"days": [], "summary": {}},
+            ):
+                prepared = prepare_transfer_simulation_context(
+                    user,
+                    horizon="14d",
+                    as_of_date=today,
+                    household_id=checking.household_id,
+                    accounts=[checking, savings],
+                    accounts_by_id={checking.id: checking, savings.id: savings},
+                )
+                simulate_transfer_impact(
+                    user,
+                    from_account_id=savings.id,
+                    to_account_id=checking.id,
+                    amount=Decimal("50"),
+                    transfer_date=today,
+                    prepared_context=prepared,
+                )
+                simulate_transfer_impact(
+                    user,
+                    from_account_id=savings.id,
+                    to_account_id=checking.id,
+                    amount=Decimal("75"),
+                    transfer_date=today,
+                    prepared_context=prepared,
+                )
 
-    base_builds = [
-        c.kwargs.get("caller")
-        for c in mock_timeline.call_args_list
-        if c.kwargs.get("caller") == "transfer_simulation_base"
-    ]
+    assert mock_canonical.call_count == 1
+    assert mock_canonical.call_args.kwargs.get("caller") == "transfer_simulation_base"
     scenario_builds = [
         c.kwargs.get("caller")
-        for c in mock_timeline.call_args_list
+        for c in mock_forecast.call_args_list
         if c.kwargs.get("caller") == "transfer_simulation_scenario"
     ]
-    assert len(base_builds) == 1
     assert len(scenario_builds) == 2

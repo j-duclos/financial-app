@@ -16,7 +16,10 @@ from categories.models import Category
 from core.models import Household, HouseholdMembership
 from goals.models import GoalBucket
 from insights.services.dashboard_summary import _build_dashboard_summary
-from timeline.services.ledger import build_timeline, recompute_timeline_running_balances
+from timeline.services.ledger import (
+    build_forecast_projection_timeline,
+    recompute_timeline_running_balances,
+)
 from transactions.models import Transaction
 
 User = get_user_model()
@@ -85,15 +88,14 @@ def credit_card(db, household):
 
 def _build_rows(user, accounts, as_of: date, days: int = 30):
     end = as_of + timedelta(days=days)
-    rows = build_timeline(
+    household_id = accounts[0].household_id if accounts else None
+    return build_forecast_projection_timeline(
         user,
-        start_date=as_of,
+        today=as_of,
         end_date=end,
-        as_of_date=as_of,
-        projection_only=True,
         caller="test_lowest_projected_cash",
+        household_id=household_id,
     )
-    return rows
 
 
 def test_case_a_main_lower_than_bills(user, main, bills, expense_category):
@@ -348,7 +350,10 @@ def test_dashboard_uses_forecasts_not_second_timeline(user, main, expense_catego
             patch("accounts.services.lowest_projected_cash.get_lowest_projected_cash")
         )
         mock_build = stack.enter_context(
-            patch("insights.services.dashboard_summary.build_forecast_projection_timeline", return_value=[])
+            patch(
+                "timeline.services.canonical_timeline_cache.get_or_build_canonical_forecast_timeline",
+                return_value=([], False),
+            )
         )
         stack.enter_context(
             patch(

@@ -206,7 +206,10 @@ def test_uses_lowest_not_ending_balance(user, checking, expense_category):
 
 def test_forecast_lowest_matches_ledger_walk(user, checking, expense_category):
     """Forecast lowest must match ledger-aligned walk (no phantom negatives)."""
-    from timeline.services.ledger import build_timeline, forecast_lowest_balance_from_rows
+    from timeline.services.ledger import (
+        build_forecast_projection_timeline,
+        forecast_lowest_balance_from_rows,
+    )
 
     Transaction.objects.create(
         account=checking,
@@ -218,14 +221,12 @@ def test_forecast_lowest_matches_ledger_walk(user, checking, expense_category):
         source=Transaction.Source.ONE_TIME,
     )
     end = AS_OF + timedelta(days=30)
-    rows = build_timeline(
+    rows = build_forecast_projection_timeline(
         user,
-        start_date=AS_OF,
+        today=AS_OF,
         end_date=end,
-        account_id=checking.pk,
-        as_of_date=AS_OF,
-        projection_only=True,
         caller="test",
+        account_id=checking.pk,
     )
     helper_low, _, _ = forecast_lowest_balance_from_rows(
         rows,
@@ -239,11 +240,10 @@ def test_forecast_lowest_matches_ledger_walk(user, checking, expense_category):
 
 
 def test_outgoing_transfer_reduces_source(user, checking, savings, expense_category):
-    transfer_cat = Category.objects.create(
+    transfer_cat = Category.objects.get(
         household=checking.household,
         name="Bank Transfer",
         category_type=Category.CategoryType.EXPENSE,
-        sort_order=2,
     )
     create_transfer(
         user,
