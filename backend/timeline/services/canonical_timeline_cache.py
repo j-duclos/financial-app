@@ -241,13 +241,36 @@ def get_or_build_canonical_forecast_timeline(
             household_id=household_id,
             caller=caller,
         )
-        cache.set(key, rows, CANONICAL_TIMELINE_CACHE_SECONDS)
+        cache_serialize_ms = 0.0
+        cached_bytes = 0
         if perf_enabled():
+            import pickle
+
+            serialize_start = time.perf_counter()
+            cached_bytes = len(pickle.dumps(rows, protocol=pickle.HIGHEST_PROTOCOL))
+            cache_serialize_ms = (time.perf_counter() - serialize_start) * 1000
+        write_start = time.perf_counter()
+        cache.set(key, rows, CANONICAL_TIMELINE_CACHE_SECONDS)
+        cache_write_ms = (time.perf_counter() - write_start) * 1000
+        if perf_enabled():
+            from timeline.services.forecast_build_perf import current_forecast_build_perf
+
+            fbp = current_forecast_build_perf()
+            if fbp is not None:
+                fbp.record_cache_write(
+                    cache_serialize_ms=cache_serialize_ms,
+                    cache_write_ms=cache_write_ms,
+                    cached_rows=len(rows),
+                    cached_bytes=cached_bytes,
+                )
             elapsed_ms = (time.perf_counter() - build_start) * 1000
             perf_print(
                 f"[PERF] canonical_timeline cache=MISS days={forecast_days} "
                 f"caller={caller} rows={len(rows)} build_timeline_elapsed_ms={elapsed_ms:.0f}"
             )
+            if fbp is not None:
+                fbp.emit(rows=len(rows), total_ms=elapsed_ms)
+                fbp.close()
         return rows, False
     finally:
         cache.delete(lock_key)

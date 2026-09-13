@@ -13,6 +13,7 @@ re-derive financial participation from status, import_match_status, or rule_id.
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -39,7 +40,12 @@ class SuppressionReason:
     IMPORT_MATCH_FULFILLED = "import_match_fulfilled"
 
 
-def _find_superseding_posting_row(row: dict, account_rows: list[dict]) -> dict | None:
+def _find_superseding_posting_row(
+    row: dict,
+    account_rows: list[dict],
+    *,
+    posting_candidates: list[dict] | None = None,
+) -> dict | None:
     """Return the cleared/reconciled posting that fulfills this planned row, if any."""
     if _is_paired_transfer_timeline_row(row):
         return None
@@ -54,15 +60,20 @@ def _find_superseding_posting_row(row: dict, account_rows: list[dict]) -> dict |
     except Exception:
         return None
     abs_amt = abs(amt)
-    for other in account_rows:
-        if other is row or other.get("account_id") != row.get("account_id"):
+    candidates = posting_candidates if posting_candidates is not None else account_rows
+    indexed = posting_candidates is not None
+    for other in candidates:
+        if other is row:
             continue
-        other_date = _timeline_row_date(other.get("date"))
-        if other_date != row_date:
-            continue
-        other_status = (other.get("status") or "").upper()
-        if other_status not in ("CLEARED", "RECONCILED"):
-            continue
+        if not indexed:
+            if other.get("account_id") != row.get("account_id"):
+                continue
+            other_date = _timeline_row_date(other.get("date"))
+            if other_date != row_date:
+                continue
+            other_status = (other.get("status") or "").upper()
+            if other_status not in ("CLEARED", "RECONCILED"):
+                continue
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return other
         if _is_unmatched_plaid_import_row(other) and _planned_and_posting_likely_same(row, other):
@@ -75,7 +86,12 @@ def _find_superseding_posting_row(row: dict, account_rows: list[dict]) -> dict |
     return None
 
 
-def _find_shadow_canonical_sibling(row: dict, account_rows: list[dict]) -> dict | None:
+def _find_shadow_canonical_sibling(
+    row: dict,
+    account_rows: list[dict],
+    *,
+    matched_siblings: list[dict] | None = None,
+) -> dict | None:
     """Return the matched rule sibling that covers this shadow occurrence."""
     if _is_paired_transfer_timeline_row(row):
         return None
@@ -92,13 +108,16 @@ def _find_shadow_canonical_sibling(row: dict, account_rows: list[dict]) -> dict 
         amt = Decimal(str(row.get("amount")))
     except Exception:
         return None
-    for other in account_rows:
+    candidates = matched_siblings if matched_siblings is not None else account_rows
+    indexed = matched_siblings is not None
+    for other in candidates:
         if other is row:
             continue
-        if other.get("account_id") != account_id or other.get("rule_id") != rule_id:
-            continue
-        if (other.get("import_match_status") or "").lower() != "matched":
-            continue
+        if not indexed:
+            if other.get("account_id") != account_id or other.get("rule_id") != rule_id:
+                continue
+            if (other.get("import_match_status") or "").lower() != "matched":
+                continue
         other_date = _timeline_row_date(other.get("date"))
         if other_date is None:
             continue
@@ -126,7 +145,14 @@ def _find_shadow_canonical_sibling(row: dict, account_rows: list[dict]) -> dict 
     return {"transaction_id": covered.pk}
 
 
-def _resolve_single_row_state(row: dict, account_rows: list[dict]) -> None:
+def _resolve_single_row_state(
+    row: dict,
+    account_rows: list[dict],
+    *,
+    posting_candidates: list[dict] | None = None,
+    matched_siblings: list[dict] | None = None,
+    allow_db_fallback: bool = True,
+) -> None:
     """Annotate one row with canonical financial identity metadata."""
     row.pop("suppression_reason", None)
     row.pop("canonical_transaction_id", None)
@@ -145,15 +171,26 @@ def _resolve_single_row_state(row: dict, account_rows: list[dict]) -> None:
         row["suppression_reason"] = SuppressionReason.IMPORT_MATCH_FULFILLED
         return
 
-    if is_shadowed_by_matched_rule_sibling(row, account_rows):
-        shadow = _find_shadow_canonical_sibling(row, account_rows)
+    if is_shadowed_by_matched_rule_sibling(
+        row, account_rows, matched_siblings=matched_siblings
+    ):
+        shadow = _find_shadow_canonical_sibling(
+            row, account_rows, matched_siblings=matched_siblings
+        )
         row["financially_active"] = False
         row["suppression_reason"] = SuppressionReason.SHADOW_RULE_SIBLING
         row["canonical_transaction_id"] = shadow.get("transaction_id") if shadow else None
         return
 
-    if is_superseded_planned_row(row, account_rows):
-        posting = _find_superseding_posting_row(row, account_rows)
+    if is_superseded_planned_row(
+        row,
+        account_rows,
+        posting_candidates=posting_candidates,
+        allow_db_fallback=allow_db_fallback,
+    ):
+        posting = _find_superseding_posting_row(
+            row, account_rows, posting_candidates=posting_candidates
+        )
         row["financially_active"] = False
         row["suppression_reason"] = SuppressionReason.SUPSERSED_BY_POSTING
         canonical_tid = posting.get("transaction_id") if posting else None
@@ -174,15 +211,51 @@ def resolve_canonical_financial_state(rows: list[dict]) -> None:
     """
     if not rows:
         return
+    from timeline.services.identity_stats import incr
+
+    incr("resolve_work_calls")
     by_account: dict[int, list[dict]] = defaultdict(list)
+    postings_by_account_date: dict[tuple[int, date], list[dict]] = defaultdict(list)
+    matched_by_account_rule: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for row in rows:
         aid = row.get("account_id")
-        if aid is not None:
-            by_account[int(aid)].append(row)
+        if aid is None:
+            continue
+        aid_i = int(aid)
+        by_account[aid_i].append(row)
+        row_date = _timeline_row_date(row.get("date"))
+        status = (row.get("status") or "").upper()
+        if row_date is not None and status in ("CLEARED", "RECONCILED"):
+            postings_by_account_date[(aid_i, row_date)].append(row)
+        if (row.get("import_match_status") or "").lower() == "matched" and row.get("rule_id") is not None:
+            matched_by_account_rule[(aid_i, int(row["rule_id"]))].append(row)
+    from timeline.services.ledger import bulk_db_postings_for_planned_rows
+
+    for key, extras in bulk_db_postings_for_planned_rows(rows).items():
+        existing = postings_by_account_date[key]
+        seen_tids = {r.get("transaction_id") for r in existing}
+        for extra in extras:
+            if extra.get("transaction_id") not in seen_tids:
+                existing.append(extra)
     for row in rows:
         aid = row.get("account_id")
         acct_rows = by_account.get(int(aid), []) if aid is not None else []
-        _resolve_single_row_state(row, acct_rows)
+        row_date = _timeline_row_date(row.get("date"))
+        postings = (
+            postings_by_account_date.get((int(aid), row_date), [])
+            if aid is not None and row_date is not None
+            else []
+        )
+        matched: list[dict] = []
+        if aid is not None and row.get("rule_id") is not None:
+            matched = matched_by_account_rule.get((int(aid), int(row["rule_id"])), [])
+        _resolve_single_row_state(
+            row,
+            acct_rows,
+            posting_candidates=postings,
+            matched_siblings=matched,
+            allow_db_fallback=False,
+        )
 
 
 def row_participates_financially(row: dict, account_rows: list[dict]) -> bool:
@@ -191,15 +264,23 @@ def row_participates_financially(row: dict, account_rows: list[dict]) -> bool:
 
     Prefer pre-resolved ``financially_active`` from ``resolve_canonical_financial_state``.
     """
+    from timeline.services.identity_stats import add_ms, incr
+
+    incr("participation_calls")
     if "financially_active" in row:
         return bool(row["financially_active"])
+    incr("participation_fallback_calls")
+    started = time.perf_counter()
     # Unannotated rows (synthetic tests, in-memory walks): decide from account_rows only.
     # Production resolve_canonical_financial_state still uses the DB fallback when needed.
-    if is_superseded_planned_row(row, account_rows, allow_db_fallback=False):
-        return False
-    if is_shadowed_by_matched_rule_sibling(row, account_rows):
-        return False
-    return True
+    try:
+        if is_superseded_planned_row(row, account_rows, allow_db_fallback=False):
+            return False
+        if is_shadowed_by_matched_rule_sibling(row, account_rows):
+            return False
+        return True
+    finally:
+        add_ms("participation_ms", (time.perf_counter() - started) * 1000)
 
 
 def resolve_canonical_ledger_entries(
@@ -245,7 +326,8 @@ def build_canonical_ledger_with_balances(
     """Full canonical pipeline: resolve identity, then assign balance_after once."""
     from timeline.services.ledger_section_balances import assign_canonical_ledger_balance_after
 
-    resolve_canonical_financial_state(rows)
+    if not rows or any("financially_active" not in row for row in rows):
+        resolve_canonical_financial_state(rows)
     assign_canonical_ledger_balance_after(
         rows,
         today=today,

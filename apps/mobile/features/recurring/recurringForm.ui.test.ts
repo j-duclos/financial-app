@@ -33,6 +33,12 @@ describe("AutomationFormScreen is the recurring-rule editor", () => {
     expect(automationFormSrc).toContain('frequency: "MONTHLY_DAY"');
     expect(automationFormSrc).toContain('lifecycleStatus: "running"');
     expect(automationFormSrc).toContain("start_date: todayStr()");
+    expect(automationFormSrc).not.toMatch(/Math.min\(31, Math.max\(1, Number\(v\) \|\| 1\)\)/);
+    expect(automationFormSrc).toContain("draftDigits(v, 2)");
+    expect(automationFormSrc).toContain("Enter a day of month between 1 and 31.");
+    expect(automationFormSrc).toContain("SelectField");
+    expect(automationFormSrc).toContain("OptionsPickerSheet");
+    expect(automationFormSrc).toContain("category_id: form.category_id");
   });
 
   it("shows onboarding recurring help only with source=onboarding", () => {

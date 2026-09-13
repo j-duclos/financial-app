@@ -20,7 +20,6 @@ import {
   skipTransactionOccurrence,
   moveTransactionDate,
   getAccount,
-  getTimeline,
   getTransaction,
   resolveExpectedAsImported,
   resolveRuleOccurrence,
@@ -30,6 +29,7 @@ import {
   ApiError,
   type PayoffProjection,
 } from "@budget-app/api-client";
+import { getTimelineWithEngineShadow } from "../lib/financialEngineShadow";
 import { useBillingStatus } from "../hooks/useBillingStatus";
 import { canUsePlaidBankSync, forecastOptionsForPlan } from "../lib/entitlements";
 import { FORECAST_WINDOW_LABELS } from "../lib/forecastWindow";
@@ -324,7 +324,7 @@ export default function Transactions() {
       hideReconciledPast,
     ],
     queryFn: () =>
-      getTimeline({
+      getTimelineWithEngineShadow({
         start: upcomingRange.start,
         end: upcomingRange.end,
         as_of: todayStr(),

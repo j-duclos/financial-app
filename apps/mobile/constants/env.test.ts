@@ -183,6 +183,31 @@ describe("getApiBaseUrl", () => {
     resetApiBaseUrlCacheForTests();
     expect(getApiBaseUrl()).toBe("http://localhost:8000");
   });
+
+  it("keeps financial-engine mode at server unless explicitly enabled", async () => {
+    process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
+    delete process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_SHADOW;
+    delete process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_MODE;
+    vi.stubGlobal("__DEV__", true);
+    const disabled = await loadEnv();
+    expect(disabled.getFinancialEngineMode()).toBe("server");
+    expect(disabled.isFinancialEngineShadowEnabled()).toBe(false);
+
+    vi.resetModules();
+    process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_SHADOW = "true";
+    const shadow = await loadEnv();
+    expect(shadow.getFinancialEngineMode()).toBe("shadow");
+
+    vi.resetModules();
+    process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_MODE = "client";
+    const client = await loadEnv();
+    expect(client.getFinancialEngineMode()).toBe("client");
+
+    vi.resetModules();
+    process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_MODE = "nope";
+    const invalid = await loadEnv();
+    expect(invalid.getFinancialEngineMode()).toBe("server");
+  });
 });
 
 describe("wireApiClient uses centralized URL", () => {

@@ -118,5 +118,8 @@ describe("buildLedgerRowsFromPastAndUpcomingTimeline forecast rows", () => {
       "utf8"
     );
     expect(src).not.toMatch(/ledger_anchor/);
+    expect(src).toMatch(/getTimelineWithEngineShadow/);
+    expect(src).toMatch(/ledgerTimelineData/);
+    expect(src).not.toMatch(/buildTimeline\(/);
   });
 });

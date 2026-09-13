@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { getTimeline, listTransactions } from "@budget-app/api-client";
+import { listTransactions } from "@budget-app/api-client";
+import { getTimelineWithEngineShadow } from "@/lib/financialEngineShadow";
 import { useMemo } from "react";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import {
@@ -179,7 +180,7 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
       })
     ),
     queryFn: () =>
-      getTimeline({
+      getTimelineWithEngineShadow({
         start: projectionRange.start,
         end: projectionRange.end,
         as_of: todayStr(),

@@ -39,6 +39,10 @@ const automationFormSource = readFileSync(
   join(dir, "../automation/AutomationFormScreen.tsx"),
   "utf8"
 );
+const automationCategoryPickerSource = readFileSync(
+  join(dir, "../automation/automationCategoryPicker.ts"),
+  "utf8"
+);
 const financialRefreshSource = readFileSync(
   join(dir, "../../lib/financialQueryRefresh.ts"),
   "utf8"
@@ -166,8 +170,10 @@ describe("Shared category picker reuse", () => {
 
   it("transaction category pickers use the shared preferred-order helper, not per-screen alpha sorts", () => {
     expect(transactionFormSource).toMatch(/buildCategoryPickerOptions|sortCategoriesForPicker/);
-    expect(automationFormSource).toMatch(/sortCategoriesForPicker/);
+    expect(automationFormSource).toMatch(/automationCategoryPickerOptions/);
+    expect(automationCategoryPickerSource).toMatch(/sortCategoriesForPicker/);
     expect(transactionFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
     expect(automationFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
+    expect(automationCategoryPickerSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
   });
 });

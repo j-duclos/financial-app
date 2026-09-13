@@ -102,21 +102,32 @@ class TimelineBalanceCache:
         qs = ledger_visible_transactions(Transaction.objects.filter(q)).order_by(
             "account_id", "date", "id"
         )
+        # Dict rows only — full ORM hydration here was a duplicate of the later
+        # window queryset and dominated Python time in the cache-miss setup path.
         loaded = 0
-        for txn in qs.iterator():
+        for txn in qs.values(
+            "id",
+            "date",
+            "amount",
+            "status",
+            "rule_id",
+            "account_id",
+            "source",
+            "reconciled",
+        ).iterator(chunk_size=500):
             row = {
-                "id": txn.pk,
-                "date": txn.date,
-                "amount": txn.amount,
-                "status": txn.status,
-                "rule_id": txn.rule_id,
-                "account_id": txn.account_id,
-                "source": txn.source,
-                "reconciled": bool(txn.reconciled),
+                "id": txn["id"],
+                "date": txn["date"],
+                "amount": txn["amount"],
+                "status": txn["status"],
+                "rule_id": txn["rule_id"],
+                "account_id": txn["account_id"],
+                "source": txn["source"],
+                "reconciled": bool(txn["reconciled"]),
             }
-            aid = txn.account_id
+            aid = txn["account_id"]
             self._ledger_rows_by_account.setdefault(aid, []).append(row)
-            self._posting_dates_by_account.setdefault(aid, set()).add(txn.date)
+            self._posting_dates_by_account.setdefault(aid, set()).add(txn["date"])
             loaded += 1
         self.debug_loaded_txn_count += loaded
 

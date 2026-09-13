@@ -17,10 +17,14 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Collection
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
+
+from common.services.profiler import QueryProfiler, perf_enabled
+from timeline.services.forecast_build_perf import current_forecast_build_perf
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +149,11 @@ def _resolve_ledger_anchors(
     today: date,
     anchors: dict[int, Decimal] | None,
 ) -> dict[int, Decimal]:
+    """Resolve posted-before-pending starts for the canonical walk.
+
+    When ``anchors`` is provided (timeline request path), no SQL. Other
+    callers may omit it and load via ``ledger_today_balances_before_pending``.
+    """
     if anchors is not None:
         return {
             aid: _decimal(anchors.get(aid, Decimal("0"))).quantize(Decimal("0.01"))
@@ -286,8 +295,16 @@ def assign_canonical_ledger_balance_after(
     if not account_ids:
         return rows
 
+    walk_qp = QueryProfiler() if perf_enabled() else None
+    if walk_qp is not None:
+        walk_qp.start()
+    walk_t0 = time.perf_counter()
     resolved_anchors = _resolve_ledger_anchors(account_ids, today, anchors)
+    anchor_ms = (time.perf_counter() - walk_t0) * 1000
+    anchor_sql_ms = walk_qp.query_time_ms if walk_qp is not None else 0.0
+    anchor_queries = walk_qp.query_count if walk_qp is not None else 0
 
+    walk_py_t0 = time.perf_counter()
     for aid in sorted(account_ids):
         anchor = resolved_anchors.get(aid)
         if anchor is None:
@@ -307,6 +324,23 @@ def assign_canonical_ledger_balance_after(
             walk=walk,
             until_description=os.environ.get("CANONICAL_LEDGER_WALK_UNTIL", "Gen's Rent"),
         )
+    python_walk_ms = (time.perf_counter() - walk_py_t0) * 1000
+    if walk_qp is not None:
+        walk_qp.stop()
+    fbp = current_forecast_build_perf()
+    if fbp is not None:
+        total_ms = (time.perf_counter() - walk_t0) * 1000
+        fbp.record_walk(
+            total_ms=total_ms,
+            anchor_ms=anchor_ms,
+            python_walk_ms=python_walk_ms,
+            sql_ms=(walk_qp.query_time_ms if walk_qp is not None else 0.0),
+            queries=(walk_qp.query_count if walk_qp is not None else 0),
+            accounts=len(account_ids),
+            rows=len(rows),
+        )
+        fbp.counts["walk_anchor_queries"] = anchor_queries
+        fbp.counts["walk_anchor_sql_ms"] = round(anchor_sql_ms, 1)
 
     return rows
 
@@ -358,11 +392,17 @@ def finalize_transactions_timeline_slice(
     as_of: date,
     projection_start: date,
     projection_end: date,
+    skip_balance_walk: bool = False,
+    timing: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Re-annotate and assign ``balance_after`` on the exact Transactions timeline slice.
 
     Mutates ``rows`` in place for ``account_id`` only; returns the ledger row subset.
+
+    When ``skip_balance_walk`` is True (``balance_walk=client``), identity and the
+    canonical row slice are still produced, leftover cached ``balance_after`` values
+    are cleared, and ``assign_canonical_ledger_balance_after`` is not called.
     """
     from timeline.services.canonical_ledger import resolve_canonical_financial_state
 
@@ -377,12 +417,21 @@ def finalize_transactions_timeline_slice(
     )
     for row in account_rows:
         row.pop("balance_after", None)
+    if skip_balance_walk:
+        if timing is not None:
+            timing["balance_walk_skipped"] = True
+            timing["balance_walk_ms"] = 0.0
+        return selected
+    t_walk = time.perf_counter()
     assign_canonical_ledger_balance_after(
         account_rows,
         today=as_of,
         account_ids={account_id},
         force=True,
     )
+    if timing is not None:
+        timing["balance_walk_skipped"] = False
+        timing["balance_walk_ms"] = (time.perf_counter() - t_walk) * 1000
     return selected
 
 

@@ -73,3 +73,39 @@ def test_opening_balance_matches_uncached_path(checking):
 
     assert cached == _opening_balance(checking.id, as_of)
     assert cached == expected
+
+
+@pytest.mark.django_db
+def test_preload_transactions_uses_value_dicts_not_models(checking):
+    from transactions.models import Transaction
+
+    Transaction.objects.create(
+        account=checking,
+        date=date(2026, 6, 1),
+        payee="Rent",
+        amount=Decimal("-50.00"),
+        status=Transaction.Status.CLEARED,
+        source=Transaction.Source.ONE_TIME,
+        tags=[],
+    )
+    cache = TimelineBalanceCache()
+    cache.preload_accounts([checking])
+    cache.preload_transactions([checking.id], date(2026, 12, 31))
+    rows = cache._ledger_rows_by_account[checking.id]
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {
+        "id",
+        "date",
+        "amount",
+        "status",
+        "rule_id",
+        "account_id",
+        "source",
+        "reconciled",
+    }
+    assert row["account_id"] == checking.id
+    assert row["amount"] == Decimal("-50.00")
+    assert row["date"] == date(2026, 6, 1)
+    assert cache.debug_loaded_txn_count == 1
+

@@ -2071,8 +2071,9 @@ export interface TimelineRow {
   transaction_id: number | null;
   running_balance: string;
   /**
-   * Canonical forecast balance after this row (Pending/Upcoming). Assigned server-side;
-   * clients display only — no local ledger arithmetic.
+   * Canonical forecast balance after this row (Pending/Upcoming).
+   * Django still sends this for parity and fallback. In `client` financial-engine
+   * mode the display adapter may replace it with the local walk.
    */
   balance_after?: string | null;
   /** Authoritative: False when superseded/shadowed — excluded from ledger walk and Bal column. */
@@ -2102,6 +2103,17 @@ export interface TimelineResponse {
   account_summary: { account_id: number; account_name: string; ending_balance: string }[];
   /** When exclude_reconciled_past: opening balance for the unreconciled past ledger list. */
   past_opening_balance?: string;
+  /**
+   * Opt-in inputs for the client financial engine.
+   * Shadow: `include_engine_shadow=true` — anchors + server `balance_after`.
+   * Client: `balance_walk=client` — anchors + `balance_walk_source: "client"`;
+   * row `balance_after` is JSON null (server walk skipped).
+   */
+  engine_shadow?: {
+    as_of: string;
+    balance_walk_source?: "server" | "client";
+    accounts: { account_id: number; posted_balance_before_pending: string }[];
+  };
 }
 
 export type TimelineCalendarRiskLevel = "none" | "watch" | "critical";

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   createRule,
   getRule,
@@ -14,9 +15,9 @@ import {
   formatAccountOptionLabel,
   GETTING_STARTED_COPY,
   recurringSaveConsumesActiveSlot,
-  sortCategoriesForPicker,
 } from "@budget-app/shared";
 import { AppHeader, Button, Card, EmptyState, ErrorState, Screen, TextField } from "@/components/ui";
+import { OptionsPickerSheet, SelectField } from "@/components/forms";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
@@ -37,6 +38,14 @@ import {
   type RuleLifecycleStatus,
 } from "./automationDisplay";
 import { RuleSummaryCard } from "./components/RuleSummaryCard";
+import { draftDigits, parseBoundedInt } from "./numericDraft";
+import {
+  ANY_CATEGORY_LABEL,
+  CHOOSE_CATEGORY_TITLE,
+  automationCategoryFieldValue,
+  automationCategoryPickerOptions,
+  serializeAutomationCategoryId,
+} from "./automationCategoryPicker";
 
 type Direction = "INCOME" | "EXPENSE" | "TRANSFER";
 type FormStep = "basics" | "schedule" | "conditions" | "review";
@@ -84,9 +93,9 @@ type FormState = {
   amount: string;
   currency: string;
   frequency: RecurringRuleFrequency;
-  interval: number;
+  interval: string;
   day_of_week: number | null;
-  day_of_month: number;
+  day_of_month: string;
   nth_week: number | null;
   start_date: string;
   end_date: string;
@@ -108,9 +117,9 @@ function defaultForm(householdId = 0): FormState {
     amount: "",
     currency: "USD",
     frequency: "MONTHLY_DAY",
-    interval: 1,
+    interval: "1",
     day_of_week: 0,
-    day_of_month: 15,
+    day_of_month: "15",
     nth_week: 1,
     start_date: todayStr(),
     end_date: "",
@@ -140,9 +149,9 @@ function ruleToForm(rule: RecurringRule): FormState {
     amount: sched?.amount ?? rule.amount,
     currency: sched?.currency ?? rule.currency ?? "USD",
     frequency: normalizedFrequency,
-    interval: normalizedInterval,
+    interval: String(normalizedInterval),
     day_of_week: source.day_of_week ?? 0,
-    day_of_month: source.day_of_month ?? 15,
+    day_of_month: String(source.day_of_month ?? 15),
     nth_week: source.nth_week ?? 1,
     start_date: (sched?.start_date ?? rule.start_date).slice(0, 10),
     end_date: (sched?.end_date ?? rule.end_date)?.slice(0, 10) ?? "",
@@ -168,9 +177,9 @@ function formToPreviewRule(form: FormState): RecurringRule {
     amount: form.amount || "0",
     currency: form.currency,
     frequency: form.frequency,
-    interval: form.interval,
+    interval: parseBoundedInt(form.interval, 1, 99) ?? 1,
     day_of_week: form.day_of_week,
-    day_of_month: form.day_of_month,
+    day_of_month: parseBoundedInt(form.day_of_month, 1, 31) ?? 15,
     nth_week: form.nth_week,
     start_date: form.start_date,
     end_date: form.end_date || null,
@@ -185,6 +194,7 @@ function formToPreviewRule(form: FormState): RecurringRule {
 
 export function AutomationFormScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ id?: string; source?: string | string[] }>();
@@ -200,6 +210,7 @@ export function AutomationFormScreen() {
   const [step, setStep] = useState<FormStep>("basics");
   const [form, setForm] = useState<FormState>(() => defaultForm());
   const [error, setError] = useState<string | null>(null);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
 
   const profileQuery = useProfile();
   const householdsQuery = useHouseholds();
@@ -226,14 +237,8 @@ export function AutomationFormScreen() {
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const catName = selectedCategory?.name ?? "";
   const categoryPickerType = form.direction === "INCOME" ? "INCOME" : "EXPENSE";
-  const categoryChipOptions = useMemo(
-    () => [
-      ...sortCategoriesForPicker(
-        categories.filter((c) => c.category_type === categoryPickerType),
-        categoryPickerType
-      ).map((c) => ({ value: String(c.id), label: c.name })),
-      { value: "", label: "None" },
-    ],
+  const categoryPickerOptions = useMemo(
+    () => automationCategoryPickerOptions(categories, categoryPickerType),
     [categories, categoryPickerType]
   );
   const transferAllowed = catName === "Credit Card Payment" || catName === "Bank Transfer";
@@ -287,14 +292,14 @@ export function AutomationFormScreen() {
         amount: form.amount.trim(),
         currency: form.currency,
         frequency: form.frequency,
-        interval: form.interval,
+        interval: parseBoundedInt(form.interval, 1, 99) ?? 1,
         day_of_week:
           form.frequency === "WEEKLY" || form.frequency === "BIWEEKLY" || form.frequency === "MONTHLY_NTH_WEEKDAY"
             ? form.day_of_week
             : null,
         day_of_month:
           form.frequency === "MONTHLY_DAY" || form.frequency === "MONTHLY_NTH_WEEKDAY"
-            ? form.day_of_month
+            ? parseBoundedInt(form.day_of_month, 1, 31)
             : undefined,
         nth_week: form.frequency === "MONTHLY_NTH_WEEKDAY" ? form.nth_week : undefined,
         start_date: form.start_date,
@@ -350,6 +355,14 @@ export function AutomationFormScreen() {
     }
     if (current === "schedule") {
       if (!form.start_date) return "Start date is required.";
+      if (form.frequency === "MONTHLY_DAY") {
+        if (parseBoundedInt(form.day_of_month, 1, 31) == null) {
+          return "Enter a day of month between 1 and 31.";
+        }
+      }
+      if (form.frequency === "WEEKLY" && parseBoundedInt(form.interval, 1, 99) == null) {
+        return "Enter how many weeks between repeats.";
+      }
     }
     if (current === "conditions") {
       if (!form.account_id) return "Select an account.";
@@ -448,7 +461,16 @@ export function AutomationFormScreen() {
         Step {stepIndex + 1} of {STEPS.length}: {STEPS[stepIndex].label}
       </Text>
 
-      <ScrollView contentContainerStyle={{ gap: theme.spacing.md, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ gap: theme.spacing.md, paddingHorizontal: theme.spacing.lg, paddingBottom: 24 }}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
         {fromOnboarding ? (
           <Card testID="onboarding-recurring-hint">
             <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>
@@ -507,9 +529,10 @@ export function AutomationFormScreen() {
               <>
                 <TextField
                   label="Every N weeks"
-                  value={String(form.interval)}
-                  onChangeText={(v) => set("interval", Math.max(1, Number(v) || 1))}
+                  value={form.interval}
+                  onChangeText={(v) => set("interval", draftDigits(v, 2))}
                   keyboardType="number-pad"
+                  selectTextOnFocus
                 />
                 <ChipRow
                   label="Day of week"
@@ -522,9 +545,10 @@ export function AutomationFormScreen() {
             {form.frequency === "MONTHLY_DAY" ? (
               <TextField
                 label="Day of month (1–31)"
-                value={String(form.day_of_month)}
-                onChangeText={(v) => set("day_of_month", Math.min(31, Math.max(1, Number(v) || 1)))}
+                value={form.day_of_month}
+                onChangeText={(v) => set("day_of_month", draftDigits(v, 2))}
                 keyboardType="number-pad"
+                selectTextOnFocus
               />
             ) : null}
             {form.frequency === "MONTHLY_NTH_WEEKDAY" ? (
@@ -563,14 +587,12 @@ export function AutomationFormScreen() {
               onSelect={(v) => set("account_id", Number(v))}
             />
             {form.direction !== "TRANSFER" ? (
-              <ChipRow
+              <SelectField
                 label="Category"
-                options={categoryChipOptions}
-                selected={String(form.category_id ?? "")}
-                onSelect={(v) => {
-                  set("category_id", v ? Number(v) : null);
-                  set("transfer_to_account_id", null);
-                }}
+                value={automationCategoryFieldValue(selectedCategory?.name)}
+                placeholder={ANY_CATEGORY_LABEL}
+                onPress={() => setCategoryPickerOpen(true)}
+                accessibilityLabel={`Category, ${automationCategoryFieldValue(selectedCategory?.name)}`}
               />
             ) : null}
             {transferAllowed && catName === "Credit Card Payment" && creditCardAccounts.length > 0 ? (
@@ -654,27 +676,56 @@ export function AutomationFormScreen() {
                 ) : null}
               </>
             ) : null}
-            <Button
-              label={isEdit ? "Save automation" : "Create automation"}
-              loading={saveMutation.isPending}
-              onPress={() => {
-                const err = validateStep("basics") || validateStep("schedule") || validateStep("conditions");
-                if (err) {
-                  setError(err);
-                  return;
-                }
-                if (saveConsumesSlot && interceptIfLimited()) return;
-                setError(null);
-                saveMutation.mutate();
-              }}
-            />
           </>
         ) : null}
-
+      </ScrollView>
+      <View
+        testID="automation-step-footer"
+        style={{
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: theme.spacing.sm,
+          paddingBottom: Math.max(insets.bottom, theme.spacing.md),
+          borderTopWidth: 1,
+          borderTopColor: theme.colors.border,
+          backgroundColor: theme.colors.background,
+        }}
+      >
         {step !== "review" ? (
           <Button label="Continue" onPress={goNext} />
-        ) : null}
-      </ScrollView>
+        ) : (
+          <Button
+            label={isEdit ? "Save automation" : "Create automation"}
+            loading={saveMutation.isPending}
+            onPress={() => {
+              const err = validateStep("basics") || validateStep("schedule") || validateStep("conditions");
+              if (err) {
+                setError(err);
+                return;
+              }
+              if (saveConsumesSlot && interceptIfLimited()) return;
+              setError(null);
+              saveMutation.mutate();
+            }}
+          />
+        )}
+      </View>
+      </KeyboardAvoidingView>
+      {form.direction !== "TRANSFER" ? (
+        <OptionsPickerSheet
+          visible={categoryPickerOpen}
+          title={CHOOSE_CATEGORY_TITLE}
+          options={categoryPickerOptions}
+          selectedId={form.category_id != null ? String(form.category_id) : ""}
+          searchPlaceholder="Search categories"
+          emptyMessage="No matching categories"
+          tall
+          onClose={() => setCategoryPickerOpen(false)}
+          onSelect={(id) => {
+            set("category_id", serializeAutomationCategoryId(id));
+            set("transfer_to_account_id", null);
+          }}
+        />
+      ) : null}
     </Screen>
   );
 }

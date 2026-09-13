@@ -1,0 +1,518 @@
+{
+  "schema": "financial-engine-parity-v1",
+  "notes": "Expected values match backend timeline.services.ledger_section_balances.assign_canonical_ledger_balance_after and forecast_balance_metrics_from_transactions_ledger. Dates are YYYY-MM-DD. Amounts are 2-decimal strings. Sign convention: stored amount is signed (positive inflow, negative outflow); type OUTFLOW/EXPENSE forces negative and INFLOW/INCOME forces positive.",
+  "cases": [
+    {
+      "id": "checking-income-expense",
+      "today": "2026-01-20",
+      "endDate": "2026-01-27",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "1000.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-25",
+          "amount": "2000.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Paycheck",
+          "transaction_id": 1,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-26",
+          "amount": "-200.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Rent",
+          "transaction_id": 2,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 1, "balance_after": "3000.00" },
+          { "transaction_id": 2, "balance_after": "2800.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "1000.00",
+            "ending": "2800.00",
+            "lowest": "1000.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "same-day-order-by-transaction-id",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "100.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "10.00",
+          "type": "INFLOW",
+          "status": "CLEARED",
+          "source": "actual",
+          "description": "Zebra",
+          "transaction_id": 10,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-5.00",
+          "type": "OUTFLOW",
+          "status": "CLEARED",
+          "source": "actual",
+          "description": "Apple",
+          "transaction_id": 2,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 2, "balance_after": "95.00" },
+          { "transaction_id": 10, "balance_after": "105.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "100.00",
+            "ending": "105.00",
+            "lowest": "95.00",
+            "lowest_date": "2026-01-21",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "pending-then-upcoming",
+      "today": "2026-01-20",
+      "endDate": "2026-01-25",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "500.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-18",
+          "amount": "-50.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Overdue bill",
+          "transaction_id": 3,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-25",
+          "amount": "100.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Paycheck",
+          "transaction_id": 4,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 3, "balance_after": "450.00" },
+          { "transaction_id": 4, "balance_after": "550.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "500.00",
+            "ending": "550.00",
+            "lowest": "450.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "transfer-two-legs",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "1000.00", "minimum_buffer": "0.00" },
+        { "id": 2, "posted_balance_before_pending": "500.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-200.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Transfer out",
+          "transaction_id": 5,
+          "financially_active": true
+        },
+        {
+          "account_id": 2,
+          "date": "2026-01-21",
+          "amount": "200.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Transfer in",
+          "transaction_id": 6,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 5, "balance_after": "800.00" },
+          { "transaction_id": 6, "balance_after": "700.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "1000.00",
+            "ending": "800.00",
+            "lowest": "800.00",
+            "lowest_date": "2026-01-21",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          },
+          {
+            "account_id": 2,
+            "opening_balance": "500.00",
+            "ending": "700.00",
+            "lowest": "500.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "zero-balance",
+      "today": "2026-01-20",
+      "endDate": "2026-01-22",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "0.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [],
+      "expected": {
+        "timeline": [],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "0.00",
+            "ending": "0.00",
+            "lowest": "0.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "cents-no-float-drift",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "10.10", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "0.10",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "one_time",
+          "txn_source": "one_time",
+          "description": "Ten cents",
+          "transaction_id": 7,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "0.20",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "one_time",
+          "txn_source": "one_time",
+          "description": "Twenty cents",
+          "transaction_id": 8,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 7, "balance_after": "10.20" },
+          { "transaction_id": 8, "balance_after": "10.40" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "10.10",
+            "ending": "10.40",
+            "lowest": "10.10",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "type-forces-sign",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "100.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "45.67",
+          "type": "OUTFLOW",
+          "status": "CLEARED",
+          "source": "actual",
+          "description": "Positive amount typed as outflow",
+          "transaction_id": 11,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-12.00",
+          "type": "INFLOW",
+          "status": "CLEARED",
+          "source": "actual",
+          "description": "Negative amount typed as inflow",
+          "transaction_id": 12,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 11, "balance_after": "54.33" },
+          { "transaction_id": 12, "balance_after": "66.33" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "100.00",
+            "ending": "66.33",
+            "lowest": "54.33",
+            "lowest_date": "2026-01-21",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "credit-card-payment",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 3, "posted_balance_before_pending": "-300.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 3,
+          "date": "2026-01-21",
+          "amount": "100.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Card payment",
+          "transaction_id": 13,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 13, "balance_after": "-200.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 3,
+            "opening_balance": "-300.00",
+            "ending": "-200.00",
+            "lowest": "-300.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": "2026-01-20",
+            "first_negative_balance": "-300.00",
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "date-window-excludes-later-upcoming",
+      "today": "2026-01-20",
+      "endDate": "2026-01-20",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "1000.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-999.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "After window",
+          "transaction_id": 14,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 14, "balance_after": "1.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "1000.00",
+            "ending": "1000.00",
+            "lowest": "1000.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "inactive-row-skipped",
+      "today": "2026-01-20",
+      "endDate": "2026-01-21",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "100.00", "minimum_buffer": "0.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "10.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Active",
+          "transaction_id": 15,
+          "financially_active": true
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "1000.00",
+          "type": "INFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Shadowed",
+          "transaction_id": 16,
+          "financially_active": false
+        },
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-5.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Bill",
+          "transaction_id": 17,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 15, "balance_after": "110.00" },
+          { "transaction_id": 17, "balance_after": "105.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "100.00",
+            "ending": "105.00",
+            "lowest": "100.00",
+            "lowest_date": "2026-01-20",
+            "first_negative_date": null,
+            "first_negative_balance": null,
+            "first_negative_transaction_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "goes-negative-in-window",
+      "today": "2026-01-20",
+      "endDate": "2026-01-22",
+      "accounts": [
+        { "id": 1, "posted_balance_before_pending": "50.00", "minimum_buffer": "25.00" }
+      ],
+      "rows": [
+        {
+          "account_id": 1,
+          "date": "2026-01-21",
+          "amount": "-80.00",
+          "type": "OUTFLOW",
+          "status": "PLANNED",
+          "source": "rule",
+          "description": "Big bill",
+          "transaction_id": 18,
+          "financially_active": true
+        }
+      ],
+      "expected": {
+        "timeline": [
+          { "transaction_id": 18, "balance_after": "-30.00" }
+        ],
+        "projections": [
+          {
+            "account_id": 1,
+            "opening_balance": "50.00",
+            "ending": "-30.00",
+            "lowest": "-30.00",
+            "lowest_date": "2026-01-21",
+            "first_negative_date": "2026-01-21",
+            "first_negative_balance": "-30.00",
+            "first_negative_transaction_id": 18
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -27,8 +27,6 @@ from common.services.profiler import (
     materialization_active,
     perf_enabled,
     perf_print,
-    phase_end,
-    phase_start,
     projection_only_build_active,
     record_materialization_created,
     record_materialization_skipped,
@@ -37,6 +35,12 @@ from common.services.profiler import (
     set_materialization_existing_loaded,
     set_materialization_occurrences_generated,
     should_materialize_rule,
+)
+from timeline.services.forecast_build_perf import (
+    ForecastBuildPerf,
+    begin_forecast_stage,
+    end_forecast_stage,
+    timed_timeline_sort,
 )
 from core.utils import get_households_for_user
 from timeline.services.balance_cache import TimelineBalanceCache, get_active_balance_cache
@@ -188,13 +192,67 @@ def recompute_timeline_running_balances(
     account_ids: set[int],
 ) -> None:
     """Re-sort rows and refresh running_balance after scenario edits."""
+    instrument = perf_enabled()
+    t0 = time.perf_counter()
+    sql_n = [0]
+    sql_ms = [0.0]
+    wrapper = None
+    if instrument:
+        from django.db import connection
+
+        def _wrap(execute, sql, params, many, context):
+            started = time.perf_counter()
+            try:
+                return execute(sql, params, many, context)
+            finally:
+                sql_n[0] += 1
+                sql_ms[0] += (time.perf_counter() - started) * 1000
+
+        wrapper = _wrap
+        connection.execute_wrappers.append(wrapper)
+    try:
+        _recompute_timeline_running_balances_impl(rows, opening=opening, account_ids=account_ids)
+    finally:
+        if wrapper is not None:
+            from django.db import connection
+
+            try:
+                connection.execute_wrappers.remove(wrapper)
+            except ValueError:
+                pass
+        if instrument:
+            from timeline.services.identity_stats import identity_stats
+
+            missing_identity = sum(1 for r in rows if "financially_active" not in r)
+            total_ms = (time.perf_counter() - t0) * 1000
+            python_ms = max(0.0, total_ms - sql_ms[0])
+            st = identity_stats()
+            perf_print(
+                "[timeline-perf] running_balances "
+                f"rows={len(rows)} accounts={len(account_ids)} "
+                f"python_ms={python_ms:.1f} sql_ms={sql_ms[0]:.1f} "
+                f"sql_queries={sql_n[0]} passes=2 mode=bulk_chronological "
+                f"missing_financially_active={missing_identity} "
+                f"participation_calls={st['participation_calls']} "
+                f"fallback_participation_calls={st['participation_fallback_calls']}"
+            )
+
+
+def _recompute_timeline_running_balances_impl(
+    rows: list[dict],
+    *,
+    opening: dict[int, Decimal],
+    account_ids: set[int],
+) -> None:
     for r in rows:
         if "sort_key" not in r and r.get("date"):
             tid = r.get("transaction_id")
             tier = 0 if tid is not None else 1
             r["sort_key"] = (r.get("date"), tier, tid or r.get("rule_id") or 0)
 
-    rows.sort(key=timeline_rows_chronological_key)
+    timed_timeline_sort(
+        rows, timeline_rows_chronological_key, sort_key="running_balances_chronological"
+    )
     for r in rows:
         r.pop("sort_key", None)
 
@@ -247,7 +305,9 @@ def recompute_future_timeline_running_balances(
             tid = r.get("transaction_id")
             tier = 0 if tid is not None else 1
             r["sort_key"] = (r.get("date"), tier, tid or r.get("rule_id") or 0)
-    rows.sort(key=timeline_rows_chronological_key)
+    timed_timeline_sort(
+        rows, timeline_rows_chronological_key, sort_key="future_running_balances_chronological"
+    )
     for r in rows:
         r.pop("sort_key", None)
 
@@ -1758,7 +1818,12 @@ def _timeline_amounts_match(a, b) -> bool:
         return False
 
 
-def is_shadowed_by_matched_rule_sibling(row: dict, account_rows: list[dict]) -> bool:
+def is_shadowed_by_matched_rule_sibling(
+    row: dict,
+    account_rows: list[dict],
+    *,
+    matched_siblings: list[dict] | None = None,
+) -> bool:
     """
     Unmatched rule row superseded because a sibling occurrence already matched the bank import.
 
@@ -1779,13 +1844,19 @@ def is_shadowed_by_matched_rule_sibling(row: dict, account_rows: list[dict]) -> 
         amt = Decimal(str(row.get("amount")))
     except Exception:
         return False
-    for other in account_rows:
+    from timeline.services.identity_stats import incr
+
+    incr("sibling_scan_calls")
+    candidates = matched_siblings if matched_siblings is not None else account_rows
+    indexed = matched_siblings is not None
+    for other in candidates:
         if other is row:
             continue
-        if other.get("account_id") != account_id or other.get("rule_id") != rule_id:
-            continue
-        if (other.get("import_match_status") or "").lower() != "matched":
-            continue
+        if not indexed:
+            if other.get("account_id") != account_id or other.get("rule_id") != rule_id:
+                continue
+            if (other.get("import_match_status") or "").lower() != "matched":
+                continue
         other_date = _timeline_row_date(other.get("date"))
         if other_date is None:
             continue
@@ -1835,6 +1906,7 @@ def is_superseded_planned_row(
     account_rows: list[dict],
     *,
     allow_db_fallback: bool = True,
+    posting_candidates: list[dict] | None = None,
 ) -> bool:
     """Skip PLANNED rows when a matching CLEARED/RECONCILED posting exists same day (matches web ledger)."""
     if _is_paired_transfer_timeline_row(row):
@@ -1847,17 +1919,25 @@ def is_superseded_planned_row(
         row_date = date.fromisoformat(str(row_date)[:10])
     amt = Decimal(str(row.get("amount")))
     abs_amt = abs(amt)
-    for other in account_rows:
-        if other is row or other.get("account_id") != row.get("account_id"):
+    from timeline.services.identity_stats import incr
+
+    incr("sibling_scan_calls")
+    candidates = posting_candidates if posting_candidates is not None else account_rows
+    indexed = posting_candidates is not None
+    for other in candidates:
+        if other is row:
             continue
-        other_date = other.get("date")
-        if hasattr(other_date, "isoformat") and not isinstance(other_date, date):
-            other_date = date.fromisoformat(str(other_date)[:10])
-        if other_date != row_date:
-            continue
-        other_status = (other.get("status") or "").upper()
-        if other_status not in ("CLEARED", "RECONCILED"):
-            continue
+        if not indexed:
+            if other.get("account_id") != row.get("account_id"):
+                continue
+            other_date = other.get("date")
+            if hasattr(other_date, "isoformat") and not isinstance(other_date, date):
+                other_date = date.fromisoformat(str(other_date)[:10])
+            if other_date != row_date:
+                continue
+            other_status = (other.get("status") or "").upper()
+            if other_status not in ("CLEARED", "RECONCILED"):
+                continue
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return True
         # Keep both visible when an unmatched import likely belongs to this forecast (user still matching).
@@ -1871,6 +1951,58 @@ def is_superseded_planned_row(
     if not allow_db_fallback:
         return False
     return _planned_row_superseded_by_db_posting(row)
+
+
+def _planned_row_as_posting_dict(txn) -> dict:
+    return {
+        "date": txn.date,
+        "amount": txn.amount,
+        "status": txn.status,
+        "rule_id": txn.rule_id,
+        "account_id": txn.account_id,
+        "description": txn.payee or "",
+        "payee": txn.payee or "",
+        "import_match_status": txn.import_match_status,
+        "txn_source": txn.source.lower() if txn.source else None,
+        "plaid_transaction_id": txn.plaid_transaction_id,
+        "transaction_id": txn.pk,
+    }
+
+
+def bulk_db_postings_for_planned_rows(rows: list[dict]) -> dict[tuple[int, date], list[dict]]:
+    """One query of same-day cleared/reconciled postings for planned rows.
+
+    Same filter as ``_planned_row_superseded_by_db_posting``, loaded once per
+    canonical identity pass instead of once per planned row.
+    """
+    planned_keys: set[tuple[int, date]] = set()
+    for row in rows:
+        if (row.get("status") or "").upper() != "PLANNED":
+            continue
+        account_id = row.get("account_id")
+        row_date = _timeline_row_date(row.get("date"))
+        if account_id is None or row_date is None:
+            continue
+        planned_keys.add((int(account_id), row_date))
+    if not planned_keys:
+        return {}
+    from collections import defaultdict
+
+    from transactions.models import Transaction
+
+    account_ids = {aid for aid, _ in planned_keys}
+    dates = {d for _, d in planned_keys}
+    extra: dict[tuple[int, date], list[dict]] = defaultdict(list)
+    for txn in Transaction.objects.filter(
+        account_id__in=account_ids,
+        date__in=dates,
+        status__in=(Transaction.Status.CLEARED, Transaction.Status.RECONCILED),
+        reconciled=False,
+    ):
+        key = (int(txn.account_id), txn.date)
+        if key in planned_keys:
+            extra[key].append(_planned_row_as_posting_dict(txn))
+    return extra
 
 
 def _planned_row_superseded_by_db_posting(row: dict) -> bool:
@@ -1899,18 +2031,7 @@ def _planned_row_superseded_by_db_posting(row: dict) -> bool:
         status__in=(Transaction.Status.CLEARED, Transaction.Status.RECONCILED),
         reconciled=False,
     ):
-        other = {
-            "date": txn.date,
-            "amount": txn.amount,
-            "status": txn.status,
-            "rule_id": txn.rule_id,
-            "account_id": txn.account_id,
-            "description": txn.payee or "",
-            "payee": txn.payee or "",
-            "import_match_status": txn.import_match_status,
-            "txn_source": txn.source.lower() if txn.source else None,
-            "plaid_transaction_id": txn.plaid_transaction_id,
-        }
+        other = _planned_row_as_posting_dict(txn)
         if row.get("rule_id") is not None and other.get("rule_id") == row.get("rule_id"):
             return True
         if _is_unmatched_plaid_import_row(other) and _planned_and_posting_likely_same(row, other):
@@ -2713,14 +2834,20 @@ def _build_timeline_impl(
             f"projection_only={projection_only} days={forecast_days}"
         )
     perf_generated_occurrences = 0
+    fbp = ForecastBuildPerf(query_profiler) if perf_enabled() else None
     if query_profiler is not None:
         query_profiler.start()
 
-    _phase_setup = phase_start(timer, "setup")
+    _st = begin_forecast_stage(fbp, timer, "accounts")
     households = get_households_for_user(user)
     if household_id:
         households = households.filter(pk=household_id)
     if not households.exists():
+        end_forecast_stage(fbp, timer, _st, "accounts", extra={"accounts": 0})
+        if query_profiler is not None:
+            query_profiler.stop()
+        if fbp is not None:
+            fbp.close()
         return []
 
     if not projection_only:
@@ -2741,9 +2868,21 @@ def _build_timeline_impl(
         for a in accounts
         if a.participates_in_forecast()
     }
+    end_forecast_stage(
+        fbp,
+        timer,
+        _st,
+        "accounts",
+        extra={"accounts": len(account_ids)},
+    )
     if not account_ids:
+        if query_profiler is not None:
+            query_profiler.stop()
+        if fbp is not None:
+            fbp.close()
         return []
 
+    _st = begin_forecast_stage(fbp, timer, "other_setup")
     today = as_of_date or timezone.localdate()
     include_overdue_pending = (
         opening_balances is None
@@ -2769,9 +2908,11 @@ def _build_timeline_impl(
         deactivate_balance_cache,
         preload_household_balance_data,
     )
+    end_forecast_stage(fbp, timer, _st, "other_setup")
 
     balance_cache, balance_cache_token = activate_balance_cache()
     try:
+        _st = begin_forecast_stage(fbp, timer, "balance_preload")
         preload_household_balance_data(
             balance_cache,
             households,
@@ -2782,9 +2923,28 @@ def _build_timeline_impl(
                 else (today if projection_only else start_date)
             ),
         )
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "balance_preload",
+            extra={
+                "preload_ledger_rows": balance_cache.debug_loaded_txn_count,
+                "preload_accounts": len(account_ids),
+            },
+        )
+
+        _st = begin_forecast_stage(fbp, timer, "scenario_lookup")
         scenario = None
         if scenario_id:
             scenario = Scenario.objects.filter(household__in=households, pk=scenario_id).first()
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "scenario_lookup",
+            extra={"scenario": 1 if scenario is not None else 0},
+        )
 
         # 1) Actual transactions in the requested window.
         #    Projection-only reads do not replay ordinary posted history before start_date;
@@ -2793,6 +2953,7 @@ def _build_timeline_impl(
         #    PLAID INVARIANT: Matched Plaid imports stay visible; hide the matched planned/manual twin
         #    via ledger_visible_transactions (see matching.py). Do NOT re-hide imports here.
         #    When exclude_reconciled_past, omit reconciled rows at the database (ledger UI default).
+        _st = begin_forecast_stage(fbp, timer, "window_transactions")
         if projection_only:
             actual_window = Q(date__gte=start_date, date__lte=end_date)
             if include_overdue_pending:
@@ -2818,8 +2979,17 @@ def _build_timeline_impl(
                 "match_as_planned__imported_transaction",
             ).order_by("date", "id")
         )
+        window_tx_loaded = len(actual)
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "window_transactions",
+            extra={"window_tx_loaded": window_tx_loaded, "db_transactions": window_tx_loaded},
+        )
         # DO NOT call rematch_unmatched_for_accounts() here — timeline reads must not mutate matches
         # or re-link imports (caused imports to disappear from UI and balances to swing).
+        _st = begin_forecast_stage(fbp, timer, "matching_inputs")
         shadow_ids = shadowed_rule_occurrence_ids(actual)
         if shadow_ids:
             actual = [t for t in actual if t.pk not in shadow_ids]
@@ -2833,7 +3003,19 @@ def _build_timeline_impl(
             ).values_list("transaction_id", "reconciled_balance")
             if bal is not None
         }
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "matching_inputs",
+            extra={
+                "window_tx_retained": len(actual),
+                "shadowed": len(shadow_ids),
+                "recon_entries": len(reconciled_balance_by_txn),
+            },
+        )
 
+        _st = begin_forecast_stage(fbp, timer, "skips_load")
         household_ids = list(households.values_list("pk", flat=True))
         skipped_occurrences = set(
             RecurringRuleSkip.objects.filter(
@@ -2860,6 +3042,13 @@ def _build_timeline_impl(
                         and t.status == Transaction.Status.PLANNED
                     )
                 ]
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "skips_load",
+            extra={"skipped_occurrences": len(skipped_occurrences)},
+        )
 
         # Amount is stored signed: positive = inflow (payment), negative = outflow (expense).
         # Dedupe rule-created transactions by (account_id, date, rule_id, sign) so we only show
@@ -2867,6 +3056,7 @@ def _build_timeline_impl(
         # Do NOT hide rule-backed transactions by "rule's current account" — if the user moved a single
         # instance to another account (e.g. Savor), it should still show on that account.
         # Build map (rule_id, date) -> destination account name for transfer "from" legs so we can show "Move to CC (Savor)" in the list.
+        _st = begin_forecast_stage(fbp, timer, "transfer_maps")
         from_leg_keys = [(t.rule_id, t.date) for t in actual if t.rule_id is not None and t.amount is not None and t.amount < 0]
         to_leg_account_name: dict[tuple[int, date], str] = {}
         tg_to_account_name: dict[int, str] = {}
@@ -2887,7 +3077,15 @@ def _build_timeline_impl(
                 ).exclude(account_id__in=account_ids).select_related("account"):
                     if to_txn.transfer_group_id and to_txn.account_id:
                         tg_to_account_name[to_txn.transfer_group_id] = getattr(to_txn.account, "name", "") or ""
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "transfer_maps",
+            extra={"from_legs": len(from_leg_keys), "to_leg_names": len(to_leg_account_name)},
+        )
 
+        _st = begin_forecast_stage(fbp, timer, "account_metadata")
         accs = {
             aid: balance_cache.get_account(aid)
             for aid in account_ids
@@ -2897,8 +3095,16 @@ def _build_timeline_impl(
             aid for aid in account_ids
             if accs.get(aid) and getattr(accs[aid], "account_type", None) == Account.AccountType.CREDIT
         }
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "account_metadata",
+            extra={"credit_accounts": len(credit_account_ids)},
+        )
 
         # Opening balances (before actual + rule rows) — used with full row ledger when skipping min payments
+        _st = begin_forecast_stage(fbp, timer, "opening_balances")
         opening: dict[int, Decimal] = {}
         if opening_balances is not None:
             for aid in account_ids:
@@ -2951,7 +3157,13 @@ def _build_timeline_impl(
                 if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
                     sb = -sb
                 opening[aid] = sb
-        phase_end(timer, _phase_setup)
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "opening_balances",
+            extra={"opening_accounts": len(opening)},
+        )
 
         rows: list[dict] = []
         ids_in_rows: set[int] = set()
@@ -2960,7 +3172,8 @@ def _build_timeline_impl(
         purged_transfer_group_ids: set[int] = set()
         suppressed_txn_ids: set[int] = set()
         scenario_projection_only = projection_only or scenario is not None
-        _phase_load = phase_start(timer, "load_transactions")
+        _st = begin_forecast_stage(fbp, timer, "load_transactions")
+        load_tx_appended = 0
         for t in actual:
             # Projection-only: posted history before start is in the opening aggregate, not rows.
             # Overdue unmatched planned rows are kept so Pending Transactions still render.
@@ -3158,16 +3371,35 @@ def _build_timeline_impl(
                 row_payload["reconciled_balance"] = rec_bal
             rows.append(row_payload)
             ids_in_rows.add(t.id)
+            load_tx_appended += 1
         if suppressed_txn_ids:
             rows[:] = [r for r in rows if r.get("transaction_id") not in suppressed_txn_ids]
         perf_transactions = len(actual)
-        phase_end(timer, _phase_load)
+        manual_rows = sum(
+            1
+            for r in rows
+            if (r.get("txn_source") or "").lower() in ("one_time", "manual")
+        )
+        transfer_rows = sum(1 for r in rows if r.get("transfer_group_id"))
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "load_transactions",
+            extra={
+                "orm_rows": len(actual),
+                "load_tx_appended": load_tx_appended,
+                "load_tx_retained": len(rows),
+                "manual_rows": manual_rows,
+                "transfer_rows": transfer_rows,
+            },
+        )
 
         # 2) One-time planned (Transaction with source=ONE_TIME or status=PLANNED, in range)
         # Already included in actual queryset above; we tagged by source. So no duplicate.
 
         # 3) Projected recurring occurrences (computed, not stored).
-        _phase_generate = phase_start(timer, "generate_occurrences")
+        _st = begin_forecast_stage(fbp, timer, "generate_occurrences")
         # Only dates >= today are emitted. Rule amount/schedule changes affect only these
         # future projections; past actual transactions in the DB are never modified.
         #
@@ -3203,7 +3435,14 @@ def _build_timeline_impl(
             )
             first_occ = min(occ_dates) if occ_dates else date.max
             rules_with_occ.append((rule, eff, eff_start, eff_end, occ_dates, first_occ))
+        _rules_sort_t0 = time.perf_counter()
         rules_with_occ.sort(key=lambda x: x[5])
+        if fbp is not None:
+            fbp.record_sort(
+                sort_key="rules_first_occurrence",
+                n_rows=len(rules_with_occ),
+                elapsed_ms=(time.perf_counter() - _rules_sort_t0) * 1000,
+            )
 
         # User-deleted rule occurrences: do not re-materialize or show them.
         rule_ids = [r.id for r, *_ in rules_with_occ]
@@ -3357,14 +3596,33 @@ def _build_timeline_impl(
                         )
                     )
 
+        _occ_sort_t0 = time.perf_counter()
         occurrence_events.sort(key=lambda x: (x[0], x[1], x[2]))
+        if fbp is not None:
+            fbp.record_sort(
+                sort_key="occurrence_events_date_amount_rule",
+                n_rows=len(occurrence_events),
+                elapsed_ms=(time.perf_counter() - _occ_sort_t0) * 1000,
+            )
         perf_generated_occurrences = len(occurrence_events)
         if materialization_active():
             set_materialization_occurrences_generated(perf_generated_occurrences)
-        phase_end(timer, _phase_generate)
+        generated_all = sum(len(item[4]) for item in rules_with_occ)
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "generate_occurrences",
+            extra={
+                "recurring_rules": len(rules_with_occ),
+                "generated_occurrences": generated_all,
+                "retained_occurrences": perf_generated_occurrences,
+            },
+        )
         seen_scenario_rule_keys: set[tuple] = set()
 
-        _phase_materialize = phase_start(timer, "materialize_occurrences")
+        _rows_before_materialize = len(rows)
+        _st = begin_forecast_stage(fbp, timer, "materialize_occurrences")
         occurrence_store: RuleOccurrenceStore | None = None
         if rule_ids:
             occurrence_store = build_rule_occurrence_store(
@@ -3702,7 +3960,17 @@ def _build_timeline_impl(
                 seen_rule_actual_key=seen_rule_actual_key,
                 purged_rule_dates=purged_rule_dates,
             )
-        phase_end(timer, _phase_materialize)
+        existing_loaded = occurrence_store.existing_loaded if occurrence_store is not None else 0
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "materialize_occurrences",
+            extra={
+                "existing_occurrences": existing_loaded,
+                "materialized_rows_added": len(rows) - _rows_before_materialize,
+            },
+        )
 
         if scenario_id and scenario:
             append_scenario_added_recurring_projections(
@@ -3715,7 +3983,10 @@ def _build_timeline_impl(
             )
 
         # User-deleted projected interest: do not re-show or re-materialize that billing cycle.
-        _phase_interest = phase_start(timer, "interest_calc")
+        _st = begin_forecast_stage(fbp, timer, "interest_calc")
+        interest_rows_before = len(rows)
+        interest_accounts_evaluated = 0
+        interest_days_evaluated = 0
         skipped_interest_by_account: dict[int, set[date]] = defaultdict(set)
         for sk in InterestCycleSkip.objects.filter(account_id__in=account_ids).values(
             "account_id", "cycle_end_date"
@@ -3728,6 +3999,7 @@ def _build_timeline_impl(
         interest_category_cache: dict[int, tuple[Optional[int], str]] = {}  # household_id -> (category_id, name)
         credit_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "CREDIT"]
         for acc in credit_accounts:
+            interest_accounts_evaluated += 1
             cycle_day = acc.get_statement_closing_day() if hasattr(acc, "get_statement_closing_day") else getattr(acc, "billing_cycle_end_day", None)
             apr_val = getattr(acc, "apr", None)
             if cycle_day is None or apr_val is None:
@@ -3753,6 +4025,7 @@ def _build_timeline_impl(
             promo_end = getattr(acc, "promotional_end_date", None)
             promo_apr = getattr(acc, "promotional_apr", None)
             for cycle_end in cycle_dates:
+                interest_days_evaluated += 1
                 if cycle_end in skipped_interest_by_account.get(acc.id, ()):
                     continue
                 if cycle_end <= today:
@@ -3795,6 +4068,7 @@ def _build_timeline_impl(
         income_interest_category_cache: dict[int, tuple[Optional[int], str]] = {}
         savings_accounts = [a for a in accounts if getattr(a, "account_type", "").upper() == "SAVINGS"]
         for acc in savings_accounts:
+            interest_accounts_evaluated += 1
             cycle_day = getattr(acc, "interest_cycle_end_day", None)
             rate_val = getattr(acc, "interest_rate", None)
             if cycle_day is None or rate_val is None:
@@ -3802,6 +4076,7 @@ def _build_timeline_impl(
             all_cycles = _cycle_end_dates_in_range(
                 int(cycle_day), start_date, end_date, on_or_after=None
             )
+            interest_days_evaluated += len(all_cycles)
             if not all_cycles:
                 continue
             if acc.household_id not in income_interest_category_cache:
@@ -3840,18 +4115,30 @@ def _build_timeline_impl(
                 "sort_key": (cycle_end, 2, acc.id),
                 **_timeline_row_meta(None),
             })
-        phase_end(timer, _phase_interest)
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "interest_calc",
+            extra={
+                "interest_rows": len(rows) - interest_rows_before,
+                "interest_accounts": interest_accounts_evaluated,
+                "interest_days": interest_days_evaluated,
+            },
+        )
 
-        _phase_scenario = phase_start(timer, "scenario_rows")
+        _st = begin_forecast_stage(fbp, timer, "scenario_rows")
         _append_scenario_projection_rows(
             rows, scenario, start_date, end_date, ephemeral_events=ephemeral_events
         )
         _apply_scenario_category_shocks(rows, scenario)
-        phase_end(timer, _phase_scenario)
+        end_forecast_stage(fbp, timer, _st, "scenario_rows")
 
         # Sort by date, then same order as Transactions ledger (transaction_id, description).
-        _phase_finalize = phase_start(timer, "finalize")
-        rows.sort(key=timeline_rows_chronological_key)
+        _st = begin_forecast_stage(fbp, timer, "finalize")
+        timed_timeline_sort(
+            rows, timeline_rows_chronological_key, sort_key="finalize_chronological"
+        )
         for r in rows:
             r.pop("sort_key", None)
             r.setdefault("reconciled", False)
@@ -3866,14 +4153,18 @@ def _build_timeline_impl(
                 if acc and acc.account_type == Account.AccountType.CREDIT and sb > 0:
                     sb = -sb
                 opening[aid] = sb
-        phase_end(timer, _phase_finalize)
+        end_forecast_stage(fbp, timer, _st, "finalize", extra={"rows": len(rows)})
 
-        _phase_balances = phase_start(timer, "running_balances")
+        _st = begin_forecast_stage(fbp, timer, "canonical_identity")
+        annotate_financially_active_rows(rows)
+        end_forecast_stage(fbp, timer, _st, "canonical_identity", extra={"rows": len(rows)})
+
+        _st = begin_forecast_stage(fbp, timer, "running_balances")
         recompute_timeline_running_balances(rows, opening=opening, account_ids=set(account_ids))
-        phase_end(timer, _phase_balances)
+        end_forecast_stage(fbp, timer, _st, "running_balances", extra={"rows": len(rows)})
 
         # Return only rows for requested accounts (we added both legs for CC transfers for balance math).
-        _phase_output = phase_start(timer, "output_filter")
+        _st = begin_forecast_stage(fbp, timer, "output_filter")
         # Projected interest is forecast-only — never surface on or before as_of (estimates, not history).
         rows = [
             r
@@ -3881,7 +4172,13 @@ def _build_timeline_impl(
             if r["account_id"] in account_ids
             and not (r.get("source") == "interest" and r["date"] <= today)
         ]
-        phase_end(timer, _phase_output)
+        end_forecast_stage(
+            fbp,
+            timer,
+            _st,
+            "output_filter",
+            extra={"final_timeline_rows": len(rows)},
+        )
     finally:
         deactivate_balance_cache(balance_cache_token)
 
@@ -3918,5 +4215,8 @@ def _build_timeline_impl(
             projection_only=projection_only,
             rows_returned=len(rows),
             elapsed_ms=f"{elapsed_ms:.0f}",
+            setup_ms=f"{fbp.setup_ms():.0f}" if fbp is not None else "0",
         )
+        if fbp is not None:
+            fbp.emit(rows=len(rows), total_ms=elapsed_ms, label="forecast-build-perf-build")
     return rows

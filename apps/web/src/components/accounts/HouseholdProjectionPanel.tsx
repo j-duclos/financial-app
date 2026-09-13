@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Account } from "@budget-app/shared";
-import { getTimeline } from "@budget-app/api-client";
+import { getTimelineWithEngineShadow } from "../../lib/financialEngineShadow";
 import {
   addMonths,
   todayStr,
@@ -43,7 +43,7 @@ export default function HouseholdProjectionPanel({ householdId, accounts }: Prop
   const { data: householdTimelineData } = useQuery({
     queryKey: ["timeline", "household", timelineStart, timelineEnd, householdId, todayStr()],
     queryFn: () =>
-      getTimeline({
+      getTimelineWithEngineShadow({
         start: timelineStart,
         end: timelineEnd,
         as_of: todayStr(),

@@ -851,9 +851,8 @@ def _resolve_timeline_household_id(
         return None
     from accounts.models import Account
 
-    households = get_households_for_user(user)
     return (
-        Account.objects.filter(pk=account_id, household__in=households)
+        Account.objects.filter(pk=account_id, household__memberships__user=user)
         .values_list("household_id", flat=True)
         .first()
     )
@@ -957,21 +956,135 @@ class ResolveRuleOccurrenceView(APIView):
         return Response({"transaction_id": txn.pk})
 
 
+def _maybe_attach_engine_shadow(
+    payload: dict,
+    *,
+    include: bool,
+    as_of,
+    account_id: int | None,
+    balance_walk_source: str = "server",
+    copy_rows: bool = True,
+    anchors: dict | None = None,
+) -> dict:
+    if not include:
+        return payload
+    from timeline.services.engine_shadow import attach_engine_shadow_payload
+
+    return attach_engine_shadow_payload(
+        payload,
+        as_of=as_of,
+        account_id=account_id,
+        balance_walk_source=balance_walk_source,
+        copy_rows=copy_rows,
+        anchors=anchors,
+    )
+
+
+def _posted_before_pending_map(snapshots: dict) -> dict:
+    return {int(aid): snap.posted_balance_before_pending for aid, snap in snapshots.items()}
+
+
+def _load_timeline_anchor_snapshots(account_ids: set[int], as_of):
+    from timeline.services.ledger_anchors import load_ledger_anchor_snapshots
+
+    return load_ledger_anchor_snapshots(account_ids, as_of)
+
+
+def _resolve_past_opening_balance_str(
+    *,
+    account_id: int,
+    as_of,
+    snapshots: dict,
+    household_id: int | None,
+    user,
+) -> str | None:
+    snap = snapshots.get(int(account_id))
+    if snap is not None:
+        derived = snap.past_opening_from_checkpoint()
+        if derived is not None:
+            return str(derived)
+    from accounts.models import Account
+    from transactions.services.reconciliation import past_ledger_opening_balance
+
+    acc_qs = Account.objects.filter(pk=account_id)
+    if household_id is not None:
+        acc_qs = acc_qs.filter(household_id=household_id)
+    else:
+        acc_qs = acc_qs.filter(household__in=get_households_for_user(user))
+    acc = acc_qs.first()
+    if acc is None:
+        return None
+    return str(past_ledger_opening_balance(acc, as_of))
+
+
+def _prepare_timeline_engine_payload(
+    payload: dict,
+    *,
+    include_engine_shadow: bool,
+    client_balance_walk: bool,
+    as_of,
+    account_id: int | None,
+    copy_rows: bool = True,
+    anchors: dict | None = None,
+) -> dict:
+    """Attach engine metadata; for client-skip, null leftover ``balance_after``."""
+    from timeline.services.engine_shadow import (
+        BALANCE_WALK_SOURCE_CLIENT,
+        BALANCE_WALK_SOURCE_SERVER,
+        apply_client_balance_walk_contract,
+    )
+
+    working = payload
+    if client_balance_walk:
+        if copy_rows:
+            working = apply_client_balance_walk_contract(payload)
+        else:
+            for row in working.get("timeline") or []:
+                row["balance_after"] = None
+            last_running: dict = {}
+            for row in working.get("timeline") or []:
+                aid = row.get("account_id")
+                if aid is not None:
+                    last_running[aid] = row.get("running_balance")
+            for summary in working.get("account_summary") or []:
+                aid = summary.get("account_id")
+                if aid in last_running and last_running[aid] is not None:
+                    summary["ending_balance"] = last_running[aid]
+    source = BALANCE_WALK_SOURCE_CLIENT if client_balance_walk else BALANCE_WALK_SOURCE_SERVER
+    return _maybe_attach_engine_shadow(
+        working,
+        include=include_engine_shadow or client_balance_walk,
+        as_of=as_of,
+        account_id=account_id,
+        balance_walk_source=source,
+        copy_rows=copy_rows and not client_balance_walk,
+        anchors=anchors,
+    )
+
+
 class TimelineView(APIView):
     permission_classes = [IsHouseholdMember]
 
     def get(self, request):
-        import copy
         import time
 
         from common.services.profiler import perf_enabled, perf_print
+        from timeline.services.timeline_perf import TimelineRequestPerf
+        from timeline.services.timeline_response import (
+            build_account_summary,
+            slice_cached_canonical_rows,
+            stringify_timeline_rows,
+        )
 
+        perf = TimelineRequestPerf()
+        perf.start_queries()
         try:
             start, end, as_of_date, _forecast_days = _timeline_date_range(request)
             today = timezone.localdate()
             if end > today:
                 forward_days = (end - today).days
                 if forward_days > MAX_TIMELINE_FORECAST_LOOKAHEAD_DAYS:
+                    perf.finish()
                     return Response(
                         {
                             "detail": (
@@ -998,8 +1111,19 @@ class TimelineView(APIView):
                 "1",
                 "yes",
             )
+            include_engine_shadow = request.query_params.get("include_engine_shadow", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+            from timeline.services.engine_shadow import is_client_balance_walk
+
+            client_balance_walk = is_client_balance_walk(request.query_params.get("balance_walk"))
+            if client_balance_walk:
+                include_engine_shadow = True
             ledger_anchor_raw = request.query_params.get("ledger_anchor")
             if ledger_anchor_raw is not None and str(ledger_anchor_raw).strip() != "":
+                perf.finish()
                 return Response(
                     {
                         "detail": (
@@ -1011,6 +1135,7 @@ class TimelineView(APIView):
                 )
 
             as_of = as_of_date or today
+            date_span_days = (end - start).days
             cache_key = timeline_response_cache_key(
                 household_id=household_id,
                 user_id=request.user.pk,
@@ -1021,37 +1146,91 @@ class TimelineView(APIView):
                 as_of_date=as_of_date,
                 exclude_reconciled_past=exclude_reconciled_past,
             )
-            # ledger_anchor removed — canonical balance_after is server-owned.
-            cached = get_cached_timeline_response(cache_key)
+            with perf.stage("cache_lookup_ms"):
+                cached = get_cached_timeline_response(cache_key)
             if cached is not None:
-                if (
+                need_engine = include_engine_shadow or client_balance_walk
+                need_past = (
                     exclude_reconciled_past
                     and account_id is not None
                     and "past_opening_balance" not in cached
-                ):
-                    from accounts.models import Account
-                    from transactions.services.reconciliation import past_ledger_opening_balance
-
-                    households = get_households_for_user(request.user)
-                    acc = Account.objects.filter(pk=account_id, household__in=households).first()
-                    if acc is not None:
-                        cached = dict(cached)
-                        cached["past_opening_balance"] = str(
-                            past_ledger_opening_balance(acc, as_of)
+                )
+                snapshots: dict = {}
+                if need_engine or need_past:
+                    ids = (
+                        {int(account_id)}
+                        if account_id is not None
+                        else {
+                            int(s["account_id"])
+                            for s in (cached.get("account_summary") or [])
+                            if s.get("account_id") is not None
+                        }
+                    )
+                    if not ids and need_engine:
+                        ids = {
+                            int(r["account_id"])
+                            for r in (cached.get("timeline") or [])
+                            if r.get("account_id") is not None
+                        }
+                    with perf.stage("anchor_ms"):
+                        snapshots = _load_timeline_anchor_snapshots(ids, as_of)
+                if need_past:
+                    with perf.stage("past_opening_ms"):
+                        opening = _resolve_past_opening_balance_str(
+                            account_id=int(account_id),
+                            as_of=as_of,
+                            snapshots=snapshots,
+                            household_id=household_id,
+                            user=request.user,
                         )
-                resp = Response(cached)
+                        if opening is not None:
+                            cached = dict(cached)
+                            cached["past_opening_balance"] = opening
+                injected = _posted_before_pending_map(snapshots) if need_engine else None
+                body = _prepare_timeline_engine_payload(
+                    cached,
+                    include_engine_shadow=include_engine_shadow,
+                    client_balance_walk=client_balance_walk,
+                    as_of=as_of,
+                    account_id=account_id,
+                    copy_rows=True,
+                    anchors=injected,
+                )
+                perf.meta.update(
+                    {
+                        "cache_hit": True,
+                        "returned_rows": len(body.get("timeline") or []),
+                        "requested_accounts": 1 if account_id is not None else len(body.get("account_summary") or []),
+                        "household_accounts": len(body.get("account_summary") or []),
+                        "source_rows": len(cached.get("timeline") or []),
+                        "date_span_days": date_span_days,
+                    }
+                )
+                stats = perf.finish()
+                resp = Response(body)
                 resp["Cache-Control"] = "private, max-age=60"
                 resp["X-Timeline-Cache"] = "hit"
                 resp["X-Timeline-Skip-Logic"] = "1"
                 resp["X-Canonical-Timeline"] = "http-cache"
+                resp["X-Balance-Walk-Mode"] = "client" if client_balance_walk else "server"
+                if client_balance_walk:
+                    resp["X-Balance-Walk-Skipped"] = "true"
+                resp["X-Timeline-Elapsed-Ms"] = f"{stats['total_ms']:.0f}"
                 return resp
 
             t0 = time.perf_counter()
             canonical_hit = False
             used_canonical = False
             rows: list
+            source_rows = 0
+            household_accounts = 0
+            snapshots = {}
+            anchor_map = None
+            will_walk = account_id is not None and not client_balance_walk
+            need_engine = include_engine_shadow or client_balance_walk
+            need_past = exclude_reconciled_past and account_id is not None
+            need_anchors = will_walk or need_engine or need_past
 
-            # Forecast-only window aligned with Dashboard/Calendar: reuse shared cache.
             can_use_canonical = (
                 exclude_reconciled_past
                 and start >= as_of
@@ -1061,104 +1240,157 @@ class TimelineView(APIView):
                 forecast_days = (end - as_of).days
                 if forecast_days < 0:
                     forecast_days = 0
-                raw_rows, canonical_hit = get_or_build_canonical_forecast_timeline(
-                    request.user,
-                    today=as_of,
-                    forecast_days=forecast_days,
-                    household_id=household_id,
-                    scenario_id=scenario_id,
-                    caller="timeline_page",
-                )
+                with perf.stage("cache_lookup_ms"):
+                    raw_rows, canonical_hit = get_or_build_canonical_forecast_timeline(
+                        request.user,
+                        today=as_of,
+                        forecast_days=forecast_days,
+                        household_id=household_id,
+                        scenario_id=scenario_id,
+                        caller="timeline_page",
+                    )
+                if not canonical_hit:
+                    perf.stages["forecast_build_ms"] = perf.stages.get("cache_lookup_ms", 0.0)
+                    perf.stages["cache_lookup_ms"] = 0.0
                 used_canonical = True
-                # Never mutate the cached list in place.
-                rows = copy.deepcopy(raw_rows)
-
-                def _row_date(r):
-                    d = r.get("date")
-                    if isinstance(d, date):
-                        return d
-                    return date.fromisoformat(str(d)[:10])
-
-                if account_id is not None:
-                    from timeline.services.ledger_section_balances import (
-                        finalize_transactions_timeline_slice,
-                    )
-
-                    rows = finalize_transactions_timeline_slice(
-                        rows,
-                        account_id=int(account_id),
-                        as_of=as_of,
-                        projection_start=start,
-                        projection_end=end,
-                    )
-                else:
-                    rows = [r for r in rows if start <= _row_date(r) <= end]
-            else:
-                rows = build_timeline(
-                    request.user,
-                    start_date=start,
-                    end_date=end,
-                    scenario_id=scenario_id,
-                    account_id=account_id,
-                    household_id=household_id,
-                    as_of_date=as_of_date,
-                    projection_only=True,
-                    exclude_reconciled_past=exclude_reconciled_past,
-                    caller="timeline_page",
+                source_rows = len(raw_rows)
+                household_accounts = len(
+                    {int(r["account_id"]) for r in raw_rows if r.get("account_id") is not None}
                 )
+                if account_id is not None and need_anchors:
+                    with perf.stage("anchor_ms"):
+                        snapshots = _load_timeline_anchor_snapshots({int(account_id)}, as_of)
+                        anchor_map = _posted_before_pending_map(snapshots)
+                rows = slice_cached_canonical_rows(
+                    raw_rows,
+                    account_id=int(account_id) if account_id is not None else None,
+                    as_of=as_of,
+                    projection_start=start,
+                    projection_end=end,
+                    skip_balance_walk=client_balance_walk or account_id is None,
+                    anchors=anchor_map,
+                    perf=perf,
+                )
+                if need_engine and account_id is None:
+                    ids = {
+                        int(r["account_id"])
+                        for r in rows
+                        if r.get("account_id") is not None
+                    }
+                    with perf.stage("anchor_ms"):
+                        snapshots = _load_timeline_anchor_snapshots(ids, as_of)
+                        anchor_map = _posted_before_pending_map(snapshots)
+            else:
+                with perf.stage("forecast_build_ms"):
+                    rows = build_timeline(
+                        request.user,
+                        start_date=start,
+                        end_date=end,
+                        scenario_id=scenario_id,
+                        account_id=account_id,
+                        household_id=household_id,
+                        as_of_date=as_of_date,
+                        projection_only=True,
+                        exclude_reconciled_past=exclude_reconciled_past,
+                        caller="timeline_page",
+                    )
+                source_rows = len(rows)
+                household_accounts = len(
+                    {int(r["account_id"]) for r in rows if r.get("account_id") is not None}
+                )
+                if client_balance_walk:
+                    perf.meta["balance_walk_skipped"] = True
+                if need_engine or need_past:
+                    ids = (
+                        {int(account_id)}
+                        if account_id is not None
+                        else {
+                            int(r["account_id"])
+                            for r in rows
+                            if r.get("account_id") is not None
+                        }
+                    )
+                    with perf.stage("anchor_ms"):
+                        snapshots = _load_timeline_anchor_snapshots(ids, as_of)
+                        anchor_map = _posted_before_pending_map(snapshots)
 
-            if rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id):
+            if client_balance_walk:
+                for r in rows:
+                    r["balance_after"] = None
+            elif rows_need_ledger_balance_after(rows, today=as_of, account_id=account_id):
                 logger.error(
                     "canonical timeline missing balance_after account_id=%s as_of=%s",
                     account_id,
                     as_of,
                 )
 
-            # Serialize dates and decimals for JSON
-            for r in rows:
-                r["date"] = r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"])
-                r["amount"] = str(r["amount"])
-                r["running_balance"] = str(r["running_balance"])
-                if r.get("balance_after") is not None:
-                    r["balance_after"] = str(r["balance_after"])
-            account_balances = {}
-            for r in rows:
-                aid = r["account_id"]
-                if aid not in account_balances:
-                    account_balances[aid] = {
-                        "account_id": aid,
-                        "account_name": r.get("account_name", ""),
-                        "ending_balance": r.get("balance_after") or r["running_balance"],
-                    }
-                else:
-                    account_balances[aid]["ending_balance"] = (
-                        r.get("balance_after") or r["running_balance"]
+            with perf.stage("serialization_ms"):
+                stringify_timeline_rows(rows)
+            with perf.stage("account_summary_ms"):
+                payload = {
+                    "timeline": rows,
+                    "account_summary": build_account_summary(rows),
+                }
+            if need_past:
+                with perf.stage("past_opening_ms"):
+                    opening = _resolve_past_opening_balance_str(
+                        account_id=int(account_id),
+                        as_of=as_of,
+                        snapshots=snapshots,
+                        household_id=household_id,
+                        user=request.user,
                     )
-            payload = {
-                "timeline": rows,
-                "account_summary": list(account_balances.values()),
-            }
-            if exclude_reconciled_past and account_id is not None:
-                from accounts.models import Account
-                from transactions.services.reconciliation import past_ledger_opening_balance
-
-                households = get_households_for_user(request.user)
-                acc = Account.objects.filter(pk=account_id, household__in=households).first()
-                if acc is not None:
-                    payload["past_opening_balance"] = str(
-                        past_ledger_opening_balance(acc, as_of)
-                    )
+                    if opening is not None:
+                        payload["past_opening_balance"] = opening
 
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            balance_walk_skipped = bool(perf.meta.get("balance_walk_skipped") or client_balance_walk)
+            balance_walk_ms = perf.stages.get("balance_walk_ms")
+            account_count = len(payload["account_summary"])
             if perf_enabled():
+                walk_part = (
+                    "balance_walk_skipped=true"
+                    if client_balance_walk or balance_walk_skipped
+                    else (
+                        f"balance_walk_ms={balance_walk_ms:.1f}"
+                        if balance_walk_ms
+                        else "balance_walk_ms=n/a"
+                    )
+                )
                 perf_print(
                     f"[PERF] timeline_endpoint elapsed_ms={elapsed_ms:.0f} "
+                    f"assembly_ms={perf.stages.get('cache_lookup_ms', 0) + perf.stages.get('forecast_build_ms', 0):.1f} {walk_part} "
+                    f"balance_walk_mode={'client' if client_balance_walk else 'server'} "
                     f"canonical={'HIT' if canonical_hit else ('MISS' if used_canonical else 'n/a')} "
-                    f"rows={len(rows)} account_id={account_id}"
+                    f"rows={len(rows)} accounts={account_count} account_id={account_id}"
                 )
 
+            cache_payload = payload
+            payload = _prepare_timeline_engine_payload(
+                payload,
+                include_engine_shadow=include_engine_shadow,
+                client_balance_walk=client_balance_walk,
+                as_of=as_of,
+                account_id=account_id,
+                copy_rows=False,
+                anchors=anchor_map if need_engine else None,
+            )
+
+            perf.meta.update(
+                {
+                    "cache_hit": bool(canonical_hit),
+                    "source_rows": source_rows,
+                    "returned_rows": len(rows),
+                    "requested_accounts": 1 if account_id is not None else household_accounts,
+                    "household_accounts": household_accounts,
+                    "date_span_days": date_span_days,
+                }
+            )
+            stats = perf.finish()
+
             resp = Response(payload)
-            set_cached_timeline_response(cache_key, resp.data)
+            if not client_balance_walk:
+                set_cached_timeline_response(cache_key, cache_payload)
             resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
             resp["X-Timeline-Cache"] = "miss"
             if used_canonical:
@@ -1167,8 +1399,15 @@ class TimelineView(APIView):
                 resp["X-Canonical-Timeline"] = "bypass"
             resp["X-Timeline-Skip-Logic"] = "1"
             resp["X-Timeline-Elapsed-Ms"] = f"{elapsed_ms:.0f}"
+            resp["X-Timeline-Assembly-Ms"] = f"{perf.stages.get('cache_lookup_ms', 0):.1f}"
+            resp["X-Balance-Walk-Mode"] = "client" if client_balance_walk else "server"
+            if client_balance_walk or balance_walk_skipped:
+                resp["X-Balance-Walk-Skipped"] = "true"
+            elif balance_walk_ms:
+                resp["X-Balance-Walk-Ms"] = f"{balance_walk_ms:.1f}"
             return resp
         except Exception as e:
+            perf.finish()
             return Response(
                 {"detail": f"Timeline error: {type(e).__name__}: {e}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

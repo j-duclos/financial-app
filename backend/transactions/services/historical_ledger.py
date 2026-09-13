@@ -34,6 +34,44 @@ class HistoricalLedgerStep:
     participates: bool
 
 
+@dataclass(frozen=True)
+class LedgerAnchorSnapshot:
+    """Account balances at one as-of instant — do not mix these fields.
+
+    ``posted_balance_before_pending`` is the canonical Pending → Upcoming walk
+    start: checkpoint (or signed starting_balance) plus posted unreconciled
+    activity through ``as_of``, excluding pending planned rows.
+
+    ``historical_walk_opening`` is that walk's start *before* applying posted
+    unreconciled rows (checkpoint, else signed starting_balance).
+
+    ``last_reconciled_signed_balance`` is the statement checkpoint only
+    (``None`` if never reconciled through ``as_of``). That is the opening of
+    the unreconciled Recent list — not posted-before-pending.
+    """
+
+    account_id: int
+    as_of: date
+    posted_balance_before_pending: Decimal
+    historical_walk_opening: Decimal
+    last_reconciled_signed_balance: Decimal | None
+    is_credit: bool
+
+    def past_opening_from_checkpoint(self) -> Decimal | None:
+        """Unreconciled-Recent opening when a checkpoint exists.
+
+        Credit cards use ``abs()`` to match ``past_ledger_opening_balance``.
+        ``None`` means the account has never been reconciled through ``as_of``
+        — callers must keep the existing SQL reconstruction, which is not the
+        same as ``posted_balance_before_pending``.
+        """
+        if self.last_reconciled_signed_balance is None:
+            return None
+        if self.is_credit:
+            return abs(self.last_reconciled_signed_balance)
+        return self.last_reconciled_signed_balance
+
+
 def signed_transaction_ledger_amount(txn: Transaction) -> Decimal:
     """Signed cash effect on the account (amount is stored signed in the DB)."""
     return Decimal(str(txn.amount or "0")).quantize(Decimal("0.01"))
@@ -145,19 +183,21 @@ def iter_historical_ledger_steps(
     return opening, steps
 
 
-def posted_balances_before_pending_for_accounts(
+def ledger_anchor_snapshots_for_accounts(
     accounts: Collection[Account],
     *,
     as_of: date,
-) -> dict[int, Decimal]:
-    """Posted-before-pending anchors for many accounts with one checkpoint + one txn query.
+) -> dict[int, LedgerAnchorSnapshot]:
+    """Posted-before-pending + checkpoint openings for many accounts.
 
-    Uses the same walk as ``iter_historical_ledger_steps`` / ``ledger_today_balance_before_pending``.
+    One checkpoint query and one unreconciled-transaction query for the set.
+    Uses the same walk as ``iter_historical_ledger_steps``.
     """
     from django.db.models import Q
 
     from transactions.services.checkpoints import (
         bulk_latest_completed_reconciliations,
+        checkpoint_signed_balance,
         post_checkpoint_q,
     )
     from transactions.services.matching import ledger_visible_transactions
@@ -184,7 +224,7 @@ def posted_balances_before_pending_for_accounts(
     for txn in all_txns:
         by_account[txn.account_id].append(txn)
 
-    result: dict[int, Decimal] = {}
+    result: dict[int, LedgerAnchorSnapshot] = {}
     for acc in account_list:
         rec = recs.get(acc.pk)
         opening = historical_walk_opening_balance(acc, as_of, reconciliation=rec)
@@ -196,8 +236,34 @@ def posted_balances_before_pending_for_accounts(
             opening=opening,
         )
         participating = [step for step in steps if step.participates]
-        result[acc.pk] = participating[-1].balance_after if participating else opening
+        posted = participating[-1].balance_after if participating else opening
+        last_reconciled = None
+        if rec is not None:
+            last_reconciled = checkpoint_signed_balance(rec, acc)
+        result[acc.pk] = LedgerAnchorSnapshot(
+            account_id=int(acc.pk),
+            as_of=as_of,
+            posted_balance_before_pending=posted,
+            historical_walk_opening=opening,
+            last_reconciled_signed_balance=last_reconciled,
+            is_credit=acc.account_type == Account.AccountType.CREDIT,
+        )
     return result
+
+
+def posted_balances_before_pending_for_accounts(
+    accounts: Collection[Account],
+    *,
+    as_of: date,
+) -> dict[int, Decimal]:
+    """Posted-before-pending anchors for many accounts with one checkpoint + one txn query.
+
+    Uses the same walk as ``iter_historical_ledger_steps`` / ``ledger_today_balance_before_pending``.
+    """
+    return {
+        aid: snap.posted_balance_before_pending
+        for aid, snap in ledger_anchor_snapshots_for_accounts(accounts, as_of=as_of).items()
+    }
 
 
 def running_balances_after_historical_walk(

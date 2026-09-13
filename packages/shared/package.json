@@ -29,6 +29,7 @@
     "./dayHeatDisplay": "./src/dayHeatDisplay.ts",
     "./dashboardDisplay": "./src/dashboardDisplay.ts",
     "./dashboardTerminology": "./src/dashboardTerminology.ts",
-    "./extendedCashRiskQuery": "./src/extendedCashRiskQuery.ts"
+    "./extendedCashRiskQuery": "./src/extendedCashRiskQuery.ts",
+    "./financial-engine": "./src/financial-engine/index.ts"
   }
 }

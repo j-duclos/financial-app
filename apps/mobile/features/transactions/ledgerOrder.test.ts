@@ -305,6 +305,6 @@ describe("no client-side ledger balance math", () => {
       "utf8"
     );
     expect(src).not.toMatch(/ledger_anchor\s*:/);
-    expect(src).toMatch(/getTimeline/);
+    expect(src).toMatch(/getTimelineWithEngineShadow/);
   });
 });

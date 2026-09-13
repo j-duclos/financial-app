@@ -36,6 +36,12 @@ describe("shared form components", () => {
     expect(optionsPicker).toMatch(/TextInput/);
     expect(optionsPicker).toMatch(/filtered\.length === 0/);
     expect(optionsPicker).toMatch(/isNoneCategoryPickerLabel/);
+    expect(optionsPicker).toMatch(/accessibilityLabel="Cancel"/);
+    expect(optionsPicker).toMatch(/accessibilityRole="radio"/);
+    expect(optionsPicker).toMatch(/keyboardAware/);
+    expect(optionsPicker).toMatch(/name="check"/);
+    expect(optionsPicker).toMatch(/pinned\?: boolean/);
+    expect(optionsPicker).toMatch(/tall\?: boolean/);
   });
 
   it("DatePickerField preserves native date picker behavior", () => {
@@ -62,6 +68,7 @@ describe("shared form import boundaries", () => {
     "features/reconcile/ReconcileScreen.tsx",
     "features/profile/ProfileSettingsScreen.tsx",
     "features/payment-planner/StrategyModePanel.tsx",
+    "features/automation/AutomationFormScreen.tsx",
   ].map(read);
 
   it("features import general-purpose forms from components/forms", () => {

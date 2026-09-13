@@ -104,7 +104,10 @@ def _matched_rule_occurrence_covers(
     amount: Decimal | None,
 ) -> Transaction | None:
     """Return a matched rule row that already satisfies this pay period (import posted nearby)."""
+    from timeline.services.identity_stats import incr
     from timeline.services.rule_occurrence_store import get_rule_occurrence_store
+
+    incr("matched_rule_lookup_calls")
 
     store = get_rule_occurrence_store()
     if store is not None and store.matched_loaded:

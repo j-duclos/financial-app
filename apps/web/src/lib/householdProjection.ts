@@ -26,7 +26,11 @@ export function buildHouseholdProjectionLines(
     let minRow = accRows[0];
     let maxRow = accRows[0];
     for (const r of accRows) {
-      const bal = parseFloat(r.running_balance);
+      const raw =
+        r.balance_after != null && String(r.balance_after).trim() !== ""
+          ? r.balance_after
+          : r.running_balance;
+      const bal = parseFloat(String(raw));
       if (bal < minBal) {
         minBal = bal;
         minRow = r;

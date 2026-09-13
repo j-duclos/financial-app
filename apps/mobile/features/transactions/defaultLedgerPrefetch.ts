@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { OperationalForecastDays } from "@budget-app/shared";
-import { getTimeline, listTransactions } from "@budget-app/api-client";
+import { listTransactions } from "@budget-app/api-client";
+import { getTimelineWithEngineShadow } from "@/lib/financialEngineShadow";
 import {
   ledgerProjectionRange,
   pastTransactionsRange,
@@ -101,7 +102,7 @@ export function defaultLedgerTimelineQueryOptions(input: DefaultLedgerPrefetchIn
     queryKey,
     staleTime: DEFAULT_LEDGER_TIMELINE_STALE_MS,
     queryFn: () =>
-      getTimeline({
+      getTimelineWithEngineShadow({
         start: projectionRange.start,
         end: projectionRange.end,
         as_of: todayStr(),

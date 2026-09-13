@@ -15,6 +15,7 @@
  * Physical iPhone: set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000 (never localhost).
  * See apps/mobile/IOS_DEVICE.md.
  */
+import { parseFinancialEngineMode, type FinancialEngineMode } from "@budget-app/shared/financial-engine";
 import Constants from "expo-constants";
 
 export type AppEnvironment = "development" | "staging" | "production";
@@ -237,3 +238,20 @@ export function getApiConnectivityHint(): string {
 }
 
 export const API_REQUEST_TIMEOUT_MS = 90_000;
+
+/**
+ * Client financial-engine display mode. Off (`server`) unless explicitly set.
+ * Not a secret. `shadow` compares locally; `client` renders the local walk
+ * with server fallback.
+ */
+export function getFinancialEngineMode(): FinancialEngineMode {
+  return parseFinancialEngineMode(
+    process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_MODE,
+    process.env.EXPO_PUBLIC_FINANCIAL_ENGINE_SHADOW
+  );
+}
+
+/** True when the local engine runs (shadow or client). */
+export function isFinancialEngineShadowEnabled(): boolean {
+  return getFinancialEngineMode() !== "server";
+}

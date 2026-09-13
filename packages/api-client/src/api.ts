@@ -2255,6 +2255,9 @@ export async function getTimeline(params: {
   account_id?: number | null;
   household_id?: number | null;
   exclude_reconciled_past?: boolean;
+  include_engine_shadow?: boolean;
+  /** Instruct Django to skip the canonical balance walk (`balance_walk=client`). */
+  balance_walk?: "client";
 }): Promise<TimelineResponse> {
   const q: Record<string, string> = {};
   if (params.start) q.start = params.start;
@@ -2266,6 +2269,8 @@ export async function getTimeline(params: {
   if (params.account_id != null) q.account_id = String(params.account_id);
   if (params.household_id != null) q.household_id = String(params.household_id);
   if (params.exclude_reconciled_past) q.exclude_reconciled_past = "true";
+  if (params.include_engine_shadow) q.include_engine_shadow = "true";
+  if (params.balance_walk) q.balance_walk = params.balance_walk;
   return requestRequired("/api/timeline/", { params: q });
 }
 
