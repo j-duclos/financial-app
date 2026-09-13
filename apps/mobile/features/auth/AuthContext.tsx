@@ -23,6 +23,8 @@ import {
 } from "@/services/secureTokenStorage";
 import { clearUserQueryCache } from "@/lib/clearUserQueryCache";
 import { PROFILE_QUERY_KEY, PROFILE_STALE_MS } from "@/lib/profileQueryKey";
+import { classifyQueryClientCache, timedStartupQueryFn } from "@/lib/startupQueries";
+import { markStartupEvent } from "@/lib/startupTrace";
 import { unregisterStoredPushToken } from "@/features/alerts/pushTokenStorage";
 import { hasCompleteSession, resolveSessionRestore } from "./session";
 
@@ -120,7 +122,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const profile = await queryClient.fetchQuery({
           queryKey: PROFILE_QUERY_KEY,
-          queryFn: getProfile,
+          queryFn: () =>
+            timedStartupQueryFn(
+              "profile",
+              classifyQueryClientCache(queryClient, PROFILE_QUERY_KEY, PROFILE_STALE_MS),
+              getProfile
+            ),
           staleTime: PROFILE_STALE_MS,
         });
         if (sessionEpoch !== sessionEpochRef.current) return null;
@@ -163,6 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         initializing: false,
         isAuthenticated: true,
       });
+      markStartupEvent("auth_ready");
       return fetchAndHydrateProfile(sessionEpoch);
     },
     [fetchAndHydrateProfile, syncApiClient]
@@ -195,6 +203,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const decision = resolveSessionRestore(stored);
         if (decision.status !== "authenticated") {
           setAuth((prev) => ({ ...prev, initializing: false }));
+          markStartupEvent("auth_ready");
+          markStartupEvent("first_screen_ready", { surface: "auth" });
           return;
         }
 
@@ -210,6 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           initializing: false,
           isAuthenticated: true,
         });
+        markStartupEvent("auth_ready");
         if (__DEV__) {
           perfLog(
             `[PERF] auth shell ready elapsed_ms=${Math.round(performance.now() - restoreStart)}`
@@ -219,6 +230,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         if (!cancelled) {
           setAuth((prev) => ({ ...prev, initializing: false }));
+          markStartupEvent("auth_ready");
+          markStartupEvent("first_screen_ready", { surface: "auth" });
         }
       }
     })();

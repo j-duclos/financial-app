@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listAccounts } from "@budget-app/api-client";
+import { timedStartupQueryFn } from "@/lib/startupQueries";
 import type { Account } from "@budget-app/shared";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import { accountsListEnrichmentEnabled } from "@budget-app/shared";
@@ -31,7 +32,10 @@ export function useAccountsList(
 
   const mainQuery = useQuery({
     queryKey: accountQueryKeys.mainList(),
-    queryFn: () => listAccounts({ balance: "true", page_size: 500, active_only: true }),
+    queryFn: () =>
+      timedStartupQueryFn("accounts", "network_fetch", () =>
+        listAccounts({ balance: "true", page_size: 500, active_only: true })
+      ),
     placeholderData: keepPreviousData,
     staleTime: MAIN_LIST_STALE_MS,
   });

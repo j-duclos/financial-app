@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import { useProfile } from "@/lib/profileQuery";
 import { singleHouseholdIdIfUnambiguous } from "@/lib/householdContext";
+import { markStartupQueryFinished, markStartupQueryStarted } from "@/lib/startupTrace";
 import { useHouseholds } from "./useHouseholds";
 
 /**
@@ -19,6 +21,14 @@ export function useDefaultHouseholdId(): {
   const householdId = profile?.default_household ?? fromList ?? null;
   const waitingForList = needsList && householdsQuery.isLoading;
   const isReady = (isFetched || isError || profile != null) && !waitingForList;
+  const markedReady = useRef(false);
+
+  useEffect(() => {
+    if (!isReady || needsList || markedReady.current) return;
+    markedReady.current = true;
+    markStartupQueryStarted("household", "cache_hit");
+    markStartupQueryFinished("household", { cache: "cache_hit", durationMs: 0, status: "ok" });
+  }, [isReady, needsList]);
 
   return {
     householdId,

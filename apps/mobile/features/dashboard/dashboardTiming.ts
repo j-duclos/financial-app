@@ -1,3 +1,5 @@
+import { markStartupEvent } from "@/lib/startupTrace";
+
 type DashboardTimingMark =
   | "home-mounted"
   | "home-shell-rendered"
@@ -24,6 +26,12 @@ function nowMs(): number {
 
 /** Development-only first-content timing for Dashboard progressive loading. */
 export function markDashboardTiming(mark: DashboardTimingMark): void {
+  if (mark === "home-shell-rendered" || mark === "financial-health-rendered") {
+    markStartupEvent("first_screen_ready");
+  }
+  if (mark === "home-fully-useful" || mark === "home-settled") {
+    markStartupEvent("home_data_ready");
+  }
   if (!__DEV__) return;
   if (mountTime == null) {
     mountTime = nowMs();

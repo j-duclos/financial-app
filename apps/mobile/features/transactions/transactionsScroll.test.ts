@@ -14,27 +14,27 @@ describe("Transactions ordinary vs focus scrolling", () => {
     expect(screen).not.toMatch(/setTimeout\([^)]*,\s*50\)/);
     expect(screen).not.toMatch(/setTimeout\([^)]*,\s*200\)/);
     expect(screen).not.toMatch(/setTimeout\([^)]*,\s*500\)/);
-  });
-
-  it("does not auto-scroll ordinary Transactions-tab opening", () => {
-    expect(screen).not.toMatch(/initialScrollIndex/);
-    expect(screen).not.toMatch(/findDefaultLedgerOpenIndex/);
-    expect(screen).not.toMatch(/ledgerOpenScrollIndex/);
-    expect(screen).not.toMatch(/estimateLedgerOffset/);
-    expect(screen).not.toMatch(/getItemLayout/);
     expect(screen).not.toMatch(/onContentSizeChange/);
+    expect(screen).not.toMatch(/initialScrollIndex/);
   });
 
-  it("cancels delayed auto-scroll once the user starts dragging", () => {
+  it("positions ordinary open once with scrollToIndex after rows exist", () => {
+    expect(screen).toMatch(/findOrdinaryLedgerOpenIndex/);
+    expect(screen).toMatch(/ordinaryInitialScrollAppliedRef/);
+    expect(screen).toMatch(/shouldApplyOrdinaryInitialScroll/);
+    expect(screen).toMatch(/scrollToIndex/);
+    expect(screen).toMatch(/ordinaryFallbackUsedRef/);
+  });
+
+  it("cancels unfinished ordinary positioning when the user starts dragging", () => {
     expect(screen).toMatch(/onScrollBeginDrag/);
     expect(screen).toMatch(/userHasDraggedRef/);
-    expect(screen).toMatch(/shouldApplyFocusScroll/);
+    expect(screen).toMatch(/ordinaryInitialScrollAppliedRef\.current = ordinaryPositionKeyRef/);
   });
 
   it("keeps explicit deep-link positioning on a separate path", () => {
     expect(screen).toMatch(/resolveLedgerOpenMode/);
     expect(screen).toMatch(/hasLedgerDeepLinkFocus/);
-    expect(screen).toMatch(/scrollToIndex/);
     expect(screen).toMatch(/forecast-risk/);
     expect(screen).toMatch(/ledger-event/);
     expect(screen).toMatch(/focusScrollAppliedRef/);
@@ -42,22 +42,16 @@ describe("Transactions ordinary vs focus scrolling", () => {
     expect(screen).toMatch(/focusRuleId/);
     expect(screen).toMatch(/focusDate/);
     expect(screen).toMatch(/focusDescription/);
+    expect(screen).toMatch(/if \(hasLedgerDeepLinkFocus \|\| !ledgerListReady\) return/);
+    expect(screen).toMatch(/if \(!hasLedgerDeepLinkFocus \|\| !ledgerListReady\) return/);
   });
 
-  it("remounts at the top on account or range change without a boundary scroll", () => {
+  it("allows a new ordinary position on account or range change, not on refresh", () => {
     expect(screen).toMatch(/ordinaryLedgerPositionKey/);
-    expect(screen).toMatch(/filters\.accountId/);
-    expect(screen).toMatch(/filters\.timeFilter/);
-    expect(screen).toMatch(/forecastDays/);
-    expect(screen).toMatch(/const listMountKey = hasLedgerDeepLinkFocus/);
+    expect(screen).toMatch(/ordinaryInitialScrollAppliedRef\.current = null/);
     expect(screen).toMatch(/: ledgerListKey;/);
-    expect(screen).not.toMatch(/findLedgerBoundaryIndex/);
-  });
-
-  it("does not remount the list on pull-to-refresh or highlight timers", () => {
-    expect(screen).toMatch(/RefreshControl/);
     expect(screen).not.toMatch(/listMountKey[\s\S]{0,200}focusHighlightActive/);
-    expect(screen).toMatch(/removeClippedSubviews=\{false\}/);
+    expect(screen).toMatch(/RefreshControl/);
   });
 });
 

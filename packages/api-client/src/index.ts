@@ -8,7 +8,7 @@ export {
   requestRequired,
   ApiError,
 } from "./config";
-export type { AuthenticatedFile } from "./config";
+export type { AuthenticatedFile, ApiResponseMeta } from "./config";
 export {
   configurePerfLogging,
   isPerfLoggingEnabled,

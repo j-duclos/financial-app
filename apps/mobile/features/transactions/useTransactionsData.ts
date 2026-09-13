@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { listTransactions } from "@budget-app/api-client";
 import { getTimelineWithEngineShadow } from "@/lib/financialEngineShadow";
+import { timedStartupQueryFn } from "@/lib/startupQueries";
 import { useMemo } from "react";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import {
@@ -103,16 +104,18 @@ export function useTransactionsData(filters: TransactionFilters, options: Option
   const canonicalHistoryQuery = useInfiniteQuery({
     queryKey: transactionQueryKeys.list({ ...canonicalListParams, pageSize }),
     queryFn: ({ pageParam = 1 }) =>
-      listTransactions({
-        account: filters.accountId ?? undefined,
-        date_after: dateAfter,
-        date_before: dateBefore,
-        page: pageParam,
-        page_size: pageSize,
-        ordering: historyOrdering,
-        include_running_balance: true,
-        ...reconciledListParams,
-      }),
+      timedStartupQueryFn("transactions", pageParam === 1 ? "network_fetch" : "cache_hit", () =>
+        listTransactions({
+          account: filters.accountId ?? undefined,
+          date_after: dateAfter,
+          date_before: dateBefore,
+          page: pageParam,
+          page_size: pageSize,
+          ordering: historyOrdering,
+          include_running_balance: true,
+          ...reconciledListParams,
+        })
+      ),
     initialPageParam: 1,
     getNextPageParam: (lastPage, _pages, lastPageParam) =>
       lastPage.next ? lastPageParam + 1 : undefined,

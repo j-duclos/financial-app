@@ -13,6 +13,7 @@ import { OfflineBanner } from "@/components/OfflineBanner";
 import { PrivacyOverlay } from "@/components/PrivacyOverlay";
 import { AuthProvider } from "@/features/auth";
 import { useAppLifecycleRefresh } from "@/hooks/useAppLifecycleRefresh";
+import { useStartupTraceLifecycle } from "@/lib/startupTraceLifecycle";
 import { createAppQueryClient } from "@/lib/queryClient";
 import { logMobileApiEnvironment } from "@/constants/env";
 import { initMonitoring } from "@/lib/monitoring";
@@ -29,6 +30,7 @@ const queryClient = createAppQueryClient();
 SplashScreen.preventAutoHideAsync();
 
 function AppLifecycleBridge() {
+  useStartupTraceLifecycle();
   useAppLifecycleRefresh();
   return null;
 }

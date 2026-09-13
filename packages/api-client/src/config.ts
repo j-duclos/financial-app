@@ -5,6 +5,19 @@ let getAccessToken: (() => string | null) | null = null;
 let getRefreshToken: (() => string | null) | null = null;
 let setAccessToken: ((access: string) => void) | null = null;
 let onUnauthorized: (() => void) | null = null;
+let extraHeaders: (() => Record<string, string>) | null = null;
+let onResponseMeta: ((meta: ApiResponseMeta) => void) | null = null;
+
+export type ApiResponseMeta = {
+  path: string;
+  method: string;
+  status: number;
+  elapsedMs: number;
+  timelineCache?: string | null;
+  timelineElapsedMs?: string | null;
+  balanceWalkMs?: string | null;
+  requestId?: string | null;
+};
 
 /** Single flight so concurrent 401s share one refresh instead of stampeding /auth/refresh/. */
 let refreshPromise: Promise<boolean> | null = null;
@@ -20,12 +33,18 @@ export function configureApiClient(options: {
   setAccessToken?: (access: string) => void;
   /** Invoked once when a protected request cannot recover from 401. */
   onUnauthorized?: () => void;
+  /** Optional extra headers (correlation ids). Called per request. */
+  extraHeaders?: () => Record<string, string>;
+  /** Optional non-body response observer for timing / cache headers. */
+  onResponseMeta?: (meta: ApiResponseMeta) => void;
 }) {
   baseUrl = options.baseUrl.replace(/\/$/, "");
   getAccessToken = options.getAccessToken ?? null;
   getRefreshToken = options.getRefreshToken ?? null;
   setAccessToken = options.setAccessToken ?? null;
   onUnauthorized = options.onUnauthorized ?? null;
+  extraHeaders = options.extraHeaders ?? extraHeaders;
+  onResponseMeta = options.onResponseMeta ?? onResponseMeta;
   unauthorizedNotified = false;
 }
 
@@ -199,6 +218,7 @@ async function requestInner<T>(
   const headers: Record<string, string> = {
     ...(hasBody ? { "Content-Type": "application/json" } : {}),
     ...(authHeader ?? {}),
+    ...(extraHeaders?.() ?? {}),
     ...((init.headers as Record<string, string>) ?? {}),
   };
   const getOpts = (init.method ?? "GET") === "GET" ? { cache: "no-store" as RequestCache } : {};
@@ -214,7 +234,7 @@ async function requestInner<T>(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const method = (init.method ?? "GET").toUpperCase();
   const perfOn = isPerfLoggingEnabled();
-  const perfStarted = perfOn ? performance.now() : 0;
+  const perfStarted = performance.now();
   if (perfOn) {
     const paramStr =
       params && Object.keys(params).length > 0
@@ -238,20 +258,41 @@ async function requestInner<T>(
     clearTimeout(timeoutId);
   }
 
+  const elapsedMs = Math.round(performance.now() - perfStarted);
+  const header = (name: string): string | null => {
+    try {
+      return res.headers?.get?.(name) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const cacheHint =
+    header("X-Timeline-Cache") ?? header("X-Dashboard-Cache") ?? header("X-Cache");
+  const canonicalTimeline = header("X-Canonical-Timeline");
+  const timelineElapsed = header("X-Timeline-Elapsed-Ms");
+  const balanceWalkMs = header("X-Balance-Walk-Ms");
+  const requestId = header("X-Request-Id") ?? header("X-FlowSight-Request-Id");
+  if (onResponseMeta) {
+    onResponseMeta({
+      path,
+      method,
+      status: res.status,
+      elapsedMs: perfOn ? elapsedMs : 0,
+      timelineCache: cacheHint,
+      timelineElapsedMs: timelineElapsed,
+      balanceWalkMs,
+      requestId,
+    });
+  }
   if (perfOn) {
-    const elapsedMs = Math.round(performance.now() - perfStarted);
-    const bytesHeader = res.headers.get("content-length");
-    const cacheHint =
-      res.headers.get("X-Timeline-Cache") ??
-      res.headers.get("X-Dashboard-Cache") ??
-      res.headers.get("X-Cache");
-    const canonicalTimeline = res.headers.get("X-Canonical-Timeline");
-    const timelineElapsed = res.headers.get("X-Timeline-Elapsed-Ms");
+    const bytesHeader = header("content-length");
     const extra = [
       bytesHeader ? `bytes=${bytesHeader}` : "",
       cacheHint ? `http_cache=${cacheHint}` : "",
       canonicalTimeline ? `canonical_timeline=${canonicalTimeline}` : "",
       timelineElapsed ? `timeline_elapsed_ms=${timelineElapsed}` : "",
+      balanceWalkMs ? `balance_walk_ms=${balanceWalkMs}` : "",
+      requestId ? `request_id=${requestId}` : "",
     ]
       .filter(Boolean)
       .join(" ");

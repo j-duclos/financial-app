@@ -5,6 +5,7 @@ import type {
 } from "@budget-app/shared";
 import { prefetchDefaultLedgerQueries } from "@/features/transactions/defaultLedgerPrefetch";
 import { attentionCardOpensLedger } from "./navigation";
+import { markStartupEvent } from "@/lib/startupTrace";
 import { markTransactionsPrefetchTiming } from "./transactionsPrefetchTiming";
 
 export type HomeTransactionsPrefetchAccountInput = {
@@ -68,43 +69,52 @@ export async function prefetchHomeTransactionsDestinations(
   input: PrefetchHomeTransactionsInput
 ): Promise<void> {
   const accountIds = selectHomeTransactionsPrefetchAccountIds(input);
-  if (accountIds.length === 0) return;
+  if (accountIds.length === 0) {
+    markStartupEvent("transactions_prefetch_started", { count: 0 });
+    markStartupEvent("transactions_prefetch_finished", { count: 0 });
+    return;
+  }
 
+  markStartupEvent("transactions_prefetch_started", { count: accountIds.length });
   markTransactionsPrefetchTiming("prefetch-start", {
     accounts: accountIds.join(","),
   });
 
-  for (const accountId of accountIds) {
-    const result = await prefetchDefaultLedgerQueries(queryClient, {
-      accountId,
-      forecastDays: input.forecastDays,
-      householdId: input.householdId ?? null,
+  try {
+    for (const accountId of accountIds) {
+      const result = await prefetchDefaultLedgerQueries(queryClient, {
+        accountId,
+        forecastDays: input.forecastDays,
+        householdId: input.householdId ?? null,
+      });
+
+      if (result.recentMs != null) {
+        markTransactionsPrefetchTiming("recent-prefetch-done", {
+          accountId: String(accountId),
+          ms: String(result.recentMs),
+        });
+      } else if (result.recentSkipped) {
+        markTransactionsPrefetchTiming("recent-prefetch-skipped", {
+          accountId: String(accountId),
+        });
+      }
+
+      if (result.timelineMs != null) {
+        markTransactionsPrefetchTiming("timeline-prefetch-done", {
+          accountId: String(accountId),
+          ms: String(result.timelineMs),
+        });
+      } else if (result.timelineSkipped) {
+        markTransactionsPrefetchTiming("timeline-prefetch-skipped", {
+          accountId: String(accountId),
+        });
+      }
+    }
+
+    markTransactionsPrefetchTiming("prefetch-complete", {
+      accounts: accountIds.join(","),
     });
-
-    if (result.recentMs != null) {
-      markTransactionsPrefetchTiming("recent-prefetch-done", {
-        accountId: String(accountId),
-        ms: String(result.recentMs),
-      });
-    } else if (result.recentSkipped) {
-      markTransactionsPrefetchTiming("recent-prefetch-skipped", {
-        accountId: String(accountId),
-      });
-    }
-
-    if (result.timelineMs != null) {
-      markTransactionsPrefetchTiming("timeline-prefetch-done", {
-        accountId: String(accountId),
-        ms: String(result.timelineMs),
-      });
-    } else if (result.timelineSkipped) {
-      markTransactionsPrefetchTiming("timeline-prefetch-skipped", {
-        accountId: String(accountId),
-      });
-    }
+  } finally {
+    markStartupEvent("transactions_prefetch_finished", { count: accountIds.length });
   }
-
-  markTransactionsPrefetchTiming("prefetch-complete", {
-    accounts: accountIds.join(","),
-  });
 }

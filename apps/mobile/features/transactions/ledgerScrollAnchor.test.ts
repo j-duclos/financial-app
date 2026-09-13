@@ -3,11 +3,13 @@ import type { Transaction } from "@budget-app/shared";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
   LEDGER_ORDINARY_OPEN_INDEX,
+  LEDGER_ORDINARY_RECENT_ROWS,
   LEDGER_ROW_HEIGHT,
   LEDGER_SECTION_HEIGHT,
   estimateLedgerOffset,
   findDefaultLedgerOpenIndex,
   findLedgerBoundaryIndex,
+  findOrdinaryLedgerOpenIndex,
   isLedgerActivityRow,
   findLedgerFocusIndex,
   firstSearchParam,
@@ -16,6 +18,7 @@ import {
   ordinaryLedgerPositionKey,
   resolveLedgerOpenMode,
   shouldApplyFocusScroll,
+  shouldApplyOrdinaryInitialScroll,
   shouldApplyOrdinaryProgrammaticScroll,
 } from "./ledgerScrollAnchor";
 import type { TimelineRow } from "@budget-app/shared";
@@ -65,8 +68,22 @@ describe("ledgerScrollAnchor", () => {
     expect(findLedgerBoundaryIndex(rows)).toBeNull();
   });
 
-  it("ordinary open is always the top of the list, regardless of Pending or Upcoming", () => {
-    const withPending: TransactionListRow[] = [
+  it("ordinary open with Upcoming and enough Recent leaves five history rows before Upcoming", () => {
+    const rows: TransactionListRow[] = [
+      section("section-recent", "Recent"),
+      ...Array.from({ length: 8 }, (_, i) => history(i + 1)),
+      section("section-upcoming", "Upcoming"),
+    ];
+    expect(LEDGER_ORDINARY_RECENT_ROWS).toBe(5);
+    const index = findOrdinaryLedgerOpenIndex(rows);
+    expect(index).toBe(4);
+    expect(rows.slice(index, 9).filter((r) => r.kind === "history")).toHaveLength(5);
+    expect(rows[9]).toMatchObject({ kind: "section", id: "section-upcoming" });
+    expect(rows.slice(0, index).some((r) => r.kind === "history")).toBe(true);
+  });
+
+  it("ordinary open with Pending counts backward from Pending, not Upcoming", () => {
+    const rows: TransactionListRow[] = [
       section("section-recent", "Recent"),
       ...Array.from({ length: 8 }, (_, i) => history(i + 1)),
       section("section-pending", "Pending"),
@@ -77,35 +94,64 @@ describe("ledgerScrollAnchor", () => {
         runningBalance: "500.00",
       },
       section("section-upcoming", "Upcoming"),
-      {
-        kind: "upcoming",
-        id: "upcoming-1",
-        row: { date: "2026-09-20", description: "Bill", amount: "-20.00" } as TimelineRow,
-        runningBalance: "480.00",
-      },
     ];
-    const noPending: TransactionListRow[] = [
+    const index = findOrdinaryLedgerOpenIndex(rows);
+    expect(index).toBe(4);
+    expect(rows.slice(index, 9).filter((r) => r.kind === "history")).toHaveLength(5);
+    expect(rows[9]).toMatchObject({ kind: "section", id: "section-pending" });
+  });
+
+  it("ordinary open with fewer than five Recent rows starts at index 0", () => {
+    const rows: TransactionListRow[] = [
       section("section-recent", "Recent"),
-      ...Array.from({ length: 8 }, (_, i) => history(i + 1)),
+      history(1),
+      history(2),
       section("section-upcoming", "Upcoming"),
     ];
-    const onlyRecent: TransactionListRow[] = [
+    expect(findOrdinaryLedgerOpenIndex(rows)).toBe(LEDGER_ORDINARY_OPEN_INDEX);
+    expect(findOrdinaryLedgerOpenIndex(rows)).toBe(0);
+  });
+
+  it("ordinary open with no Pending/Upcoming backs up from the end of Recent", () => {
+    const rows: TransactionListRow[] = [
       section("section-recent", "Recent"),
       ...Array.from({ length: 10 }, (_, i) => history(i + 1)),
     ];
-    const manyHistory: TransactionListRow[] = [
+    const index = findOrdinaryLedgerOpenIndex(rows);
+    expect(index).toBe(6);
+    expect(rows.slice(index).filter((r) => r.kind === "history")).toHaveLength(5);
+  });
+
+  it("does not count section, skeleton, message, or load-older rows as Recent", () => {
+    const rows: TransactionListRow[] = [
       section("section-recent", "Recent"),
-      ...Array.from({ length: 40 }, (_, i) => history(i + 1)),
+      { kind: "loadOlder", id: "load-older-history", loading: false },
+      history(1),
+      { kind: "message", id: "msg", text: "hidden" },
+      history(2),
+      { kind: "skeleton", id: "sk", section: "recent" },
+      history(3),
+      history(4),
+      history(5),
+      history(6),
       section("section-upcoming", "Upcoming"),
     ];
-    expect(LEDGER_ORDINARY_OPEN_INDEX).toBe(0);
-    expect(findDefaultLedgerOpenIndex(withPending)).toBe(0);
-    expect(findDefaultLedgerOpenIndex(noPending)).toBe(0);
-    expect(findDefaultLedgerOpenIndex(onlyRecent)).toBe(0);
-    expect(findDefaultLedgerOpenIndex(manyHistory)).toBe(0);
-    expect(findDefaultLedgerOpenIndex([])).toBe(0);
-    expect(ledgerAnchorScrollIndex(withPending)).toBe(0);
-    expect(ledgerOpenScrollIndex(withPending, null)).toBe(0);
+    const index = findOrdinaryLedgerOpenIndex(rows);
+    expect(rows.slice(index, 10).filter((r) => r.kind === "history")).toHaveLength(5);
+    expect(rows[index]?.kind).toBe("history");
+    expect(index).not.toBe(10 - 5);
+    expect(rows[10]).toMatchObject({ kind: "section", id: "section-upcoming" });
+  });
+
+  it("keeps older Recent rows in the list above the ordinary open index", () => {
+    const rows: TransactionListRow[] = [
+      section("section-recent", "Recent"),
+      ...Array.from({ length: 12 }, (_, i) => history(i + 1)),
+      section("section-upcoming", "Upcoming"),
+    ];
+    const index = findOrdinaryLedgerOpenIndex(rows);
+    expect(rows.filter((r) => r.kind === "history")).toHaveLength(12);
+    expect(rows.slice(0, index).filter((r) => r.kind === "history").length).toBeGreaterThan(0);
   });
 
   it("treats only history, pending, and upcoming as activity rows", () => {
@@ -170,7 +216,9 @@ describe("ledgerScrollAnchor", () => {
     };
     expect(findLedgerFocusIndex(rows, focus)).toBe(3);
     expect(ledgerOpenScrollIndex(rows, focus)).toBe(3);
-    expect(ledgerOpenScrollIndex(rows, null)).toBe(0);
+    expect(ledgerOpenScrollIndex(rows, null)).toBe(findOrdinaryLedgerOpenIndex(rows));
+    expect(findDefaultLedgerOpenIndex(rows)).toBe(findOrdinaryLedgerOpenIndex(rows));
+    expect(ledgerAnchorScrollIndex(rows)).toBe(findOrdinaryLedgerOpenIndex(rows));
   });
 
   it("ledger-event deep link matches rule id and date when transaction id is absent", () => {
@@ -354,7 +402,35 @@ describe("ledger open modes", () => {
     expect(resolveLedgerOpenMode({ focus: "ledger-event", focusTransactionId: 9 })).toBe("focus");
   });
 
-  it("never allows delayed ordinary programmatic scroll", () => {
+  it("allows exactly one ordinary initial scroll per position key", () => {
+    expect(
+      shouldApplyOrdinaryInitialScroll({
+        userHasDragged: false,
+        appliedKey: null,
+        attemptKey: "3:7d:90",
+      })
+    ).toBe(true);
+    expect(
+      shouldApplyOrdinaryInitialScroll({
+        userHasDragged: false,
+        appliedKey: "3:7d:90",
+        attemptKey: "3:7d:90",
+      })
+    ).toBe(false);
+    expect(
+      shouldApplyOrdinaryInitialScroll({
+        userHasDragged: false,
+        appliedKey: "3:7d:90",
+        attemptKey: "4:7d:90",
+      })
+    ).toBe(true);
+    expect(
+      shouldApplyOrdinaryInitialScroll({
+        userHasDragged: true,
+        appliedKey: null,
+        attemptKey: "3:7d:90",
+      })
+    ).toBe(false);
     expect(shouldApplyOrdinaryProgrammaticScroll()).toBe(false);
   });
 

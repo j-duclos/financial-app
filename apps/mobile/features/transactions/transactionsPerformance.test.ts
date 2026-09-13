@@ -75,11 +75,11 @@ describe("Transactions request orchestration", () => {
     expect(transactionsData).toMatch(/filtersForList/);
   });
 
-  it("opens the ordinary ledger at the top without auto-scroll", () => {
+  it("opens the ordinary ledger once near the Recent/Pending boundary", () => {
     expect(transactionsScreen).toMatch(/ledgerListReady/);
     expect(transactionsScreen).toMatch(/onScrollBeginDrag/);
+    expect(transactionsScreen).toMatch(/findOrdinaryLedgerOpenIndex/);
     expect(transactionsScreen).not.toMatch(/initialScrollIndex/);
-    expect(transactionsScreen).not.toMatch(/findDefaultLedgerOpenIndex/);
     expect(transactionsScreen).not.toMatch(/onContentSizeChange/);
   });
 

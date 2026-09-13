@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listAccounts } from "@budget-app/api-client";
+import { classifyQueryClientCache, timedStartupQueryFn } from "@/lib/startupQueries";
 import { accountLifecycleStatus } from "@/lib/accountGroups";
 import {
   ACCOUNT_OPTIONS_STALE_MS,
@@ -20,15 +21,22 @@ type UseAccountOptionsOptions = {
 export function useAccountOptions(options: UseAccountOptionsOptions = {}) {
   const householdId = options.householdId ?? null;
   const enabled = (options.enabled ?? true) && householdId != null;
+  const queryClient = useQueryClient();
+  const accountOptionsKey = referenceQueryKeys.accountOptions(householdId);
 
   const query = useQuery({
-    queryKey: referenceQueryKeys.accountOptions(householdId),
+    queryKey: accountOptionsKey,
     queryFn: () =>
-      listAccounts({
-        active_only: true,
-        household: householdId ?? undefined,
-        page_size: 500,
-      }),
+      timedStartupQueryFn(
+        "accounts",
+        classifyQueryClientCache(queryClient, accountOptionsKey, ACCOUNT_OPTIONS_STALE_MS),
+        () =>
+          listAccounts({
+            active_only: true,
+            household: householdId ?? undefined,
+            page_size: 500,
+          })
+      ),
     enabled,
     staleTime: ACCOUNT_OPTIONS_STALE_MS,
   });

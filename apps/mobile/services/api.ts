@@ -4,6 +4,7 @@ import {
 } from "@budget-app/api-client";
 import { getApiBaseUrl, getApiTargetLabel } from "@/constants/env";
 import { saveAccessToken } from "@/services/secureTokenStorage";
+import { getStartupCorrelationId, recordTimelineBackendMeta } from "@/lib/startupTrace";
 
 export { ApiError, describeApiError, describeAuthFormError } from "./apiErrors";
 
@@ -31,6 +32,19 @@ export function wireApiClient(refs: TokenRefs): void {
       refs.onAccessUpdated(access);
     },
     onUnauthorized: refs.onUnauthorized,
+    extraHeaders: () => {
+      const requestId = getStartupCorrelationId();
+      return requestId ? { "X-FlowSight-Request-Id": requestId } : {};
+    },
+    onResponseMeta: (meta) => {
+      if (!meta.path.includes("/api/timeline/")) return;
+      const serverMs = meta.timelineElapsedMs ? Number(meta.timelineElapsedMs) : null;
+      recordTimelineBackendMeta({
+        cache: meta.timelineCache ?? null,
+        serverDurationMs: serverMs != null && Number.isFinite(serverMs) ? serverMs : meta.elapsedMs,
+        requestId: meta.requestId ?? getStartupCorrelationId(),
+      });
+    },
   });
   if (!wired && __DEV__) {
     configurePerfLogging(true, getApiTargetLabel());

@@ -46,10 +46,12 @@ import { AccountLedgerHeader } from "./AccountLedgerHeader";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
   findLedgerFocusIndex,
+  findOrdinaryLedgerOpenIndex,
   firstSearchParam,
   ordinaryLedgerPositionKey,
   resolveLedgerOpenMode,
   shouldApplyFocusScroll,
+  shouldApplyOrdinaryInitialScroll,
   type LedgerFocusParams,
 } from "./ledgerScrollAnchor";
 import { markAttentionNavigation } from "@/features/dashboard/attentionNavigationTiming";
@@ -155,6 +157,9 @@ export function TransactionsScreen() {
   const listRef = useRef<FlatList<TransactionListRow>>(null);
   const userHasDraggedRef = useRef(false);
   const focusScrollAppliedRef = useRef<string | null>(null);
+  const ordinaryInitialScrollAppliedRef = useRef<string | null>(null);
+  const ordinaryFallbackUsedRef = useRef(false);
+  const ordinaryPositionKeyRef = useRef("");
 
   const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
@@ -270,6 +275,10 @@ export function TransactionsScreen() {
     (!hasLedgerDeepLinkFocus ||
       focusHighlightIndex != null ||
       (timelineSettled && !isTimelineLoading));
+  const ordinaryOpenIndex = useMemo(() => {
+    if (!ledgerDataReady || hasLedgerDeepLinkFocus) return null;
+    return findOrdinaryLedgerOpenIndex(listRows);
+  }, [ledgerDataReady, hasLedgerDeepLinkFocus, listRows]);
   const focusScrollIndex =
     hasLedgerDeepLinkFocus && focusHighlightIndex != null
       ? Math.max(0, Math.min(focusHighlightIndex, Math.max(0, listRows.length - 1)))
@@ -278,6 +287,7 @@ export function TransactionsScreen() {
     hasLedgerDeepLinkFocus && focusScrollIndex != null
       ? `${focusMountKey}:focus-${focusScrollIndex}`
       : focusMountKey;
+  ordinaryPositionKeyRef.current = ordinaryPositionKey;
 
   const stickyHeaderIndices = useMemo(
     () =>
@@ -301,7 +311,32 @@ export function TransactionsScreen() {
   useEffect(() => {
     userHasDraggedRef.current = false;
     focusScrollAppliedRef.current = null;
+    ordinaryInitialScrollAppliedRef.current = null;
+    ordinaryFallbackUsedRef.current = false;
   }, [ordinaryPositionKey, focusMountKey]);
+
+  useEffect(() => {
+    if (hasLedgerDeepLinkFocus || !ledgerListReady) return;
+    if (ordinaryOpenIndex == null || ordinaryOpenIndex <= 0) {
+      ordinaryInitialScrollAppliedRef.current = ordinaryPositionKey;
+      return;
+    }
+    if (
+      !shouldApplyOrdinaryInitialScroll({
+        userHasDragged: userHasDraggedRef.current,
+        appliedKey: ordinaryInitialScrollAppliedRef.current,
+        attemptKey: ordinaryPositionKey,
+      })
+    ) {
+      return;
+    }
+    ordinaryInitialScrollAppliedRef.current = ordinaryPositionKey;
+    listRef.current?.scrollToIndex({
+      index: ordinaryOpenIndex,
+      animated: false,
+      viewPosition: 0,
+    });
+  }, [hasLedgerDeepLinkFocus, ledgerListReady, ordinaryOpenIndex, ordinaryPositionKey]);
 
   useEffect(() => {
     if (!hasLedgerDeepLinkFocus || !ledgerListReady) return;
@@ -326,14 +361,22 @@ export function TransactionsScreen() {
 
   const onScrollBeginDrag = useCallback(() => {
     userHasDraggedRef.current = true;
+    ordinaryInitialScrollAppliedRef.current = ordinaryPositionKeyRef.current;
   }, []);
 
   const onScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
       if (userHasDraggedRef.current) return;
-      if (!hasLedgerDeepLinkFocus) return;
+      if (hasLedgerDeepLinkFocus) {
+        const unit = info.averageItemLength > 0 ? info.averageItemLength : 72;
+        const approx = Math.max(0, unit * info.index * 0.65);
+        listRef.current?.scrollToOffset({ offset: approx, animated: false });
+        return;
+      }
+      if (ordinaryFallbackUsedRef.current) return;
+      ordinaryFallbackUsedRef.current = true;
       const unit = info.averageItemLength > 0 ? info.averageItemLength : 72;
-      const approx = Math.max(0, unit * info.index * 0.65);
+      const approx = Math.max(0, unit * info.index);
       listRef.current?.scrollToOffset({ offset: approx, animated: false });
     },
     [hasLedgerDeepLinkFocus]
@@ -615,11 +658,10 @@ export function TransactionsScreen() {
           stickyHeaderIndices={stickyHeaderIndices}
           {...FINANCIAL_LIST_PROPS}
           removeClippedSubviews={false}
-          initialNumToRender={
-            focusScrollIndex != null
-              ? Math.max(FINANCIAL_LIST_PROPS.initialNumToRender, focusScrollIndex + 12)
-              : FINANCIAL_LIST_PROPS.initialNumToRender
-          }
+          initialNumToRender={Math.max(
+            FINANCIAL_LIST_PROPS.initialNumToRender,
+            (focusScrollIndex ?? ordinaryOpenIndex ?? 0) + 12
+          )}
           onScrollToIndexFailed={onScrollToIndexFailed}
           refreshControl={
             <RefreshControl

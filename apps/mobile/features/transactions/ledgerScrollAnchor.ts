@@ -1,13 +1,16 @@
 import type { TransactionListRow } from "./buildTransactionList";
 
-/** Ordinary Transactions-tab open is always the top of the list. */
+/** Posted Recent rows to keep visible above Pending/Upcoming on ordinary open (~4–6). */
+export const LEDGER_ORDINARY_RECENT_ROWS = 5;
+
+/** Short-history / empty-list fallback: top of the list. */
 export const LEDGER_ORDINARY_OPEN_INDEX = 0;
 
-/** @deprecated Ordinary open no longer backs up from Pending/Upcoming. */
-export const LEDGER_OPEN_RECENT_ROWS = 0;
+/** @deprecated Use LEDGER_ORDINARY_RECENT_ROWS */
+export const LEDGER_OPEN_RECENT_ROWS = LEDGER_ORDINARY_RECENT_ROWS;
 
-/** @deprecated Use LEDGER_ORDINARY_OPEN_INDEX */
-export const LEDGER_ANCHOR_PAST_ROWS = LEDGER_OPEN_RECENT_ROWS;
+/** @deprecated Use LEDGER_ORDINARY_RECENT_ROWS */
+export const LEDGER_ANCHOR_PAST_ROWS = LEDGER_ORDINARY_RECENT_ROWS;
 
 /** Approximate row heights (focus fallback estimates only — never ordinary open). */
 export const LEDGER_SECTION_HEIGHT = 52;
@@ -54,17 +57,55 @@ export function findLedgerBoundaryIndex(rows: TransactionListRow[]): number | nu
   return null;
 }
 
-/**
- * Ordinary Transactions-tab open is always the top of the list.
- * Do not compute a Pending/Upcoming boundary anchor here.
- */
-export function findDefaultLedgerOpenIndex(_rows: TransactionListRow[]): number {
-  return LEDGER_ORDINARY_OPEN_INDEX;
+function walkBackRecentHistory(
+  rows: TransactionListRow[],
+  fromIndex: number,
+  recentCount: number
+): number {
+  let historyAbove = 0;
+  let target = LEDGER_ORDINARY_OPEN_INDEX;
+  for (let i = fromIndex - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    if (row?.kind !== "history") continue;
+    historyAbove += 1;
+    target = i;
+    if (historyAbove >= recentCount) return target;
+  }
+  return historyAbove >= recentCount ? target : LEDGER_ORDINARY_OPEN_INDEX;
 }
 
-/** @deprecated Use findDefaultLedgerOpenIndex */
+/**
+ * Ordinary Transactions-tab open index: ~LEDGER_ORDINARY_RECENT_ROWS posted
+ * Recent rows above Pending (if any) or Upcoming. Older Recent rows stay in
+ * the list above the target. Short history returns 0.
+ */
+export function findOrdinaryLedgerOpenIndex(rows: TransactionListRow[]): number {
+  if (rows.length === 0) return LEDGER_ORDINARY_OPEN_INDEX;
+
+  const boundary = findLedgerBoundaryIndex(rows);
+  if (boundary != null) {
+    return walkBackRecentHistory(rows, boundary, LEDGER_ORDINARY_RECENT_ROWS);
+  }
+
+  let lastHistory = -1;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i]?.kind === "history") {
+      lastHistory = i;
+      break;
+    }
+  }
+  if (lastHistory < 0) return LEDGER_ORDINARY_OPEN_INDEX;
+  return walkBackRecentHistory(rows, lastHistory + 1, LEDGER_ORDINARY_RECENT_ROWS);
+}
+
+/** @deprecated Use findOrdinaryLedgerOpenIndex */
+export function findDefaultLedgerOpenIndex(rows: TransactionListRow[]): number {
+  return findOrdinaryLedgerOpenIndex(rows);
+}
+
+/** @deprecated Use findOrdinaryLedgerOpenIndex */
 export function ledgerAnchorScrollIndex(rows: TransactionListRow[]): number | null {
-  return findDefaultLedgerOpenIndex(rows);
+  return findOrdinaryLedgerOpenIndex(rows);
 }
 
 export type LedgerOpenMode = "ordinary" | "focus";
@@ -82,7 +123,18 @@ export function ordinaryLedgerPositionKey(input: {
   return `${input.accountId ?? "none"}:${input.timeFilter}:${input.forecastDays}`;
 }
 
-/** Ordinary open never schedules delayed/programmatic scroll after first paint. */
+/** Ordinary open may run exactly one initial positioning for a given key. */
+export function shouldApplyOrdinaryInitialScroll(opts: {
+  userHasDragged: boolean;
+  appliedKey: string | null;
+  attemptKey: string;
+}): boolean {
+  if (opts.userHasDragged) return false;
+  if (opts.appliedKey === opts.attemptKey) return false;
+  return true;
+}
+
+/** @deprecated Use shouldApplyOrdinaryInitialScroll */
 export function shouldApplyOrdinaryProgrammaticScroll(): boolean {
   return false;
 }
@@ -222,9 +274,9 @@ export function findLedgerForecastFocusIndex(
 /**
  * Scroll target on open.
  *
- * Ordinary navigation always returns 0 (top of the list).
+ * Ordinary navigation uses findOrdinaryLedgerOpenIndex (Recent context + boundary).
  * Deep links return the focused row index, or null while that row is not in the
- * list yet. Missing-focus fallback is also the top — never a boundary anchor.
+ * list yet. Missing-focus fallback stays at the top — not a second boundary jump.
  */
 export function ledgerOpenScrollIndex(
   rows: TransactionListRow[],
@@ -237,7 +289,7 @@ export function ledgerOpenScrollIndex(
     if (opts?.allowDefaultWhenFocusMissing) return LEDGER_ORDINARY_OPEN_INDEX;
     return null;
   }
-  return LEDGER_ORDINARY_OPEN_INDEX;
+  return findOrdinaryLedgerOpenIndex(rows);
 }
 
 export function ledgerRowHeight(row: TransactionListRow | undefined): number {

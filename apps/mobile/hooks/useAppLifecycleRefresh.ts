@@ -3,6 +3,7 @@ import { AppState, type AppStateStatus } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth";
 import { refetchFinancialDataOnForeground } from "@/lib/financialQueryRefresh";
+import { requestStartupTraceFinish } from "@/lib/startupTrace";
 
 const BACKGROUND_REFRESH_MS = 5 * 60_000;
 
@@ -27,9 +28,14 @@ export function useAppLifecycleRefresh(): void {
       const sinceBackground = lastBackgroundAt.current;
       lastBackgroundAt.current = null;
       if (sinceBackground == null) return;
-      if (Date.now() - sinceBackground < BACKGROUND_REFRESH_MS) return;
+      if (Date.now() - sinceBackground < BACKGROUND_REFRESH_MS) {
+        requestStartupTraceFinish();
+        return;
+      }
 
-      refetchFinancialDataOnForeground(queryClient);
+      void Promise.resolve(refetchFinancialDataOnForeground(queryClient)).finally(() => {
+        requestStartupTraceFinish();
+      });
     };
 
     const sub = AppState.addEventListener("change", onChange);

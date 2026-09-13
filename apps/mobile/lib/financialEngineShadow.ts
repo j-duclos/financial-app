@@ -1,4 +1,6 @@
 import { getTimeline } from "@budget-app/api-client";
+import { timedStartupQueryFn } from "@/lib/startupQueries";
+import { recordTimelineBackendMeta } from "@/lib/startupTrace";
 import {
   financialEngineTimelineRequestParams,
   parseFinancialEngineMode,
@@ -47,9 +49,14 @@ export async function getTimelineWithEngineShadow(
   options?: { mode?: FinancialEngineMode; enabled?: boolean }
 ): Promise<TimelineResponse> {
   const mode = resolveMode(options);
-  const data = await getTimeline({
-    ...params,
-    ...financialEngineTimelineRequestParams(mode),
+  const data = await timedStartupQueryFn("timeline", "network_fetch", () =>
+    getTimeline({
+      ...params,
+      ...financialEngineTimelineRequestParams(mode),
+    })
+  );
+  recordTimelineBackendMeta({
+    balanceWalkMode: data.engine_shadow?.balance_walk_source ?? mode,
   });
   const resolved = resolveTimelineWithFinancialEngine({
     mode,

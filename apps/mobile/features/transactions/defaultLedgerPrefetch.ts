@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { OperationalForecastDays } from "@budget-app/shared";
 import { listTransactions } from "@budget-app/api-client";
+import { timedStartupQueryFn } from "@/lib/startupQueries";
 import { getTimelineWithEngineShadow } from "@/lib/financialEngineShadow";
 import {
   ledgerProjectionRange,
@@ -58,18 +59,20 @@ export function defaultLedgerHistoryQueryOptions(accountId: number) {
     staleTime: DEFAULT_LEDGER_HISTORY_STALE_MS,
     initialPageParam: 1 as const,
     queryFn: ({ pageParam = 1 }: { pageParam?: number }) =>
-      listTransactions({
-        account: accountId,
-        date_after: dateAfter,
-        date_before: dateBefore,
-        page: pageParam,
-        page_size: pageSize,
-        ordering: TRANSACTIONS_LEDGER_ORDERING,
-        include_running_balance: true,
-        ...(filters.showReconciled
-          ? { show_reconciled: true, include_reconciled_after: historyStart }
-          : { reconciled: false }),
-      }),
+      timedStartupQueryFn("transactions", pageParam === 1 ? "network_fetch" : "cache_hit", () =>
+        listTransactions({
+          account: accountId,
+          date_after: dateAfter,
+          date_before: dateBefore,
+          page: pageParam,
+          page_size: pageSize,
+          ordering: TRANSACTIONS_LEDGER_ORDERING,
+          include_running_balance: true,
+          ...(filters.showReconciled
+            ? { show_reconciled: true, include_reconciled_after: historyStart }
+            : { reconciled: false }),
+        })
+      ),
     getNextPageParam: (
       lastPage: { next?: string | null },
       _pages: unknown,

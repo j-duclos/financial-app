@@ -180,7 +180,11 @@ export function invalidateFinancialQueries(queryClient: QueryClient): void {
   }
 }
 
-/** Selective foreground refresh after long background — active screens only. */
+/**
+ * Selective foreground refresh after long background — active screens only.
+ * Mobile does not run Plaid bank sync here; attach `recordPlaidRefreshTiming`
+ * if a future sync path is added so startup summaries can show plaid_refresh_ms.
+ */
 export function refetchFinancialDataOnForeground(queryClient: QueryClient): void {
   const keys = [
     [LIVE_QUERY_KEY_ROOTS.dashboardSummaryFast],
