@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { InteractionManager, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { resolveRuleOccurrence } from "@budget-app/api-client";
 import { calendarMonthFromIsoDate, getEffectiveDisplayName, parseIsoDateParam } from "@budget-app/shared";
@@ -113,6 +113,19 @@ export function CalendarScreen() {
       gettingStarted.markCalendarOnboardingHandoffSeen();
     }
   }, [fromOnboarding, gettingStarted]);
+
+  /** iOS deadlocks if we change tabs while the handoff Modal is still dismissing. */
+  const dismissHandoffThenReplace = useCallback(
+    (href: typeof GETTING_STARTED_HOME_ROUTE | typeof GETTING_STARTED_EXPLORE_ROUTE) => {
+      setHandoffVisible(false);
+      InteractionManager.runAfterInteractions(() => {
+        setTimeout(() => {
+          router.replace(href as never);
+        }, 350);
+      });
+    },
+    [router]
+  );
 
   const accountOptionsQuery = useAccountOptions({
     householdId: defaultHouseholdId,
@@ -430,14 +443,9 @@ export function CalendarScreen() {
         primaryLabel={GETTING_STARTED_COPY.calendarCompletePrimary}
         secondaryLabel={GETTING_STARTED_COPY.calendarCompleteSecondary}
         testID="calendar-onboarding-handoff"
-        onPrimary={() => {
-          setHandoffVisible(false);
-          router.replace(GETTING_STARTED_HOME_ROUTE as never);
-        }}
-        onSecondary={() => {
-          setHandoffVisible(false);
-          router.push(GETTING_STARTED_EXPLORE_ROUTE as never);
-        }}
+        onClose={() => setHandoffVisible(false)}
+        onPrimary={() => dismissHandoffThenReplace(GETTING_STARTED_HOME_ROUTE)}
+        onSecondary={() => dismissHandoffThenReplace(GETTING_STARTED_EXPLORE_ROUTE)}
       />
     </Screen>
   );

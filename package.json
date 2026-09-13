@@ -20,6 +20,8 @@
     "build:django-static": "npm run build:deploy -w @budget-app/web && rm -rf backend/frontend_dist && mkdir -p backend/frontend_dist && cp -r apps/web/dist/* backend/frontend_dist/",
     "serve:web": "npm run build:web && npm run preview -w @budget-app/web",
     "dev:mobile": "npm run start -w @budget-app/mobile -- --clear",
-    "generate:api": "npm run generate -w @budget-app/api-client"
+    "generate:api": "npm run generate -w @budget-app/api-client",
+    "android": "npm run android -w @budget-app/mobile",
+    "ios": "npm run ios -w @budget-app/mobile"
   }
 }

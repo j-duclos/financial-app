@@ -11,6 +11,8 @@ type Props = {
   onPrimary: () => void;
   secondaryLabel?: string;
   onSecondary?: () => void;
+  /** Overlay / back dismiss. Defaults to primary so swipe-away does not fire a navigation CTA. */
+  onClose?: () => void;
   testID?: string;
 };
 
@@ -22,11 +24,12 @@ export function OnboardingEducationSheet({
   onPrimary,
   secondaryLabel,
   onSecondary,
+  onClose,
   testID,
 }: Props) {
   const theme = useTheme();
   return (
-    <BottomSheet visible={visible} title={title} onClose={onSecondary ?? onPrimary}>
+    <BottomSheet visible={visible} title={title} onClose={onClose ?? onPrimary}>
       <View testID={testID}>
         <Text
           style={{

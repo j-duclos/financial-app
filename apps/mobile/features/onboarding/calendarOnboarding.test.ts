@@ -85,7 +85,13 @@ describe("calendar onboarding context", () => {
     expect(GETTING_STARTED_EXPLORE_ROUTE).toBe("/(app)/(tabs)/more");
     expect(calendarSource).toMatch(/GETTING_STARTED_EXPLORE_ROUTE/);
     expect(calendarSource).toMatch(/GETTING_STARTED_HOME_ROUTE/);
-    expect(calendarSource).toMatch(/router\.replace\(GETTING_STARTED_HOME_ROUTE/);
+    expect(calendarSource).toMatch(/dismissHandoffThenReplace\(GETTING_STARTED_HOME_ROUTE\)/);
+    expect(calendarSource).toMatch(/dismissHandoffThenReplace\(GETTING_STARTED_EXPLORE_ROUTE\)/);
+    expect(calendarSource).toMatch(/InteractionManager\.runAfterInteractions/);
+    expect(calendarSource).toMatch(/setTimeout/);
+    expect(calendarSource).toMatch(/router\.replace\(href/);
+    expect(calendarSource).toMatch(/onClose=\{\(\) => setHandoffVisible\(false\)\}/);
+    expect(calendarSource).not.toMatch(/router\.push\(GETTING_STARTED_EXPLORE_ROUTE/);
     expect(calendarSource).not.toMatch(/GETTING_STARTED_ROUTES\.recurring/);
   });
 
