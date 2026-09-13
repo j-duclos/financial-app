@@ -1,5 +1,5 @@
 /**
- * Recurring form UI contract tests — picker-based form (no account/category chip walls).
+ * Recurring view + Automation form UI contract tests.
  */
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -8,71 +8,50 @@ import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const formSrc = readFileSync(join(here, "RecurringFormScreen.tsx"), "utf8");
+const automationFormSrc = readFileSync(join(here, "../automation/AutomationFormScreen.tsx"), "utf8");
 const listSrc = readFileSync(join(here, "RecurringListScreen.tsx"), "utf8");
 const rowSrc = readFileSync(join(here, "RecurringRow.tsx"), "utf8");
+const displaySrc = readFileSync(join(here, "recurringDisplay.ts"), "utf8");
 
-describe("RecurringFormScreen structure", () => {
-  it("uses account/category pickers instead of chip walls", () => {
-    expect(formSrc).toContain("OptionsPickerSheet");
-    expect(formSrc).toContain("useAccountOptions");
-    expect(formSrc).toContain("useCategoryOptions");
-    expect(formSrc).toContain("SelectField");
-    expect(formSrc).toContain('label="Category"');
-    // Category/Account use SelectField + OptionsPickerSheet, not ChipRow walls
-    expect(formSrc).toContain("setCategoryPickerOpen");
-    expect(formSrc).toContain('setAccountPicker("from")');
-    expect(formSrc).not.toMatch(/accounts\.map\(\(a\) => \(\{ value: String\(a\.id\)/);
-    expect(formSrc).not.toMatch(/categories\.map\(\(c\) => \(\{ value: String\(c\.id\)/);
+describe("RecurringFormScreen is not a duplicate editor", () => {
+  it("redirects create/edit to Automation", () => {
+    expect(formSrc).toContain("Redirect");
+    expect(formSrc).toContain("automationCreateHref");
+    expect(formSrc).toContain("automationEditHref");
+    expect(formSrc).not.toContain("createRule");
+    expect(formSrc).not.toContain("OptionsPickerSheet");
   });
+});
 
-  it("shows type-dependent transfer destination and hides category for transfers", () => {
-    expect(formSrc).toContain('form.direction !== "TRANSFER"');
-    expect(formSrc).toContain("showTransferDestination");
-    expect(formSrc).toContain("Transfer destination is required");
-    expect(formSrc).toContain("categoryAllowsTransferDestination");
-    expect(formSrc).toContain("isBankTransferCategory");
-    expect(formSrc).toContain("system_code");
-    expect(formSrc).not.toMatch(/TRANSFER_CATEGORY_NAMES/);
-    expect(formSrc).not.toMatch(/name === "Bank Transfer"/);
-    expect(formSrc).not.toMatch(/name === "Credit Card Payment"/);
-  });
-
-  it("loads categories once and filters client-side", () => {
-    const categoryOptionCalls = formSrc.match(/useCategoryOptions\(/g) ?? [];
-    expect(categoryOptionCalls.length).toBe(1);
-  });
-
-  it("shows frequency-dependent scheduling fields only", () => {
-    expect(formSrc).toContain('form.frequency === "MONTHLY_DAY"');
-    expect(formSrc).toContain('form.frequency === "WEEKLY"');
-    expect(formSrc).toContain('form.frequency === "BIWEEKLY"');
-    expect(formSrc).toContain('form.frequency === "MONTHLY_NTH_WEEKDAY"');
-    expect(formSrc).toContain("DatePickerField");
-    expect(formSrc).toContain("EndsDateField");
-  });
-
-  it("defaults align with product defaults", () => {
-    expect(formSrc).toContain('direction: "EXPENSE"');
-    expect(formSrc).toContain('frequency: "MONTHLY_DAY"');
-    expect(formSrc).toContain('lifecycleStatus: "running"');
-    expect(formSrc).toContain("start_date: todayStr()");
+describe("AutomationFormScreen is the recurring-rule editor", () => {
+  it("owns create/edit of recurring rules", () => {
+    expect(automationFormSrc).toContain("createRule");
+    expect(automationFormSrc).toContain("updateRule");
+    expect(automationFormSrc).toContain("useAccountOptions");
+    expect(automationFormSrc).toContain("useCategoryOptions");
+    expect(automationFormSrc).toContain('direction: "EXPENSE"');
+    expect(automationFormSrc).toContain('frequency: "MONTHLY_DAY"');
+    expect(automationFormSrc).toContain('lifecycleStatus: "running"');
+    expect(automationFormSrc).toContain("start_date: todayStr()");
   });
 
   it("shows onboarding recurring help only with source=onboarding", () => {
-    expect(formSrc).toContain("isCalendarOnboardingSource(params.source)");
-    expect(formSrc).toContain('testID="onboarding-recurring-hint"');
-    expect(formSrc).toContain("GETTING_STARTED_COPY.recurringOnboardingHelp");
+    expect(automationFormSrc).toContain("isCalendarOnboardingSource(params.source)");
+    expect(automationFormSrc).toContain('testID="onboarding-recurring-hint"');
+    expect(automationFormSrc).toContain("GETTING_STARTED_COPY.recurringOnboardingHelp");
   });
 });
 
 describe("Recurring list UI structure", () => {
-  it("uses compact rows without direction badge or color bar", () => {
+  it("uses compact rows with type, cadence, next occurrence, and status", () => {
     expect(rowSrc).not.toContain("width: 4");
-    expect(rowSrc).not.toContain("directionLabel");
     expect(rowSrc).toContain("CurrencyDisplay");
     expect(rowSrc).toContain("lifecycleBadgeLabel");
+    expect(displaySrc).toContain("directionLabel(rule.direction)");
     expect(listSrc).not.toContain("getBillsOverview");
     expect(listSrc).toContain('useState<RecurringSortKey>("next")');
+    expect(listSrc).toContain("Create automation");
+    expect(listSrc).toContain("automationEditHref");
   });
 
   it("uses explicit pullRefreshing, not passive isFetching", () => {

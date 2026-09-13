@@ -6,8 +6,7 @@ import {
 } from "@budget-app/shared";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
-
-const GOAL_LIMIT_TITLE = "Goal limit reached";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 
 /**
  * Free/Premium goal quota from cached billing status.
@@ -22,9 +21,9 @@ export function useGoalPlanLimit() {
 
   const interceptIfLimited = useCallback(() => {
     if (!goalsLimited) return false;
-    promptUpgrade(GOAL_LIMIT_TITLE, goalLimitReachedMessage(billing));
+    promptUpgrade(PREMIUM_UPGRADE_CONTEXT.goals);
     return true;
-  }, [billing, goalsLimited, promptUpgrade]);
+  }, [goalsLimited, promptUpgrade]);
 
   return {
     billing,
@@ -33,6 +32,7 @@ export function useGoalPlanLimit() {
     usageLabel,
     limitReachedMessage,
     interceptIfLimited,
+    promptUpgrade,
     startUpgrade,
   };
 }

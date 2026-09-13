@@ -15,6 +15,7 @@ import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { DebtDetailSheet } from "./DebtDetailSheet";
 import { DebtPriorityRow } from "./DebtPriorityRow";
 import { PlannerSummaryCard } from "./PlannerSummaryCard";
@@ -45,7 +46,7 @@ export function PaymentPlannerScreen() {
   const router = useRouter();
   const { billing } = useBillingStatus();
   const plannerFull = canUsePaymentPlannerFull(billing);
-  const { startUpgrade } = usePremiumUpgrade();
+  const { promptUpgrade } = usePremiumUpgrade();
   const params = useLocalSearchParams<{
     account?: string;
     strategy?: string;
@@ -326,7 +327,7 @@ export function PaymentPlannerScreen() {
       ) : null}
 
       {!plannerFull ? (
-        <PremiumUpsellCard onUpgrade={() => void startUpgrade()} />
+        <PremiumUpsellCard onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.paymentPlanner)} />
       ) : null}
 
       {selectedAccount && selectedPlanCard ? (

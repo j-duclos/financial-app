@@ -46,6 +46,7 @@ describe("recurringDisplay", () => {
     expect(rows[0].nextOccurrence).toBe("2026-09-01");
     expect(rows[0].accountLine).toContain("Main");
     expect(rows[0].accountLine).toContain("Rent / Mortgage");
+    expect(rows[0].metaLine).toContain("Expense");
     expect(rows[0].metaLine).toContain("Next");
   });
 

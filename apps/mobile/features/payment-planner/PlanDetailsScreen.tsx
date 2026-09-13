@@ -9,6 +9,7 @@ import { formatDateDisplay } from "@/lib/dates";
 import { describeApiError } from "@/services/api";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { parseDebtModeParam } from "./display";
 import type { PlannerScenarioInputs } from "./queryKeys";
 import { PremiumUpsellCard } from "./PremiumUpsellCard";
@@ -25,7 +26,7 @@ export function PlanDetailsScreen() {
   const router = useRouter();
   const { billing } = useBillingStatus();
   const plannerFull = canUsePaymentPlannerFull(billing);
-  const { startUpgrade } = usePremiumUpgrade();
+  const { promptUpgrade } = usePremiumUpgrade();
   const params = useLocalSearchParams<{
     strategy?: string;
     mode?: string;
@@ -68,7 +69,7 @@ export function PlanDetailsScreen() {
           title="Premium projection"
           message="Month-by-month payoff projections are available with Premium."
         />
-        <PremiumUpsellCard onUpgrade={() => void startUpgrade()} />
+        <PremiumUpsellCard onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.paymentPlanner)} />
       </Screen>
     );
   }

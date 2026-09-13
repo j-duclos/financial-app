@@ -42,6 +42,11 @@ export type TransactionListRow =
       kind: "message";
       id: string;
       text: string;
+    }
+  | {
+      kind: "loadOlder";
+      id: string;
+      loading: boolean;
     };
 
 export function indexTimelineBalances(
@@ -235,6 +240,9 @@ export function buildTransactionListRows(input: {
   serverFilteredHistory?: boolean;
   recentRangeLabel?: string;
   upcomingRangeLabel?: string;
+  /** Unbounded/newest-first history still has older server pages. */
+  hasMoreHistory?: boolean;
+  isLoadingMoreHistory?: boolean;
 }): TransactionListRow[] {
   const rows: TransactionListRow[] = [];
   const showRecent = input.filters.forecast !== "forecast";
@@ -279,6 +287,13 @@ export function buildTransactionListRows(input: {
           rangeLabel: input.isSearchMode ? undefined : input.recentRangeLabel,
           rangeKind: input.isSearchMode ? undefined : "recent",
         });
+        if (input.hasMoreHistory && !input.isSearchMode) {
+          rows.push({
+            kind: "loadOlder",
+            id: "load-older-history",
+            loading: Boolean(input.isLoadingMoreHistory),
+          });
+        }
         for (const txn of filteredHistory) {
           const bal = runningBalanceForTransaction(
             txn,

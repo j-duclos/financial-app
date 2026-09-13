@@ -35,6 +35,15 @@ function notifyUnauthorized(): void {
   onUnauthorized();
 }
 
+function messageFromHtmlOrPlainError(status: number, text: string): string {
+  const trimmed = (text || "").trim();
+  if (!trimmed || /<!doctype html|<html[\s>]|<\/html>/i.test(trimmed)) {
+    if (status >= 500) return "The server had a problem. Please try again.";
+    return `Request failed (${status})`;
+  }
+  return trimmed;
+}
+
 export function getBaseUrl(): string {
   return baseUrl;
 }
@@ -321,7 +330,7 @@ async function requestInner<T>(
         detail = `${detail}\n\nPlaid allowlist — add this exact URL (Developers → API): ${j.redirect_uri_sent.trim()}`;
       }
     } catch {
-      detail = text;
+      detail = messageFromHtmlOrPlainError(res.status, text);
     }
     throw new ApiError(res.status, detail, extras);
   }

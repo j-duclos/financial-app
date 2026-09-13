@@ -57,6 +57,13 @@ import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import {
+  MANAGE_SUBSCRIPTION_LABEL,
+  PREMIUM_DISCOVERY_SUBTITLE,
+  PREMIUM_MONTHLY_PRICE_LABEL,
+  PREMIUM_SHEET_TITLE,
+  PREMIUM_UPGRADE_CONTEXT,
+} from "@/features/billing";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { invalidateAfterUtilizationTargetChange } from "@/lib/financialQueryRefresh";
@@ -119,7 +126,7 @@ export function ProfileSettingsScreen() {
   const { householdId } = useDefaultHouseholdId();
   const { accounts } = useAccountOptions({ householdId });
   const { billing } = useBillingStatus();
-  const { promptUpgrade, startUpgrade } = usePremiumUpgrade();
+  const { promptUpgrade, startPortal } = usePremiumUpgrade();
 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -327,14 +334,22 @@ export function ProfileSettingsScreen() {
 
           <SectionHeader title="Plan" />
           <SettingsGroup>
-            <SettingsRow
-              title="Subscription"
-              value={billing?.is_premium ? "Premium" : "Free"}
-              onPress={billing?.is_premium ? undefined : () => void startUpgrade()}
-              accessibilityLabel={
-                billing?.is_premium ? "Premium plan" : "Free plan, upgrade to Premium"
-              }
-            />
+            {billing?.is_premium ? (
+              <SettingsRow
+                title="Premium"
+                value={MANAGE_SUBSCRIPTION_LABEL}
+                onPress={() => void startPortal()}
+                accessibilityLabel="Premium, Manage subscription"
+              />
+            ) : (
+              <SettingsRow
+                title={PREMIUM_SHEET_TITLE}
+                subtitle={PREMIUM_DISCOVERY_SUBTITLE}
+                value={PREMIUM_MONTHLY_PRICE_LABEL}
+                onPress={() => promptUpgrade()}
+                accessibilityLabel={`${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+              />
+            )}
           </SettingsGroup>
 
           {canShowPlanTestControls(billing, typeof __DEV__ !== "undefined" && __DEV__) ? (
@@ -620,13 +635,13 @@ export function ProfileSettingsScreen() {
           badge: opt.locked ? "Premium" : undefined,
         }))}
         onClose={() => setForecastPickerOpen(false)}
-        onSelectLocked={(id) => {
-          promptUpgrade("Premium forecast", lockedForecastUpsellMessage(Number(id)));
+        onSelectLocked={() => {
+          promptUpgrade(PREMIUM_UPGRADE_CONTEXT.forecast);
         }}
         onSelect={(id) => {
           const days = normalizeOperationalForecastDays(Number(id));
           if (!isForecastDaysAllowed(days, billing)) {
-            promptUpgrade("Premium forecast", lockedForecastUpsellMessage(days));
+            promptUpgrade(PREMIUM_UPGRADE_CONTEXT.forecast);
             return;
           }
           if (days === forecastDays) {

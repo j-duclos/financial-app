@@ -33,7 +33,7 @@ Required in production (`DEBUG=false`):
 - `DJANGO_SECRET_KEY`
 - `PLAID_TOKEN_FERNET_KEY`
 - `DATABASE_URL` (Render Postgres)
-- `ALLOWED_HOSTS` (include `flowsight.com` and `www.flowsight.com` when using the custom domain)
+- `ALLOWED_HOSTS` (include `flowsight360.com` and `www.flowsight360.com` when using the custom domain)
 
 Required for billed production:
 
@@ -88,9 +88,9 @@ When `DEBUG` is false:
 - `SECURE_CONTENT_TYPE_NOSNIFF`
 - `Referrer-Policy: same-origin`
 
-HSTS **preload** and **includeSubDomains** are off until `flowsight.com` and every required subdomain are confirmed HTTPS-only.
+HSTS **preload** and **includeSubDomains** are off until `flowsight360.com` and every required subdomain are confirmed HTTPS-only.
 
-CORS is an explicit allowlist (`CORS_ALLOW_ALL_ORIGINS` is false). Production includes `https://flowsight.com` and `https://www.flowsight.com`.
+CORS is an explicit allowlist (`CORS_ALLOW_ALL_ORIGINS` is false). Production includes `https://flowsight360.com` and `https://www.flowsight360.com`.
 
 ## Logging and Sentry
 
@@ -114,7 +114,7 @@ CI runs gitleaks, `pip-audit`, `npm audit --omit=dev --audit-level=high`, and `p
 
 ## Vulnerability reporting
 
-Email security issues to **security@flowsight.com** (placeholder — replace with the monitored inbox before launch). Do not file public GitHub issues for active exploits.
+Email security issues to **security@flowsight360.com** (placeholder — replace with the monitored inbox before launch). Do not file public GitHub issues for active exploits.
 
 ## Deployment checklist
 
@@ -122,7 +122,7 @@ Email security issues to **security@flowsight.com** (placeholder — replace wit
 - [ ] Unique `DJANGO_SECRET_KEY`
 - [ ] Explicit `PLAID_TOKEN_FERNET_KEY` (not derived from the Django secret)
 - [ ] `DATABASE_URL` is Render Postgres, not localhost
-- [ ] `ALLOWED_HOSTS` / `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` include only intended hosts (`flowsight.com`, `www.flowsight.com`, Render hostname)
+- [ ] `ALLOWED_HOSTS` / `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` include only intended hosts (`flowsight360.com`, `www.flowsight360.com`, Render hostname)
 - [ ] SMTP configured if customers must verify email, reset passwords, or receive in-app feedback (`FEEDBACK_EMAIL_TO`)
 - [ ] Stripe webhook endpoint uses `STRIPE_WEBHOOK_SECRET`
 - [ ] Plaid webhook URL unset **or** Plaid-Verification JWT required (current code)

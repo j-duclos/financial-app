@@ -10,12 +10,21 @@ import {
   updateRule,
 } from "@budget-app/api-client";
 import type { RecurringRule, RecurringRuleFrequency } from "@budget-app/shared";
-import { formatAccountOptionLabel, sortCategoriesForPicker } from "@budget-app/shared";
-import { AppHeader, Button, Card, ErrorState, Screen, TextField } from "@/components/ui";
+import {
+  formatAccountOptionLabel,
+  GETTING_STARTED_COPY,
+  recurringSaveConsumesActiveSlot,
+  sortCategoriesForPicker,
+} from "@budget-app/shared";
+import { AppHeader, Button, Card, EmptyState, ErrorState, Screen, TextField } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
+import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
 import { todayStr } from "@/lib/dates";
+import { isCalendarOnboardingSource } from "@/features/onboarding/gettingStartedRoutes";
+import { useRecurringPlanLimit } from "@/features/recurring/useRecurringPlanLimit";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useHouseholds } from "@/hooks/useHouseholds";
@@ -178,9 +187,16 @@ export function AutomationFormScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; source?: string | string[] }>();
   const editingId = params.id ? Number(params.id) : null;
   const isEdit = editingId != null && Number.isInteger(editingId) && editingId > 0;
+  const fromOnboarding = !isEdit && isCalendarOnboardingSource(params.source);
+  const {
+    limited,
+    limitReachedMessage,
+    interceptIfLimited,
+    promptUpgrade,
+  } = useRecurringPlanLimit();
   const [step, setStep] = useState<FormStep>("basics");
   const [form, setForm] = useState<FormState>(() => defaultForm());
   const [error, setError] = useState<string | null>(null);
@@ -234,10 +250,32 @@ export function AutomationFormScreen() {
     if (ruleQuery.data) setForm(ruleToForm(ruleQuery.data));
   }, [ruleQuery.data]);
 
+  const nextActive = lifecycleToActiveAndEndDate(
+    form.lifecycleStatus,
+    form.end_date,
+    todayStr()
+  ).active;
+  const currentlyActive = Boolean(isEdit && ruleQuery.data?.active);
+  const saveConsumesSlot = recurringSaveConsumesActiveSlot({
+    isCreate: !isEdit,
+    currentlyActive,
+    nextActive,
+  });
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const today = todayStr();
       const { active, end_date } = lifecycleToActiveAndEndDate(form.lifecycleStatus, form.end_date, today);
+      if (
+        limited &&
+        recurringSaveConsumesActiveSlot({
+          isCreate: !isEdit,
+          currentlyActive: Boolean(isEdit && ruleQuery.data?.active),
+          nextActive: active,
+        })
+      ) {
+        throw new Error(limitReachedMessage);
+      }
 
       const payload: Record<string, unknown> = {
         household: form.household || householdId,
@@ -356,6 +394,33 @@ export function AutomationFormScreen() {
     );
   }
 
+  if (!isEdit && limited && nextActive) {
+    return (
+      <Screen>
+        <AppHeader title="Create automation" onBack={() => router.back()} />
+        <View style={{ gap: theme.spacing.md }}>
+          <ChipRow
+            label="Status"
+            options={[
+              { value: "running", label: "Running" },
+              { value: "paused", label: "Paused" },
+              { value: "ended", label: "Ended" },
+            ]}
+            selected={form.lifecycleStatus}
+            onSelect={(v) => set("lifecycleStatus", v as RuleLifecycleStatus)}
+          />
+          <EmptyState
+            title="Recurring limit reached"
+            message={limitReachedMessage}
+            actionLabel={UPGRADE_TO_PREMIUM_LABEL}
+            actionVariant="primary"
+            onAction={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.recurring)}
+          />
+        </View>
+      </Screen>
+    );
+  }
+
   const previewRule = formToPreviewRule(form);
 
   return (
@@ -384,6 +449,13 @@ export function AutomationFormScreen() {
       </Text>
 
       <ScrollView contentContainerStyle={{ gap: theme.spacing.md, paddingHorizontal: theme.spacing.lg, paddingBottom: 32 }}>
+        {fromOnboarding ? (
+          <Card testID="onboarding-recurring-hint">
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>
+              {GETTING_STARTED_COPY.recurringOnboardingHelp}
+            </Text>
+          </Card>
+        ) : null}
         {error ? <Text style={{ color: theme.colors.critical }}>{error}</Text> : null}
 
         {isEdit ? (
@@ -591,6 +663,7 @@ export function AutomationFormScreen() {
                   setError(err);
                   return;
                 }
+                if (saveConsumesSlot && interceptIfLimited()) return;
                 setError(null);
                 saveMutation.mutate();
               }}

@@ -29,8 +29,8 @@ describe("Accounts screen navigation", () => {
     expect(accountsSource).toMatch(/atPlanLimit\(billing, "manual_accounts"\)/);
     expect(accountsSource).toMatch(/manualAccountUsageLabel/);
     expect(accountsSource).toMatch(/onAddAccount/);
-    expect(accountsSource).toMatch(/You've reached the Free plan limit|manualAccountLimitReachedMessage/);
-    expect(accountsSource).toMatch(/PLAID_PREMIUM_MESSAGE/);
+    expect(accountsSource).toMatch(/You've reached the Free plan limit|manualAccountLimitReachedMessage|PREMIUM_UPGRADE_CONTEXT\.accounts/);
+    expect(accountsSource).toMatch(/ACCOUNTS_BANK_SYNC_TEASER|PLAID_PREMIUM_MESSAGE/);
   });
 });
 

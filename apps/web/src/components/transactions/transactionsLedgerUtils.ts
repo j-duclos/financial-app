@@ -46,9 +46,9 @@ export function addMonthsToIsoDate(iso: string, months: number): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
-export type TimeFilter = "14d" | "1m" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+export type TimeFilter = "14d" | "1m" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m" | "all";
 
-export const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d">, number> = {
+export const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d" | "all">, number> = {
   "1m": 1,
   "3m": 3,
   "6m": 6,
@@ -61,6 +61,9 @@ export const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d">, number> = {
 /** Past/future window for the transactions ledger timeline query. */
 export function timelineRangeForFilter(filter: TimeFilter): { start: string; end: string } {
   const today = todayStr();
+  if (filter === "all") {
+    return { start: "", end: today };
+  }
   if (filter === "14d") {
     return {
       start: addDaysToIsoDate(today, -14),
@@ -116,11 +119,27 @@ export function daysToForecastRange(days: number): ForecastRange {
   return "30d";
 }
 
-/** Past window for listTransactions (history through today). */
+/** Past window for listTransactions (history through today). Empty start = all history. */
 export function pastTransactionsRange(filter: TimeFilter): { start: string; end: string } {
   const today = todayStr();
+  if (filter === "all") {
+    return { start: "", end: today };
+  }
   const { start } = timelineRangeForFilter(filter);
   return { start, end: today };
+}
+
+export function isUnboundedHistoryFilter(filter: TimeFilter): boolean {
+  return filter === "all";
+}
+
+export function flattenLedgerHistoryPages<T>(
+  pages: ReadonlyArray<{ results: T[] }> | undefined,
+  newestFirst: boolean
+): T[] {
+  const rows = pages?.flatMap((page) => page.results) ?? [];
+  if (!newestFirst || rows.length <= 1) return rows;
+  return rows.slice().reverse();
 }
 
 /**
@@ -145,18 +164,18 @@ export function ledgerPastTransactionStart(
   if (periodEnd) {
     const dayAfterClose = addDaysToIsoDate(periodEnd, 1);
     if (floor && floor === periodEnd) {
-      return maxIsoDate(filterStart, floor);
+      return filterStart ? maxIsoDate(filterStart, floor) : floor;
     }
     if (floor && floor < periodEnd) {
-      return maxIsoDate(filterStart, dayAfterClose);
+      return filterStart ? maxIsoDate(filterStart, dayAfterClose) : dayAfterClose;
     }
     if (floor && floor > periodEnd) {
-      return maxIsoDate(filterStart, floor);
+      return filterStart ? maxIsoDate(filterStart, floor) : floor;
     }
-    return maxIsoDate(filterStart, dayAfterClose);
+    return filterStart ? maxIsoDate(filterStart, dayAfterClose) : dayAfterClose;
   }
 
-  if (floor) return maxIsoDate(filterStart, floor);
+  if (floor) return filterStart ? maxIsoDate(filterStart, floor) : floor;
   return filterStart;
 }
 

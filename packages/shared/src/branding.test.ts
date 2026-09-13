@@ -19,8 +19,8 @@ describe("branding", () => {
     expect(APP_TAGLINE).toMatch(/money/i);
     expect(APP_VALUE_STATEMENT).toMatch(/cash flow/i);
     expect(APP_DESCRIPTION.length).toBeGreaterThan(20);
-    expect(APP_WEB_URL).toBe("https://flowsight.com");
-    expect(APP_WEB_HOST).toBe("flowsight.com");
+    expect(APP_WEB_URL).toBe("https://flowsight360.com");
+    expect(APP_WEB_HOST).toBe("flowsight360.com");
     expect(APP_WEB_URL).toContain(APP_WEB_HOST);
     expect(APP_WEB_COMPANION_MESSAGE).toMatch(/full planning experience/);
   });

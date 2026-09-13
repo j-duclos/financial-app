@@ -16,6 +16,12 @@ const listSource = readFileSync(join(dir, "RecurringListScreen.tsx"), "utf8");
 const detailSource = readFileSync(join(dir, "RecurringDetailScreen.tsx"), "utf8");
 const formSource = readFileSync(join(dir, "RecurringFormScreen.tsx"), "utf8");
 const rowSource = readFileSync(join(dir, "RecurringRow.tsx"), "utf8");
+const navigationSource = readFileSync(join(dir, "navigation.ts"), "utf8");
+const automationFormSource = readFileSync(join(dir, "../automation/AutomationFormScreen.tsx"), "utf8");
+const automationDetailSource = readFileSync(
+  join(dir, "../automation/AutomationDetailScreen.tsx"),
+  "utf8"
+);
 const webRecurringSource = readFileSync(join(dir, "../../../web/src/pages/Recurring.tsx"), "utf8");
 
 function mutationFnBlock(source: string): string {
@@ -27,7 +33,7 @@ function mutationFnBlock(source: string): string {
 }
 
 function resumeOnPressBlock(source: string): string {
-  const label = source.indexOf('label="Resume recurrence"');
+  const label = source.indexOf('label="Resume rule"');
   expect(label).toBeGreaterThanOrEqual(0);
   const onPress = source.indexOf("onPress={() => {", label);
   expect(onPress).toBeGreaterThan(label);
@@ -99,7 +105,27 @@ const premiumStatus: BillingStatus = {
   },
 };
 
-describe("mobile Recurring Free/Premium recurring-limit UX", () => {
+describe("mobile Recurring is a view; Automation owns rules", () => {
+  it("routes Recurring create and item edit to the Automation editor", () => {
+    expect(navigationSource).toMatch(/\/automation\/new/);
+    expect(navigationSource).toMatch(/\/automation\/edit\/\$\{ruleId\}/);
+    expect(listSource).toMatch(/onCreateAutomation/);
+    expect(listSource).toMatch(/if \(interceptIfLimited\(\)\) return/);
+    expect(listSource).toMatch(/automationCreateHref\(\)/);
+    expect(listSource).toMatch(/automationEditHref\(item\.rule\.id\)/);
+    expect(listSource).toMatch(/Create automation/);
+    expect(listSource).not.toMatch(/\/recurring\/new/);
+    expect(listSource).not.toMatch(/\/recurring\/\$\{/);
+    expect(formSource).toMatch(/Redirect/);
+    expect(formSource).toMatch(/automationCreateHref/);
+    expect(formSource).toMatch(/automationEditHref/);
+    expect(formSource).not.toMatch(/createRule/);
+    expect(formSource).not.toMatch(/updateRule/);
+    expect(detailSource).toMatch(/Redirect/);
+    expect(detailSource).toMatch(/automationEditHref/);
+    expect(detailSource).not.toMatch(/pauseRule|resumeRule|deleteRule|createRule/);
+  });
+
   it("uses cached billing status and shared entitlement helpers, not a local plan or recount", () => {
     expect(hookSource).toMatch(/useBillingStatus/);
     expect(hookSource).toMatch(/atPlanLimit\(billing, "recurring_rules"\)/);
@@ -115,46 +141,43 @@ describe("mobile Recurring Free/Premium recurring-limit UX", () => {
     expect(listSource.match(/queryFn: \(\) => listRules\(\)/g)?.length).toBe(1);
   });
 
-  it("FREE below limit: usage label renders and + opens create", () => {
+  it("FREE below limit: usage label renders and Create automation opens Automation", () => {
     expect(recurringRulesUsageLabel(freeBelowLimit)).toBe("7 of 10 active recurring rules");
     expect(atPlanLimit(freeBelowLimit, "recurring_rules")).toBe(false);
     expect(listSource).toMatch(/usageLabel/);
     expect(listSource).toMatch(/\{usageLabel\}/);
-    expect(listSource).toMatch(/onAddRecurring/);
+    expect(listSource).toMatch(/onCreateAutomation/);
     expect(listSource).toMatch(/if \(interceptIfLimited\(\)\) return/);
-    expect(listSource).toMatch(/router\.push\("\/recurring\/new"\)/);
-    expect(listSource).not.toMatch(/onPress=\{\(\) => router\.push\("\/recurring\/new"\)\}/);
-    expect(listSource).toMatch(/onPress=\{onAddRecurring\}/);
-    expect(listSource).toMatch(/onAction=\{onAddRecurring\}/);
+    expect(listSource).toMatch(/onPress=\{onCreateAutomation\}/);
+    expect(listSource).toMatch(/onAction=\{onCreateAutomation\}/);
   });
 
-  it("FREE below limit: resume is allowed", () => {
-    expect(detailSource).toMatch(/useRecurringPlanLimit/);
+  it("FREE below limit: resume is allowed on Automation detail", () => {
+    expect(automationDetailSource).toMatch(/useRecurringPlanLimit/);
     expect(hookSource).toMatch(/if \(!limited\) return false/);
-    const resume = resumeOnPressBlock(detailSource);
+    const resume = resumeOnPressBlock(automationDetailSource);
     expect(resume).toMatch(/if \(interceptIfLimited\(\)\) return/);
     expect(resume).toMatch(/resumeMutation\.mutate/);
   });
 
-  it("FREE at limit: + does not navigate and shows the upgrade prompt", () => {
+  it("FREE at limit: Create automation does not navigate and shows the upgrade prompt", () => {
     expect(atPlanLimit(freeAtLimit, "recurring_rules")).toBe(true);
     expect(recurringRulesUsageLabel(freeAtLimit)).toBe("10 of 10 active recurring rules");
     expect(recurringRulesLimitReachedMessage(freeAtLimit)).toBe(
       "You've reached the Free plan limit of 10 active recurring rules."
     );
-    expect(hookSource).toMatch(/promptUpgrade\(RECURRING_LIMIT_TITLE/);
-    expect(hookSource).toMatch(/You've reached the Free plan limit|recurringRulesLimitReachedMessage/);
-    expect(listSource).toMatch(/onPress=\{onAddRecurring\}/);
-    expect(listSource).not.toMatch(/onPress=\{\(\) => router\.push\("\/recurring\/new"\)\}/);
+    expect(hookSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.recurring\)/);
+    expect(listSource).toMatch(/onPress=\{onCreateAutomation\}/);
+    expect(listSource).not.toMatch(/onPress=\{\(\) => router\.push\("\/automation\/new"\)\}/);
   });
 
-  it("direct create route is blocked for active creation", () => {
-    expect(formSource).toMatch(/!isEdit && limited && nextActive/);
-    expect(formSource).toMatch(/Recurring limit reached/);
-    expect(formSource).toMatch(/UPGRADE_TO_PREMIUM_LABEL/);
-    expect(formSource).toMatch(/startUpgrade/);
-    expect(formSource).toMatch(/createRule/);
-    const mutationFn = mutationFnBlock(formSource);
+  it("direct Automation create route is blocked for active creation", () => {
+    expect(automationFormSource).toMatch(/!isEdit && limited && nextActive/);
+    expect(automationFormSource).toMatch(/Recurring limit reached/);
+    expect(automationFormSource).toMatch(/UPGRADE_TO_PREMIUM_LABEL/);
+    expect(automationFormSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.recurring\)/);
+    expect(automationFormSource).toMatch(/createRule/);
+    const mutationFn = mutationFnBlock(automationFormSource);
     expect(mutationFn).toMatch(/recurringSaveConsumesActiveSlot/);
     expect(mutationFn).toMatch(/throw new Error\(limitReachedMessage\)/);
     expect(mutationFn.indexOf("recurringSaveConsumesActiveSlot")).toBeLessThan(
@@ -163,28 +186,28 @@ describe("mobile Recurring Free/Premium recurring-limit UX", () => {
     expect(mutationFn.indexOf("limitReachedMessage")).toBeLessThan(mutationFn.indexOf("createRule"));
   });
 
-  it("paused rules remain visible and Pause/Delete/Edit remain allowed at the limit", () => {
+  it("paused rules remain visible and Pause/Delete remain allowed at the limit", () => {
     expect(rowSource).toMatch(/lifecycleBadgeLabel/);
     expect(listSource).not.toMatch(/\.filter\(\(.*active/);
     expect(listSource).not.toMatch(/isActive === true/);
     expect(listSource).toMatch(/buildRecurringRows\(rulesQuery\.data\?\.results/);
-    expect(detailSource).toMatch(/onPress=\{\(\) => pauseMutation\.mutate\(\)\}/);
-    expect(detailSource).toMatch(/onPress=\{\(\) => setConfirmDelete\(true\)\}/);
-    expect(detailSource).toMatch(/router\.push\(`\/recurring\/edit\/\$\{rule\.id\}`\)/);
-    const pauseBlock = detailSource.slice(
-      detailSource.indexOf('label="Pause recurrence"'),
-      detailSource.indexOf("pauseMutation.mutate()")
+    expect(automationDetailSource).toMatch(/onPress=\{\(\) => pauseMutation\.mutate\(\)\}/);
+    expect(automationDetailSource).toMatch(/onPress=\{\(\) => setConfirmDelete\(true\)\}/);
+    expect(automationDetailSource).toMatch(/router\.push\(`\/automation\/edit\/\$\{rule\.id\}`\)/);
+    const pauseBlock = automationDetailSource.slice(
+      automationDetailSource.indexOf('label="Pause rule"'),
+      automationDetailSource.indexOf("pauseMutation.mutate()")
     );
     expect(pauseBlock).not.toMatch(/interceptIfLimited/);
-    const deleteBlock = detailSource.slice(
-      detailSource.indexOf('label="Delete rule"'),
-      detailSource.indexOf("setConfirmDelete(true)")
+    const deleteBlock = automationDetailSource.slice(
+      automationDetailSource.indexOf('label="Delete rule"'),
+      automationDetailSource.indexOf("setConfirmDelete(true)")
     );
     expect(deleteBlock).not.toMatch(/interceptIfLimited/);
   });
 
   it("FREE at limit: Resume is blocked and resume API is not called", () => {
-    const resume = resumeOnPressBlock(detailSource);
+    const resume = resumeOnPressBlock(automationDetailSource);
     expect(resume).toMatch(/if \(interceptIfLimited\(\)\) return/);
     expect(resume).toMatch(/resumeMutation\.mutate/);
     expect(resume.indexOf("interceptIfLimited")).toBeLessThan(resume.indexOf("resumeMutation.mutate"));
@@ -194,10 +217,10 @@ describe("mobile Recurring Free/Premium recurring-limit UX", () => {
     expect(
       recurringSaveConsumesActiveSlot({ isCreate: true, currentlyActive: false, nextActive: false })
     ).toBe(false);
-    expect(formSource).toMatch(/lifecycleStatus: "running"/);
-    expect(formSource).toMatch(/value: "paused"/);
-    expect(formSource).toMatch(/recurringSaveConsumesActiveSlot/);
-    expect(formSource).toMatch(/!isEdit && limited && nextActive/);
+    expect(automationFormSource).toMatch(/lifecycleStatus: "running"/);
+    expect(automationFormSource).toMatch(/value: "paused"/);
+    expect(automationFormSource).toMatch(/recurringSaveConsumesActiveSlot/);
+    expect(automationFormSource).toMatch(/!isEdit && limited && nextActive/);
   });
 
   it("edit transitions match backend slot semantics", () => {
@@ -213,17 +236,17 @@ describe("mobile Recurring Free/Premium recurring-limit UX", () => {
     expect(
       recurringSaveConsumesActiveSlot({ isCreate: false, currentlyActive: false, nextActive: false })
     ).toBe(false);
-    expect(formSource).toMatch(/saveConsumesSlot && interceptIfLimited\(\)/);
-    expect(formSource).toMatch(/updateRule/);
-    expect(formSource).toMatch(/currentlyActive/);
+    expect(automationFormSource).toMatch(/saveConsumesSlot && interceptIfLimited\(\)/);
+    expect(automationFormSource).toMatch(/updateRule/);
+    expect(automationFormSource).toMatch(/currentlyActive/);
   });
 
   it("PREMIUM has no quota interception for create or resume", () => {
     expect(atPlanLimit(premiumStatus, "recurring_rules")).toBe(false);
     expect(recurringRulesUsageLabel(premiumStatus)).toBeNull();
     expect(hookSource).toMatch(/if \(!limited\) return false/);
-    expect(listSource).toMatch(/router\.push\("\/recurring\/new"\)/);
-    expect(detailSource).toMatch(/resumeMutation\.mutate/);
+    expect(listSource).toMatch(/automationCreateHref\(\)/);
+    expect(automationDetailSource).toMatch(/resumeMutation\.mutate/);
   });
 
   it("quota uses billing-status usage with no extra recurring list fetch", () => {

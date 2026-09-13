@@ -5,7 +5,7 @@ const TIME_FILTER_KEY = "budget-app:transactions:timeFilter";
 const AMOUNT_MIN_KEY = "budget-app:transactions:amountMin";
 const AMOUNT_MAX_KEY = "budget-app:transactions:amountMax";
 
-const TIME_FILTERS: TimeFilter[] = ["14d", "1m", "3m", "6m", "12m", "18m", "24m", "36m"];
+const TIME_FILTERS: TimeFilter[] = ["14d", "1m", "3m", "6m", "12m", "18m", "24m", "36m", "all"];
 
 export function loadStoredTransactionsAccountId(): number | "" {
   if (typeof window === "undefined") return "";

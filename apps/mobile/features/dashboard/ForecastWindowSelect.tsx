@@ -3,13 +3,13 @@ import { Pressable, Text, View } from "react-native";
 import {
   FORECAST_WINDOW_LABELS,
   forecastPickerRows,
-  lockedForecastUpsellMessage,
   type OperationalForecastDays,
 } from "@budget-app/shared";
 import { BottomSheet } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 
 type OptionListProps = {
   value: OperationalForecastDays;
@@ -32,7 +32,7 @@ export function ForecastWindowOptionList({ value, onChange, onClose }: OptionLis
             key={row.days}
             onPress={() => {
               if (row.locked) {
-                promptUpgrade("Premium forecast", lockedForecastUpsellMessage(row.days));
+                promptUpgrade(PREMIUM_UPGRADE_CONTEXT.forecast);
                 return;
               }
               onChange(row.days);

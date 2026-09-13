@@ -1,5 +1,5 @@
 import type { TransactionFilters } from "./types";
-import type { TimeFilter } from "@/lib/transactionsLedger";
+import { isTimeFilter } from "@/lib/transactionsLedger";
 
 export const transactionQueryKeys = {
   all: ["transactions"] as const,
@@ -19,22 +19,27 @@ export const transactionQueryKeys = {
 
 export function transactionListQueryParams(input: {
   accountId: number | null;
-  dateAfter: string;
+  dateAfter?: string | null;
   dateBefore: string;
   showReconciled: boolean;
-  historyStart: string;
+  historyStart?: string | null;
   ordering?: string;
   includeRunningBalance?: boolean;
   categoryId?: number | null;
   ruleId?: number | null;
   search?: string;
 }): Record<string, unknown> {
+  const dateAfter = input.dateAfter?.trim() || undefined;
+  const historyStart = input.historyStart?.trim() || undefined;
   return {
     account: input.accountId ?? undefined,
-    date_after: input.dateAfter,
+    ...(dateAfter ? { date_after: dateAfter } : {}),
     date_before: input.dateBefore,
     ...(input.showReconciled
-      ? { show_reconciled: true, include_reconciled_after: input.historyStart }
+      ? {
+          show_reconciled: true,
+          ...(historyStart ? { include_reconciled_after: historyStart } : {}),
+        }
       : { reconciled: false }),
     ...(input.categoryId != null ? { category: input.categoryId } : {}),
     ...(input.ruleId != null ? { rule_id: input.ruleId } : {}),
@@ -77,8 +82,7 @@ export function filtersFromSearchParams(params: {
   if (Number.isInteger(categoryId) && categoryId > 0) next.categoryId = categoryId;
   const ruleId = Number(params.rule);
   if (Number.isInteger(ruleId) && ruleId > 0) next.ruleId = ruleId;
-  const tf = params.timeFilter as TimeFilter | undefined;
-  if (tf) next.timeFilter = tf;
+  if (isTimeFilter(params.timeFilter)) next.timeFilter = params.timeFilter;
   if (params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)) {
     next.specificDate = params.date;
   }

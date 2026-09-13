@@ -75,18 +75,19 @@ describe("Accounts tab root", () => {
 });
 
 describe("Spending Limits under More", () => {
-  it("lists Reports under Insights, not Setup", () => {
-    expect(moreSource).toMatch(/SectionHeader title="Insights"/);
+  it("lists Reports under Insights & setup, not as a tab", () => {
+    expect(moreSource).toMatch(/SectionHeader title="Insights & setup"/);
     const insightsBlock = moreSource.slice(
-      moreSource.indexOf("const INSIGHTS_LINKS"),
-      moreSource.indexOf("const SETUP_LINKS")
+      moreSource.indexOf("const INSIGHTS_SETUP_LINKS"),
+      moreSource.indexOf("const ACCOUNT_LINKS")
     );
-    const setupBlock = moreSource.slice(
-      moreSource.indexOf("const SETUP_LINKS"),
-      moreSource.indexOf("export function MoreScreen")
+    const moneyBlock = moreSource.slice(
+      moreSource.indexOf("const MONEY_LINKS"),
+      moreSource.indexOf("const PLANNING_LINKS")
     );
     expect(insightsBlock).toMatch(/title: "Reports"/);
-    expect(setupBlock).not.toMatch(/title: "Reports"/);
+    expect(insightsBlock).toMatch(/title: "Categories"/);
+    expect(moneyBlock).not.toMatch(/title: "Reports"/);
   });
 
   it("lists Spending Limits in Planning (not as a tab)", () => {
@@ -110,41 +111,40 @@ describe("Spending Limits under More", () => {
   });
 });
 
-describe("FlowSight web shortcut on More", () => {
-  it("adds a FlowSight section after Setup and before log out", () => {
-    expect(moreSource).toMatch(/SectionHeader title="Planning"/);
+describe("Account shortcuts on More", () => {
+  it("adds Send feedback and FlowSight on the web after Profile, before log out", () => {
     expect(moreSource).toMatch(/SectionHeader title="Money tools"/);
-    expect(moreSource).toMatch(/SectionHeader title="Insights"/);
-    expect(moreSource).toMatch(/SectionHeader title="Setup"/);
-    expect(moreSource).toMatch(/SectionHeader title="FlowSight"/);
+    expect(moreSource).toMatch(/SectionHeader title="Planning"/);
+    expect(moreSource).toMatch(/SectionHeader title="Insights & setup"/);
+    expect(moreSource).toMatch(/SectionHeader title="Account"/);
     expect(moreSource).toMatch(/title="Send feedback"/);
     expect(moreSource).toMatch(/openFeedback/);
     expect(moreSource).toMatch(/title="FlowSight on the web"/);
     expect(moreSource).toMatch(/Open full web app/);
     expect(moreSource).toMatch(/Linking\.openURL\(APP_WEB_URL\)/);
-    expect(APP_WEB_URL).toBe("https://flowsight.com");
+    expect(APP_WEB_URL).toBe("https://flowsight360.com");
     expect(moreSource).toMatch(/FlowSight on the web, \$\{APP_WEB_HOST\}/);
-    const setupIdx = moreSource.indexOf('SectionHeader title="Setup"');
-    const flowIdx = moreSource.indexOf('SectionHeader title="FlowSight"');
+    const moneyIdx = moreSource.indexOf('SectionHeader title="Money tools"');
+    const accountIdx = moreSource.indexOf('SectionHeader title="Account"');
     const logoutIdx = moreSource.indexOf('label="Log out"');
     const planningIdx = moreSource.indexOf('SectionHeader title="Planning"');
-    expect(setupIdx).toBeGreaterThan(planningIdx);
-    expect(flowIdx).toBeGreaterThan(setupIdx);
-    expect(logoutIdx).toBeGreaterThan(flowIdx);
+    expect(planningIdx).toBeGreaterThan(moneyIdx);
+    expect(accountIdx).toBeGreaterThan(planningIdx);
+    expect(logoutIdx).toBeGreaterThan(accountIdx);
   });
 
   it("does not put the web shortcut inside feature categories", () => {
     const planningBlock = moreSource.slice(
       moreSource.indexOf("const PLANNING_LINKS"),
-      moreSource.indexOf("const MONEY_LINKS")
+      moreSource.indexOf("const INSIGHTS_SETUP_LINKS")
     );
     const moneyBlock = moreSource.slice(
       moreSource.indexOf("const MONEY_LINKS"),
-      moreSource.indexOf("const INSIGHTS_LINKS")
+      moreSource.indexOf("const PLANNING_LINKS")
     );
     const insightsBlock = moreSource.slice(
-      moreSource.indexOf("const INSIGHTS_LINKS"),
-      moreSource.indexOf("const SETUP_LINKS")
+      moreSource.indexOf("const INSIGHTS_SETUP_LINKS"),
+      moreSource.indexOf("const ACCOUNT_LINKS")
     );
     expect(planningBlock).not.toMatch(/FlowSight on the web/);
     expect(moneyBlock).not.toMatch(/FlowSight on the web/);

@@ -1,11 +1,21 @@
 """Production HTTPS, host, and CORS policy helpers.
 
-HSTS preload is intentionally off until flowsight.com and every required
+HSTS preload is intentionally off until flowsight360.com and every required
 subdomain are confirmed HTTPS-only.
 """
 
-PRODUCTION_WEB_HOSTS = ("flowsight.com", "www.flowsight.com")
-PRODUCTION_WEB_ORIGINS = ("https://flowsight.com", "https://www.flowsight.com")
+PRODUCTION_WEB_HOSTS = (
+    "flowsight360.com",
+    "www.flowsight360.com",
+    "flowsight.com",
+    "www.flowsight.com",
+)
+PRODUCTION_WEB_ORIGINS = (
+    "https://flowsight360.com",
+    "https://www.flowsight360.com",
+    "https://flowsight.com",
+    "https://www.flowsight.com",
+)
 
 
 def production_https_settings(*, debug: bool, ssl_redirect: bool = True) -> dict:

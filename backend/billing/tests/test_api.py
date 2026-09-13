@@ -115,6 +115,18 @@ def test_checkout_unverified_does_not_create_stripe_customer(authenticated_clien
 
 
 @pytest.mark.django_db
+def test_checkout_unexpected_error_returns_json_503(authenticated_client, user):
+    _verified(user)
+    with patch(
+        "billing.views.create_premium_checkout_session",
+        side_effect=RuntimeError("stripe boom"),
+    ):
+        r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Billing is temporarily unavailable. Please try again later."
+
+
+@pytest.mark.django_db
 def test_checkout_fails_safely_without_stripe_config(authenticated_client, user):
     _verified(user)
     r = authenticated_client.post("/api/billing/create-checkout-session/", {}, format="json")

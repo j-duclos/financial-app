@@ -98,7 +98,8 @@ describe("Profile & Settings screen", () => {
   });
 
   it("preserves subscription, forecast entitlement, and utilization editing", () => {
-    expect(screenSource).toMatch(/Subscription/);
+    expect(screenSource).toMatch(/PREMIUM_SHEET_TITLE|Subscription/);
+    expect(screenSource).toMatch(/createPortalSession|startPortal/);
     expect(screenSource).toMatch(/Default forecast window/);
     expect(screenSource).toMatch(/updateProfile/);
     expect(screenSource).toMatch(/default_forecast_days/);
@@ -171,8 +172,8 @@ describe("Profile & Settings screen", () => {
   });
 
   it("shows a Website row in About that opens the FlowSight web app", () => {
-    expect(APP_WEB_URL).toBe("https://flowsight.com");
-    expect(APP_WEB_HOST).toBe("flowsight.com");
+    expect(APP_WEB_URL).toBe("https://flowsight360.com");
+    expect(APP_WEB_HOST).toBe("flowsight360.com");
     expect(screenSource).toMatch(/SectionHeader title="Help"/);
     expect(screenSource).toMatch(/title="Send feedback"/);
     expect(screenSource).toMatch(/openFeedback/);

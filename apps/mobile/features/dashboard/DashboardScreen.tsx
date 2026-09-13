@@ -26,6 +26,7 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { useAuth } from "@/features/auth";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
@@ -74,7 +75,7 @@ export function DashboardScreen() {
   });
   const [helpTopic, setHelpTopic] = useState<GettingStartedHelpTopic | null>(null);
   const { billing } = useBillingStatus();
-  const { startUpgrade } = usePremiumUpgrade();
+  const { promptUpgrade } = usePremiumUpgrade();
   const isPremium = canUsePlaidBankSync(billing);
   const missingAccounts = isMissingAccounts(onboarding);
   const loadDashboard = forecastReady && (onboardingError || onboarding?.steps.account === true);
@@ -425,7 +426,7 @@ export function DashboardScreen() {
         <DashboardFirstRun
           isPremium={isPremium}
           onAddAccount={() => router.push("/account/new")}
-          onUpgrade={() => void startUpgrade()}
+          onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.bankSync)}
         />
         {educationLayers}
       </Screen>

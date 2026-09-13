@@ -8,8 +8,7 @@ import {
 } from "@budget-app/shared";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
-
-const RECURRING_LIMIT_TITLE = "Recurring limit reached";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 
 /**
  * Free/Premium recurring-rule quota from cached billing status.
@@ -27,9 +26,9 @@ export function useRecurringPlanLimit() {
 
   const interceptIfLimited = useCallback(() => {
     if (!limited) return false;
-    promptUpgrade(RECURRING_LIMIT_TITLE, recurringRulesLimitReachedMessage(billing));
+    promptUpgrade(PREMIUM_UPGRADE_CONTEXT.recurring);
     return true;
-  }, [billing, limited, promptUpgrade]);
+  }, [limited, promptUpgrade]);
 
   return {
     billing,
@@ -40,6 +39,7 @@ export function useRecurringPlanLimit() {
     usageLabel,
     limitReachedMessage,
     interceptIfLimited,
+    promptUpgrade,
     startUpgrade,
   };
 }

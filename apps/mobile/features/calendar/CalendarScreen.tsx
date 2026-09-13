@@ -19,6 +19,7 @@ import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { transactionsForForecastRiskPath } from "@/features/payment-planner/navigation";
+import { automationEditHref } from "@/features/recurring/navigation";
 import { CalendarMonthGrid } from "./CalendarMonthGrid";
 import { CalendarDaySummary } from "./CalendarDaySummary";
 import { CalendarFiltersSheet } from "./CalendarFiltersSheet";
@@ -237,14 +238,14 @@ export function CalendarScreen() {
           });
           router.push(`/transaction/${result.transaction_id}` as Href);
         } catch {
-          router.push(`/recurring/${plan.ruleId}` as Href);
+          router.push(automationEditHref(plan.ruleId));
         } finally {
           setResolvingId(null);
         }
         return;
       }
       if (plan?.kind === "recurring") {
-        router.push(`/recurring/${plan.ruleId}` as Href);
+        router.push(automationEditHref(plan.ruleId));
       }
     },
     [router]

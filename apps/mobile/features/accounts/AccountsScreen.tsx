@@ -15,13 +15,16 @@ import { useTheme } from "@/theme";
 import { groupAccountsByType } from "@/lib/accountGroups";
 import {
   atPlanLimit,
-  manualAccountLimitReachedMessage,
   manualAccountUsageLabel,
-  PLAID_PREMIUM_MESSAGE,
 } from "@budget-app/shared";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import {
+  ACCOUNTS_BANK_SYNC_TEASER,
+  ACCOUNTS_LIMIT_TEASER,
+  PREMIUM_UPGRADE_CONTEXT,
+} from "@/features/billing";
 import { describeApiError } from "@/services/api";
 import { useAccountsList } from "./useAccountsList";
 import { AccountRow } from "./AccountRow";
@@ -80,11 +83,11 @@ export function AccountsScreen() {
 
   const onAddAccount = useCallback(() => {
     if (accountsLimited) {
-      promptUpgrade("Account limit reached", manualAccountLimitReachedMessage(billing));
+      promptUpgrade(PREMIUM_UPGRADE_CONTEXT.accounts);
       return;
     }
     router.push("/account/new");
-  }, [accountsLimited, billing, promptUpgrade, router]);
+  }, [accountsLimited, promptUpgrade, router]);
 
   return (
     <Screen
@@ -122,15 +125,26 @@ export function AccountsScreen() {
         </Text>
       ) : null}
       {!isPremium ? (
-        <Text
-          style={{
-            color: theme.colors.textMuted,
-            ...theme.typography.caption,
-            marginTop: usageLabel ? 4 : theme.spacing.sm,
-          }}
+        <Pressable
+          onPress={() =>
+            promptUpgrade(
+              accountsLimited ? PREMIUM_UPGRADE_CONTEXT.accounts : PREMIUM_UPGRADE_CONTEXT.bankSync
+            )
+          }
+          accessibilityRole="button"
+          accessibilityLabel={accountsLimited ? ACCOUNTS_LIMIT_TEASER : ACCOUNTS_BANK_SYNC_TEASER}
         >
-          {PLAID_PREMIUM_MESSAGE}
-        </Text>
+          <Text
+            style={{
+              color: theme.colors.tint,
+              ...theme.typography.caption,
+              marginTop: usageLabel ? 4 : theme.spacing.sm,
+              fontWeight: "600",
+            }}
+          >
+            {accountsLimited ? ACCOUNTS_LIMIT_TEASER : ACCOUNTS_BANK_SYNC_TEASER}
+          </Text>
+        </Pressable>
       ) : null}
 
       {attentionFilterActive ? (

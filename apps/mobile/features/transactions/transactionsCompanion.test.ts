@@ -7,12 +7,14 @@ import {
   MATCH_BANK_TRANSACTION_LABEL,
   MATCH_IMPORTED_TRANSACTION_LABEL,
   clampForecastDaysForPlan,
+  forecastPickerRows,
   isForecastDaysAllowed,
   transactionSourceDisplayLabel,
 } from "@budget-app/shared";
 import { TRANSACTIONS_LEDGER_PAGE_SIZE } from "./types";
 import { needsTimelineProjection } from "./timelineProjection";
 import { DEFAULT_TRANSACTION_FILTERS } from "./types";
+import { RECENT_RANGE_OPTIONS, TIME_FILTER_LABELS } from "@/lib/transactionsLedger";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const mobileRoot = join(dir, "../..");
@@ -172,12 +174,40 @@ describe("mobile Transactions entitlements", () => {
     expect(formSource).not.toMatch(/is_premium/);
   });
 
+  it("does not mark historical ranges Premium", () => {
+    expect(RECENT_RANGE_OPTIONS).toEqual(["30d", "90d", "12m", "all"]);
+    expect(filtersSource).toMatch(/History range/);
+    expect(filtersSource).toMatch(/RECENT_RANGE_OPTIONS/);
+    expect(filtersSource).not.toMatch(/Premium/);
+    expect(TIME_FILTER_LABELS.all).toBe("All history");
+  });
+
   it("reuses the shared plan-aware forecast window", () => {
     expect(listSource).toMatch(/usePageForecastWindow/);
     expect(listSource).toMatch(/ForecastWindowOptionList/);
+    expect(isForecastDaysAllowed(90, freeBilling)).toBe(true);
+    expect(isForecastDaysAllowed(180, freeBilling)).toBe(false);
     expect(isForecastDaysAllowed(365, freeBilling)).toBe(false);
     expect(clampForecastDaysForPlan(365, freeBilling)).toBe(90);
+    expect(isForecastDaysAllowed(180, premiumBilling)).toBe(true);
     expect(isForecastDaysAllowed(365, premiumBilling)).toBe(true);
+  });
+
+  it("opens the shared upgrade flow when Free taps a Premium forecast window", () => {
+    const forecastSelect = read("features/dashboard/ForecastWindowSelect.tsx");
+    const freeRows = forecastPickerRows(freeBilling);
+    expect(freeRows.map((row) => [row.days, row.locked])).toEqual([
+      [30, false],
+      [60, false],
+      [90, false],
+      [180, true],
+      [365, true],
+    ]);
+    expect(forecastSelect).toMatch(/promptUpgrade/);
+    expect(forecastSelect).toMatch(/PREMIUM_UPGRADE_CONTEXT\.forecast/);
+    expect(forecastSelect).toMatch(/if \(row\.locked\)/);
+    expect(listSource).toMatch(/ForecastWindowOptionList/);
+    expect(forecastPickerRows(premiumBilling).every((row) => !row.locked)).toBe(true);
   });
 
   it("does not client-filter imported historical rows by plan", () => {

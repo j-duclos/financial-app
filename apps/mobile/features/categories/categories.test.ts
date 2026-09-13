@@ -30,7 +30,6 @@ const transactionFormSource = readFileSync(
   join(dir, "../transactions/TransactionFormScreen.tsx"),
   "utf8"
 );
-const recurringFormSource = readFileSync(join(dir, "../recurring/RecurringFormScreen.tsx"), "utf8");
 const spendingLimitFormSource = readFileSync(
   join(dir, "../budget/SpendingLimitFormScreen.tsx"),
   "utf8"
@@ -151,9 +150,8 @@ describe("Category query keys and invalidation", () => {
 });
 
 describe("Shared category picker reuse", () => {
-  it("Transactions, Recurring, Spending Limits, What-If, and Automation use useCategoryOptions", () => {
+  it("Transactions, Spending Limits, What-If, and Automation use useCategoryOptions", () => {
     expect(transactionFormSource).toMatch(/useCategoryOptions/);
-    expect(recurringFormSource).toMatch(/useCategoryOptions/);
     expect(spendingLimitFormSource).toMatch(/useCategoryOptions/);
     expect(whatIfDataSource).toMatch(/useCategoryOptions/);
     expect(whatIfDataSource).not.toMatch(/what-if-categories/);
@@ -168,9 +166,8 @@ describe("Shared category picker reuse", () => {
 
   it("transaction category pickers use the shared preferred-order helper, not per-screen alpha sorts", () => {
     expect(transactionFormSource).toMatch(/buildCategoryPickerOptions|sortCategoriesForPicker/);
-    expect(recurringFormSource).toMatch(/sortCategoriesForPicker/);
     expect(automationFormSource).toMatch(/sortCategoriesForPicker/);
     expect(transactionFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
-    expect(recurringFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
+    expect(automationFormSource).not.toMatch(/a\.name\.localeCompare\(b\.name\)/);
   });
 });

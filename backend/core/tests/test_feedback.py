@@ -186,8 +186,8 @@ def test_feedback_rate_limit(authenticated_client):
 def test_feedback_email_uses_env_fallback(settings):
     settings.FEEDBACK_EMAIL_TO = ""
     assert get_feedback_email_to() == "feedback@example.com"
-    settings.FEEDBACK_EMAIL_TO = "  feedback@flowsight.com "
-    assert get_feedback_email_to() == "feedback@flowsight.com"
+    settings.FEEDBACK_EMAIL_TO = "  feedback@flowsight360.com "
+    assert get_feedback_email_to() == "feedback@flowsight360.com"
 
 
 def test_sanitize_feedback_message_caps_and_strips_controls():

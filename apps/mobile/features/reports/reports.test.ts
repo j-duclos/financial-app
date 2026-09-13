@@ -215,17 +215,17 @@ describe("Reports information architecture", () => {
   it("keeps Reports under More, not as a primary tab destination invent", () => {
     expect(moreScreen).toMatch(/title: "Reports"/);
     expect(moreScreen).toMatch(/href: "\/reports"/);
-    expect(moreScreen).toMatch(/SectionHeader title="Insights"/);
+    expect(moreScreen).toMatch(/SectionHeader title="Insights & setup"/);
     const insightsBlock = moreScreen.slice(
-      moreScreen.indexOf("const INSIGHTS_LINKS"),
-      moreScreen.indexOf("const SETUP_LINKS")
+      moreScreen.indexOf("const INSIGHTS_SETUP_LINKS"),
+      moreScreen.indexOf("const ACCOUNT_LINKS")
     );
-    const setupBlock = moreScreen.slice(
-      moreScreen.indexOf("const SETUP_LINKS"),
-      moreScreen.indexOf("export function MoreScreen")
+    const moneyBlock = moreScreen.slice(
+      moreScreen.indexOf("const MONEY_LINKS"),
+      moreScreen.indexOf("const PLANNING_LINKS")
     );
     expect(insightsBlock).toMatch(/title: "Reports"/);
-    expect(setupBlock).not.toMatch(/title: "Reports"/);
+    expect(moneyBlock).not.toMatch(/title: "Reports"/);
   });
 
   it("places the filter icon in AppHeader.right, not a standalone toolbar row", () => {
@@ -244,8 +244,7 @@ describe("Reports information architecture", () => {
 
   it("locks Cash Flow and 6/12/24 history for Free; requests basic history only", () => {
     expect(reportsScreen).toMatch(/canUseReportsAdvanced|reportsAdvanced/);
-    expect(reportsScreen).toMatch(/promptUpgrade/);
-    expect(reportsScreen).toMatch(/REPORTS_ADVANCED_CASH_FLOW_MESSAGE/);
+    expect(reportsScreen).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.reports\)/);
     expect(reportsScreen).toMatch(/Premium/);
     expect(reportDetail).toMatch(/reportsAdvanced/);
     expect(reportDetail).toMatch(/showFundingHistory=\{reportsAdvanced\}/);

@@ -84,6 +84,8 @@ import {
   forecastRangeLabel,
   daysToForecastRange,
   forecastRangeToDays,
+  flattenLedgerHistoryPages,
+  isUnboundedHistoryFilter,
   type TimeFilter,
   type ForecastRange,
 } from "../components/transactions/transactionsLedgerUtils";
@@ -242,6 +244,8 @@ export default function Transactions() {
    * pastRangeStart alone is wrong after reconcile — it would over-fetch rows the ledger discards.
    */
   const historyDateAfter = pastTransactionsDateAfter;
+  const unboundedHistory = isUnboundedHistoryFilter(timeFilter);
+  const historyOrdering = unboundedHistory ? "-date,-id" : "date,id";
   const upcomingRange = useMemo(
     () => ledgerProjectionRange(todayStr(), forecastRange),
     [forecastRange]
@@ -259,11 +263,15 @@ export default function Transactions() {
       {
         account: accountId || undefined,
         category: hasUrlCategory ? urlCategoryId : undefined,
-        date_after: historyDateAfter,
+        ...(historyDateAfter ? { date_after: historyDateAfter } : {}),
         date_before: pastRangeEnd,
         showReconciled,
+        ordering: historyOrdering,
         ...(showReconciled
-          ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart }
+          ? {
+              historyRange: timeFilter,
+              ...(pastRangeStart ? { include_reconciled_after: pastRangeStart } : {}),
+            }
           : {}),
       },
     ],
@@ -272,17 +280,19 @@ export default function Transactions() {
         ...(accountId
           ? {
               account: accountId as number,
-              date_after: historyDateAfter,
+              date_after: historyDateAfter || undefined,
               date_before: pastRangeEnd,
               page: pageParam,
               page_size: WEB_LEDGER_PAGE_SIZE,
-              ordering: "date,id",
+              ordering: historyOrdering,
               include_running_balance: true,
               ...(hasUrlCategory ? { category: urlCategoryId } : {}),
               ...(showReconciled
                 ? {
                     show_reconciled: true,
-                    include_reconciled_after: pastRangeStart,
+                    ...(pastRangeStart
+                      ? { include_reconciled_after: pastRangeStart }
+                      : {}),
                   }
                 : { reconciled: false }),
             }
@@ -402,8 +412,8 @@ export default function Transactions() {
   });
 
   const transactions = useMemo(
-    () => txnsData?.pages.flatMap((p) => p.results) ?? [],
-    [txnsData?.pages]
+    () => flattenLedgerHistoryPages(txnsData?.pages, unboundedHistory),
+    [txnsData?.pages, unboundedHistory]
   );
   const hasUserTransactions =
     transactions.length > 0 || (ledgerTimelineData?.timeline?.length ?? 0) > 0;
@@ -1056,11 +1066,15 @@ export default function Transactions() {
         {
           account: accountId || undefined,
           category: hasUrlCategory ? urlCategoryId : undefined,
-          date_after: historyDateAfter,
+          ...(historyDateAfter ? { date_after: historyDateAfter } : {}),
           date_before: pastRangeEnd,
           showReconciled,
+          ordering: historyOrdering,
           ...(showReconciled
-            ? { historyRange: timeFilter, include_reconciled_after: pastRangeStart }
+            ? {
+                historyRange: timeFilter,
+                ...(pastRangeStart ? { include_reconciled_after: pastRangeStart } : {}),
+              }
             : {}),
         },
       ] as const,
@@ -1071,6 +1085,7 @@ export default function Transactions() {
       historyDateAfter,
       pastRangeEnd,
       pastRangeStart,
+      historyOrdering,
       showReconciled,
       timeFilter,
     ]
@@ -1841,7 +1856,6 @@ export default function Transactions() {
           )}
 
         <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-wrap sm:items-end">
-          {showReconciled && (
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
             <label className="block text-xs font-medium text-gray-500 mb-0.5">History Range</label>
             <select
@@ -1857,9 +1871,9 @@ export default function Transactions() {
               <option value="18m">18 months</option>
               <option value="24m">24 months</option>
               <option value="36m">36 months</option>
+              <option value="all">All history</option>
             </select>
           </div>
-          )}
           <div className="w-full sm:w-auto sm:min-w-[8rem]">
             <label className="block text-xs font-medium text-gray-500 mb-0.5">Forecast Window</label>
             <select

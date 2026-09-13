@@ -25,11 +25,19 @@ describe("premium upgrade email verification", () => {
     expect(isEmailVerificationRequiredError(new ApiError(402, "Payment required", {}))).toBe(false);
   });
 
+  it("does not surface HTML 500 bodies in the Upgrade alert", () => {
+    expect(hookSource).toMatch(/error\.status >= 500/);
+    expect(hookSource).toMatch(/BILLING_UNAVAILABLE_MESSAGE/);
+    expect(hookSource).toMatch(/<!doctype html/);
+  });
+
   it("offers resend verification instead of OK-only", () => {
+    expect(hookSource).toMatch(/createCheckoutSession/);
+    expect(hookSource).toMatch(/createPortalSession/);
     expect(hookSource).toMatch(/resendVerification/);
     expect(hookSource).toMatch(/EMAIL_VERIFY_BEFORE_UPGRADE_TITLE/);
     expect(hookSource).toMatch(/RESEND_VERIFICATION_EMAIL_LABEL/);
-    expect(hookSource).toMatch(/Not now/);
+    expect(hookSource).toMatch(/Not now|PREMIUM_NOT_NOW_LABEL/);
     expect(hookSource).toMatch(/isEmailVerificationRequiredError\(err\)[\s\S]*?return;/);
     expect(hookSource).toMatch(/onPress: \(\) => void resendVerificationEmail\(\)/);
     expect(EMAIL_VERIFY_BEFORE_UPGRADE_TITLE).toBe("Verify your email");

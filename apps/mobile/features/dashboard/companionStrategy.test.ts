@@ -45,7 +45,7 @@ describe("mobile companion navigation", () => {
 describe("deferred Recurring entitlement UX", () => {
   it("still offers unlimited-looking create actions; backend remains the guard", () => {
     const recurring = read("features/recurring/RecurringListScreen.tsx");
-    expect(recurring).toMatch(/Add recurring/);
+    expect(recurring).toMatch(/Create automation/);
     expect(recurring).not.toMatch(/atPlanLimit/);
   });
 });

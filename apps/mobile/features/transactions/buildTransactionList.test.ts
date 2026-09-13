@@ -219,4 +219,23 @@ describe("buildTransactionListRows", () => {
     expect(upcoming && upcoming.kind === "upcoming" ? upcoming.row.transaction_id : null).toBe(99);
     expect(upcoming && upcoming.kind === "upcoming" ? upcoming.runningBalance : null).toBe("50.00");
   });
+
+  it("inserts Load older when unbounded history still has pages", () => {
+    const rows = buildTransactionListRows({
+      upcoming: [],
+      pending: [],
+      history: [txn({ id: 1, payee: "Coffee", amount: "-4.00", date: "2026-01-01" })],
+      balanceMap: new Map(),
+      filters: DEFAULT_TRANSACTION_FILTERS,
+      today: "2026-09-01",
+      recentRangeLabel: "All history",
+      hasMoreHistory: true,
+      isLoadingMoreHistory: false,
+    });
+    const loadOlder = rows.find((r) => r.kind === "loadOlder");
+    expect(loadOlder && loadOlder.kind === "loadOlder" ? loadOlder.loading : null).toBe(false);
+    expect(rows.findIndex((r) => r.kind === "loadOlder")).toBeLessThan(
+      rows.findIndex((r) => r.kind === "history")
+    );
+  });
 });

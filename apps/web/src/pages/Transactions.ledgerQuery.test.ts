@@ -49,8 +49,17 @@ describe("Transactions ledger history query", () => {
     expect(source).toMatch(/reconcileSetupData\?\.min_start_date/);
   });
 
-  it("requests canonical running balances in ascending ledger order", () => {
-    expect(source).toMatch(/ordering: "date,id"/);
+  it("requests canonical running balances in ledger order", () => {
+    expect(source).toMatch(/ordering: historyOrdering/);
+    expect(source).toMatch(/"-date,-id" : "date,id"/);
     expect(source).toMatch(/include_running_balance: true/);
+  });
+
+  it("offers All history without Premium gating and paginates newest-first", () => {
+    expect(source).toMatch(/<option value="all">All history<\/option>/);
+    expect(source).toMatch(/isUnboundedHistoryFilter/);
+    expect(source).toMatch(/flattenLedgerHistoryPages/);
+    expect(source).toMatch(/ordering: historyOrdering/);
+    expect(source).not.toMatch(/All history[\s\S]{0,80}Premium/);
   });
 });

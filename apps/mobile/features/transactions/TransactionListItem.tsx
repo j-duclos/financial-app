@@ -11,6 +11,7 @@ type Props = {
   onPressRow: (item: TransactionListRow) => void;
   onPressRecentRange?: () => void;
   onPressUpcomingRange?: () => void;
+  onPressLoadOlder?: () => void;
   focusHighlight?: boolean;
 };
 
@@ -19,6 +20,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   onPressRow,
   onPressRecentRange,
   onPressUpcomingRange,
+  onPressLoadOlder,
   focusHighlight,
 }: Props) {
   const theme = useTheme();
@@ -84,6 +86,32 @@ export const TransactionListItem = memo(function TransactionListItem({
       >
         {item.text}
       </Text>
+    );
+  }
+  if (item.kind === "loadOlder") {
+    return (
+      <Pressable
+        onPress={onPressLoadOlder}
+        disabled={item.loading || !onPressLoadOlder}
+        accessibilityRole="button"
+        accessibilityLabel="Load older transactions"
+        style={{
+          minHeight: theme.touchTarget,
+          marginHorizontal: theme.spacing.lg,
+          marginVertical: theme.spacing.sm,
+          borderRadius: theme.radius.md,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surfaceMuted,
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: item.loading ? 0.7 : 1,
+        }}
+      >
+        <Text style={{ color: theme.colors.tint, ...theme.typography.caption }}>
+          {item.loading ? "Loading older transactions…" : "Load older transactions"}
+        </Text>
+      </Pressable>
     );
   }
   if (item.kind === "upcoming") {

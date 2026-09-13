@@ -9,7 +9,7 @@ export const GETTING_STARTED_EXPLORE_ROUTE = "/(app)/(tabs)/more";
 export const GETTING_STARTED_ROUTES: Record<GettingStartedStepId, string> = {
   account: "/account/new",
   upcoming_transaction: `/transaction/new?source=${CALENDAR_ONBOARDING_SOURCE}&mode=${ONBOARDING_FUTURE_TRANSACTION_MODE}`,
-  recurring: `/recurring/new?source=${CALENDAR_ONBOARDING_SOURCE}`,
+  recurring: `/automation/new?source=${CALENDAR_ONBOARDING_SOURCE}`,
   calendar: `/(app)/(tabs)/calendar?source=${CALENDAR_ONBOARDING_SOURCE}`,
 };
 

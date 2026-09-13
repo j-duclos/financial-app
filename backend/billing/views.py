@@ -56,6 +56,12 @@ class CreateCheckoutSessionView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except BillingConfigurationError as exc:
             return _billing_error_response(exc)
+        except Exception:
+            logger.exception("create-checkout-session failed")
+            return Response(
+                {"detail": "Billing is temporarily unavailable. Please try again later."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(payload, status=status.HTTP_200_OK)
 
 

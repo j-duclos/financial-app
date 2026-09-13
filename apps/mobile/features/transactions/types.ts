@@ -1,4 +1,4 @@
-import type { TimeFilter } from "@/lib/transactionsLedger";
+import { DEFAULT_TIME_FILTER, type TimeFilter } from "@/lib/transactionsLedger";
 
 export type TransactionFlowFilter = "all" | "income" | "expense" | "transfer";
 export type TransactionClearedFilter = "all" | "cleared" | "pending";
@@ -27,17 +27,20 @@ export type TransactionFilters = {
 /** First-page size for mobile transaction list and Attention prefetch (same query key). */
 export const TRANSACTIONS_LIST_PAGE_SIZE = 15;
 
-/** Bounded Recent ledger page — large enough for a typical 14–90 day window in one request. */
+/** Bounded Recent ledger page. Longer / all-history windows paginate instead of growing this. */
 export const TRANSACTIONS_LEDGER_PAGE_SIZE = 500;
 
 /** Ascending ledger order matching backend running-balance walk (date, then id). */
 export const TRANSACTIONS_LEDGER_ORDERING = "date,id";
 
+/** Newest-first fetch so unbounded history first-page stays adjacent to Pending. */
+export const TRANSACTIONS_LEDGER_ORDERING_NEWEST_FIRST = "-date,-id";
+
 export const DEFAULT_TRANSACTION_FILTERS: TransactionFilters = {
   accountId: null,
   categoryId: null,
   ruleId: null,
-  timeFilter: "14d",
+  timeFilter: DEFAULT_TIME_FILTER,
   specificDate: null,
   dateFrom: null,
   dateTo: null,
@@ -61,7 +64,7 @@ export function countActiveTransactionFilters(filters: TransactionFilters): numb
   if (filters.ruleId != null) n += 1;
   if (filters.specificDate) n += 1;
   else if (filters.dateFrom || filters.dateTo) n += 1;
-  else if (filters.timeFilter !== "14d") n += 1;
+  else if (filters.timeFilter !== DEFAULT_TIME_FILTER) n += 1;
   if (filters.showReconciled) n += 1;
   if (filters.flow !== "all") n += 1;
   if (filters.forecast !== "all") n += 1;

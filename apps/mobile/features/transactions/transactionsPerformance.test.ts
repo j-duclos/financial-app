@@ -90,6 +90,16 @@ describe("Transactions request orchestration", () => {
     expect(transactionsScreen).toMatch(/displayQuerySettled/);
   });
 
+  it("paginates unbounded history via Load older instead of draining pages", () => {
+    expect(transactionsData).toMatch(/flattenLedgerHistoryPages/);
+    expect(transactionsData).toMatch(/newestFirstHistory/);
+    expect(transactionsData).toMatch(/TRANSACTIONS_LEDGER_ORDERING_NEWEST_FIRST/);
+    expect(transactionsData).not.toMatch(/while \(.*hasNextPage.*fetchNextPage/s);
+    expect(transactionsScreen).toMatch(/onPressLoadOlder/);
+    expect(transactionsScreen).toMatch(/if \(newestFirstHistory\) return/);
+    expect(previewSource).not.toMatch(/page_size: 2000/);
+  });
+
   it("refetches active independent queries concurrently", () => {
     expect(transactionsData).toMatch(/Promise\.all/);
     expect(transactionsData).toMatch(

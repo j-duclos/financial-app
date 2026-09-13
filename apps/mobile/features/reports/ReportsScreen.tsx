@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useRouter } from "expo-router";
-import { currentMonthStr, formatCurrency, REPORTS_ADVANCED_CASH_FLOW_MESSAGE } from "@budget-app/shared";
+import { currentMonthStr, formatCurrency } from "@budget-app/shared";
 import {
   AppHeader,
   Card,
@@ -17,6 +17,7 @@ import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { ReportFiltersSheet } from "./ReportFiltersSheet";
 import { formatMonthLabel, formatSignedAmount, parseOptionalAmount } from "./reportDisplay";
 import { reportDetailPath } from "./navigation";
@@ -224,7 +225,7 @@ export function ReportsScreen() {
                 key={card.id}
                 onPress={() => {
                   if (cashFlowLocked) {
-                    promptUpgrade("Cash Flow", REPORTS_ADVANCED_CASH_FLOW_MESSAGE);
+                    promptUpgrade(PREMIUM_UPGRADE_CONTEXT.reports);
                     return;
                   }
                   router.push(reportDetailPath(card.id, activeFilters));

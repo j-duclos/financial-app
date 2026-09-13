@@ -120,7 +120,7 @@ export function canOpenRecurringRuleDetail(txn: Transaction): boolean {
 }
 
 export function recurringRuleDetailPath(ruleId: number): Href {
-  return `/recurring/${ruleId}` as Href;
+  return `/automation/edit/${ruleId}` as Href;
 }
 
 export function canOpenLinkedTransactionDetail(txn: Transaction): boolean {

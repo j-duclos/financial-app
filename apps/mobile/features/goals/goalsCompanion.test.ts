@@ -63,9 +63,8 @@ describe("mobile Goals Free/Premium goal-limit UX", () => {
   });
 
   it("FREE at limit: + does not navigate and shows the upgrade prompt", () => {
-    expect(hookSource).toMatch(/promptUpgrade\(GOAL_LIMIT_TITLE/);
-    expect(hookSource).toMatch(/goalLimitReachedMessage\(billing\)/);
-    expect(hookSource).toMatch(/You've reached the Free plan limit|goalLimitReachedMessage/);
+    expect(hookSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.goals\)/);
+    expect(hookSource).toMatch(/goalLimitReachedMessage/);
     expect(goalsScreenSource).toMatch(/onPress=\{onCreateGoal\}/);
     expect(goalsScreenSource).toMatch(/onAction=\{onCreateGoal\}/);
     expect(goalsScreenSource).not.toMatch(
@@ -78,7 +77,7 @@ describe("mobile Goals Free/Premium goal-limit UX", () => {
     expect(goalFormSource).toMatch(/if \(!isEdit && goalsLimited\) return/);
     expect(goalFormSource).toMatch(/Goal limit reached/);
     expect(goalFormSource).toMatch(/UPGRADE_TO_PREMIUM_LABEL/);
-    expect(goalFormSource).toMatch(/startUpgrade/);
+    expect(goalFormSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.goals\)/);
     expect(goalFormSource).toMatch(/createBucket/);
     const mutationFn = goalFormSource.slice(
       goalFormSource.indexOf("mutationFn: async"),

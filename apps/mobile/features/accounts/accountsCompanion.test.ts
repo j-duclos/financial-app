@@ -37,8 +37,9 @@ describe("mobile Accounts list companion UX", () => {
   it("preserves Free manual-account limit interception and Premium unlimited usage", () => {
     expect(accountsSource).toMatch(/atPlanLimit\(billing, "manual_accounts"\)/);
     expect(accountsSource).toMatch(/manualAccountUsageLabel/);
-    expect(accountsSource).toMatch(/manualAccountLimitReachedMessage/);
-    expect(accountsSource).toMatch(/PLAID_PREMIUM_MESSAGE/);
+    expect(accountsSource).toMatch(/ACCOUNTS_BANK_SYNC_TEASER/);
+    expect(accountsSource).toMatch(/ACCOUNTS_LIMIT_TEASER/);
+    expect(accountsSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.accounts\)/);
     expect(accountsSource).toMatch(/isPremium/);
     expect(accountsSource).toMatch(/No accounts yet/);
     expect(accountsSource).toMatch(/Add your first account to start tracking balances and transactions/);

@@ -46,10 +46,10 @@ const timelineRow = (
   });
 
 describe("Recent historical defaults", () => {
-  it("defaults Recent to 14 days", () => {
-    expect(DEFAULT_TIME_FILTER).toBe("14d");
-    expect(DEFAULT_TRANSACTION_FILTERS.timeFilter).toBe("14d");
-    const range = pastTransactionsRange("14d");
+  it("defaults Recent to 30 days", () => {
+    expect(DEFAULT_TIME_FILTER).toBe("30d");
+    expect(DEFAULT_TRANSACTION_FILTERS.timeFilter).toBe("30d");
+    const range = pastTransactionsRange("30d");
     expect(range.end >= range.start).toBe(true);
   });
 

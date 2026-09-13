@@ -25,11 +25,11 @@ def test_debug_does_not_force_https_settings():
 
 def test_allowed_hosts_include_flowsight_only_outside_debug():
     hosts = merge_allowed_hosts(["localhost"], debug=True, on_render=False)
-    assert "flowsight.com" not in hosts
+    assert "flowsight360.com" not in hosts
     assert ".onrender.com" not in hosts
     prod = merge_allowed_hosts(["api.example.com"], debug=False, on_render=True)
-    assert "flowsight.com" in prod
-    assert "www.flowsight.com" in prod
+    assert "flowsight360.com" in prod
+    assert "www.flowsight360.com" in prod
     assert ".onrender.com" in prod
 
 
@@ -37,6 +37,6 @@ def test_cors_merges_flowsight_origins_in_production():
     dev = merge_production_web_origins(["http://localhost:5173"], debug=True)
     assert dev == ["http://localhost:5173"]
     prod = merge_production_web_origins(["https://app.onrender.com"], debug=False)
-    assert "https://flowsight.com" in prod
-    assert "https://www.flowsight.com" in prod
+    assert "https://flowsight360.com" in prod
+    assert "https://www.flowsight360.com" in prod
     assert "*" not in prod

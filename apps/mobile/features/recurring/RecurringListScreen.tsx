@@ -22,6 +22,7 @@ import {
   sortRecurringRows,
   type RecurringSortKey,
 } from "./recurringDisplay";
+import { automationCreateHref, automationEditHref } from "./navigation";
 import { useRecurringPlanLimit } from "./useRecurringPlanLimit";
 
 const SORT_OPTIONS: { key: RecurringSortKey; label: string }[] = [
@@ -38,9 +39,9 @@ export function RecurringListScreen() {
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const { usageLabel, interceptIfLimited } = useRecurringPlanLimit();
 
-  const onAddRecurring = useCallback(() => {
+  const onCreateAutomation = useCallback(() => {
     if (interceptIfLimited()) return;
-    router.push("/recurring/new");
+    router.push(automationCreateHref());
   }, [interceptIfLimited, router]);
 
   const rulesQuery = useQuery({
@@ -75,8 +76,8 @@ export function RecurringListScreen() {
           right={
             <IconButton
               name="plus"
-              accessibilityLabel="Add recurring transaction"
-              onPress={onAddRecurring}
+              accessibilityLabel="Create automation"
+              onPress={onCreateAutomation}
             />
           }
         />
@@ -144,15 +145,18 @@ export function RecurringListScreen() {
         <EmptyState
           title="No recurring transactions"
           message={GETTING_STARTED_COPY.recurringEmpty}
-          actionLabel="Add recurring"
-          onAction={onAddRecurring}
+          actionLabel="Create automation"
+          onAction={onCreateAutomation}
         />
       ) : (
         <FlatList
           data={rows}
           keyExtractor={(item) => String(item.rule.id)}
           renderItem={({ item }) => (
-            <RecurringRow row={item} onPress={() => router.push(`/recurring/${item.rule.id}`)} />
+            <RecurringRow
+              row={item}
+              onPress={() => router.push(automationEditHref(item.rule.id))}
+            />
           )}
           refreshControl={
             <RefreshControl refreshing={pullRefreshing} onRefresh={() => void refreshList()} />

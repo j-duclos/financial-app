@@ -34,6 +34,7 @@ import {
   DEFAULT_FORECAST_RANGE,
   pastTransactionsRange,
   ledgerPastTransactionStart,
+  flattenLedgerHistoryPages,
   filterPastTransactionsAfterReconcileClose,
   transactionAlreadyInCheckpoint,
   buildLedgerRowsFromPastAndUpcomingTimeline,
@@ -176,6 +177,20 @@ describe("pastTransactionsRange", () => {
     const today = todayStr();
     const { end } = pastTransactionsRange("3m");
     expect(end).toBe(today);
+  });
+
+  it("allows all-history without a 90-day floor", () => {
+    const today = todayStr();
+    const all = pastTransactionsRange("all");
+    expect(all.start).toBe("");
+    expect(all.end).toBe(today);
+    expect(pastTransactionsRange("12m").start < addDaysToIsoDate(today, -90)).toBe(true);
+  });
+
+  it("reverses newest-first pages into ledger order", () => {
+    expect(flattenLedgerHistoryPages([{ results: [3, 2] }, { results: [1] }], true)).toEqual([
+      1, 2, 3,
+    ]);
   });
 });
 

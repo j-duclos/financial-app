@@ -1,8 +1,13 @@
 import { Alert } from "react-native";
-import { useCallback } from "react";
+import { useCallback, useContext, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import * as WebBrowser from "expo-web-browser";
-import { ApiError, createCheckoutSession, resendVerification } from "@budget-app/api-client";
+import {
+  ApiError,
+  createCheckoutSession,
+  createPortalSession,
+  resendVerification,
+} from "@budget-app/api-client";
 import { describeApiError } from "@/services/api";
 import {
   ALREADY_PREMIUM_MESSAGE,
@@ -11,16 +16,23 @@ import {
   EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE,
   EMAIL_VERIFY_BEFORE_UPGRADE_TITLE,
   RESEND_VERIFICATION_EMAIL_LABEL,
-  UPGRADE_TO_PREMIUM_LABEL,
   isEmailVerificationRequiredError,
 } from "@/lib/billing";
+import { PremiumUpgradeContext } from "@/features/billing/premiumUpgradeContext";
+import {
+  PREMIUM_NOT_NOW_LABEL,
+  PREMIUM_SHEET_TITLE,
+  PREMIUM_UPGRADE_CTA_LABEL,
+} from "@/features/billing/premiumUpgradeCopy";
 
 function upgradeErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 409) return ALREADY_PREMIUM_MESSAGE;
     const msg = error.message || "";
     if (
+      error.status >= 500 ||
       error.status === 503 ||
+      /<!doctype html|<html[\s>]|<\/html>/i.test(msg) ||
       /not configured/i.test(msg) ||
       /STRIPE_|SECRET|whsec_|sk_live|sk_test/i.test(msg)
     ) {
@@ -41,10 +53,13 @@ async function resendVerificationEmail(): Promise<void> {
   }
 }
 
-export function usePremiumUpgrade() {
+/** Stripe Checkout + Customer Portal. Does not change entitlement rules. */
+export function usePremiumCheckout() {
   const queryClient = useQueryClient();
+  const [upgrading, setUpgrading] = useState(false);
 
   const startUpgrade = useCallback(async () => {
+    setUpgrading(true);
     try {
       const session = await createCheckoutSession();
       if (!session.url) {
@@ -56,7 +71,7 @@ export function usePremiumUpgrade() {
     } catch (err) {
       if (isEmailVerificationRequiredError(err)) {
         Alert.alert(EMAIL_VERIFY_BEFORE_UPGRADE_TITLE, EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE, [
-          { text: "Not now", style: "cancel" },
+          { text: PREMIUM_NOT_NOW_LABEL, style: "cancel" },
           {
             text: RESEND_VERIFICATION_EMAIL_LABEL,
             onPress: () => void resendVerificationEmail(),
@@ -65,18 +80,45 @@ export function usePremiumUpgrade() {
         return;
       }
       Alert.alert("Upgrade", upgradeErrorMessage(err));
+    } finally {
+      setUpgrading(false);
     }
   }, [queryClient]);
 
+  const startPortal = useCallback(async () => {
+    try {
+      const session = await createPortalSession();
+      if (!session.url) {
+        Alert.alert("Billing", "The billing portal could not be opened. Please try again.");
+        return;
+      }
+      await WebBrowser.openBrowserAsync(session.url);
+      await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
+    } catch (err) {
+      Alert.alert("Billing", upgradeErrorMessage(err));
+    }
+  }, [queryClient]);
+
+  return { startUpgrade, startPortal, upgrading };
+}
+
+export function usePremiumUpgrade() {
+  const checkout = usePremiumCheckout();
+  const sheet = useContext(PremiumUpgradeContext);
+
   const promptUpgrade = useCallback(
-    (title: string, message: string) => {
-      Alert.alert(title, message, [
-        { text: "Not now", style: "cancel" },
-        { text: UPGRADE_TO_PREMIUM_LABEL, onPress: () => void startUpgrade() },
+    (contextMessage?: string) => {
+      if (sheet) {
+        sheet.promptUpgrade(contextMessage);
+        return;
+      }
+      Alert.alert(PREMIUM_SHEET_TITLE, contextMessage ?? "", [
+        { text: PREMIUM_NOT_NOW_LABEL, style: "cancel" },
+        { text: PREMIUM_UPGRADE_CTA_LABEL, onPress: () => void checkout.startUpgrade() },
       ]);
     },
-    [startUpgrade]
+    [checkout, sheet]
   );
 
-  return { startUpgrade, promptUpgrade };
+  return { ...checkout, promptUpgrade };
 }

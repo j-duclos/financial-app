@@ -159,7 +159,7 @@ describe("mobile forecast entitlements", () => {
     expect(clampForecastDaysForPlan(365, freeBilling)).toBe(90);
     expect(forecastSelectSource).toMatch(/forecastPickerRows/);
     expect(forecastSelectSource).toMatch(/promptUpgrade/);
-    expect(forecastSelectSource).toMatch(/lockedForecastUpsellMessage/);
+    expect(forecastSelectSource).toMatch(/PREMIUM_UPGRADE_CONTEXT\.forecast/);
     expect(forecastSelectSource).not.toMatch(/OPERATIONAL_FORECAST_DAY_OPTIONS\.map/);
   });
 

@@ -88,9 +88,9 @@ Set these in the Web Service → **Environment**:
 | `DATABASE_URL` | *(from Render Postgres)* | Required in production |
 | `DJANGO_SECRET_KEY` | `your-long-random-secret` | Generate a new one; never commit |
 | `DEBUG` | `False` | Optional on Render: defaults to **False** when `RENDER=true` (set explicitly if needed) |
-| `ALLOWED_HOSTS` | `flowsight.com,www.flowsight.com,<service>.onrender.com` | `.onrender.com` is added only when `RENDER=true`. Include the custom domain before cutover. |
-| `CSRF_TRUSTED_ORIGINS` | `https://flowsight.com,https://www.flowsight.com` | HTTPS, no trailing slash |
-| `CORS_ALLOWED_ORIGINS` | `https://flowsight.com,https://www.flowsight.com` | No wildcard CORS. Production also merges those two origins when `DEBUG=false`. |
+| `ALLOWED_HOSTS` | `flowsight360.com,www.flowsight360.com,<service>.onrender.com` | `.onrender.com` is added only when `RENDER=true`. Include the custom domain before cutover. |
+| `CSRF_TRUSTED_ORIGINS` | `https://flowsight360.com,https://www.flowsight360.com` | HTTPS, no trailing slash |
+| `CORS_ALLOWED_ORIGINS` | `https://flowsight360.com,https://www.flowsight360.com` | No wildcard CORS. Production also merges those two origins when `DEBUG=false`. |
 | `PLAID_CLIENT_ID` | `…` | From Plaid Dashboard |
 | `PLAID_SECRET` or `PLAID_PRODUCTION_SECRET` | `…` | Must match `PLAID_ENV` |
 | `PLAID_ENV` | `production` | Use `sandbox` only for fake institutions |

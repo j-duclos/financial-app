@@ -9,6 +9,39 @@ Account deletion
 
 
 
+
+prod_VFRn6QQMXF1pHi
+
+
+
+
+
+
+Stripe subscriptions
+Free/premium enforcement
+Plaid production readiness
+Password reset
+Email verification
+Privacy policy
+Terms of service
+Account deletion
+
+For the environment/configuration portion, I’ll need screenshots from Render—but do not expose any secret values. First, send:
+
+Render → web service → Environment page showing only the variable names. Blur/crop all values.
+Render → Background Worker/Cron service pages, if any.
+Stripe Dashboard → Developers → Webhooks showing endpoint URL and status. Hide signing secrets.
+Plaid Dashboard page showing whether the app is Sandbox, Development, or Production. Hide client IDs and secrets.
+
+
+
+
+
+
+
+
+
+
 Step 1: First-time user and authentication
 Send screenshots from mobile and web of:
 

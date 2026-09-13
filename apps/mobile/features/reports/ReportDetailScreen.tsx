@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { currentMonthStr, REPORTS_ADVANCED_CASH_FLOW_MESSAGE } from "@budget-app/shared";
+import { currentMonthStr } from "@budget-app/shared";
 import { AppHeader, Button, Card, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
 import { PeriodSelector } from "@/features/budget/PeriodSelector";
 import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/features/budget/periodUtils";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
 import {
   CashFlowSection,
@@ -32,7 +33,7 @@ export function ReportDetailScreen() {
   }>();
   const reportType = parseReportTypeParam(params.type);
   const [pullRefreshing, setPullRefreshing] = useState(false);
-  const { startUpgrade } = usePremiumUpgrade();
+  const { promptUpgrade } = usePremiumUpgrade();
 
   const routeFilters = parseReportRouteParams(params);
   const filters: ReportFilters = useMemo(
@@ -171,9 +172,12 @@ export function ReportDetailScreen() {
                     Cash Flow
                   </Text>
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginBottom: 12 }}>
-                    {REPORTS_ADVANCED_CASH_FLOW_MESSAGE}
+                    {PREMIUM_UPGRADE_CONTEXT.reports}
                   </Text>
-                  <Button label={UPGRADE_TO_PREMIUM_LABEL} onPress={() => void startUpgrade()} />
+                  <Button
+                    label={UPGRADE_TO_PREMIUM_LABEL}
+                    onPress={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.reports)}
+                  />
                 </Card>
               )
             ) : null}

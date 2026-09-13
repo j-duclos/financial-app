@@ -197,4 +197,21 @@ describe("fetchAuthenticatedFile", () => {
     expect(Array.from(file.data.slice(0, 1))).toEqual([body[0]]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not put Django HTML 500 pages into ApiError.message", async () => {
+    const html =
+      "<!doctype html><html lang=\"en\"><head><title>Server Error (500)</title></head>" +
+      "<body><h1>Server Error (500)</h1></body></html>";
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 500,
+      ok: false,
+      text: async () => html,
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(request("/api/billing/create-checkout-session/", { method: "POST" })).rejects.toMatchObject({
+      status: 500,
+      message: "The server had a problem. Please try again.",
+    });
+  });
 });

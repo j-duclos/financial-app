@@ -115,6 +115,6 @@ describe("calendar onboarding context", () => {
   it("leaves recurring checklist completion to real recurring data", () => {
     expect(calendarSource).not.toMatch(/recurring: true/);
     expect(hookSource).not.toMatch(/steps\.recurring/);
-    expect(GETTING_STARTED_ROUTES.recurring).toBe("/recurring/new?source=onboarding");
+    expect(GETTING_STARTED_ROUTES.recurring).toBe("/automation/new?source=onboarding");
   });
 });

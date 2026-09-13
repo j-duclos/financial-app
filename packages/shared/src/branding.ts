@@ -2,8 +2,8 @@
 
 export const APP_NAME = "FlowSight";
 
-export const APP_WEB_URL = "https://flowsight.com";
-export const APP_WEB_HOST = "flowsight.com";
+export const APP_WEB_URL = "https://flowsight360.com";
+export const APP_WEB_HOST = "flowsight360.com";
 
 export const APP_WEB_COMPANION_MESSAGE =
   "Use FlowSight on the web for the full planning experience.";

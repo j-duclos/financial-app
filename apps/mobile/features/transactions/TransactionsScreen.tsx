@@ -28,7 +28,7 @@ import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { ForecastWindowOptionList } from "@/features/dashboard/ForecastWindowSelect";
 import {
   RECENT_RANGE_OPTIONS,
-  TIME_FILTER_LABELS,
+  recentRangeLabel,
 } from "@/lib/transactionsLedger";
 import {
   countActiveTransactionFilters,
@@ -220,6 +220,7 @@ export function TransactionsScreen() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
+    newestFirstHistory,
     refetch,
     historyQuery,
     timelineQuery,
@@ -358,6 +359,11 @@ export function TransactionsScreen() {
       : firstSearchParam(params.accountName) || "Account";
 
   const onEndReached = useCallback(() => {
+    if (newestFirstHistory) return;
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [newestFirstHistory, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const onPressLoadOlder = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
@@ -377,10 +383,11 @@ export function TransactionsScreen() {
         onPressRow={onPressRow}
         onPressRecentRange={() => setRecentRangeOpen(true)}
         onPressUpcomingRange={() => setUpcomingRangeOpen(true)}
+        onPressLoadOlder={onPressLoadOlder}
         focusHighlight={focusHighlightActive && index === focusHighlightIndex}
       />
     ),
-    [onPressRow, focusHighlightActive, focusHighlightIndex]
+    [onPressRow, onPressLoadOlder, focusHighlightActive, focusHighlightIndex]
   );
 
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
@@ -690,7 +697,7 @@ export function TransactionsScreen() {
                   ...theme.typography.bodyStrong,
                 }}
               >
-                Last {TIME_FILTER_LABELS[opt]}
+                {recentRangeLabel(opt)}
               </Text>
             </Pressable>
           ))}

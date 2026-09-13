@@ -66,8 +66,8 @@ jobs:
           DEBUG: "false"
           DJANGO_SECRET_KEY: ci-dummy-secret-not-for-production-use-only-please-rotate
           PLAID_TOKEN_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-          ALLOWED_HOSTS: flowsight.com,www.flowsight.com
-          CORS_ALLOWED_ORIGINS: https://flowsight.com,https://www.flowsight.com
+          ALLOWED_HOSTS: flowsight360.com,www.flowsight360.com
+          CORS_ALLOWED_ORIGINS: https://flowsight360.com,https://www.flowsight360.com
           SECURE_SSL_REDIRECT: "true"
         run: python manage.py check --deploy
       - name: Canonical ledger regression

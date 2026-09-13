@@ -11,7 +11,21 @@ import {
 } from "@/components/ui";
 import { useAuth } from "@/features/auth";
 import { useReviewFeedback } from "@/features/review";
+import { useBillingStatus } from "@/hooks/useBillingStatus";
+import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import {
+  PREMIUM_DISCOVERY_SUBTITLE,
+  PREMIUM_MONTHLY_PRICE_LABEL,
+  PREMIUM_SHEET_TITLE,
+} from "@/features/billing";
 import { useTheme } from "@/theme";
+
+/** Core money workflows — Automation owns recurring-rule management. */
+const MONEY_LINKS = [
+  { title: "Automation", href: "/automation", subtitle: "Create and manage recurring rules" },
+  { title: "Action Center", href: "/action-center", subtitle: "Alerts and recommended actions" },
+  { title: "Recurring", href: "/recurring", subtitle: "Upcoming recurring activity" },
+] as const;
 
 /** Planning tools — Accounts lives on the bottom tab bar. */
 const PLANNING_LINKS = [
@@ -20,18 +34,12 @@ const PLANNING_LINKS = [
   { title: "Spending Limits", href: "/spending-limits", subtitle: "Category spending targets" },
 ] as const;
 
-const MONEY_LINKS = [
-  { title: "Recurring", href: "/recurring", subtitle: "Income, bills, and transfers" },
-  { title: "Action Center", href: "/action-center", subtitle: "Recommendations and alerts" },
-] as const;
-
-const INSIGHTS_LINKS = [
+const INSIGHTS_SETUP_LINKS = [
+  { title: "Categories", href: "/categories", subtitle: "Income and expense categories" },
   { title: "Reports", href: "/reports", subtitle: "Monthly insights" },
 ] as const;
 
-const SETUP_LINKS = [
-  { title: "Automation", href: "/automation", subtitle: "Rules & recurring automation" },
-  { title: "Categories", href: "/categories", subtitle: "Income and expense categories" },
+const ACCOUNT_LINKS = [
   { title: "Profile & Settings", href: "/profile", subtitle: "Account preferences" },
 ] as const;
 
@@ -40,6 +48,9 @@ export function MoreScreen() {
   const router = useRouter();
   const { auth, logout } = useAuth();
   const { openFeedback } = useReviewFeedback();
+  const { billing } = useBillingStatus();
+  const { promptUpgrade } = usePremiumUpgrade();
+  const isPremium = billing?.is_premium === true;
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -49,16 +60,6 @@ export function MoreScreen() {
       <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 8 }}>
         {auth.user?.displayName ? `Signed in as ${auth.user.displayName}` : "Secondary tools"}
       </Text>
-
-      <SectionHeader title="Planning" />
-      {PLANNING_LINKS.map((link) => (
-        <ListRow
-          key={link.href}
-          title={link.title}
-          subtitle={link.subtitle}
-          onPress={() => router.push(link.href as never)}
-        />
-      ))}
 
       <SectionHeader title="Money tools" />
       {MONEY_LINKS.map((link) => (
@@ -70,8 +71,8 @@ export function MoreScreen() {
         />
       ))}
 
-      <SectionHeader title="Insights" />
-      {INSIGHTS_LINKS.map((link) => (
+      <SectionHeader title="Planning" />
+      {PLANNING_LINKS.map((link) => (
         <ListRow
           key={link.href}
           title={link.title}
@@ -80,8 +81,8 @@ export function MoreScreen() {
         />
       ))}
 
-      <SectionHeader title="Setup" />
-      {SETUP_LINKS.map((link) => (
+      <SectionHeader title="Insights & setup" />
+      {INSIGHTS_SETUP_LINKS.map((link) => (
         <ListRow
           key={link.href}
           title={link.title}
@@ -90,7 +91,23 @@ export function MoreScreen() {
         />
       ))}
 
-      <SectionHeader title="FlowSight" />
+      <SectionHeader title="Account" />
+      {ACCOUNT_LINKS.map((link) => (
+        <ListRow
+          key={link.href}
+          title={link.title}
+          subtitle={link.subtitle}
+          onPress={() => router.push(link.href as never)}
+        />
+      ))}
+      {!isPremium ? (
+        <ListRow
+          title={PREMIUM_SHEET_TITLE}
+          subtitle={`${PREMIUM_DISCOVERY_SUBTITLE} · ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+          onPress={() => promptUpgrade()}
+          accessibilityLabel={`${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+        />
+      ) : null}
       <ListRow
         title="Send feedback"
         subtitle="Tell us what we can improve"

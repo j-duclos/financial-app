@@ -55,7 +55,6 @@ describe("shared form components", () => {
 
 describe("shared form import boundaries", () => {
   const featureSources = [
-    "features/recurring/RecurringFormScreen.tsx",
     "features/goals/GoalFormScreen.tsx",
     "features/categories/CategoryFormScreen.tsx",
     "features/budget/SpendingLimitFormScreen.tsx",
@@ -108,7 +107,6 @@ describe("overflow sheet action row consolidation", () => {
 
 describe("DetailRow consolidation", () => {
   it("horizontal detail screens use shared DetailRow", () => {
-    expect(read("features/recurring/RecurringDetailScreen.tsx")).toMatch(/DetailRow/);
     expect(read("features/automation/AutomationDetailScreen.tsx")).toMatch(/DetailRow/);
     expect(read("features/reconcile/ReconcileScreen.tsx")).toMatch(/DetailRow/);
   });

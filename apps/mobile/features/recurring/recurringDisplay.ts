@@ -139,7 +139,7 @@ export function buildRecurringRows(rules: RecurringRule[], today: string): Recur
       rule,
       cadenceLabel: cadence,
       accountLine: accountLineForRule(rule),
-      metaLine: `${cadence} · ${nextBit}`,
+      metaLine: `${directionLabel(rule.direction)} · ${cadence} · ${nextBit}`,
       nextOccurrence,
       isActive,
       lifecycleStatus,

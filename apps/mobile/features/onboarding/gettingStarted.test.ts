@@ -222,7 +222,7 @@ describe("getting started checklist on Home", () => {
     expect(GETTING_STARTED_ROUTES.upcoming_transaction).toBe(
       "/transaction/new?source=onboarding&mode=future"
     );
-    expect(GETTING_STARTED_ROUTES.recurring).toBe("/recurring/new?source=onboarding");
+    expect(GETTING_STARTED_ROUTES.recurring).toBe("/automation/new?source=onboarding");
     expect(GETTING_STARTED_ROUTES.calendar).toBe("/(app)/(tabs)/calendar?source=onboarding");
     expect(GETTING_STARTED_ROUTES).not.toHaveProperty("goal");
     expect(cardSource).not.toMatch(/Upgrade/);
@@ -232,7 +232,7 @@ describe("getting started checklist on Home", () => {
     expect(GETTING_STARTED_STEPS.map((step) => GETTING_STARTED_ROUTES[step.id])).toEqual([
       "/account/new",
       "/transaction/new?source=onboarding&mode=future",
-      "/recurring/new?source=onboarding",
+      "/automation/new?source=onboarding",
       "/(app)/(tabs)/calendar?source=onboarding",
     ]);
   });

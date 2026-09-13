@@ -126,7 +126,7 @@ describe("import match eligibility", () => {
 describe("recurring rule navigation", () => {
   it("opens recurring detail when rule_id is present", () => {
     expect(canOpenRecurringRuleDetail(txn({ id: 1, rule_id: 99 }))).toBe(true);
-    expect(recurringRuleDetailPath(99)).toBe("/recurring/99");
+    expect(recurringRuleDetailPath(99)).toBe("/automation/edit/99");
   });
 
   it("does not navigate without rule_id", () => {

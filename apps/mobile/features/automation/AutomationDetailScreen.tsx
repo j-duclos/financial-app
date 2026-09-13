@@ -45,6 +45,7 @@ import {
 } from "./activityPreview";
 import { ExecutionHistoryRowView } from "./components/ExecutionHistoryRow";
 import { RuleSummaryCard } from "./components/RuleSummaryCard";
+import { useRecurringPlanLimit } from "@/features/recurring/useRecurringPlanLimit";
 
 export function AutomationDetailScreen() {
   const theme = useTheme();
@@ -53,6 +54,7 @@ export function AutomationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const ruleId = Number(id);
   const today = todayStr();
+  const { interceptIfLimited } = useRecurringPlanLimit();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const ruleQuery = useQuery({
@@ -232,7 +234,10 @@ export function AutomationDetailScreen() {
             <Button
               label="Resume rule"
               loading={resumeMutation.isPending}
-              onPress={() => resumeMutation.mutate()}
+              onPress={() => {
+                if (interceptIfLimited()) return;
+                resumeMutation.mutate();
+              }}
             />
           ) : null}
           <Button label="Delete rule" variant="danger" onPress={() => setConfirmDelete(true)} />

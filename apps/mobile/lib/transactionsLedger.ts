@@ -1,13 +1,28 @@
 import type { OperationalForecastDays } from "@budget-app/shared";
 import { addDaysToIsoDate, addMonthsToIsoDate, maxIsoDate, todayStr } from "./dates";
 
-export type TimeFilter = "14d" | "30d" | "60d" | "90d" | "1m" | "3m" | "6m" | "12m" | "18m" | "24m" | "36m";
+export type TimeFilter =
+  | "14d"
+  | "30d"
+  | "60d"
+  | "90d"
+  | "1m"
+  | "3m"
+  | "6m"
+  | "12m"
+  | "18m"
+  | "24m"
+  | "36m"
+  | "all";
 
 /** Default Recent historical window on mobile Transactions. */
-export const DEFAULT_TIME_FILTER: TimeFilter = "14d";
+export const DEFAULT_TIME_FILTER: TimeFilter = "30d";
 
-/** Compact Recent range options shown on the ledger section header. */
-export const RECENT_RANGE_OPTIONS: TimeFilter[] = ["14d", "30d", "60d", "90d"];
+/**
+ * History range chips on the Transactions filter sheet and Recent header.
+ * Not plan-gated — Free and Premium can open all available ledger history.
+ */
+export const RECENT_RANGE_OPTIONS: TimeFilter[] = ["30d", "90d", "12m", "all"];
 
 export const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
   "14d": "14 days",
@@ -17,10 +32,11 @@ export const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
   "1m": "1 month",
   "3m": "3 months",
   "6m": "6 months",
-  "12m": "12 months",
+  "12m": "1 year",
   "18m": "18 months",
   "24m": "24 months",
   "36m": "36 months",
+  all: "All history",
 };
 
 const TIME_FILTER_DAYS: Partial<Record<TimeFilter, number>> = {
@@ -30,7 +46,10 @@ const TIME_FILTER_DAYS: Partial<Record<TimeFilter, number>> = {
   "90d": 90,
 };
 
-const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d" | "30d" | "60d" | "90d">, number> = {
+const TIME_FILTER_MONTHS: Record<
+  Exclude<TimeFilter, "14d" | "30d" | "60d" | "90d" | "all">,
+  number
+> = {
   "1m": 1,
   "3m": 3,
   "6m": 6,
@@ -40,9 +59,28 @@ const TIME_FILTER_MONTHS: Record<Exclude<TimeFilter, "14d" | "30d" | "60d" | "90
   "36m": 36,
 };
 
-/** Past window for listTransactions (history through today). */
+export function isTimeFilter(value: string | null | undefined): value is TimeFilter {
+  return typeof value === "string" && value in TIME_FILTER_LABELS;
+}
+
+export function isUnboundedHistoryFilter(filter: TimeFilter): boolean {
+  return filter === "all";
+}
+
+/**
+ * Windows that may exceed one ledger page. Fetch newest-first so Recent stays
+ * adjacent to Pending; older pages load on demand instead of dumping the archive.
+ */
+export function usesNewestFirstHistoryPagination(filter: TimeFilter): boolean {
+  return filter === "all" || filter === "12m";
+}
+
+/** Past window for listTransactions (history through today). Empty start = all history. */
 export function pastTransactionsRange(filter: TimeFilter): { start: string; end: string } {
   const today = todayStr();
+  if (isUnboundedHistoryFilter(filter)) {
+    return { start: "", end: today };
+  }
   const days = TIME_FILTER_DAYS[filter];
   if (days != null) {
     return { start: addDaysToIsoDate(today, -days), end: today };
@@ -72,19 +110,32 @@ export function ledgerPastTransactionStart(
   if (periodEnd) {
     const dayAfterClose = addDaysToIsoDate(periodEnd, 1);
     if (floor && floor === periodEnd) {
-      return maxIsoDate(filterStart, floor);
+      return filterStart ? maxIsoDate(filterStart, floor) : floor;
     }
     if (floor && floor < periodEnd) {
-      return maxIsoDate(filterStart, dayAfterClose);
+      return filterStart ? maxIsoDate(filterStart, dayAfterClose) : dayAfterClose;
     }
     if (floor && floor > periodEnd) {
-      return maxIsoDate(filterStart, floor);
+      return filterStart ? maxIsoDate(filterStart, floor) : floor;
     }
-    return maxIsoDate(filterStart, dayAfterClose);
+    return filterStart ? maxIsoDate(filterStart, dayAfterClose) : dayAfterClose;
   }
 
-  if (floor) return maxIsoDate(filterStart, floor);
+  if (floor) return filterStart ? maxIsoDate(filterStart, floor) : floor;
   return filterStart;
+}
+
+/**
+ * Concatenate infinite-query history pages into ledger order.
+ * Newest-first API pages are reversed so Recent still runs oldest → newest.
+ */
+export function flattenLedgerHistoryPages<T>(
+  pages: ReadonlyArray<{ results: T[] }> | undefined,
+  newestFirst: boolean
+): T[] {
+  const rows = pages?.flatMap((page) => page.results) ?? [];
+  if (!newestFirst || rows.length <= 1) return rows;
+  return rows.slice().reverse();
 }
 
 /** Upcoming projection window: today through today + forecast days. */
@@ -101,6 +152,7 @@ export function isTransferCategoryName(name: string | undefined): boolean {
 }
 
 export function recentRangeLabel(filter: TimeFilter): string {
+  if (isUnboundedHistoryFilter(filter)) return TIME_FILTER_LABELS.all;
   return `Last ${TIME_FILTER_LABELS[filter]}`;
 }
 

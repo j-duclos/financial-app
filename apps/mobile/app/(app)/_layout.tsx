@@ -5,6 +5,7 @@ import { useAuth } from "@/features/auth";
 import { ProjectedFundsInAppBanner, NotificationPermissionSheet, useProjectedFundsPush } from "@/features/alerts";
 import { TestPlanBanner } from "@/features/profile/TestPlanBanner";
 import { ReviewPromptHost } from "@/features/review";
+import { PremiumUpgradeProvider } from "@/features/billing";
 import { setPendingPostLoginRedirect } from "@/lib/postLoginRedirect";
 
 function ProjectedFundsPushHost() {
@@ -35,6 +36,7 @@ export default function AppLayout() {
 
   return (
     <ReviewPromptHost>
+    <PremiumUpgradeProvider>
     <View style={{ flex: 1 }}>
       <TestPlanBanner />
       <ProjectedFundsInAppBanner />
@@ -81,6 +83,7 @@ export default function AppLayout() {
       </View>
       <ProjectedFundsPushHost />
     </View>
+    </PremiumUpgradeProvider>
     </ReviewPromptHost>
   );
 }

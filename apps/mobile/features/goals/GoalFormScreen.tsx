@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -56,6 +56,7 @@ import { goalsQueryKeys, invalidateGoalFundingQueries, invalidateGoalMetadataQue
 import { invalidateForecastQueries } from "@/lib/financialQueryRefresh";
 import { describeApiError } from "@/services/api";
 import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
+import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { useGoalPlanLimit } from "./useGoalPlanLimit";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
@@ -179,13 +180,21 @@ export function GoalFormScreen() {
     billingLoading,
     goalsLimited,
     limitReachedMessage,
-    startUpgrade,
+    promptUpgrade,
   } = useGoalPlanLimit();
   const [form, setForm] = useState<GoalFormValues>(emptyGoalForm);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [picker, setPicker] = useState<"type" | "account" | "paycheck" | "priority" | null>(null);
+  const openedLimitSheet = useRef(false);
+
+  useEffect(() => {
+    if (!isEdit && goalsLimited && !openedLimitSheet.current) {
+      openedLimitSheet.current = true;
+      promptUpgrade(PREMIUM_UPGRADE_CONTEXT.goals);
+    }
+  }, [isEdit, goalsLimited, promptUpgrade]);
 
   const overviewQuery = useQuery({
     queryKey: goalsQueryKeys.overview(householdId),
@@ -411,7 +420,7 @@ export function GoalFormScreen() {
           message={limitReachedMessage}
           actionLabel={UPGRADE_TO_PREMIUM_LABEL}
           actionVariant="primary"
-          onAction={() => void startUpgrade()}
+          onAction={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.goals)}
         />
       </Screen>
     );
