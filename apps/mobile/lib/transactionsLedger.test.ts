@@ -12,13 +12,15 @@ import {
 } from "./transactionsLedger";
 
 describe("mobile history range", () => {
-  it("offers 30 days, 90 days, 1 year, and All history without Premium labels", () => {
-    expect(DEFAULT_TIME_FILTER).toBe("30d");
-    expect(RECENT_RANGE_OPTIONS).toEqual(["30d", "90d", "12m", "all"]);
-    expect(RECENT_RANGE_OPTIONS.map((opt) => TIME_FILTER_LABELS[opt])).toEqual([
-      "30 days",
-      "90 days",
-      "1 year",
+  it("offers 7 days, 14 days, 30 days, 90 days, 1 year, and All history without Premium labels", () => {
+    expect(DEFAULT_TIME_FILTER).toBe("7d");
+    expect(RECENT_RANGE_OPTIONS).toEqual(["7d", "14d", "30d", "90d", "12m", "all"]);
+    expect(RECENT_RANGE_OPTIONS.map((opt) => recentRangeLabel(opt))).toEqual([
+      "Last 7 days",
+      "Last 14 days",
+      "Last 30 days",
+      "Last 90 days",
+      "Last 1 year",
       "All history",
     ]);
     for (const opt of RECENT_RANGE_OPTIONS) {
@@ -28,6 +30,14 @@ describe("mobile history range", () => {
 
   it("does not cap historical lookback at 90 days", () => {
     const today = todayStr();
+    expect(pastTransactionsRange("7d")).toEqual({
+      start: addDaysToIsoDate(today, -7),
+      end: today,
+    });
+    expect(pastTransactionsRange("14d")).toEqual({
+      start: addDaysToIsoDate(today, -14),
+      end: today,
+    });
     expect(pastTransactionsRange("30d")).toEqual({
       start: addDaysToIsoDate(today, -30),
       end: today,
@@ -46,6 +56,8 @@ describe("mobile history range", () => {
   });
 
   it("paginates 1 year and all-history newest-first", () => {
+    expect(usesNewestFirstHistoryPagination("7d")).toBe(false);
+    expect(usesNewestFirstHistoryPagination("14d")).toBe(false);
     expect(usesNewestFirstHistoryPagination("30d")).toBe(false);
     expect(usesNewestFirstHistoryPagination("90d")).toBe(false);
     expect(usesNewestFirstHistoryPagination("12m")).toBe(true);
@@ -53,6 +65,8 @@ describe("mobile history range", () => {
   });
 
   it("labels unbounded history without a Last prefix", () => {
+    expect(recentRangeLabel("7d")).toBe("Last 7 days");
+    expect(recentRangeLabel("14d")).toBe("Last 14 days");
     expect(recentRangeLabel("30d")).toBe("Last 30 days");
     expect(recentRangeLabel("all")).toBe("All history");
   });

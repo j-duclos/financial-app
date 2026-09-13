@@ -35,6 +35,13 @@ type SheetProps = {
   keyboardAware?: boolean;
   /** When false, the review-prompt host will not treat this sheet as a blocking modal. */
   trackPresentation?: boolean;
+  /**
+   * In-tree overlay instead of RN Modal. Use when the next action navigates away —
+   * unmounting a presented Modal freezes iOS (zombie overlay, no touches).
+   */
+  embedded?: boolean;
+  /** Fires after the native Modal has fully dismissed (iOS). */
+  onDismiss?: () => void;
 };
 
 function useKeyboardInset(enabled: boolean): number {
@@ -73,6 +80,8 @@ export function BottomSheet({
   contentStyle,
   keyboardAware = false,
   trackPresentation = true,
+  embedded = false,
+  onDismiss,
 }: SheetProps) {
   const theme = useTheme();
   const safeInsets = useSafeAreaInsets();
@@ -94,40 +103,54 @@ export function BottomSheet({
       ? Dimensions.get("window").height - keyboardInset - 16
       : undefined;
 
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={dismiss}>
-      <View style={styles.modalRoot}>
-        <Pressable
-          style={[styles.overlay, { backgroundColor: theme.colors.overlay }]}
-          onPress={dismiss}
-          accessibilityLabel="Dismiss"
-        />
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: theme.colors.surface,
-              borderTopLeftRadius: theme.radius.xl,
-              borderTopRightRadius: theme.radius.xl,
-              padding: theme.spacing.lg,
-              paddingBottom: theme.spacing.xxl,
-              bottom: sheetBottom,
-              ...(keyboardMaxHeight != null ? { maxHeight: keyboardMaxHeight } : {}),
-            },
-            contentStyle,
-          ]}
-        >
-          <View style={styles.handleWrap}>
-            <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
-          </View>
-          {title ? (
-            <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 12 }}>
-              {title}
-            </Text>
-          ) : null}
-          {children}
+  if (embedded && !visible) return null;
+
+  const body = (
+    <View style={embedded ? styles.embeddedRoot : styles.modalRoot}>
+      <Pressable
+        style={[styles.overlay, { backgroundColor: theme.colors.overlay }]}
+        onPress={dismiss}
+        accessibilityLabel="Dismiss"
+      />
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.surface,
+            borderTopLeftRadius: theme.radius.xl,
+            borderTopRightRadius: theme.radius.xl,
+            padding: theme.spacing.lg,
+            paddingBottom: theme.spacing.xxl,
+            bottom: sheetBottom,
+            ...(keyboardMaxHeight != null ? { maxHeight: keyboardMaxHeight } : {}),
+          },
+          contentStyle,
+        ]}
+      >
+        <View style={styles.handleWrap}>
+          <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
         </View>
+        {title ? (
+          <Text style={{ color: theme.colors.text, ...theme.typography.headline, marginBottom: 12 }}>
+            {title}
+          </Text>
+        ) : null}
+        {children}
       </View>
+    </View>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={dismiss}
+      onDismiss={onDismiss}
+    >
+      {body}
     </Modal>
   );
 }
@@ -193,6 +216,7 @@ export function ConfirmDialog({
 
 const styles = StyleSheet.create({
   modalRoot: { flex: 1 },
+  embeddedRoot: { ...StyleSheet.absoluteFillObject, zIndex: 20 },
   overlay: { ...StyleSheet.absoluteFillObject },
   overlayCenter: { flex: 1, justifyContent: "center" },
   sheet: {

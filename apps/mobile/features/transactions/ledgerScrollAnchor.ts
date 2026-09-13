@@ -1,11 +1,17 @@
 import type { TransactionListRow } from "./buildTransactionList";
 
-/** How many posted Recent rows to keep visible above Pending/Upcoming on open. */
-export const LEDGER_ANCHOR_PAST_ROWS = 4;
+/** Ordinary Transactions-tab open is always the top of the list. */
+export const LEDGER_ORDINARY_OPEN_INDEX = 0;
 
-/** Approximate heights for default (non-focus) open only. Never use for deep-link scroll. */
-export const LEDGER_SECTION_HEIGHT = 56;
-export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 68;
+/** @deprecated Ordinary open no longer backs up from Pending/Upcoming. */
+export const LEDGER_OPEN_RECENT_ROWS = 0;
+
+/** @deprecated Use LEDGER_ORDINARY_OPEN_INDEX */
+export const LEDGER_ANCHOR_PAST_ROWS = LEDGER_OPEN_RECENT_ROWS;
+
+/** Approximate row heights (focus fallback estimates only — never ordinary open). */
+export const LEDGER_SECTION_HEIGHT = 52;
+export const LEDGER_SECTION_WITH_RANGE_HEIGHT = 76;
 export const LEDGER_ROW_HEIGHT = 88;
 export const LEDGER_PENDING_ROW_HEIGHT = 100;
 export const LEDGER_SKELETON_HEIGHT = 56;
@@ -26,9 +32,13 @@ export type LedgerFocusParams = {
 /** @deprecated Use LedgerFocusParams */
 export type LedgerForecastFocus = LedgerFocusParams;
 
+export function isLedgerActivityRow(row: TransactionListRow | undefined): boolean {
+  return row?.kind === "history" || row?.kind === "pending" || row?.kind === "upcoming";
+}
+
 /**
- * Index of the ledger "today" boundary: Pending section, else Upcoming section.
- * Returns null when the list has no boundary to anchor (Recent-only / empty).
+ * Index of the ledger "now" boundary: Pending section if present, else Upcoming.
+ * Returns null when the list has no pending/upcoming section.
  */
 export function findLedgerBoundaryIndex(rows: TransactionListRow[]): number | null {
   const pending = rows.findIndex(
@@ -45,29 +55,46 @@ export function findLedgerBoundaryIndex(rows: TransactionListRow[]): number | nu
 }
 
 /**
- * FlatList index to place at the top of the viewport so ~LEDGER_ANCHOR_PAST_ROWS
- * history rows sit above the Pending/Upcoming boundary.
+ * Ordinary Transactions-tab open is always the top of the list.
+ * Do not compute a Pending/Upcoming boundary anchor here.
  */
-export function ledgerAnchorScrollIndex(rows: TransactionListRow[]): number | null {
-  const boundary = findLedgerBoundaryIndex(rows);
-  if (boundary == null) return null;
+export function findDefaultLedgerOpenIndex(_rows: TransactionListRow[]): number {
+  return LEDGER_ORDINARY_OPEN_INDEX;
+}
 
-  let historyAbove = 0;
-  let target = boundary;
-  for (let i = boundary - 1; i >= 0; i -= 1) {
-    const row = rows[i];
-    if (row.kind === "history") {
-      historyAbove += 1;
-      target = i;
-      if (historyAbove >= LEDGER_ANCHOR_PAST_ROWS) break;
-    }
-    if (row.kind === "section" && row.id === "section-recent") {
-      if (historyAbove === 0) target = i;
-      break;
-    }
-    if (row.kind === "loadOlder") continue;
-  }
-  return target;
+/** @deprecated Use findDefaultLedgerOpenIndex */
+export function ledgerAnchorScrollIndex(rows: TransactionListRow[]): number | null {
+  return findDefaultLedgerOpenIndex(rows);
+}
+
+export type LedgerOpenMode = "ordinary" | "focus";
+
+export function resolveLedgerOpenMode(focus?: LedgerFocusParams | null): LedgerOpenMode {
+  if (focus?.focus === "forecast-risk" || focus?.focus === "ledger-event") return "focus";
+  return "ordinary";
+}
+
+export function ordinaryLedgerPositionKey(input: {
+  accountId: number | null | undefined;
+  timeFilter: string;
+  forecastDays: number;
+}): string {
+  return `${input.accountId ?? "none"}:${input.timeFilter}:${input.forecastDays}`;
+}
+
+/** Ordinary open never schedules delayed/programmatic scroll after first paint. */
+export function shouldApplyOrdinaryProgrammaticScroll(): boolean {
+  return false;
+}
+
+export function shouldApplyFocusScroll(opts: {
+  userHasDragged: boolean;
+  appliedKey: string | null;
+  attemptKey: string;
+}): boolean {
+  if (opts.userHasDragged) return false;
+  if (opts.appliedKey === opts.attemptKey) return false;
+  return true;
 }
 
 function normalizeDesc(value: string | null | undefined): string {
@@ -195,10 +222,9 @@ export function findLedgerForecastFocusIndex(
 /**
  * Scroll target on open.
  *
+ * Ordinary navigation always returns 0 (top of the list).
  * Deep links return the focused row index, or null while that row is not in the
- * list yet (e.g. timeline still loading). Callers must NOT fall back to the
- * default Pending anchor until the timeline has settled — that was scrolling
- * users to the wrong place, then a later estimated jump landed on Sep 4.
+ * list yet. Missing-focus fallback is also the top — never a boundary anchor.
  */
 export function ledgerOpenScrollIndex(
   rows: TransactionListRow[],
@@ -208,10 +234,10 @@ export function ledgerOpenScrollIndex(
   if (focus?.focus === "forecast-risk" || focus?.focus === "ledger-event") {
     const focused = findLedgerFocusIndex(rows, focus);
     if (focused != null) return focused;
-    if (opts?.allowDefaultWhenFocusMissing) return ledgerAnchorScrollIndex(rows);
+    if (opts?.allowDefaultWhenFocusMissing) return LEDGER_ORDINARY_OPEN_INDEX;
     return null;
   }
-  return ledgerAnchorScrollIndex(rows);
+  return LEDGER_ORDINARY_OPEN_INDEX;
 }
 
 export function ledgerRowHeight(row: TransactionListRow | undefined): number {

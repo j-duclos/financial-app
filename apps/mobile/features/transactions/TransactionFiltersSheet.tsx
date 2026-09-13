@@ -8,7 +8,7 @@ import {
   parseAmountFilterInput,
   type TransactionFilters,
 } from "./types";
-import { TIME_FILTER_LABELS, RECENT_RANGE_OPTIONS } from "@/lib/transactionsLedger";
+import { RECENT_RANGE_OPTIONS, recentRangeLabel } from "@/lib/transactionsLedger";
 
 type Props = {
   visible: boolean;
@@ -87,7 +87,7 @@ export function TransactionFiltersSheet({
               </Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {TIME_FILTERS.map((tf) =>
-                  chip(`time-${tf}`, TIME_FILTER_LABELS[tf], draft.timeFilter === tf, () =>
+                  chip(`time-${tf}`, recentRangeLabel(tf), draft.timeFilter === tf, () =>
                     set("timeFilter", tf)
                   )
                 )}

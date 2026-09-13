@@ -45,12 +45,11 @@ import { AccountSelectorSheet } from "./AccountSelectorSheet";
 import { AccountLedgerHeader } from "./AccountLedgerHeader";
 import type { TransactionListRow } from "./buildTransactionList";
 import {
-  estimateLedgerOffset,
-  findLedgerBoundaryIndex,
   findLedgerFocusIndex,
   firstSearchParam,
-  getLedgerItemLayout,
-  ledgerOpenScrollIndex,
+  ordinaryLedgerPositionKey,
+  resolveLedgerOpenMode,
+  shouldApplyFocusScroll,
   type LedgerFocusParams,
 } from "./ledgerScrollAnchor";
 import { markAttentionNavigation } from "@/features/dashboard/attentionNavigationTiming";
@@ -154,6 +153,8 @@ export function TransactionsScreen() {
   const [filterDraft, setFilterDraft] = useState(filters);
   const accountInitializedRef = useRef(false);
   const listRef = useRef<FlatList<TransactionListRow>>(null);
+  const userHasDraggedRef = useRef(false);
+  const focusScrollAppliedRef = useRef<string | null>(null);
 
   const { householdId: defaultHouseholdId, isReady: householdReady } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
@@ -237,6 +238,11 @@ export function TransactionsScreen() {
   });
 
   const ledgerListKey = `${filters.accountId ?? "none"}-${filters.timeFilter}-${forecastDays}`;
+  const ordinaryPositionKey = ordinaryLedgerPositionKey({
+    accountId: filters.accountId,
+    timeFilter: filters.timeFilter,
+    forecastDays,
+  });
   const timelineSettled =
     !wantsTimeline || timelineQuery.isFetched || timelineQuery.isError;
   const ledgerDataReady =
@@ -245,56 +251,41 @@ export function TransactionsScreen() {
     timelineSettled &&
     !listIsOnlyPlaceholders(listRows) &&
     listHasActivityRows(listRows);
-  const hasLedgerDeepLinkFocus = ledgerFocus != null;
+  const ledgerOpenMode = resolveLedgerOpenMode(ledgerFocus);
+  const hasLedgerDeepLinkFocus = ledgerOpenMode === "focus";
   const focusHighlightIndex = useMemo(() => {
     if (!ledgerDataReady || ledgerFocus == null) return null;
     return findLedgerFocusIndex(listRows, ledgerFocus);
   }, [listRows, ledgerDataReady, ledgerFocus]);
-  const ledgerBoundaryIndex = useMemo(() => {
-    if (!ledgerDataReady) return null;
-    return findLedgerBoundaryIndex(listRows);
-  }, [ledgerDataReady, listRows]);
   /**
-   * Remount when account/data OR deep-link focus changes.
-   * Deep-link scrolls must NOT use getItemLayout — estimated heights overshoot (Aug 30 → Sep 4).
+   * Ordinary lists remount only when account / history / forecast window change
+   * so the list starts at offset 0. Never remount on refresh or highlight timers.
+   * Deep-link lists remount separately and never use estimated row offsets.
    */
-  const listMountKey = `${ledgerListKey}:${ledgerDataReady ? "ready" : "loading"}:${focusMountKey}`;
-  const ledgerAnchorIndex = useMemo(() => {
-    if (!ledgerDataReady) return null;
-    if (hasLedgerDeepLinkFocus) {
-      if (focusHighlightIndex != null) return focusHighlightIndex;
-      // Timeline settled and row still missing — only then fall back to default boundary.
-      if (timelineSettled && !isTimelineLoading) {
-        return ledgerOpenScrollIndex(listRows, ledgerFocus, {
-          allowDefaultWhenFocusMissing: true,
-        });
-      }
-      return null;
-    }
-    return ledgerOpenScrollIndex(listRows, null);
-  }, [
-    listRows,
-    ledgerDataReady,
-    hasLedgerDeepLinkFocus,
-    focusHighlightIndex,
-    timelineSettled,
-    isTimelineLoading,
-    ledgerFocus,
-  ]);
+  const listMountKey = hasLedgerDeepLinkFocus
+    ? `${ledgerListKey}:focus:${focusMountKey}:${ledgerDataReady ? "ready" : "loading"}`
+    : ledgerListKey;
   const ledgerListReady =
     ledgerDataReady &&
-    (hasLedgerDeepLinkFocus
-      ? focusHighlightIndex != null || (timelineSettled && !isTimelineLoading)
-      : ledgerBoundaryIndex == null || ledgerAnchorIndex != null);
-  const anchorScrollIndex = useMemo(() => {
-    if (!ledgerListReady || ledgerAnchorIndex == null) return 0;
-    return Math.max(0, Math.min(ledgerAnchorIndex, Math.max(0, listRows.length - 1)));
-  }, [ledgerListReady, ledgerAnchorIndex, listRows.length]);
-  const anchorAppliedRef = useRef<string | null>(null);
-  const focusScrollKey =
+    (!hasLedgerDeepLinkFocus ||
+      focusHighlightIndex != null ||
+      (timelineSettled && !isTimelineLoading));
+  const focusScrollIndex =
     hasLedgerDeepLinkFocus && focusHighlightIndex != null
-      ? `${listMountKey}:focus-${focusHighlightIndex}`
-      : listMountKey;
+      ? Math.max(0, Math.min(focusHighlightIndex, Math.max(0, listRows.length - 1)))
+      : null;
+  const focusScrollKey =
+    hasLedgerDeepLinkFocus && focusScrollIndex != null
+      ? `${focusMountKey}:focus-${focusScrollIndex}`
+      : focusMountKey;
+
+  const stickyHeaderIndices = useMemo(
+    () =>
+      listRows
+        .map((row, index) => (row.kind === "section" ? index : -1))
+        .filter((index) => index >= 0),
+    [listRows]
+  );
 
   const [focusHighlightActive, setFocusHighlightActive] = useState(false);
   useEffect(() => {
@@ -307,50 +298,49 @@ export function TransactionsScreen() {
     return () => clearTimeout(timer);
   }, [focusScrollKey, focusHighlightIndex]);
 
-  const applyLedgerAnchorScroll = useCallback(() => {
-    if (anchorScrollIndex <= 0) return;
-    if (hasLedgerDeepLinkFocus) {
-      // No getItemLayout on focus lists — scrollToIndex measures real rows.
-      listRef.current?.scrollToIndex({
-        index: anchorScrollIndex,
-        animated: false,
-        viewPosition: 0,
-      });
+  useEffect(() => {
+    userHasDraggedRef.current = false;
+    focusScrollAppliedRef.current = null;
+  }, [ordinaryPositionKey, focusMountKey]);
+
+  useEffect(() => {
+    if (!hasLedgerDeepLinkFocus || !ledgerListReady) return;
+    if (focusScrollIndex == null || focusScrollIndex <= 0) return;
+    const attemptKey = `${focusScrollKey}:${focusScrollIndex}`;
+    if (
+      !shouldApplyFocusScroll({
+        userHasDragged: userHasDraggedRef.current,
+        appliedKey: focusScrollAppliedRef.current,
+        attemptKey,
+      })
+    ) {
       return;
     }
-    const offset = estimateLedgerOffset(listRows, anchorScrollIndex);
-    listRef.current?.scrollToOffset({ offset, animated: false });
-  }, [anchorScrollIndex, listRows, hasLedgerDeepLinkFocus]);
+    focusScrollAppliedRef.current = attemptKey;
+    listRef.current?.scrollToIndex({
+      index: focusScrollIndex,
+      animated: false,
+      viewPosition: 0,
+    });
+  }, [hasLedgerDeepLinkFocus, ledgerListReady, focusScrollIndex, focusScrollKey]);
 
-  useEffect(() => {
-    anchorAppliedRef.current = null;
-  }, [focusScrollKey]);
+  const onScrollBeginDrag = useCallback(() => {
+    userHasDraggedRef.current = true;
+  }, []);
 
-  useEffect(() => {
-    if (!ledgerListReady || anchorScrollIndex <= 0) return;
-    applyLedgerAnchorScroll();
-    const t1 = setTimeout(() => applyLedgerAnchorScroll(), 50);
-    const t2 = setTimeout(() => applyLedgerAnchorScroll(), 200);
-    const t3 = setTimeout(() => applyLedgerAnchorScroll(), 500);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [focusScrollKey, ledgerListReady, anchorScrollIndex, applyLedgerAnchorScroll]);
-
-  const getItemLayout = useCallback(
-    (_data: ArrayLike<TransactionListRow> | null | undefined, index: number) =>
-      getLedgerItemLayout(listRows, index),
-    [listRows]
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      if (userHasDraggedRef.current) return;
+      if (!hasLedgerDeepLinkFocus) return;
+      const unit = info.averageItemLength > 0 ? info.averageItemLength : 72;
+      const approx = Math.max(0, unit * info.index * 0.65);
+      listRef.current?.scrollToOffset({ offset: approx, animated: false });
+    },
+    [hasLedgerDeepLinkFocus]
   );
 
-  const onLedgerContentSizeChange = useCallback(() => {
-    if (!ledgerListReady || anchorScrollIndex <= 0) return;
-    if (anchorAppliedRef.current === focusScrollKey) return;
-    anchorAppliedRef.current = focusScrollKey;
-    applyLedgerAnchorScroll();
-  }, [ledgerListReady, anchorScrollIndex, focusScrollKey, applyLedgerAnchorScroll]);
+  const onPressRecentRange = useCallback(() => setRecentRangeOpen(true), []);
+  const onPressUpcomingRange = useCallback(() => setUpcomingRangeOpen(true), []);
 
   const activeFilterCount = countActiveTransactionFilters(filters);
   const selectedAccountName =
@@ -381,13 +371,20 @@ export function TransactionsScreen() {
       <TransactionListItem
         item={item}
         onPressRow={onPressRow}
-        onPressRecentRange={() => setRecentRangeOpen(true)}
-        onPressUpcomingRange={() => setUpcomingRangeOpen(true)}
+        onPressRecentRange={onPressRecentRange}
+        onPressUpcomingRange={onPressUpcomingRange}
         onPressLoadOlder={onPressLoadOlder}
         focusHighlight={focusHighlightActive && index === focusHighlightIndex}
       />
     ),
-    [onPressRow, onPressLoadOlder, focusHighlightActive, focusHighlightIndex]
+    [
+      onPressRow,
+      onPressRecentRange,
+      onPressUpcomingRange,
+      onPressLoadOlder,
+      focusHighlightActive,
+      focusHighlightIndex,
+    ]
   );
 
   const keyExtractor = useCallback((item: TransactionListRow) => item.id, []);
@@ -614,38 +611,16 @@ export function TransactionsScreen() {
           keyExtractor={keyExtractor}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
+          onScrollBeginDrag={onScrollBeginDrag}
+          stickyHeaderIndices={stickyHeaderIndices}
           {...FINANCIAL_LIST_PROPS}
-          initialNumToRender={Math.max(
-            FINANCIAL_LIST_PROPS.initialNumToRender,
-            // Render enough rows that the focus target exists before scrollToIndex.
-            hasLedgerDeepLinkFocus ? anchorScrollIndex + 12 : anchorScrollIndex + 8
-          )}
-          // Deep links: never use estimated layouts — they overshoot (Aug 30 → Sep 4).
-          initialScrollIndex={
-            !hasLedgerDeepLinkFocus && anchorScrollIndex > 0 ? anchorScrollIndex : undefined
+          removeClippedSubviews={false}
+          initialNumToRender={
+            focusScrollIndex != null
+              ? Math.max(FINANCIAL_LIST_PROPS.initialNumToRender, focusScrollIndex + 12)
+              : FINANCIAL_LIST_PROPS.initialNumToRender
           }
-          getItemLayout={hasLedgerDeepLinkFocus ? undefined : getItemLayout}
-          onContentSizeChange={onLedgerContentSizeChange}
-          onScrollToIndexFailed={(info) => {
-            // Undershoot on failure — overshooting is what put Aug 30 taps on Sep 4.
-            const unit = info.averageItemLength > 0 ? info.averageItemLength : 72;
-            const approx = Math.max(0, unit * info.index * 0.65);
-            listRef.current?.scrollToOffset({ offset: approx, animated: false });
-            setTimeout(() => {
-              listRef.current?.scrollToIndex({
-                index: info.index,
-                animated: false,
-                viewPosition: 0,
-              });
-            }, 100);
-            setTimeout(() => {
-              listRef.current?.scrollToIndex({
-                index: info.index,
-                animated: false,
-                viewPosition: 0,
-              });
-            }, 350);
-          }}
+          onScrollToIndexFailed={onScrollToIndexFailed}
           refreshControl={
             <RefreshControl
               refreshing={historyQuery.isFetching && !isRecentLoading}

@@ -46,10 +46,10 @@ const timelineRow = (
   });
 
 describe("Recent historical defaults", () => {
-  it("defaults Recent to 30 days", () => {
-    expect(DEFAULT_TIME_FILTER).toBe("30d");
-    expect(DEFAULT_TRANSACTION_FILTERS.timeFilter).toBe("30d");
-    const range = pastTransactionsRange("30d");
+  it("defaults Recent to 7 days", () => {
+    expect(DEFAULT_TIME_FILTER).toBe("7d");
+    expect(DEFAULT_TRANSACTION_FILTERS.timeFilter).toBe("7d");
+    const range = pastTransactionsRange("7d");
     expect(range.end >= range.start).toBe(true);
   });
 
@@ -143,6 +143,43 @@ describe("Recent chronological order", () => {
       .map((r) => (r.kind === "history" ? r.txn.payee : ""));
     expect(recentPayees).toEqual(["Posted"]);
     expect(rows.some((r) => r.kind === "pending")).toBe(true);
+  });
+
+  it("keeps chronological ledger order Recent → Pending → Upcoming", () => {
+    const rows = buildTransactionListRows({
+      history: [txn({ id: 1, payee: "Posted", amount: "-10", date: "2026-08-25" })],
+      pending: [
+        timelineRow({
+          date: "2026-08-26",
+          description: "Due today",
+          amount: "-50",
+          status: "PLANNED",
+          source: "rule",
+        }),
+      ],
+      upcoming: [
+        timelineRow({
+          date: "2026-08-28",
+          description: "Future bill",
+          amount: "-20",
+        }),
+      ],
+      balanceMap: new Map(),
+      filters: { ...DEFAULT_TRANSACTION_FILTERS, accountId: 1 },
+      today: "2026-08-26",
+    });
+
+    const kinds = rows.map((r) =>
+      r.kind === "section" ? `${r.kind}:${r.id}` : r.kind
+    );
+    expect(kinds).toEqual([
+      "section:section-recent",
+      "history",
+      "section:section-pending",
+      "pending",
+      "section:section-upcoming",
+      "upcoming",
+    ]);
   });
 });
 

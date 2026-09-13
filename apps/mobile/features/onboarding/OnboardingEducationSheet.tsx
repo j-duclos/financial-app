@@ -13,6 +13,8 @@ type Props = {
   onSecondary?: () => void;
   /** Overlay / back dismiss. Defaults to primary so swipe-away does not fire a navigation CTA. */
   onClose?: () => void;
+  /** In-tree sheet (no RN Modal). Required before navigating to another tab. */
+  embedded?: boolean;
   testID?: string;
 };
 
@@ -25,11 +27,12 @@ export function OnboardingEducationSheet({
   secondaryLabel,
   onSecondary,
   onClose,
+  embedded,
   testID,
 }: Props) {
   const theme = useTheme();
   return (
-    <BottomSheet visible={visible} title={title} onClose={onClose ?? onPrimary}>
+    <BottomSheet visible={visible} title={title} onClose={onClose ?? onPrimary} embedded={embedded}>
       <View testID={testID}>
         <Text
           style={{

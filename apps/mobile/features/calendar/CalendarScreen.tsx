@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { InteractionManager, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { resolveRuleOccurrence } from "@budget-app/api-client";
 import { calendarMonthFromIsoDate, getEffectiveDisplayName, parseIsoDateParam } from "@budget-app/shared";
@@ -114,15 +114,11 @@ export function CalendarScreen() {
     }
   }, [fromOnboarding, gettingStarted]);
 
-  /** iOS deadlocks if we change tabs while the handoff Modal is still dismissing. */
-  const dismissHandoffThenReplace = useCallback(
+  /** Switch tabs without RN Modal + replace — that pairing leaves a zombie overlay on iOS. */
+  const leaveHandoffTo = useCallback(
     (href: typeof GETTING_STARTED_HOME_ROUTE | typeof GETTING_STARTED_EXPLORE_ROUTE) => {
       setHandoffVisible(false);
-      InteractionManager.runAfterInteractions(() => {
-        setTimeout(() => {
-          router.replace(href as never);
-        }, 350);
-      });
+      router.navigate(href as never);
     },
     [router]
   );
@@ -305,6 +301,7 @@ export function CalendarScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <Screen scroll={false}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: theme.spacing.xxl }}
@@ -436,6 +433,7 @@ export function CalendarScreen() {
         testID="calendar-intro"
         onPrimary={dismissCalendarIntro}
       />
+    </Screen>
       <OnboardingEducationSheet
         visible={handoffVisible && !calendarIntroVisible}
         title={GETTING_STARTED_COPY.calendarCompleteTitle}
@@ -443,10 +441,11 @@ export function CalendarScreen() {
         primaryLabel={GETTING_STARTED_COPY.calendarCompletePrimary}
         secondaryLabel={GETTING_STARTED_COPY.calendarCompleteSecondary}
         testID="calendar-onboarding-handoff"
+        embedded
         onClose={() => setHandoffVisible(false)}
-        onPrimary={() => dismissHandoffThenReplace(GETTING_STARTED_HOME_ROUTE)}
-        onSecondary={() => dismissHandoffThenReplace(GETTING_STARTED_EXPLORE_ROUTE)}
+        onPrimary={() => leaveHandoffTo(GETTING_STARTED_HOME_ROUTE)}
+        onSecondary={() => leaveHandoffTo(GETTING_STARTED_EXPLORE_ROUTE)}
       />
-    </Screen>
+    </View>
   );
 }

@@ -2,6 +2,7 @@ import type { OperationalForecastDays } from "@budget-app/shared";
 import { addDaysToIsoDate, addMonthsToIsoDate, maxIsoDate, todayStr } from "./dates";
 
 export type TimeFilter =
+  | "7d"
   | "14d"
   | "30d"
   | "60d"
@@ -16,15 +17,16 @@ export type TimeFilter =
   | "all";
 
 /** Default Recent historical window on mobile Transactions. */
-export const DEFAULT_TIME_FILTER: TimeFilter = "30d";
+export const DEFAULT_TIME_FILTER: TimeFilter = "7d";
 
 /**
  * History range chips on the Transactions filter sheet and Recent header.
  * Not plan-gated — Free and Premium can open all available ledger history.
  */
-export const RECENT_RANGE_OPTIONS: TimeFilter[] = ["30d", "90d", "12m", "all"];
+export const RECENT_RANGE_OPTIONS: TimeFilter[] = ["7d", "14d", "30d", "90d", "12m", "all"];
 
 export const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
+  "7d": "7 days",
   "14d": "14 days",
   "30d": "30 days",
   "60d": "60 days",
@@ -40,6 +42,7 @@ export const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
 };
 
 const TIME_FILTER_DAYS: Partial<Record<TimeFilter, number>> = {
+  "7d": 7,
   "14d": 14,
   "30d": 30,
   "60d": 60,
@@ -47,7 +50,7 @@ const TIME_FILTER_DAYS: Partial<Record<TimeFilter, number>> = {
 };
 
 const TIME_FILTER_MONTHS: Record<
-  Exclude<TimeFilter, "14d" | "30d" | "60d" | "90d" | "all">,
+  Exclude<TimeFilter, "7d" | "14d" | "30d" | "60d" | "90d" | "all">,
   number
 > = {
   "1m": 1,

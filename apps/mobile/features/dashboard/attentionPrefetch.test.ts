@@ -260,10 +260,10 @@ describe("default ledger prefetch cache keys", () => {
     const history = defaultLedgerHistoryQueryOptions(10);
     const expectedParams = transactionListQueryParams({
       accountId: 10,
-      dateAfter: pastTransactionsRange("30d").start,
-      dateBefore: pastTransactionsRange("30d").end,
+      dateAfter: pastTransactionsRange("7d").start,
+      dateBefore: pastTransactionsRange("7d").end,
       showReconciled: false,
-      historyStart: pastTransactionsRange("30d").start,
+      historyStart: pastTransactionsRange("7d").start,
       ordering: TRANSACTIONS_LEDGER_ORDERING,
       includeRunningBalance: true,
     });

@@ -175,9 +175,10 @@ describe("mobile Transactions entitlements", () => {
   });
 
   it("does not mark historical ranges Premium", () => {
-    expect(RECENT_RANGE_OPTIONS).toEqual(["30d", "90d", "12m", "all"]);
+    expect(RECENT_RANGE_OPTIONS).toEqual(["7d", "14d", "30d", "90d", "12m", "all"]);
     expect(filtersSource).toMatch(/History range/);
     expect(filtersSource).toMatch(/RECENT_RANGE_OPTIONS/);
+    expect(filtersSource).toMatch(/recentRangeLabel/);
     expect(filtersSource).not.toMatch(/Premium/);
     expect(TIME_FILTER_LABELS.all).toBe("All history");
   });
