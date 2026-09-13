@@ -1,42 +1,27 @@
-import type { DashboardDetailsSectionState } from "./dashboardSectionState";
 import {
   selectHomeTransactionsPrefetchAccountIds,
   type HomeTransactionsPrefetchAccountInput,
 } from "./attentionPrefetch";
 
-/** Section states that mean Upcoming/Goals are no longer competing for first paint. */
-const SECTION_SETTLED: ReadonlySet<DashboardDetailsSectionState> = new Set([
-  "data",
-  "empty",
-  "error",
-  "hidden",
-]);
-
 /**
- * Home is ready for low-priority Transactions prefetch when critical sections
- * for first useful render have settled. Extended cash risk is intentionally
- * excluded — it must not delay likely Transactions navigation.
+ * Low-priority Transactions/timeline prefetch starts only after Home already
+ * shows meaningful financial data. It must not compete with the first
+ * accounts list or the first summary-fast request.
  *
- * Details success is not required: an error section state counts as settled so
- * Attention → Transactions can still warm after a Details failure.
+ * Details / Upcoming / Goals are not required — those stay on their own
+ * section skeletons.
  */
 export function isHomeReadyForTransactionsPrefetch(input: {
   onboarding: boolean;
+  primaryContentVisible: boolean;
   summaryFast: unknown;
+  fastError: boolean;
   fastIsPlaceholderData: boolean;
-  fastFetching: boolean;
-  detailsFetching: boolean;
-  upcomingSectionState: DashboardDetailsSectionState;
-  goalsSectionState: DashboardDetailsSectionState;
 }): boolean {
   if (input.onboarding) return false;
-  if (!input.summaryFast || input.fastIsPlaceholderData || input.fastFetching) {
-    return false;
-  }
-  // Details must have finished requesting (success or error) — not still in flight.
-  if (input.detailsFetching) return false;
-  if (!SECTION_SETTLED.has(input.upcomingSectionState)) return false;
-  if (!SECTION_SETTLED.has(input.goalsSectionState)) return false;
+  if (!input.primaryContentVisible) return false;
+  if (input.fastIsPlaceholderData) return false;
+  if (!input.summaryFast && !input.fastError) return false;
   return true;
 }
 

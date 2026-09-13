@@ -48,8 +48,11 @@ describe("startup trace wiring", () => {
     expect(homePrefetch).toMatch(/transactions_prefetch_finished/);
     expect(timeline).toMatch(/timedStartupQueryFn\(\s*"timeline"/);
     expect(timeline).toMatch(/recordTimelineBackendMeta/);
+    expect(dashboardTiming).toMatch(/home_primary_content_visible/);
     expect(dashboardTiming).toMatch(/first_screen_ready/);
     expect(dashboardTiming).toMatch(/home_data_ready/);
+    expect(api).toMatch(/recordStartupRequest/);
+    expect(api).toMatch(/onRequestStart/);
   });
 
   it("attaches a correlation id and can record Plaid refresh timing", () => {

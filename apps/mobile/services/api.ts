@@ -4,7 +4,12 @@ import {
 } from "@budget-app/api-client";
 import { getApiBaseUrl, getApiTargetLabel } from "@/constants/env";
 import { saveAccessToken } from "@/services/secureTokenStorage";
-import { getStartupCorrelationId, recordTimelineBackendMeta } from "@/lib/startupTrace";
+import {
+  getStartupCorrelationId,
+  recordStartupRequest,
+  recordStartupRequestStart,
+  recordTimelineBackendMeta,
+} from "@/lib/startupTrace";
 
 export { ApiError, describeApiError, describeAuthFormError } from "./apiErrors";
 
@@ -36,13 +41,32 @@ export function wireApiClient(refs: TokenRefs): void {
       const requestId = getStartupCorrelationId();
       return requestId ? { "X-FlowSight-Request-Id": requestId } : {};
     },
+    onRequestStart: ({ path, method }) => {
+      recordStartupRequestStart(path, method);
+    },
     onResponseMeta: (meta) => {
-      if (!meta.path.includes("/api/timeline/")) return;
-      const serverMs = meta.timelineElapsedMs ? Number(meta.timelineElapsedMs) : null;
-      recordTimelineBackendMeta({
+      const timelineServer = meta.timelineElapsedMs ? Number(meta.timelineElapsedMs) : null;
+      const dashboardServer = meta.dashboardElapsedMs ? Number(meta.dashboardElapsedMs) : null;
+      const serverMs =
+        timelineServer != null && Number.isFinite(timelineServer)
+          ? timelineServer
+          : dashboardServer != null && Number.isFinite(dashboardServer)
+            ? dashboardServer
+            : null;
+      if (meta.path.includes("/api/timeline/")) {
+        recordTimelineBackendMeta({
+          cache: meta.timelineCache ?? null,
+          serverDurationMs: serverMs ?? meta.elapsedMs,
+          requestId: meta.requestId ?? getStartupCorrelationId(),
+        });
+      }
+      recordStartupRequest({
+        path: meta.path,
+        method: meta.method,
+        durationMs: meta.elapsedMs,
+        status: meta.status,
         cache: meta.timelineCache ?? null,
-        serverDurationMs: serverMs != null && Number.isFinite(serverMs) ? serverMs : meta.elapsedMs,
-        requestId: meta.requestId ?? getStartupCorrelationId(),
+        serverMs,
       });
     },
   });

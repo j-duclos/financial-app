@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { InteractionManager, RefreshControl, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getDashboardDetails, getDashboardSummaryFast } from "@budget-app/api-client";
+import { getDashboardDetails, getDashboardSummaryFast, listAccounts } from "@budget-app/api-client";
 import {
   attentionCardsForDisplay,
   EXTENDED_CASH_RISK_QUERY_KEY,
@@ -16,7 +16,6 @@ import {
 import {
   Card,
   Screen,
-  SkeletonBlock,
   StatusChip,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
@@ -50,6 +49,7 @@ import { OnboardingEducationSheet } from "@/features/onboarding/OnboardingEducat
 import { DashboardConceptHelpSheet } from "@/features/onboarding/DashboardConceptHelpSheet";
 import { useGettingStartedEducation } from "@/features/onboarding/useGettingStartedEducation";
 import { markDashboardTiming } from "./dashboardTiming";
+import { requestStartupTraceFinish } from "@/lib/startupTrace";
 import {
   dashboardDetailsSectionState,
   isDashboardAttentionLoading,
@@ -59,6 +59,19 @@ import {
   homeTransactionsPrefetchSignature,
   isHomeReadyForTransactionsPrefetch,
 } from "./homeTransactionsPrefetchGate";
+import { HomeAccountBalancesSection } from "./HomeAccountBalancesSection";
+import {
+  hasOfficialHomeBalances,
+  hasVisibleHomeAccountBalances,
+  isHomePrimaryContentVisible,
+  isHomeSectionPending,
+  shouldShowHomeAccountBalancesSection,
+  shouldShowHomeFirstRun,
+  shouldStartHomeAccountsQuery,
+  shouldStartHomeSummaryFast,
+} from "./homeReadiness";
+import { accountQueryKeys } from "@/features/accounts/queryKeys";
+import { classifyQueryClientCache, timedStartupQueryFn } from "@/lib/startupQueries";
 
 export function DashboardScreen() {
   const theme = useTheme();
@@ -68,7 +81,11 @@ export function DashboardScreen() {
   const { householdId } = useDefaultHouseholdId();
   const { data: profile } = useProfile();
   const { auth } = useAuth();
-  const { status: onboarding, isError: onboardingError } = useOnboardingStatus();
+  const {
+    status: onboarding,
+    isError: onboardingError,
+    isLoading: onboardingPending,
+  } = useOnboardingStatus();
   const gettingStarted = useGettingStartedEducation({
     userId: auth.user?.id,
     onboarding,
@@ -78,7 +95,12 @@ export function DashboardScreen() {
   const { promptUpgrade } = usePremiumUpgrade();
   const isPremium = canUsePlaidBankSync(billing);
   const missingAccounts = isMissingAccounts(onboarding);
-  const loadDashboard = forecastReady && (onboardingError || onboarding?.steps.account === true);
+  const firstRun = shouldShowHomeFirstRun({
+    onboardingPending: !onboardingError && onboardingPending && !onboarding,
+    missingAccounts,
+  });
+  const loadAccounts = shouldStartHomeAccountsQuery(forecastReady);
+  const loadDashboard = shouldStartHomeSummaryFast(forecastReady);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [extendedRiskEnabled, setExtendedRiskEnabled] = useState(false);
   const transactionsPrefetchSignatureRef = useRef<string | null>(null);
@@ -95,7 +117,6 @@ export function DashboardScreen() {
 
   const {
     data: summaryFast,
-    isLoading: fastLoading,
     isSuccess: fastSuccess,
     isError: fastError,
     error: fastErr,
@@ -104,10 +125,34 @@ export function DashboardScreen() {
     isPlaceholderData: fastIsPlaceholderData,
   } = useQuery({
     queryKey: ["dashboard-summary-fast", forecastDays],
-    queryFn: () => getDashboardSummaryFast({ forecast_days: forecastDays }),
+    queryFn: () =>
+      timedStartupQueryFn(
+        "dashboard_summary_fast",
+        classifyQueryClientCache(queryClient, ["dashboard-summary-fast", forecastDays], 30_000),
+        () => getDashboardSummaryFast({ forecast_days: forecastDays })
+      ),
     enabled: loadDashboard,
     placeholderData: keepPreviousData,
   });
+
+  const {
+    data: accountsPage,
+    isPending: accountsPendingRaw,
+    isFetching: accountsFetching,
+  } = useQuery({
+    queryKey: accountQueryKeys.mainList(),
+    queryFn: () =>
+      timedStartupQueryFn(
+        "accounts",
+        classifyQueryClientCache(queryClient, accountQueryKeys.mainList(), 30_000),
+        () => listAccounts({ balance: "true", page_size: 500, active_only: true })
+      ),
+    enabled: loadAccounts,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+  const homeAccounts = accountsPage?.results ?? [];
+  const accountsPending = accountsPendingRaw && homeAccounts.length === 0;
 
   useEffect(() => {
     if (summaryFast && !fastIsPlaceholderData) {
@@ -134,7 +179,12 @@ export function DashboardScreen() {
     isPlaceholderData: detailsIsPlaceholderData,
   } = useQuery({
     queryKey: ["dashboard-summary-details", forecastDays],
-    queryFn: () => getDashboardDetails({ forecast_days: forecastDays }),
+    queryFn: () =>
+      timedStartupQueryFn(
+        "dashboard_details",
+        classifyQueryClientCache(queryClient, ["dashboard-summary-details", forecastDays], 30_000),
+        () => getDashboardDetails({ forecast_days: forecastDays })
+      ),
     enabled: dependentQueriesEnabled,
     placeholderData: keepPreviousData,
   });
@@ -191,7 +241,6 @@ export function DashboardScreen() {
   );
   const upcomingGroups = details?.upcoming_groups ?? [];
   const goals = (details?.goals ?? []).slice(0, 3);
-  const firstRun = missingAccounts;
 
   const upcomingPreview = useMemo(() => {
     const nextIssue = summaryFast?.first_cash_shortfall?.date
@@ -224,11 +273,23 @@ export function DashboardScreen() {
     (fastFetching && (fastIsPlaceholderData || !!summaryFast)) ||
     (detailsFetching && (detailsIsPlaceholderData || !!details));
 
-  const financialHealthLoading = fastLoading && !summaryFast;
+  const officialTop = hasOfficialHomeBalances(top);
+  const accountsHaveBalances = hasVisibleHomeAccountBalances(homeAccounts);
+  const primaryContentVisible = isHomePrimaryContentVisible({
+    accountsWithVisibleBalance: accountsHaveBalances,
+    officialTopSummary: officialTop,
+  });
+  const forecastLoading = isHomeSectionPending(!!summaryFast) && !fastError;
+  const balancesLoading = isHomeSectionPending(officialTop) && !fastError;
   const attentionLoading = isDashboardAttentionLoading({
     summaryFast,
     fastError,
     fastSuccess,
+  });
+  const showAccountBalances = shouldShowHomeAccountBalancesSection({
+    firstRun,
+    accountsPending,
+    accounts: homeAccounts,
   });
 
   const onRefresh = useCallback(async () => {
@@ -237,6 +298,7 @@ export function DashboardScreen() {
       await refetchFast();
       await Promise.all([
         refetchDetails(),
+        queryClient.invalidateQueries({ queryKey: accountQueryKeys.mainList() }),
         queryClient.invalidateQueries({ queryKey: EXTENDED_CASH_RISK_QUERY_KEY }),
       ]);
     } finally {
@@ -308,10 +370,35 @@ export function DashboardScreen() {
   }, []);
 
   useEffect(() => {
+    if (accountsHaveBalances) {
+      markDashboardTiming("home-accounts-visible");
+    }
+  }, [accountsHaveBalances]);
+
+  useEffect(() => {
+    if (officialTop || accountsHaveBalances) {
+      markDashboardTiming("home-balances-visible");
+    }
+  }, [officialTop, accountsHaveBalances]);
+
+  useEffect(() => {
     if (summaryFast && top) {
       markDashboardTiming("financial-health-rendered");
+      markDashboardTiming("home-forecast-visible");
     }
   }, [summaryFast, top]);
+
+  useEffect(() => {
+    if (primaryContentVisible) {
+      markDashboardTiming("home-primary-content-visible");
+    }
+  }, [primaryContentVisible]);
+
+  useEffect(() => {
+    if (firstRun) {
+      requestStartupTraceFinish();
+    }
+  }, [firstRun]);
 
   useEffect(() => {
     if (summaryFast && !firstRun && !attentionLoading) {
@@ -322,6 +409,7 @@ export function DashboardScreen() {
   useEffect(() => {
     if (upcomingSectionState === "data" || upcomingSectionState === "empty") {
       markDashboardTiming("upcoming-rendered");
+      markDashboardTiming("home-recent-activity-visible");
     }
   }, [upcomingSectionState]);
 
@@ -344,12 +432,10 @@ export function DashboardScreen() {
 
   const homeReadyForPrefetch = isHomeReadyForTransactionsPrefetch({
     onboarding: firstRun,
+    primaryContentVisible,
     summaryFast,
+    fastError,
     fastIsPlaceholderData,
-    fastFetching,
-    detailsFetching,
-    upcomingSectionState,
-    goalsSectionState,
   });
 
   useEffect(() => {
@@ -405,17 +491,6 @@ export function DashboardScreen() {
     queryClient,
   ]);
 
-  if (!onboardingError && !onboarding) {
-    return (
-      <Screen>
-        <Text style={{ color: theme.colors.text, ...theme.typography.title }}>Home</Text>
-        <View style={{ marginTop: theme.spacing.lg }}>
-          <SkeletonBlock lines={4} />
-        </View>
-      </Screen>
-    );
-  }
-
   if (firstRun) {
     return (
       <Screen scroll>
@@ -467,11 +542,20 @@ export function DashboardScreen() {
 
       {gettingStartedCard}
 
+      {showAccountBalances ? (
+        <HomeAccountBalancesSection
+          accounts={homeAccounts}
+          loading={accountsPending}
+          refetching={accountsFetching && homeAccounts.length > 0}
+        />
+      ) : null}
+
       <FinancialHealthSection
         forecastDays={forecastDays}
         data={summaryFast}
         top={top}
-        loading={financialHealthLoading}
+        balancesLoading={balancesLoading}
+        forecastLoading={forecastLoading}
         error={fastError && !summaryFast}
         errorMessage={describeApiError(fastErr)}
         onRetry={() => {

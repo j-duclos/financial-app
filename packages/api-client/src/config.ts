@@ -7,6 +7,7 @@ let setAccessToken: ((access: string) => void) | null = null;
 let onUnauthorized: (() => void) | null = null;
 let extraHeaders: (() => Record<string, string>) | null = null;
 let onResponseMeta: ((meta: ApiResponseMeta) => void) | null = null;
+let onRequestStart: ((meta: { path: string; method: string }) => void) | null = null;
 
 export type ApiResponseMeta = {
   path: string;
@@ -15,6 +16,7 @@ export type ApiResponseMeta = {
   elapsedMs: number;
   timelineCache?: string | null;
   timelineElapsedMs?: string | null;
+  dashboardElapsedMs?: string | null;
   balanceWalkMs?: string | null;
   requestId?: string | null;
 };
@@ -35,6 +37,8 @@ export function configureApiClient(options: {
   onUnauthorized?: () => void;
   /** Optional extra headers (correlation ids). Called per request. */
   extraHeaders?: () => Record<string, string>;
+  /** Optional observer when a request is about to start. */
+  onRequestStart?: (meta: { path: string; method: string }) => void;
   /** Optional non-body response observer for timing / cache headers. */
   onResponseMeta?: (meta: ApiResponseMeta) => void;
 }) {
@@ -44,6 +48,7 @@ export function configureApiClient(options: {
   setAccessToken = options.setAccessToken ?? null;
   onUnauthorized = options.onUnauthorized ?? null;
   extraHeaders = options.extraHeaders ?? extraHeaders;
+  onRequestStart = options.onRequestStart ?? onRequestStart;
   onResponseMeta = options.onResponseMeta ?? onResponseMeta;
   unauthorizedNotified = false;
 }
@@ -235,6 +240,7 @@ async function requestInner<T>(
   const method = (init.method ?? "GET").toUpperCase();
   const perfOn = isPerfLoggingEnabled();
   const perfStarted = performance.now();
+  onRequestStart?.({ path, method });
   if (perfOn) {
     const paramStr =
       params && Object.keys(params).length > 0
@@ -246,6 +252,13 @@ async function requestInner<T>(
   try {
     res = await fetch(url, { ...init, ...getOpts, headers, signal: controller.signal });
   } catch (err) {
+    const failedMs = Math.round(performance.now() - perfStarted);
+    onResponseMeta?.({
+      path,
+      method,
+      status: 0,
+      elapsedMs: failedMs,
+    });
     if (err instanceof Error && err.name === "AbortError") {
       if (callerSignal?.aborted) throw err;
       throw new ApiError(
@@ -270,6 +283,7 @@ async function requestInner<T>(
     header("X-Timeline-Cache") ?? header("X-Dashboard-Cache") ?? header("X-Cache");
   const canonicalTimeline = header("X-Canonical-Timeline");
   const timelineElapsed = header("X-Timeline-Elapsed-Ms");
+  const dashboardElapsed = header("X-Dashboard-Elapsed-Ms");
   const balanceWalkMs = header("X-Balance-Walk-Ms");
   const requestId = header("X-Request-Id") ?? header("X-FlowSight-Request-Id");
   if (onResponseMeta) {
@@ -277,9 +291,10 @@ async function requestInner<T>(
       path,
       method,
       status: res.status,
-      elapsedMs: perfOn ? elapsedMs : 0,
+      elapsedMs,
       timelineCache: cacheHint,
       timelineElapsedMs: timelineElapsed,
+      dashboardElapsedMs: dashboardElapsed,
       balanceWalkMs,
       requestId,
     });

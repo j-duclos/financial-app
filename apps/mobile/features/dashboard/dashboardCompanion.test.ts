@@ -142,8 +142,8 @@ describe("mobile Home onboarding status", () => {
   });
 
   it("does not show first-run for established users with accounts", () => {
-    expect(dashboardSource).toMatch(/onboarding\?\.steps\.account === true/);
-    expect(dashboardSource).toMatch(/const firstRun = missingAccounts/);
+    expect(dashboardSource).toMatch(/shouldShowHomeFirstRun/);
+    expect(dashboardSource).toMatch(/isMissingAccounts/);
     expect(dashboardSource).toMatch(/FinancialHealthSection/);
     expect(dashboardSource).not.toMatch(/dismissMu/);
     expect(firstRunSource).not.toMatch(/dismiss/);

@@ -37,8 +37,28 @@ describe("Dashboard loading states", () => {
 
   it("preserves cached dashboard during background refresh", () => {
     expect(dashboardSource).toMatch(/placeholderData: keepPreviousData/);
-    expect(dashboardSource).toMatch(/fastLoading && !summaryFast/);
+    expect(dashboardSource).toMatch(/isHomeSectionPending/);
     expect(dashboardSource).toMatch(/recalculating && !!details/);
+    expect(dashboardSource).not.toMatch(/if \(fastFetching\) return/);
+  });
+
+  it("does not blank Home because isFetching is true while cached data exists", () => {
+    expect(dashboardSource).toMatch(/isHomeSectionPending\(officialTop\)/);
+    expect(dashboardSource).toMatch(/isHomeSectionPending\(!!summaryFast\)/);
+    expect(dashboardSource).not.toMatch(/if \(fastFetching\) \{\s*return/);
+    expect(dashboardSource).not.toMatch(/if \(isFetching\) return/);
+  });
+
+  it("keeps forecast tiles independent of account balances", () => {
+    expect(dashboardSource).toMatch(/forecastLoading=\{forecastLoading\}/);
+    expect(dashboardSource).toMatch(/balancesLoading=\{balancesLoading\}/);
+    expect(dashboardSource).toMatch(/HomeAccountBalancesSection/);
+  });
+
+  it("does not wait for transactions prefetch before showing Home content", () => {
+    expect(dashboardSource).toMatch(/HomeAccountBalancesSection/);
+    expect(dashboardSource).not.toMatch(/if \(!homeReadyForPrefetch\) \{\s*return \(/);
+    expect(dashboardSource).toMatch(/isHomeReadyForTransactionsPrefetch/);
   });
 
   it("shows attention skeletons before summary-fast resolves", () => {

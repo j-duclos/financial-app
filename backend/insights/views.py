@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+import time
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -138,8 +139,11 @@ class DashboardSummaryFastView(APIView):
             days = parse_forecast_days_param(request)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
+        started = time.perf_counter()
         data = build_dashboard_summary_fast(request.user, days=days)
-        return Response(data)
+        resp = Response(data)
+        resp["X-Dashboard-Elapsed-Ms"] = f"{(time.perf_counter() - started) * 1000:.0f}"
+        return resp
 
 
 class DashboardSummaryDetailsView(APIView):
@@ -150,8 +154,11 @@ class DashboardSummaryDetailsView(APIView):
             days = parse_forecast_days_param(request)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
+        started = time.perf_counter()
         data = build_dashboard_summary_details(request.user, days=days)
-        return Response(data)
+        resp = Response(data)
+        resp["X-Dashboard-Elapsed-Ms"] = f"{(time.perf_counter() - started) * 1000:.0f}"
+        return resp
 
 
 class ExtendedCashRiskView(APIView):

@@ -147,6 +147,7 @@ def test_dashboard_summary_api_returns_safe_to_spend(auth_client, checking):
 def test_dashboard_summary_fast_api_returns_above_the_fold(auth_client, checking):
     r = auth_client.get("/api/insights/dashboard/summary-fast/?days=30")
     assert r.status_code == 200
+    assert r.headers.get("X-Dashboard-Elapsed-Ms") is not None
     data = r.json()
     assert "lowest_projected_cash" in data
     assert "first_cash_shortfall" in data

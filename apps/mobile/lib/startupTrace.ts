@@ -12,7 +12,9 @@ export type StartupQueryName =
   | "household"
   | "accounts"
   | "transactions"
-  | "timeline";
+  | "timeline"
+  | "dashboard_summary_fast"
+  | "dashboard_details";
 
 export type StartupEventName =
   | "app_started"
@@ -24,14 +26,35 @@ export type StartupEventName =
   | "household_request_finished"
   | "accounts_request_started"
   | "accounts_request_finished"
+  | "dashboard_summary_fast_request_started"
+  | "dashboard_summary_fast_request_finished"
+  | "dashboard_details_request_started"
+  | "dashboard_details_request_finished"
   | "transactions_prefetch_started"
   | "transactions_prefetch_finished"
   | "timeline_request_started"
   | "timeline_request_finished"
+  | "home_shell_mounted"
+  | "home_accounts_visible"
+  | "home_balances_visible"
+  | "home_recent_activity_visible"
+  | "home_forecast_visible"
+  | "home_primary_content_visible"
   | "home_data_ready"
   | "first_screen_ready"
   | "plaid_refresh_started"
   | "plaid_refresh_finished";
+
+export type StartupRequestRecord = {
+  path: string;
+  method: string;
+  startMs: number;
+  durationMs: number;
+  status: number;
+  cache: string | null;
+  clientElapsedMs: number;
+  serverMs: number | null;
+};
 
 export type StartupEventMetadata = Record<string, string | number | boolean | null | undefined>;
 
@@ -61,6 +84,7 @@ export type StartupTraceSnapshot = {
   timeSinceBackgroundMs: number | null;
   events: Partial<Record<StartupEventName, number>>;
   queries: Partial<Record<StartupQueryName, StartupQueryPhase>>;
+  requests: StartupRequestRecord[];
   plaid: PlaidRefreshTiming | null;
   timelineBackend: TimelineBackendMeta | null;
   summary: string | null;
@@ -77,9 +101,11 @@ type ActiveTrace = {
   timeSinceBackgroundMs: number | null;
   events: Map<StartupEventName, number>;
   queries: Map<StartupQueryName, StartupQueryPhase>;
+  requests: StartupRequestRecord[];
   plaid: PlaidRefreshTiming | null;
   timelineBackend: TimelineBackendMeta | null;
   inFlight: number;
+  apiInFlight: number;
   prefetchOpen: boolean;
   allowFinishWithoutHome: boolean;
   readyToFinish: boolean;
@@ -162,9 +188,11 @@ export function startStartupTrace(input: {
     timeSinceBackgroundMs: input.timeSinceBackgroundMs ?? null,
     events: new Map(),
     queries: new Map(),
+    requests: [],
     plaid: null,
     timelineBackend: null,
     inFlight: 0,
+    apiInFlight: 0,
     prefetchOpen: false,
     allowFinishWithoutHome: false,
     readyToFinish: false,
@@ -295,6 +323,54 @@ export function recordTimelineBackendMeta(meta: TimelineBackendMeta): void {
   };
 }
 
+function safeApiPath(path: string): string {
+  const trimmed = path.split("?")[0] ?? path;
+  return trimmed.slice(0, 120);
+}
+
+export function recordStartupRequestStart(_path: string, _method: string): void {
+  if (!active || active.finishedAt != null) return;
+  active.apiInFlight += 1;
+}
+
+export function recordStartupRequest(input: {
+  path: string;
+  method: string;
+  durationMs: number;
+  status: number;
+  cache?: string | null;
+  serverMs?: number | null;
+}): void {
+  if (!active || active.finishedAt != null) return;
+  active.apiInFlight = Math.max(0, active.apiInFlight - 1);
+  const durationMs = Math.max(0, Math.round(input.durationMs));
+  const endMs = Math.round(nowMs() - active.startedAt);
+  const startMs = Math.max(0, endMs - durationMs);
+  const record: StartupRequestRecord = {
+    path: safeApiPath(input.path),
+    method: input.method,
+    startMs,
+    durationMs,
+    status: input.status,
+    cache: input.cache ?? null,
+    clientElapsedMs: durationMs,
+    serverMs: input.serverMs != null && Number.isFinite(input.serverMs) ? Math.round(input.serverMs) : null,
+  };
+  active.requests.push(record);
+  const gap =
+    record.serverMs != null ? Math.max(0, record.clientElapsedMs - record.serverMs) : null;
+  emit(
+    `[startup-request] ${record.method} ${record.path} start_ms=${record.startMs} duration_ms=${record.durationMs} status=${record.status} cache=${record.cache ?? "n/a"} client_elapsed_ms=${record.clientElapsedMs} server_processing_ms=${record.serverMs ?? "n/a"}` +
+      (gap != null ? ` client_server_gap_ms=${gap}` : "")
+  );
+  maybeFinishStartupTrace();
+}
+
+export function getStartupRequestsSorted(): StartupRequestRecord[] {
+  const rows = active?.requests ?? lastSnapshot?.requests ?? [];
+  return [...rows].sort((a, b) => b.durationMs - a.durationMs);
+}
+
 export function classifyReactQueryCache(input: {
   dataUpdatedAt?: number;
   hasData: boolean;
@@ -322,10 +398,28 @@ function queryCache(name: StartupQueryName): string {
   );
 }
 
+function eventMs(trace: ActiveTrace, name: StartupEventName, fallback: number): number {
+  const at = trace.events.get(name);
+  return at != null ? Math.round(at - trace.startedAt) : fallback;
+}
+
+function buildRequestTable(trace: ActiveTrace): string[] {
+  const sorted = [...trace.requests].sort((a, b) => b.durationMs - a.durationMs);
+  if (sorted.length === 0) return [];
+  const lines = ["[startup-requests]"];
+  for (const row of sorted) {
+    lines.push(
+      `${row.path} start_ms=${row.startMs} duration_ms=${row.durationMs} status=${row.status} cache=${row.cache ?? "n/a"} client_elapsed_ms=${row.clientElapsedMs} server_processing_ms=${row.serverMs ?? "n/a"}`
+    );
+  }
+  return lines;
+}
+
 function buildSummary(trace: ActiveTrace, finishedAt: number): string {
   const total = Math.round(finishedAt - trace.startedAt);
   const firstScreen = trace.events.get("first_screen_ready");
   const firstScreenMs = firstScreen != null ? Math.round(firstScreen - trace.startedAt) : total;
+  const primaryMs = eventMs(trace, "home_primary_content_visible", firstScreenMs);
   const lines = [
     "[startup-summary]",
     `type=${trace.type}`,
@@ -334,11 +428,17 @@ function buildSummary(trace: ActiveTrace, finishedAt: number): string {
     `profile_ms=${trace.queries.get("profile")?.durationMs ?? 0}`,
     `household_ms=${trace.queries.get("household")?.durationMs ?? 0}`,
     `accounts_ms=${trace.queries.get("accounts")?.durationMs ?? 0}`,
+    `dashboard_summary_fast_ms=${trace.queries.get("dashboard_summary_fast")?.durationMs ?? 0}`,
+    `dashboard_details_ms=${trace.queries.get("dashboard_details")?.durationMs ?? 0}`,
     `transactions_ms=${trace.queries.get("transactions")?.durationMs ?? 0}`,
     `timeline_ms=${trace.queries.get("timeline")?.durationMs ?? 0}`,
     `timeline_cache=${trace.timelineBackend?.cache ?? trace.queries.get("timeline")?.cache ?? "n/a"}`,
     `plaid_refresh_ms=${trace.plaid?.durationMs ?? 0}`,
     `first_screen_ready_ms=${firstScreenMs}`,
+    `home_primary_content_ms=${primaryMs}`,
+    `home_accounts_ms=${eventMs(trace, "home_accounts_visible", 0)}`,
+    `home_balances_ms=${eventMs(trace, "home_balances_visible", 0)}`,
+    `home_forecast_ms=${eventMs(trace, "home_forecast_visible", 0)}`,
   ];
   if (trace.timeSinceBackgroundMs != null) {
     lines.splice(3, 0, `time_since_background_ms=${Math.round(trace.timeSinceBackgroundMs)}`);
@@ -352,6 +452,7 @@ function buildSummary(trace: ActiveTrace, finishedAt: number): string {
   if (trace.timelineBackend?.balanceWalkMode) {
     lines.push(`timeline_balance_walk=${trace.timelineBackend.balanceWalkMode}`);
   }
+  lines.push(...buildRequestTable(trace));
   return lines.join("\n");
 }
 
@@ -368,6 +469,7 @@ function toSnapshot(trace: ActiveTrace): StartupTraceSnapshot {
     timeSinceBackgroundMs: trace.timeSinceBackgroundMs,
     events,
     queries,
+    requests: [...trace.requests],
     plaid: trace.plaid,
     timelineBackend: trace.timelineBackend,
     summary: trace.finishedAt != null ? buildSummary(trace, trace.finishedAt) : null,
@@ -383,6 +485,7 @@ export function requestStartupTraceFinish(): void {
 export function maybeFinishStartupTrace(): void {
   if (!active || active.finishedAt != null) return;
   if (active.inFlight > 0) return;
+  if (active.apiInFlight > 0) return;
   if (active.prefetchOpen) return;
   const canFinish =
     active.events.has("transactions_prefetch_finished") ||

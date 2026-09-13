@@ -9,11 +9,13 @@ const dashboardSource = readFileSync(
 );
 
 describe("DashboardScreen request ordering", () => {
-  it("starts summary-fast after onboarding confirms an account exists", () => {
-    expect(dashboardSource).toMatch(/enabled: loadDashboard/);
+  it("starts summary-fast and accounts as soon as auth is ready, not after onboarding", () => {
+    expect(dashboardSource).toMatch(/shouldStartHomeSummaryFast\(forecastReady\)/);
+    expect(dashboardSource).toMatch(/shouldStartHomeAccountsQuery\(forecastReady\)/);
     expect(dashboardSource).toMatch(/useOnboardingStatus/);
     expect(dashboardSource).toMatch(/isMissingAccounts/);
     expect(dashboardSource).toMatch(/\["dashboard-summary-fast", forecastDays\]/);
+    expect(dashboardSource).not.toMatch(/onboarding\?\.steps\.account === true/);
     expect(dashboardSource).not.toMatch(/isDashboardOnboarding/);
   });
 
@@ -59,7 +61,8 @@ describe("DashboardScreen request ordering", () => {
 
   it("keeps progressive loading for fast vs details sections", () => {
     expect(dashboardSource).toMatch(/FinancialHealthSection/);
-    expect(dashboardSource).toMatch(/fastLoading && !summaryFast/);
+    expect(dashboardSource).toMatch(/forecastLoading/);
+    expect(dashboardSource).toMatch(/balancesLoading/);
     expect(dashboardSource).toMatch(/dashboardDetailsSectionState/);
   });
 

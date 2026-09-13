@@ -6,7 +6,10 @@ import {
   getStartupTraceSnapshot,
   markStartupEvent,
   maybeFinishStartupTrace,
+  getStartupRequestsSorted,
   recordPlaidRefreshTiming,
+  recordStartupRequest,
+  recordStartupRequestStart,
   recordTimelineBackendMeta,
   resetStartupTraceForTests,
   runTimedStartupQuery,
@@ -46,6 +49,10 @@ describe("startupTrace", () => {
     expect(first?.events.app_started).toBeDefined();
     expect(first?.summary).toContain("type=cold_launch");
     expect(first?.summary).toContain("correlation_id=");
+    expect(first?.summary).toContain("home_primary_content_ms=");
+    expect(first?.summary).toContain("home_accounts_ms=");
+    expect(first?.summary).toContain("home_balances_ms=");
+    expect(first?.summary).toContain("home_forecast_ms=");
     expect(second?.correlationId).toBe(first?.correlationId);
     expect(lines.filter((l) => l.startsWith("[startup-summary]")).length).toBe(1);
   });
@@ -117,7 +124,8 @@ describe("startupTrace", () => {
     expect(snap?.plaid).toEqual({ durationMs: 1630, changedData: true });
     expect(snap?.summary).toContain("plaid_refresh_ms=1630");
     expect(snap?.summary).toContain("plaid_refresh_changed_data=true");
-    expect(lines.join("\n")).not.toMatch(/account_id|payee|balance|token/i);
+    expect(lines.join("\n")).not.toMatch(/account_id|payee|token/i);
+    expect(lines.join("\n")).not.toMatch(/\bbalance=/i);
   });
 
   it("records timeline backend cache hit/miss metadata", () => {
@@ -134,6 +142,57 @@ describe("startupTrace", () => {
     expect(snap?.summary).toContain("timeline_server_ms=1150");
     expect(snap?.summary).toContain("timeline_balance_walk=client");
     expect(getStartupCorrelationId()).toBe(snap?.correlationId);
+  });
+
+  it("records home readiness milestones and request timings", () => {
+    startStartupTrace({ type: "cold_launch" });
+    markStartupEvent("home_shell_mounted");
+    markStartupEvent("home_accounts_visible");
+    markStartupEvent("home_balances_visible");
+    markStartupEvent("home_primary_content_visible");
+    markStartupEvent("first_screen_ready");
+    const snap = finishStartupTrace();
+    expect(snap?.events.home_primary_content_visible).toBeDefined();
+    expect(snap?.events.home_shell_mounted).toBeDefined();
+    expect(snap?.summary).toContain("home_primary_content_ms=");
+    expect(snap?.summary).toMatch(/home_primary_content_ms=\d+/);
+  });
+
+  it("does not treat first_screen_ready as primary content unless that event was marked", () => {
+    startStartupTrace({ type: "cold_launch" });
+    markStartupEvent("home_shell_mounted");
+    const snap = finishStartupTrace();
+    expect(snap?.events.home_primary_content_visible).toBeUndefined();
+    expect(snap?.summary).toContain("home_primary_content_ms=");
+  });
+
+  it("records startup requests sorted by duration", () => {
+    startStartupTrace({ type: "cold_launch" });
+    recordStartupRequestStart("/api/accounts/", "GET");
+    recordStartupRequest({
+      path: "/api/accounts/",
+      method: "GET",
+      durationMs: 420,
+      status: 200,
+      cache: "n/a",
+    });
+    recordStartupRequestStart("/api/insights/dashboard/summary-fast/", "GET");
+    recordStartupRequest({
+      path: "/api/insights/dashboard/summary-fast/",
+      method: "GET",
+      durationMs: 4300,
+      status: 200,
+      serverMs: 4100,
+      cache: "miss",
+    });
+    markStartupEvent("home_primary_content_visible");
+    const snap = finishStartupTrace();
+    const sorted = getStartupRequestsSorted();
+    expect(sorted[0]?.path).toContain("summary-fast");
+    expect(sorted[0]?.durationMs).toBe(4300);
+    expect(snap?.summary).toContain("[startup-requests]");
+    expect(snap?.summary).toContain("duration_ms=4300");
+    expect(snap?.summary).toContain("server_processing_ms=4100");
   });
 
   it("strips sensitive payload keys from log metadata", () => {

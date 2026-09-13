@@ -19,7 +19,10 @@ type Props = {
   forecastDays: number;
   data?: DashboardSummaryFast;
   top: DashboardTopSummary | null;
-  loading: boolean;
+  /** Official Available Cash/Credit tiles pending — not `isFetching` with cached data. */
+  balancesLoading: boolean;
+  /** Lowest-forecast tile pending — independent of account balances. */
+  forecastLoading: boolean;
   error: boolean;
   errorMessage: string;
   onRetry: () => void;
@@ -27,11 +30,34 @@ type Props = {
   onHelpPress?: (topic: GettingStartedHelpTopic) => void;
 };
 
-function FinancialHealthSkeleton() {
+function ForecastTileSkeleton() {
   const theme = useTheme();
-  const tile = (key: string, fullWidth = false) => (
+  return (
     <View
-      key={key}
+      testID="home-forecast-skeleton"
+      style={{
+        backgroundColor: theme.colors.surface,
+        borderRadius: theme.radius.lg,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        padding: theme.spacing.lg,
+        flex: 1,
+        minWidth: "46%",
+        gap: 8,
+      }}
+    >
+      <Skeleton height={12} width="55%" />
+      <Skeleton height={28} width="70%" />
+      <Skeleton height={12} width="85%" />
+    </View>
+  );
+}
+
+function BalanceTileSkeleton({ fullWidth = false }: { fullWidth?: boolean }) {
+  const theme = useTheme();
+  return (
+    <View
+      testID={fullWidth ? "home-credit-skeleton" : "home-balances-skeleton"}
       style={{
         backgroundColor: theme.colors.surface,
         borderRadius: theme.radius.lg,
@@ -48,23 +74,14 @@ function FinancialHealthSkeleton() {
       <Skeleton height={12} width="85%" />
     </View>
   );
-
-  return (
-    <View style={{ gap: theme.spacing.md }}>
-      <View style={{ flexDirection: "row", gap: theme.spacing.sm }}>
-        {tile("lowest")}
-        {tile("cash")}
-      </View>
-      {tile("credit", true)}
-    </View>
-  );
 }
 
 export const FinancialHealthSection = memo(function FinancialHealthSection({
   forecastDays,
   data,
   top,
-  loading,
+  balancesLoading,
+  forecastLoading,
   error,
   errorMessage,
   onRetry,
@@ -74,56 +91,68 @@ export const FinancialHealthSection = memo(function FinancialHealthSection({
   const theme = useTheme();
   const router = useRouter();
 
-  if (loading) {
-    return <FinancialHealthSkeleton />;
-  }
-
-  if (error && !data) {
+  if (error && !data && !top) {
     return <ErrorState message={errorMessage} onRetry={onRetry} />;
   }
 
-  if (!data || !top) {
+  if (!forecastLoading && !balancesLoading && !data && !top) {
     return null;
   }
 
   return (
-    <View style={{ gap: theme.spacing.md }}>
+    <View style={{ gap: theme.spacing.md }} testID="home-financial-health">
       {recalculating ? (
         <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Updating…</Text>
       ) : null}
       <View style={{ flexDirection: "row", gap: theme.spacing.sm }}>
-        <BalanceDisplay
-          label={lowestForecastBalanceLabel(forecastDays)}
-          amount={data.lowest_projected_cash?.amount ?? "0"}
-          subtitle={
-            data.lowest_projected_cash
-              ? lowestProjectedCashSubtitle(data.lowest_projected_cash)
-              : "No cash accounts in window"
-          }
-          accessibilityHint={FINANCIAL_HEALTH.lowestProjectedCash.help}
-          infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.lowestForecastBalance}
-          onInfoPress={onHelpPress ? () => onHelpPress("lowestForecastBalance") : undefined}
-        />
-        <BalanceDisplay
-          label={FINANCIAL_HEALTH.availableCash.label}
-          amount={top.liquid_cash}
-          subtitle={FINANCIAL_HEALTH.availableCash.subtitle}
-          infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.availableCash}
-          onInfoPress={onHelpPress ? () => onHelpPress("availableCash") : undefined}
-        />
+        {forecastLoading || !data ? (
+          <ForecastTileSkeleton />
+        ) : (
+          <View testID="home-forecast-visible" style={{ flex: 1, minWidth: "46%" }}>
+            <BalanceDisplay
+              label={lowestForecastBalanceLabel(forecastDays)}
+              amount={data.lowest_projected_cash?.amount ?? "0"}
+              subtitle={
+                data.lowest_projected_cash
+                  ? lowestProjectedCashSubtitle(data.lowest_projected_cash)
+                  : "No cash accounts in window"
+              }
+              accessibilityHint={FINANCIAL_HEALTH.lowestProjectedCash.help}
+              infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.lowestForecastBalance}
+              onInfoPress={onHelpPress ? () => onHelpPress("lowestForecastBalance") : undefined}
+            />
+          </View>
+        )}
+        {balancesLoading || !top ? (
+          <BalanceTileSkeleton />
+        ) : (
+          <View testID="home-balances-visible" style={{ flex: 1, minWidth: "46%" }}>
+            <BalanceDisplay
+              label={FINANCIAL_HEALTH.availableCash.label}
+              amount={top.liquid_cash}
+              subtitle={FINANCIAL_HEALTH.availableCash.subtitle}
+              infoAccessibilityLabel={GETTING_STARTED_HELP_LABELS.availableCash}
+              onInfoPress={onHelpPress ? () => onHelpPress("availableCash") : undefined}
+            />
+          </View>
+        )}
       </View>
-      <Pressable
-        onPress={() => router.push("/(app)/(tabs)/accounts")}
-        accessibilityRole="button"
-        accessibilityLabel="View accounts for available credit"
-      >
-        <BalanceDisplay
-          label={FINANCIAL_HEALTH.availableCredit.label}
-          amount={top.available_credit}
-          subtitle={availableCreditSubtitle(top.credit_utilization, top.total_credit_limit)}
-          fullWidth
-        />
-      </Pressable>
+      {balancesLoading || !top ? (
+        <BalanceTileSkeleton fullWidth />
+      ) : (
+        <Pressable
+          onPress={() => router.push("/(app)/(tabs)/accounts")}
+          accessibilityRole="button"
+          accessibilityLabel="View accounts for available credit"
+        >
+          <BalanceDisplay
+            label={FINANCIAL_HEALTH.availableCredit.label}
+            amount={top.available_credit}
+            subtitle={availableCreditSubtitle(top.credit_utilization, top.total_credit_limit)}
+            fullWidth
+          />
+        </Pressable>
+      )}
     </View>
   );
 });

@@ -3,6 +3,11 @@ import { markStartupEvent } from "@/lib/startupTrace";
 type DashboardTimingMark =
   | "home-mounted"
   | "home-shell-rendered"
+  | "home-accounts-visible"
+  | "home-balances-visible"
+  | "home-recent-activity-visible"
+  | "home-forecast-visible"
+  | "home-primary-content-visible"
   | "summary-fast-request-start"
   | "summary-fast-response"
   | "financial-health-rendered"
@@ -24,15 +29,34 @@ function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
-/** Development-only first-content timing for Dashboard progressive loading. */
+/**
+ * Maps Home section visibility to startup milestones.
+ * `first_screen_ready` is reserved for meaningful financial data, not mount.
+ */
 export function markDashboardTiming(mark: DashboardTimingMark): void {
-  if (mark === "home-shell-rendered" || mark === "financial-health-rendered") {
+  if (mark === "home-shell-rendered") {
+    markStartupEvent("home_shell_mounted");
+  }
+  if (mark === "home-accounts-visible") {
+    markStartupEvent("home_accounts_visible");
+  }
+  if (mark === "home-balances-visible") {
+    markStartupEvent("home_balances_visible");
+  }
+  if (mark === "home-recent-activity-visible") {
+    markStartupEvent("home_recent_activity_visible");
+  }
+  if (mark === "home-forecast-visible") {
+    markStartupEvent("home_forecast_visible");
+  }
+  if (mark === "home-primary-content-visible") {
     markStartupEvent("first_screen_ready");
+    markStartupEvent("home_primary_content_visible");
   }
   if (mark === "home-fully-useful" || mark === "home-settled") {
     markStartupEvent("home_data_ready");
   }
-  if (!__DEV__) return;
+  if (typeof __DEV__ !== "undefined" && !__DEV__) return;
   if (mountTime == null) {
     mountTime = nowMs();
   }

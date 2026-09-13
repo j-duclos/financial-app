@@ -23,7 +23,16 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).toMatch(/Home/);
     expect(dashboardSource).toMatch(/ForecastWindowSelect/);
     expect(dashboardSource).not.toMatch(/if \(.*isLoading.*\) return null/);
+    expect(dashboardSource).not.toMatch(/if \(!onboardingError && !onboarding\)/);
     expect(dashboardSource).not.toMatch(/await Promise\.all\(\[\s*getDashboardSummaryFast/);
+  });
+
+  it("renders account balances without waiting for timeline or summary-fast", () => {
+    expect(dashboardSource).toMatch(/HomeAccountBalancesSection/);
+    expect(dashboardSource).toMatch(/accountQueryKeys\.mainList/);
+    expect(dashboardSource).toMatch(/forecastLoading/);
+    expect(dashboardSource).not.toMatch(/enabled: loadDashboard && .*onboarding/);
+    expect(dashboardSource).not.toMatch(/getTimeline\(/);
   });
 
   it("uses independent TanStack queries with keepPreviousData for forecast changes", () => {
@@ -46,13 +55,22 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).toMatch(/isSuccess: fastSuccess/);
   });
 
+  it("marks home_primary_content_visible only from meaningful financial data", () => {
+    expect(dashboardSource).toMatch(/isHomePrimaryContentVisible/);
+    expect(dashboardSource).toMatch(/if \(primaryContentVisible\)/);
+    expect(dashboardSource).toMatch(/home-primary-content-visible/);
+    expect(dashboardSource).not.toMatch(/markDashboardTiming\("home-primary-content-visible"\);\s*\}, \[\]/);
+  });
+
   it("does not block financial health on dashboard details", () => {
     expect(dashboardSource).toMatch(/topSummaryFromDashboard\(summaryFast\)/);
     expect(dashboardSource).not.toMatch(/details\?\.snapshot/);
   });
 
   it("uses section-level loading flags with cached data preserved", () => {
-    expect(dashboardSource).toMatch(/fastLoading && !summaryFast/);
+    expect(dashboardSource).toMatch(/isHomeSectionPending/);
+    expect(dashboardSource).toMatch(/forecastLoading/);
+    expect(dashboardSource).toMatch(/balancesLoading/);
     expect(dashboardSource).toMatch(/dashboardDetailsSectionState/);
     expect(detailsSource).toMatch(/sectionState === "loading"/);
   });
@@ -80,8 +98,9 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).not.toMatch(/setTimeout/);
   });
 
-  it("uses shaped financial health skeleton instead of one generic card", () => {
-    expect(financialHealthSource).toMatch(/FinancialHealthSkeleton/);
+  it("uses per-tile financial health skeletons instead of one generic card", () => {
+    expect(financialHealthSource).toMatch(/ForecastTileSkeleton/);
+    expect(financialHealthSource).toMatch(/BalanceTileSkeleton/);
     expect(dashboardSource).not.toMatch(/SkeletonBlock lines=\{5\}/);
   });
 
@@ -92,6 +111,8 @@ describe("Dashboard progressive loading architecture", () => {
     expect(dashboardSource).toMatch(/details-request-start/);
     expect(dashboardSource).toMatch(/details-response/);
     expect(dashboardSource).toMatch(/financial-health-rendered/);
+    expect(dashboardSource).toMatch(/home-primary-content-visible/);
+    expect(dashboardSource).toMatch(/home-accounts-visible/);
     expect(dashboardSource).toMatch(/upcoming-rendered/);
     expect(dashboardSource).toMatch(/home-fully-useful/);
     expect(dashboardSource).toMatch(/extended-risk-enabled/);

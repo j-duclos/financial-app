@@ -140,37 +140,33 @@ describe("selectHomeTransactionsPrefetchAccountIds", () => {
 describe("isHomeReadyForTransactionsPrefetch", () => {
   const base = {
     onboarding: false,
+    primaryContentVisible: true,
     summaryFast: { ok: true },
+    fastError: false,
     fastIsPlaceholderData: false,
-    fastFetching: false,
-    detailsFetching: false,
-    upcomingSectionState: "data" as const,
-    goalsSectionState: "data" as const,
   };
 
-  it("requires summary-fast settled and Upcoming/Goals settled — not extended risk or details success", () => {
+  it("starts only after primary Home content is visible and summary-fast has settled", () => {
     expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
-    expect(isHomeReadyForTransactionsPrefetch({ ...base, fastFetching: true })).toBe(false);
-    expect(isHomeReadyForTransactionsPrefetch({ ...base, detailsFetching: true })).toBe(false);
-    expect(
-      isHomeReadyForTransactionsPrefetch({ ...base, upcomingSectionState: "loading" })
-    ).toBe(false);
+    expect(isHomeReadyForTransactionsPrefetch({ ...base, primaryContentVisible: false })).toBe(
+      false
+    );
+    expect(isHomeReadyForTransactionsPrefetch({ ...base, summaryFast: null })).toBe(false);
     expect(isHomeReadyForTransactionsPrefetch({ ...base, onboarding: true })).toBe(false);
   });
 
-  it("allows prefetch after Details error once sections settle", () => {
+  it("does not wait for details, Upcoming, or Goals before prefetch", () => {
+    expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
+  });
+
+  it("allows prefetch after summary-fast error once accounts already made Home useful", () => {
     expect(
       isHomeReadyForTransactionsPrefetch({
         ...base,
-        upcomingSectionState: "error",
-        goalsSectionState: "error",
+        summaryFast: null,
+        fastError: true,
       })
     ).toBe(true);
-  });
-
-  it("does not require a truthy details payload", () => {
-    // Gate no longer accepts a `details` field — settled section state is enough.
-    expect(isHomeReadyForTransactionsPrefetch(base)).toBe(true);
   });
 });
 
