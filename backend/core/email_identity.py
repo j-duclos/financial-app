@@ -1,12 +1,14 @@
 """Email identity helpers.
 
 New registrations require a non-blank, case-insensitively unique email.
-Existing development users may still have blank or duplicate emails, so
-uniqueness is enforced in application code rather than a database constraint.
+Existing development users may still have blank, duplicate, mixed-case, or
+whitespace-padded emails, so lookups normalize both the submitted value and the
+stored database value.
 """
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from core.utils import get_user_profile
@@ -34,19 +36,35 @@ def is_email_verified(user) -> bool:
     return bool(verified_at)
 
 
+def _users_with_normalized_email(normalized_email: str):
+    """Match email after trimming and lower-casing the stored DB value too.
+
+    Older/dev rows may contain leading/trailing whitespace. ``email__iexact``
+    does not repair that, which can make password recovery silently miss a
+    perfectly valid account even though sending mail directly to that user
+    works. Keep this normalization at query time so old rows remain recoverable.
+    """
+    email = normalize_email(normalized_email)
+    if not email:
+        return User.objects.none()
+    return (
+        User.objects.annotate(_normalized_email=Lower(Trim("email")))
+        .filter(_normalized_email=email)
+        .order_by("id")
+    )
+
+
 def email_taken(normalized_email: str, *, exclude_user_id: int | None = None) -> bool:
-    if not normalized_email:
+    if not normalize_email(normalized_email):
         return False
-    qs = User.objects.filter(email__iexact=normalized_email)
+    qs = _users_with_normalized_email(normalized_email)
     if exclude_user_id is not None:
         qs = qs.exclude(pk=exclude_user_id)
     return qs.exists()
 
 
 def find_users_by_email(normalized_email: str):
-    if not normalized_email:
-        return User.objects.none()
-    return User.objects.filter(email__iexact=normalized_email).order_by("id")
+    return _users_with_normalized_email(normalized_email)
 
 
 def clear_email_verified(user):
@@ -61,7 +79,7 @@ def clear_email_verified(user):
 
 def assign_user_email(user, normalized_email: str):
     """Set User.email and clear verification. Caller must validate uniqueness."""
-    user.email = normalized_email
+    user.email = normalize_email(normalized_email)
     user.save(update_fields=["email"])
     clear_email_verified(user)
     return user
