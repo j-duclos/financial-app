@@ -290,17 +290,46 @@ def create_premium_checkout_session(user) -> dict[str, str]:
     return {"url": str(url), "session_id": str(session_id or "")}
 
 
+def _recover_portal_customer(user, billing: BillingSubscription) -> str:
+    """Repair an old/local billing row that has a subscription but no customer id."""
+    if billing.stripe_customer_id:
+        return billing.stripe_customer_id
+
+    if billing.stripe_subscription_id:
+        try:
+            subscription = retrieve_subscription(billing.stripe_subscription_id)
+            apply_stripe_subscription(billing, subscription)
+        except Exception:
+            logger.warning(
+                "Could not recover Stripe customer from subscription user_id=%s",
+                user.pk,
+                exc_info=True,
+            )
+        if billing.stripe_customer_id:
+            return billing.stripe_customer_id
+
+    # A portal session is tied to a Stripe Customer. Older/dev accounts can have
+    # billing state without a persisted customer id, so create one rather than
+    # making Manage Subscription permanently unusable.
+    return get_or_create_stripe_customer(user, billing)
+
+
 def create_customer_portal_session(user) -> dict[str, str]:
     require_stripe_secret()
     billing = get_or_create_billing_subscription(user)
-    if not billing.stripe_customer_id:
-        raise BillingConfigurationError(
-            "No billing customer on file. Start a Premium subscription first."
+    customer_id = _recover_portal_customer(user, billing)
+    try:
+        session = create_portal_session(
+            customer=customer_id,
+            return_url=portal_return_url(),
         )
-    session = create_portal_session(
-        customer=billing.stripe_customer_id,
-        return_url=portal_return_url(),
-    )
+    except Exception as exc:
+        # Keep Stripe SDK details out of the client while giving the API a
+        # predictable error type/status instead of an unhandled 500/HTML page.
+        logger.exception("Stripe Customer Portal session creation failed user_id=%s", user.pk)
+        raise BillingConfigurationError(
+            "Stripe subscription management is temporarily unavailable."
+        ) from exc
     url = _obj_get(session, "url")
     if not url:
         raise BillingConfigurationError("Stripe Customer Portal did not return a session URL.")
