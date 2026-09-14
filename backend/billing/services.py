@@ -18,7 +18,9 @@ from billing.models import BillingSubscription
 from billing.stripe_api import (
     create_checkout_session,
     create_customer,
+    create_portal_configuration,
     create_portal_session,
+    list_portal_configurations,
     list_subscriptions,
     retrieve_subscription,
 )
@@ -308,10 +310,23 @@ def _recover_portal_customer(user, billing: BillingSubscription) -> str:
         if billing.stripe_customer_id:
             return billing.stripe_customer_id
 
-    # A portal session is tied to a Stripe Customer. Older/dev accounts can have
-    # billing state without a persisted customer id, so create one rather than
-    # making Manage Subscription permanently unusable.
     return get_or_create_stripe_customer(user, billing)
+
+
+def _active_portal_configuration_id() -> str:
+    """Return an active portal config, creating a minimal one once if needed."""
+    configs = list_portal_configurations(limit=10)
+    data = _obj_get(configs, "data") or []
+    for config in data:
+        config_id = _normalize_stripe_id(_obj_get(config, "id"))
+        if config_id:
+            return config_id
+
+    created = create_portal_configuration()
+    config_id = _normalize_stripe_id(_obj_get(created, "id"))
+    if not config_id:
+        raise BillingConfigurationError("Stripe Customer Portal configuration was not created.")
+    return config_id
 
 
 def create_customer_portal_session(user) -> dict[str, str]:
@@ -319,13 +334,13 @@ def create_customer_portal_session(user) -> dict[str, str]:
     billing = get_or_create_billing_subscription(user)
     customer_id = _recover_portal_customer(user, billing)
     try:
+        configuration_id = _active_portal_configuration_id()
         session = create_portal_session(
             customer=customer_id,
             return_url=portal_return_url(),
+            configuration=configuration_id,
         )
     except Exception as exc:
-        # Keep Stripe SDK details out of the client while giving the API a
-        # predictable error type/status instead of an unhandled 500/HTML page.
         logger.exception("Stripe Customer Portal session creation failed user_id=%s", user.pk)
         raise BillingConfigurationError(
             "Stripe subscription management is temporarily unavailable."
