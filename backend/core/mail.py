@@ -7,7 +7,7 @@ import time
 from urllib.parse import quote, urlencode
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
 
 from core.auth_tokens import (
@@ -31,39 +31,50 @@ def _from_email() -> str:
 
 
 def _send(subject: str, to_email: str, text_body: str, html_body: str) -> None:
-    """Send a transactional email, retrying one transient SMTP/network failure.
+    """Send a transactional email with bounded SMTP retries.
 
-    Render cold starts can occasionally make the first SMTP connection fail or
-    time out even though the exact same credentials work immediately afterward.
-    We retry only connection/SMTP failures, never template or application errors.
+    Web requests must not sit on an SMTP connection for ~30+ seconds and then
+    silently lose the message. Each attempt gets a fresh connection and a
+    bounded timeout. Transient SMTP/network failures are retried twice.
     """
 
+    timeout = float(getattr(settings, "EMAIL_TIMEOUT", 10) or 10)
     last_error: BaseException | None = None
-    for attempt in (1, 2):
+
+    for attempt in (1, 2, 3):
+        connection = get_connection(fail_silently=False, timeout=timeout)
         message = EmailMultiAlternatives(
             subject=subject,
             body=text_body,
             from_email=_from_email(),
             to=[to_email],
+            connection=connection,
         )
         message.attach_alternative(html_body, "text/html")
         try:
+            connection.open()
             sent_count = message.send(fail_silently=False)
             if sent_count != 1:
                 raise smtplib.SMTPException(
                     f"Email backend reported {sent_count} messages sent; expected 1."
                 )
             return
-        except (smtplib.SMTPException, OSError) as exc:
+        except (smtplib.SMTPException, OSError, TimeoutError) as exc:
             last_error = exc
-            if attempt == 2:
+            if attempt == 3:
                 raise
             logger.warning(
-                "Transient email delivery failure; retrying once subject=%s error_type=%s",
+                "Transient email delivery failure; retrying subject=%s attempt=%s error_type=%s",
                 subject,
+                attempt,
                 type(exc).__name__,
             )
-            time.sleep(0.5)
+            time.sleep(0.35 * attempt)
+        finally:
+            try:
+                connection.close()
+            except Exception:
+                pass
 
     if last_error is not None:
         raise last_error
