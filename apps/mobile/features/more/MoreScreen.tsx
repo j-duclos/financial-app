@@ -13,8 +13,10 @@ import { useAuth } from "@/features/auth";
 import { useReviewFeedback } from "@/features/review";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
+import { canOfferStripePremiumPurchase } from "@/features/billing/billingProvider";
 import {
   PREMIUM_DISCOVERY_SUBTITLE,
+  PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE,
   PREMIUM_MONTHLY_PRICE_LABEL,
   PREMIUM_SHEET_TITLE,
 } from "@/features/billing";
@@ -51,6 +53,7 @@ export function MoreScreen() {
   const { billing } = useBillingStatus();
   const { promptUpgrade } = usePremiumUpgrade();
   const isPremium = billing?.is_premium === true;
+  const canPurchase = canOfferStripePremiumPurchase();
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -103,9 +106,17 @@ export function MoreScreen() {
       {!isPremium ? (
         <ListRow
           title={PREMIUM_SHEET_TITLE}
-          subtitle={`${PREMIUM_DISCOVERY_SUBTITLE} · ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+          subtitle={
+            canPurchase
+              ? `${PREMIUM_DISCOVERY_SUBTITLE} · ${PREMIUM_MONTHLY_PRICE_LABEL}`
+              : PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE
+          }
           onPress={() => promptUpgrade()}
-          accessibilityLabel={`${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+          accessibilityLabel={
+            canPurchase
+              ? `${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`
+              : `${PREMIUM_SHEET_TITLE}, ${PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE}`
+          }
         />
       ) : null}
       <ListRow

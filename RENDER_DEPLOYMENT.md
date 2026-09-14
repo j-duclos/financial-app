@@ -1,6 +1,14 @@
 # Deploy budget-app on Render (HTTPS + Plaid OAuth)
 
-This guide deploys **one Render Web Service** (`backend/`) that serves both the **Django API** and the **Vite/React** UI on the same hostname (e.g. `https://financial-app-1-tu0l.onrender.com`). `build.sh` runs `npm run build -w @budget-app/web` and copies `apps/web/dist` into `backend/frontend_dist/` so `/accounts` matches local `localhost:5173`.
+This guide deploys **one Render Web Service** (`backend/`) that serves both the **Django API** and the **Vite/React** UI on the same hostname.
+
+**Authoritative production host:** `https://financial-app-1-tu0l.onrender.com`  
+Public web origin: `https://flowsight360.com`  
+Retired (do not use): `financial-app-5ywr.onrender.com`
+
+`build.sh` runs `npm run build -w @budget-app/web` and copies `apps/web/dist` into `backend/frontend_dist/` so `/accounts` matches local `localhost:5173`.
+
+See `docs/PRODUCTION_CONFIGURATION.md` for the production environment-variable checklist and diagnostic commands.
 
 An optional separate **Static Site** is still supported if you prefer a split deploy; see section 3.
 

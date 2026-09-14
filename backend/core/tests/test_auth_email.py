@@ -1,7 +1,9 @@
 """Registration, email verification, and password reset."""
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 from django.contrib.auth import get_user_model
 from django.core import mail, signing
 from django.core.cache import cache
@@ -234,6 +236,12 @@ def test_reset_password_success_and_token_cannot_be_reused(api_client, user):
         format="json",
     )
     assert login.status_code == 200
+    old = api_client.post(
+        "/api/auth/token/",
+        {"username": user.username, "password": "testpass123"},
+        format="json",
+    )
+    assert old.status_code == 401
     reuse = api_client.post(
         "/api/auth/reset-password/",
         {
@@ -245,6 +253,47 @@ def test_reset_password_success_and_token_cannot_be_reused(api_client, user):
         format="json",
     )
     assert reuse.status_code == 400
+
+
+def test_reset_password_expired_token(api_client, user):
+    uid = make_password_reset_uid(user)
+    token = make_password_reset_token(user)
+    future = datetime.now() + timedelta(days=4)
+    with patch("django.contrib.auth.tokens.PasswordResetTokenGenerator._now", return_value=future):
+        r = api_client.post(
+            "/api/auth/reset-password/",
+            {
+                "uid": uid,
+                "token": token,
+                "new_password": REGISTER_PASSWORD,
+                "new_password_confirm": REGISTER_PASSWORD,
+            },
+            format="json",
+        )
+    assert r.status_code == 400
+    assert "invalid or has expired" in r.json()["detail"]
+    user.refresh_from_db()
+    assert user.check_password("testpass123")
+
+
+@override_settings(DEBUG=False, FRONTEND_ORIGIN="https://flowsight360.com")
+def test_reset_email_uses_https_frontend_origin(api_client, user):
+    mail.outbox.clear()
+    user.email = "reset-origin@example.com"
+    user.save(update_fields=["email"])
+    r = api_client.post(
+        "/api/auth/forgot-password/",
+        {"email": "reset-origin@example.com"},
+        format="json",
+    )
+    assert r.status_code == 200
+    assert r.json()["detail"] == NEUTRAL_PASSWORD_RESET_DETAIL
+    assert len(mail.outbox) == 1
+    body = mail.outbox[0].body
+    assert "https://flowsight360.com/reset-password?" in body
+    assert "localhost" not in body
+    assert "financial-app-1-tu0l.onrender.com" not in body
+    assert "testpass123" not in body
 
 
 def test_reset_password_invalid_token(api_client, user):

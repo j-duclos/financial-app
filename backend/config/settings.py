@@ -305,6 +305,13 @@ if not DEBUG and not os.environ.get("PLAID_TOKEN_FERNET_KEY", "").strip():
         "Generate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
     )
 
+if not DEBUG and not os.environ.get("PLAID_ENV", "").strip():
+    raise ImproperlyConfigured(
+        "PLAID_ENV must be set explicitly when DEBUG is False. "
+        "Use PLAID_ENV=production for live banks. "
+        "The implicit sandbox default is not allowed in production."
+    )
+
 # DRF
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

@@ -12,6 +12,7 @@ import {
   SkeletonBlock,
 } from "@/components/ui";
 import { useTheme } from "@/theme";
+import { isPremiumRequiredError } from "@budget-app/api-client";
 import { describeApiError } from "@/services/api";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
@@ -44,7 +45,7 @@ const NEUTRAL_EXTRA_MONTHLY = "0";
 export function PaymentPlannerScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { billing } = useBillingStatus();
+  const { billing, isLoading: billingLoading } = useBillingStatus();
   const plannerFull = canUsePaymentPlannerFull(billing);
   const { promptUpgrade } = usePremiumUpgrade();
   const params = useLocalSearchParams<{
@@ -85,8 +86,12 @@ export function PaymentPlannerScreen() {
 
   const accountsQuery = usePaymentPlannerAccounts();
   const creditCards = useCreditCardsFromAccounts(accountsQuery.data?.results);
-  const planQuery = useDebtPayoffPlan(scenarioInputs, creditCards.length > 0);
+  const planQuery = useDebtPayoffPlan(
+    scenarioInputs,
+    !billingLoading && plannerFull && creditCards.length > 0
+  );
   const plan = planQuery.data;
+  const plannerDenied = isPremiumRequiredError(planQuery.error);
 
   const selectedAccount = useMemo(
     () => creditCards.find((a) => a.id === selectedAccountId) ?? null,
@@ -141,7 +146,7 @@ export function PaymentPlannerScreen() {
   const recommended = plan ? topRecommendation(plan) : null;
   const focusCard = plan?.cards.find((c) => c.payoff_order === 1);
 
-  if (accountsQuery.isLoading) {
+  if (accountsQuery.isLoading || billingLoading) {
     return (
       <Screen>
         <AppHeader title="Payment Planner" onBack={() => router.back()} />
@@ -191,7 +196,7 @@ export function PaymentPlannerScreen() {
     >
       <AppHeader title="Payment Planner" onBack={() => router.back()} />
 
-      {planQuery.isError && !plan ? (
+      {planQuery.isError && !plan && !plannerDenied ? (
         <ErrorState message={describeApiError(planQuery.error)} onRetry={() => planQuery.refetch()} />
       ) : null}
 
@@ -326,7 +331,7 @@ export function PaymentPlannerScreen() {
         </>
       ) : null}
 
-      {!plannerFull ? (
+      {!plannerFull || plannerDenied ? (
         <PremiumUpsellCard onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.paymentPlanner)} />
       ) : null}
 

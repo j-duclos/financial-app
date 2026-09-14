@@ -1,12 +1,14 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumCheckout } from "@/hooks/usePremiumUpgrade";
+import { canOfferStripePremiumPurchase } from "./billingProvider";
 import { PremiumUpgradeContext } from "./premiumUpgradeContext";
 import { PremiumUpgradeSheet } from "./PremiumUpgradeSheet";
 
 export function PremiumUpgradeProvider({ children }: { children: React.ReactNode }) {
   const { billing } = useBillingStatus();
   const { startUpgrade, upgrading } = usePremiumCheckout();
+  const purchaseAvailable = canOfferStripePremiumPurchase();
   const [visible, setVisible] = useState(false);
   const [contextMessage, setContextMessage] = useState<string | undefined>();
 
@@ -24,9 +26,10 @@ export function PremiumUpgradeProvider({ children }: { children: React.ReactNode
   }, []);
 
   const onUpgrade = useCallback(() => {
+    if (!purchaseAvailable) return;
     setVisible(false);
     void startUpgrade();
-  }, [startUpgrade]);
+  }, [purchaseAvailable, startUpgrade]);
 
   const value = useMemo(() => ({ promptUpgrade }), [promptUpgrade]);
 
@@ -37,6 +40,7 @@ export function PremiumUpgradeProvider({ children }: { children: React.ReactNode
         visible={visible}
         contextMessage={contextMessage}
         upgrading={upgrading}
+        purchaseAvailable={purchaseAvailable}
         onClose={close}
         onUpgrade={onUpgrade}
       />

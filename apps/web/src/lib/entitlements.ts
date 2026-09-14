@@ -1,5 +1,5 @@
 import type { BillingStatus } from "@budget-app/shared";
-import { ApiError } from "@budget-app/api-client";
+import { ApiError, isPremiumRequiredError } from "@budget-app/api-client";
 import { FREE_PLAN_LIMITS, PREMIUM_PLAN_FORECAST_DAYS } from "./billing";
 import {
   OPERATIONAL_FORECAST_DAY_OPTIONS,
@@ -60,6 +60,8 @@ export function atPlanLimit(
 export function planLimit(feature: "manual_accounts" | "recurring_rules" | "goals"): number {
   return FREE_PLAN_LIMITS[feature];
 }
+
+export { isPremiumRequiredError };
 
 export function isEntitlementError(error: unknown): error is ApiError {
   return (

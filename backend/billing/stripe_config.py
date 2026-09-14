@@ -89,4 +89,4 @@ def portal_return_url() -> str:
     explicit = (getattr(settings, "BILLING_PORTAL_RETURN_URL", "") or "").strip()
     if explicit:
         return explicit
-    return f"{get_frontend_origin()}/profile"
+    return f"{get_frontend_origin()}/profile?billing=portal"

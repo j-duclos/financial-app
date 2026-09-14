@@ -545,6 +545,18 @@ class AccountViewSet(ModelViewSet):
                 id_to_account[aid].save(update_fields=["position"])
         return Response({"detail": "Order updated.", "account_ids": account_ids})
 
+    @action(detail=True, methods=["post"], url_path="pin-to-home")
+    def pin_to_home(self, request, pk=None):
+        """Pin or unpin this account on Home. Household-wide; max 4 pins."""
+        account = self.get_object()
+        payload = {"pinned_to_home": request.data.get("pinned_to_home", True)}
+        if "home_pin_order" in request.data:
+            payload["home_pin_order"] = request.data.get("home_pin_order")
+        serializer = self.get_serializer(account, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
     @action(detail=True, methods=["post"], url_path="clear_phantom")
     def clear_phantom(self, request, pk=None):
         """
@@ -721,6 +733,7 @@ class AccountViewSet(ModelViewSet):
         Legacy: ?monthly_payment=100 implies strategy=custom_amount.
         Optional: ?fixed_amount= for fixed_amount strategy.
         """
+        require_payment_planner_full(request.user)
         account = self.get_object()
         if account.account_type != Account.AccountType.CREDIT:
             return Response(

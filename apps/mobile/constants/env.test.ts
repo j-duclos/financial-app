@@ -223,5 +223,76 @@ describe("wireApiClient uses centralized URL", () => {
     expect(source).not.toMatch(/localhost:8000/);
     expect(source).not.toMatch(/onrender\.com/);
     expect(source).toMatch(/configurePerfLogging\(true,\s*getApiTargetLabel\(\)\)/);
+    expect(source).toMatch(/configureBillingCheckoutDiagnostics\(true\)/);
+    expect(source).toMatch(/shouldEnableBillingCheckoutDiagnostics/);
+  });
+});
+
+describe("production API host + runtime diagnostic", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  async function loadEnv(mocks?: { appEnv?: string; apiUrl?: string }) {
+    vi.doMock("expo-constants", () => ({
+      default: {
+        expoConfig: {
+          extra: {
+            appEnv: mocks?.appEnv,
+            apiUrl: mocks?.apiUrl ?? "",
+          },
+        },
+      },
+    }));
+    return import("./env");
+  }
+
+  it("resolves production builds to the authoritative Render host", async () => {
+    const { PRODUCTION_RENDER_ORIGIN, PRODUCTION_RENDER_HOST } = await import(
+      "@budget-app/shared"
+    );
+    process.env.EXPO_PUBLIC_APP_ENV = "production";
+    process.env.EXPO_PUBLIC_API_URL = PRODUCTION_RENDER_ORIGIN;
+    vi.stubGlobal("__DEV__", false);
+
+    const env = await loadEnv({ appEnv: "production" });
+    env.resetApiBaseUrlCacheForTests();
+    expect(env.getApiBaseUrl()).toBe(PRODUCTION_RENDER_ORIGIN);
+    const diagnostic = env.getApiRuntimeDiagnostic();
+    expect(diagnostic.environment).toBe("production");
+    expect(diagnostic.resolved_api_host).toBe(PRODUCTION_RENDER_HOST);
+    expect(diagnostic.build_profile).toBe("production");
+    expect(env.formatApiRuntimeDiagnostic(diagnostic)).not.toMatch(
+      /Bearer |Authorization|sk_live_|whsec_/
+    );
+  });
+
+  it("rejects the stale Render host in staging/production", async () => {
+    process.env.EXPO_PUBLIC_APP_ENV = "production";
+    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-5ywr.onrender.com";
+    vi.stubGlobal("__DEV__", false);
+
+    const env = await loadEnv({ appEnv: "production" });
+    env.resetApiBaseUrlCacheForTests();
+    expect(() => env.getApiBaseUrl()).toThrow(/retired Render host/i);
+  });
+
+  it("logs runtime diagnostics in development and preview, not production", async () => {
+    process.env.EXPO_PUBLIC_APP_ENV = "development";
+    process.env.EXPO_PUBLIC_API_URL = "http://localhost:8000";
+    vi.stubGlobal("__DEV__", true);
+    const env = await loadEnv({ appEnv: "development" });
+    env.resetApiBaseUrlCacheForTests();
+    expect(env.shouldLogApiRuntimeDiagnostic(true, "development")).toBe(true);
+    expect(env.shouldLogApiRuntimeDiagnostic(false, "staging")).toBe(true);
+    expect(env.shouldLogApiRuntimeDiagnostic(false, "production")).toBe(false);
   });
 });

@@ -174,7 +174,7 @@ describe("mobile Recurring is a view; Automation owns rules", () => {
   it("direct Automation create route is blocked for active creation", () => {
     expect(automationFormSource).toMatch(/!isEdit && limited && nextActive/);
     expect(automationFormSource).toMatch(/Recurring limit reached/);
-    expect(automationFormSource).toMatch(/UPGRADE_TO_PREMIUM_LABEL/);
+    expect(automationFormSource).toMatch(/premiumRequiredActionLabel\(canPurchase\)/);
     expect(automationFormSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.recurring\)/);
     expect(automationFormSource).toMatch(/createRule/);
     const mutationFn = mutationFnBlock(automationFormSource);

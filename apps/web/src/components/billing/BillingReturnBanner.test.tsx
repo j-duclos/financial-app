@@ -95,6 +95,16 @@ describe("BillingReturnBanner", () => {
     expect(screen.getByText(CHECKOUT_STILL_CONFIRMING_MESSAGE)).toBeInTheDocument();
   });
 
+  it("refetches billing once after portal return without granting Premium from the URL", async () => {
+    api.getBillingStatus.mockResolvedValue(freeStatus);
+    renderBanner("/profile?billing=portal");
+    await waitFor(() => {
+      expect(api.getBillingStatus).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(PREMIUM_ACTIVE_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.queryByText(CHECKOUT_CONFIRMING_MESSAGE)).not.toBeInTheDocument();
+  });
+
   it("shows a cancellation notice for billing=canceled", async () => {
     api.getBillingStatus.mockResolvedValue(freeStatus);
     renderBanner("/profile?billing=canceled");

@@ -62,6 +62,11 @@ describe("auth email UX", () => {
     expect(loginSource).toMatch(/\/forgot-password/);
   });
 
+  it("keeps email verification on the web verify-email route", () => {
+    expect(verifySource).toMatch(/verifyEmail\(/);
+    expect(appSource).toMatch(/path="\/verify-email"/);
+  });
+
   it("shows a neutral forgot-password confirmation", () => {
     expect(forgotSource).toMatch(
       /If an account exists for that email, we've sent password reset instructions/

@@ -1,5 +1,12 @@
 import Constants from "expo-constants";
-import { APP_NAME, APP_WEB_HOST, APP_WEB_URL } from "@budget-app/shared";
+import {
+  APP_NAME,
+  APP_WEB_HOST,
+  APP_WEB_URL,
+  DEFAULT_PRIVACY_POLICY_URL,
+  DEFAULT_TERMS_OF_SERVICE_URL,
+  resolveLegalUrl,
+} from "@budget-app/shared";
 import type { AppEnvironment } from "./env";
 
 type ExpoExtra = {
@@ -36,14 +43,12 @@ export function getAppVersionLabel(): string {
   return build ? `${version} (${build})` : version;
 }
 
-export function getPrivacyPolicyUrl(): string | null {
-  const url = extra().privacyPolicyUrl?.trim();
-  return url || null;
+export function getPrivacyPolicyUrl(): string {
+  return resolveLegalUrl(extra().privacyPolicyUrl, DEFAULT_PRIVACY_POLICY_URL);
 }
 
-export function getTermsUrl(): string | null {
-  const url = extra().termsUrl?.trim();
-  return url || null;
+export function getTermsUrl(): string {
+  return resolveLegalUrl(extra().termsUrl, DEFAULT_TERMS_OF_SERVICE_URL);
 }
 
 export function getSupportEmail(): string | null {

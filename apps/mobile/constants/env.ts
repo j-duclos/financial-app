@@ -16,6 +16,10 @@
  * See apps/mobile/IOS_DEVICE.md.
  */
 import { parseFinancialEngineMode, type FinancialEngineMode } from "@budget-app/shared/financial-engine";
+import {
+  PRODUCTION_RENDER_ORIGIN,
+  isStaleRenderHost,
+} from "@budget-app/shared";
 import Constants from "expo-constants";
 
 export type AppEnvironment = "development" | "staging" | "production";
@@ -120,6 +124,12 @@ function assertProductionApiUrl(url: string, env: AppEnvironment): void {
         `Plain HTTP is not permitted for authenticated financial APIs.`
     );
   }
+  if (isStaleRenderHost(parseUrl(url).hostname)) {
+    throw new Error(
+      `${env} builds cannot use retired Render host ${parseUrl(url).hostname}. ` +
+        `Set EXPO_PUBLIC_API_URL to ${PRODUCTION_RENDER_ORIGIN}.`
+    );
+  }
 }
 
 let cachedApiBaseUrl: string | null = null;
@@ -165,7 +175,7 @@ export function getApiBaseUrl(): string {
   } catch {
     throw new Error(
       `EXPO_PUBLIC_API_URL is not a valid URL: ${fromEnv}. ` +
-        `Example: http://192.168.1.10:8000 or https://financial-app-1-tu0l.onrender.com`
+        `Example: http://192.168.1.10:8000 or ${PRODUCTION_RENDER_ORIGIN}`
     );
   }
 
@@ -190,6 +200,48 @@ export function getApiTargetLabel(): ApiTargetLabel {
   return "other";
 }
 
+export type ApiRuntimeDiagnostic = {
+  environment: AppEnvironment;
+  resolved_api_host: string;
+  build_profile: string;
+};
+
+export function resolveBuildProfile(env: AppEnvironment = getAppEnvironment()): string {
+  const fromEas = (
+    process.env.EAS_BUILD_PROFILE ||
+    process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE ||
+    ""
+  ).trim();
+  if (fromEas) return fromEas;
+  if (env === "production") return "production";
+  if (env === "staging") return "preview";
+  return "development";
+}
+
+export function getApiRuntimeDiagnostic(): ApiRuntimeDiagnostic {
+  return {
+    environment: getAppEnvironment(),
+    resolved_api_host: getApiHostname(),
+    build_profile: resolveBuildProfile(),
+  };
+}
+
+export function formatApiRuntimeDiagnostic(diagnostic: ApiRuntimeDiagnostic): string {
+  return [
+    "[api-runtime]",
+    `environment=${diagnostic.environment}`,
+    `resolved_api_host=${diagnostic.resolved_api_host}`,
+    `build_profile=${diagnostic.build_profile}`,
+  ].join("\n");
+}
+
+export function shouldLogApiRuntimeDiagnostic(
+  isDev: boolean,
+  env: AppEnvironment = getAppEnvironment()
+): boolean {
+  return isDev || env === "staging";
+}
+
 /** Human label for Profile / debug UI (dev only). */
 export function getApiTargetDisplayLabel(): string {
   const label = getApiTargetLabel();
@@ -203,12 +255,18 @@ export function getApiTargetDisplayLabel(): string {
  * No-op outside __DEV__. Never prints tokens or full URLs with credentials.
  */
 export function logMobileApiEnvironment(): void {
-  if (!__DEV__) return;
+  const isDev = typeof __DEV__ !== "undefined" && __DEV__;
+  const env = getAppEnvironment();
+  if (!shouldLogApiRuntimeDiagnostic(isDev, env)) return;
   try {
-    const label = getApiTargetLabel();
-    const host = getApiHostname();
+    const diagnostic = getApiRuntimeDiagnostic();
+    if (isDev) {
+      const label = getApiTargetLabel();
+      // eslint-disable-next-line no-console
+      console.log(`[MOBILE ENV] API: ${label} (${diagnostic.resolved_api_host})`);
+    }
     // eslint-disable-next-line no-console
-    console.log(`[MOBILE ENV] API: ${label} (${host})`);
+    console.log(formatApiRuntimeDiagnostic(diagnostic));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(

@@ -91,6 +91,8 @@ def get_user_plan(user, *, create_billing_row: bool = True) -> str:
 
 
 def user_has_premium(user, *, create_billing_row: bool = True) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
     return get_user_plan(user, create_billing_row=create_billing_row) == BillingSubscription.Plan.PREMIUM
 
 

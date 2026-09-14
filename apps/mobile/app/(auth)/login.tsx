@@ -114,7 +114,12 @@ export default function LoginScreen() {
 
         <Button label="Log in" onPress={() => void handleSubmit()} loading={submitting} />
 
-        <View style={{ marginTop: theme.spacing.lg, alignItems: "center" }}>
+        <View style={{ marginTop: theme.spacing.md, alignItems: "center" }}>
+          <Button
+            label="Forgot password?"
+            variant="ghost"
+            onPress={() => router.push("/(auth)/forgot-password")}
+          />
           <Button
             label="Create an account"
             variant="ghost"

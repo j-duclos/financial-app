@@ -1,8 +1,10 @@
 import {
   configureApiClient,
+  configureBillingCheckoutDiagnostics,
   configurePerfLogging,
+  shouldEnableBillingCheckoutDiagnostics,
 } from "@budget-app/api-client";
-import { getApiBaseUrl, getApiTargetLabel } from "@/constants/env";
+import { getApiBaseUrl, getApiTargetLabel, getAppEnvironment } from "@/constants/env";
 import { saveAccessToken } from "@/services/secureTokenStorage";
 import {
   getStartupCorrelationId,
@@ -70,7 +72,11 @@ export function wireApiClient(refs: TokenRefs): void {
       });
     },
   });
-  if (!wired && __DEV__) {
+  const isDev = typeof __DEV__ !== "undefined" && __DEV__;
+  if (shouldEnableBillingCheckoutDiagnostics({ isDev, appEnv: getAppEnvironment() })) {
+    configureBillingCheckoutDiagnostics(true);
+  }
+  if (!wired && isDev) {
     configurePerfLogging(true, getApiTargetLabel());
     wired = true;
   }

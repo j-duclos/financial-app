@@ -22,13 +22,15 @@ import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import {
   ACCOUNTS_BANK_SYNC_TEASER,
-  ACCOUNTS_LIMIT_TEASER,
+  accountsLimitTeaser,
+  canOfferStripePremiumPurchase,
   PREMIUM_UPGRADE_CONTEXT,
 } from "@/features/billing";
 import { describeApiError } from "@/services/api";
 import { useAccountsList } from "./useAccountsList";
 import { AccountRow } from "./AccountRow";
 import { markAccountsTiming } from "./accountsTiming";
+import { useHomeAccountPin } from "./useHomeAccountPin";
 
 export function AccountsScreen() {
   const theme = useTheme();
@@ -38,13 +40,16 @@ export function AccountsScreen() {
   const { forecastDays, ready } = usePageForecastWindow();
   const { billing } = useBillingStatus();
   const { promptUpgrade } = usePremiumUpgrade();
+  const canPurchase = canOfferStripePremiumPurchase();
   const accountsLimited = atPlanLimit(billing, "manual_accounts");
+  const limitTeaser = accountsLimitTeaser(canPurchase);
   const usageLabel = manualAccountUsageLabel(billing);
   const isPremium = billing?.is_premium === true;
   const { accounts, isLoading, isError, error, refetch, isEnriching } = useAccountsList(
     forecastDays,
     { forecastReady: ready }
   );
+  const { toggleHomePin, isPending: pinPending, pendingAccountId } = useHomeAccountPin();
 
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
@@ -132,7 +137,7 @@ export function AccountsScreen() {
             )
           }
           accessibilityRole="button"
-          accessibilityLabel={accountsLimited ? ACCOUNTS_LIMIT_TEASER : ACCOUNTS_BANK_SYNC_TEASER}
+          accessibilityLabel={accountsLimited ? limitTeaser : ACCOUNTS_BANK_SYNC_TEASER}
         >
           <Text
             style={{
@@ -142,7 +147,7 @@ export function AccountsScreen() {
               fontWeight: "600",
             }}
           >
-            {accountsLimited ? ACCOUNTS_LIMIT_TEASER : ACCOUNTS_BANK_SYNC_TEASER}
+            {accountsLimited ? limitTeaser : ACCOUNTS_BANK_SYNC_TEASER}
           </Text>
         </Pressable>
       ) : null}
@@ -202,6 +207,8 @@ export function AccountsScreen() {
                   key={account.id}
                   account={account}
                   onPress={() => router.push(`/account/${account.id}`)}
+                  onToggleHomePin={() => toggleHomePin(account)}
+                  pinBusy={pinPending && pendingAccountId === account.id}
                 />
               ))}
             </View>

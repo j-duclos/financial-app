@@ -5,6 +5,7 @@ import { BrandLogo } from "@/components/brand";
 import { Button, Screen, TextField } from "@/components/ui";
 import { APP_TAGLINE } from "@budget-app/shared";
 import { useAuth } from "@/features/auth";
+import { LegalInlineLinks } from "@/features/billing/LegalInlineLinks";
 import { describeAuthFormError } from "@/services/api";
 import { useTheme } from "@/theme";
 
@@ -91,6 +92,9 @@ export default function RegisterScreen() {
             void handleSubmit();
           }}
         />
+        <View style={{ marginBottom: 12 }}>
+          <LegalInlineLinks />
+        </View>
         <Button label="Sign up" onPress={() => void handleSubmit()} loading={submitting} />
         <View style={{ marginTop: 16 }}>
           <Button label="Back to sign in" variant="ghost" onPress={() => router.back()} />

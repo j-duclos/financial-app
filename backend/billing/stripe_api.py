@@ -92,3 +92,15 @@ def create_checkout_session(**kwargs: Any) -> Any:
 def create_portal_session(*, customer: str, return_url: str) -> Any:
     _configure()
     return stripe.billing_portal.Session.create(customer=customer, return_url=return_url)
+
+
+def retrieve_account() -> Any:
+    """Read-only account lookup. Does not create charges or checkout sessions."""
+    _configure()
+    return stripe.Account.retrieve()
+
+
+def retrieve_price(price_id: str) -> Any:
+    """Read-only Price lookup. Does not create charges or checkout sessions."""
+    _configure()
+    return stripe.Price.retrieve(price_id)

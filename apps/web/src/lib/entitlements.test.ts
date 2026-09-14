@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { BillingStatus } from "@budget-app/shared";
-import { canUsePlaidBankSync, canUsePaymentPlannerFull, canUseReportsAdvanced, forecastOptionsForPlan, isPremium } from "./entitlements";
+import { ApiError } from "@budget-app/api-client";
+import {
+  canUsePlaidBankSync,
+  canUsePaymentPlannerFull,
+  canUseReportsAdvanced,
+  forecastOptionsForPlan,
+  isEntitlementError,
+  isPremium,
+  isPremiumRequiredError,
+} from "./entitlements";
 import { PLAID_PREMIUM_MESSAGE, PREMIUM_BENEFITS } from "./billing";
 
 const freeStatus: BillingStatus = {
@@ -52,6 +61,22 @@ describe("launch entitlements", () => {
     expect(forecastOptionsForPlan(freeStatus)).toEqual([30, 60, 90]);
     expect(forecastOptionsForPlan(freeStatus)).not.toContain(180);
     expect(forecastOptionsForPlan(freeStatus)).not.toContain(365);
+  });
+
+  it("maps premium_required API errors to upgrade UX without treating all 403s as billing", () => {
+    const premium = new ApiError(403, "Custom payoff simulations are available with Premium.", {
+      code: "premium_required",
+      feature: "payment_planner_full",
+      upgradeRequired: true,
+    });
+    const ordinary = new ApiError(403, "You do not have permission to do that.");
+    const auth = new ApiError(401, "Authentication credentials were not provided.");
+    expect(isPremiumRequiredError(premium)).toBe(true);
+    expect(isEntitlementError(premium)).toBe(true);
+    expect(isPremiumRequiredError(ordinary)).toBe(false);
+    expect(isEntitlementError(ordinary)).toBe(false);
+    expect(isPremiumRequiredError(auth)).toBe(false);
+    expect(isEntitlementError(auth)).toBe(false);
   });
 
   it("markets automatic bank syncing without promising unlimited institutions", () => {

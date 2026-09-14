@@ -8,8 +8,11 @@ import { currentPeriodAnchor, periodAnchorFromDate, shiftPeriodAnchor } from "@/
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
-import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
-import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
+import {
+  canOfferStripePremiumPurchase,
+  PREMIUM_UPGRADE_CONTEXT,
+  premiumRequiredActionLabel,
+} from "@/features/billing";
 import {
   CashFlowSection,
   DebtSection,
@@ -34,6 +37,7 @@ export function ReportDetailScreen() {
   const reportType = parseReportTypeParam(params.type);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const { promptUpgrade } = usePremiumUpgrade();
+  const canPurchase = canOfferStripePremiumPurchase();
 
   const routeFilters = parseReportRouteParams(params);
   const filters: ReportFilters = useMemo(
@@ -175,7 +179,7 @@ export function ReportDetailScreen() {
                     {PREMIUM_UPGRADE_CONTEXT.reports}
                   </Text>
                   <Button
-                    label={UPGRADE_TO_PREMIUM_LABEL}
+                    label={premiumRequiredActionLabel(canPurchase)}
                     onPress={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.reports)}
                   />
                 </Card>

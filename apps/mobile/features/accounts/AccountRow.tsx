@@ -8,7 +8,7 @@ import {
   getEffectiveDisplayName,
   type Account,
 } from "@budget-app/shared";
-import { StatusChip, UtilizationDisplay } from "@/components/ui";
+import { IconButton, StatusChip, UtilizationDisplay } from "@/components/ui";
 import { useTheme } from "@/theme";
 import {
   resolveListPrimaryBalance,
@@ -18,9 +18,16 @@ import {
 type Props = {
   account: Account;
   onPress: () => void;
+  onToggleHomePin?: () => void;
+  pinBusy?: boolean;
 };
 
-export const AccountRow = React.memo(function AccountRow({ account, onPress }: Props) {
+export const AccountRow = React.memo(function AccountRow({
+  account,
+  onPress,
+  onToggleHomePin,
+  pinBusy,
+}: Props) {
   const theme = useTheme();
   const isCredit = account.account_type === "CREDIT";
   const targetUtil = parseFloat(
@@ -32,18 +39,25 @@ export const AccountRow = React.memo(function AccountRow({ account, onPress }: P
   const primary = resolveListPrimaryBalance(account);
 
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={getEffectiveDisplayName(account)}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.85 : 1,
-        paddingVertical: theme.spacing.md,
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "flex-start",
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.border,
-      })}
+      }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={getEffectiveDisplayName(account)}
+        style={({ pressed }) => ({
+          opacity: pressed ? 0.85 : 1,
+          paddingVertical: theme.spacing.md,
+          flex: 1,
+        })}
+      >
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
         <View
           style={{
             width: 40,
@@ -121,7 +135,18 @@ export const AccountRow = React.memo(function AccountRow({ account, onPress }: P
             </Text>
           ) : null}
         </View>
-      </View>
-    </Pressable>
+        </View>
+      </Pressable>
+      {onToggleHomePin ? (
+        <IconButton
+          name="thumb-tack"
+          size={16}
+          accessibilityLabel={account.pinned_to_home ? "Unpin from Home" : "Pin to Home"}
+          color={account.pinned_to_home ? theme.colors.tint : theme.colors.textMuted}
+          disabled={pinBusy}
+          onPress={onToggleHomePin}
+        />
+      ) : null}
+    </View>
   );
 });

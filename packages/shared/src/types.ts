@@ -200,6 +200,10 @@ export interface Account {
   preserve_partner_transfer_legs?: boolean;
   /** Display order in list (lower = higher). */
   position?: number;
+  /** When true, this account is pinned to the Home preview. Household-wide. */
+  pinned_to_home?: boolean;
+  /** Pin slot 1–4 when pinned; null when unpinned. */
+  home_pin_order?: number | null;
   created_at: string;
   updated_at: string;
   /** Today's balance (signed; for CREDIT, negative = debt). Used for calculations. */

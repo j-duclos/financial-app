@@ -12,6 +12,20 @@ describe("describeApiError", () => {
     expect(describeApiError(new ApiError(504, "Gateway timeout"))).toMatch(/timeout/i);
   });
 
+  it("maps premium_required 403s to upgrade copy without treating every 403 as billing", () => {
+    expect(
+      describeApiError(
+        new ApiError(403, "Custom payoff simulations are available with Premium.", {
+          code: "premium_required",
+          feature: "payment_planner_full",
+          upgradeRequired: true,
+        })
+      )
+    ).toMatch(/premium/i);
+    expect(describeApiError(new ApiError(403, "x"))).toMatch(/permission/i);
+    expect(describeApiError(new ApiError(401, "x"))).toMatch(/session expired/i);
+  });
+
   it("maps JWT credential 401s to a login failure, not session expiry", () => {
     expect(
       describeApiError(new ApiError(401, "No active account found with the given credentials"))

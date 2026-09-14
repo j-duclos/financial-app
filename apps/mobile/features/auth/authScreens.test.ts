@@ -22,6 +22,16 @@ describe("auth screens autofill", () => {
     expect(loginSource).toMatch(/autoComplete="password"/);
   });
 
+  it("login offers Forgot password without revealing account existence", () => {
+    expect(loginSource).toMatch(/Forgot password\?/);
+    expect(loginSource).toMatch(/\/\(auth\)\/forgot-password/);
+  });
+
+  it("acknowledges Terms of Service and Privacy Policy without a checkbox", () => {
+    expect(registerSource).toMatch(/LegalInlineLinks/);
+    expect(registerSource).not.toMatch(/checkbox/i);
+  });
+
   it("maps login/register 401s to credential copy, not session expiry", () => {
     expect(loginSource).toMatch(/describeAuthFormError/);
     expect(registerSource).toMatch(/describeAuthFormError/);

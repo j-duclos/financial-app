@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   ACCOUNTS_BANK_SYNC_TEASER,
   ACCOUNTS_LIMIT_TEASER,
+  accountsLimitTeaser,
   MANAGE_SUBSCRIPTION_LABEL,
+  premiumRequiredActionLabel,
   PREMIUM_BENEFITS,
   PREMIUM_DISCOVERY_SUBTITLE,
   PREMIUM_MONTHLY_PRICE_LABEL,
@@ -66,6 +68,9 @@ describe("PremiumUpgradeSheet is the single upgrade surface", () => {
     expect(sheet).toMatch(/PREMIUM_BENEFITS/);
     expect(sheet).toMatch(/PREMIUM_UPGRADE_CTA_LABEL/);
     expect(sheet).toMatch(/PREMIUM_NOT_NOW_LABEL/);
+    expect(sheet).toMatch(/PREMIUM_AUTO_RENEW_STATEMENT/);
+    expect(sheet).toMatch(/LegalInlineLinks prefix=\{PREMIUM_LEGAL_LINKS_PREFIX\}/);
+    expect(sheet).toMatch(/purchaseAvailable/);
     expect(sheet).toMatch(/contextMessage/);
     expect(provider).toMatch(/PremiumUpgradeSheet/);
     expect(provider).toMatch(/if \(billing\?\.is_premium\) return/);
@@ -78,8 +83,11 @@ describe("PremiumUpgradeSheet is the single upgrade surface", () => {
     expect(hook).toMatch(/isEmailVerificationRequiredError\(err\)/);
     expect(hook).toMatch(/EMAIL_VERIFY_BEFORE_UPGRADE_TITLE/);
     expect(hook).toMatch(/RESEND_VERIFICATION_EMAIL_LABEL/);
+    expect(hook).toMatch(/logBillingCheckoutErrorIfDev\(err\)/);
     expect(hook).toMatch(/WebBrowser\.openBrowserAsync\(session\.url\)/);
     expect(provider).toMatch(/startUpgrade/);
+    expect(provider).toMatch(/canOfferStripePremiumPurchase/);
+    expect(hook).toMatch(/canUseStripeBilling/);
     expect(sheet).not.toMatch(/createCheckoutSession/);
   });
 });
@@ -88,10 +96,13 @@ describe("screens open the shared sheet", () => {
   it("account limit and bank sync open the shared sheet", () => {
     expect(accounts).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.accounts\)/);
     expect(accounts).toMatch(/ACCOUNTS_BANK_SYNC_TEASER/);
-    expect(accounts).toMatch(/ACCOUNTS_LIMIT_TEASER/);
+    expect(accounts).toMatch(/accountsLimitTeaser\(canPurchase\)/);
     expect(accounts).not.toMatch(/manualAccountLimitReachedMessage/);
     expect(ACCOUNTS_BANK_SYNC_TEASER).toBe("Automatic bank syncing with Premium");
     expect(ACCOUNTS_LIMIT_TEASER).toMatch(/unlimited manual accounts and automatic bank syncing/);
+    expect(premiumRequiredActionLabel(true)).toBe("Upgrade to Premium");
+    expect(premiumRequiredActionLabel(false)).toBe("View plan");
+    expect(accountsLimitTeaser(false)).not.toMatch(/^Upgrade /);
   });
 
   it("6 month / 1 year forecast opens the shared sheet", () => {

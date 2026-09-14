@@ -31,7 +31,7 @@ import {
 } from "@budget-app/api-client";
 import { getTimelineWithEngineShadow } from "../lib/financialEngineShadow";
 import { useBillingStatus } from "../hooks/useBillingStatus";
-import { canUsePlaidBankSync, forecastOptionsForPlan } from "../lib/entitlements";
+import { canUsePlaidBankSync, canUsePaymentPlannerFull, forecastOptionsForPlan, isPremiumRequiredError } from "../lib/entitlements";
 import { FORECAST_WINDOW_LABELS } from "../lib/forecastWindow";
 import { PlaidConnectBar } from "../components/PlaidConnectBar";
 import ForecastSummaryBar from "../components/transactions/ForecastSummaryBar";
@@ -164,6 +164,7 @@ export default function Transactions() {
   } = usePageForecastWindow();
   const { billing } = useBillingStatus();
   const plaidAllowed = canUsePlaidBankSync(billing);
+  const plannerFull = canUsePaymentPlannerFull(billing);
   const forecastRange = daysToForecastRange(forecastDays);
   const forecastDayOptions = forecastOptionsForPlan(billing);
   /** Default OFF — reconciled history is loaded only when the user asks. */
@@ -1964,13 +1965,23 @@ export default function Transactions() {
                   setPayoffLoading(true);
                   setPayoffError(null);
                   setPayoffResult(null);
+                  if (!plannerFull) {
+                    setPayoffError("Payoff projections are available with Premium.");
+                    return;
+                  }
                   try {
                     const res = await getAccountPayoff(accountId as number, {
                       monthly_payment: val,
                     });
                     setPayoffResult(res);
                   } catch (err: unknown) {
-                    setPayoffError(err instanceof Error ? err.message : "Failed to load payoff.");
+                    if (isPremiumRequiredError(err)) {
+                      setPayoffError("Payoff projections are available with Premium.");
+                    } else if (err instanceof ApiError && err.status === 401) {
+                      setPayoffError("Your session expired. Please sign in again.");
+                    } else {
+                      setPayoffError(err instanceof Error ? err.message : "Failed to load payoff.");
+                    }
                   } finally {
                     setPayoffLoading(false);
                   }

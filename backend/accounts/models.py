@@ -274,6 +274,15 @@ class Account(models.Model):
         default=0,
         help_text="Display order within the account list (lower = higher in list).",
     )
+    pinned_to_home = models.BooleanField(
+        default=False,
+        help_text="When true, this account is pinned to the Home preview (household-wide).",
+    )
+    home_pin_order = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Home pin slot 1–4 when pinned; null when unpinned.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

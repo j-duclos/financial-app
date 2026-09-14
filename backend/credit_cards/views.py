@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from accounts.models import Account
 from accounts.services.balances import bulk_signed_ledger_balances
+from billing.entitlements import require_payment_planner_full
 from core.utils import get_households_for_user
 from credit_cards.services.debt_engine import (
     DEBT_STRATEGIES,
@@ -56,6 +57,7 @@ class DebtPayoffPlanView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        require_payment_planner_full(request.user)
         strategy = request.query_params.get("strategy", "avalanche")
         mode = request.query_params.get("mode", "aggressive")
         if strategy not in DEBT_STRATEGIES:

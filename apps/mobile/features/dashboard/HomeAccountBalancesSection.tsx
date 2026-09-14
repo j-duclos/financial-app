@@ -2,11 +2,11 @@ import React, { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { getEffectiveDisplayName, type Account } from "@budget-app/shared";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { BalanceDisplay, CurrencyDisplay, SectionHeader, Skeleton } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { resolveListPrimaryBalance } from "@/features/accounts/accountBalanceDisplay";
-
-const PREVIEW_LIMIT = 4;
+import { resolveHomePreviewAccounts } from "./homePreviewAccounts";
 
 type Props = {
   accounts: Account[];
@@ -45,7 +45,7 @@ export const HomeAccountBalancesSection = memo(function HomeAccountBalancesSecti
 }: Props) {
   const theme = useTheme();
   const router = useRouter();
-  const preview = accounts.slice(0, PREVIEW_LIMIT);
+  const preview = resolveHomePreviewAccounts(accounts);
 
   return (
     <View style={{ marginBottom: theme.spacing.lg }} testID="home-account-balances">
@@ -96,9 +96,19 @@ export const HomeAccountBalancesSection = memo(function HomeAccountBalancesSecti
                     gap: 4,
                   }}
                 >
-                  <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                    {name}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    {account.pinned_to_home ? (
+                      <FontAwesome
+                        name="thumb-tack"
+                        size={12}
+                        color={theme.colors.tint}
+                        accessibilityLabel="Pinned to Home"
+                      />
+                    ) : null}
+                    <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, flex: 1 }}>
+                      {name}
+                    </Text>
+                  </View>
                   <CurrencyDisplay
                     amount={primary.amount}
                     style={{ ...theme.typography.title, fontSize: 22 }}

@@ -21,9 +21,32 @@ def _clean_cred(raw: str | None) -> str:
     return s
 
 
+def _is_production_runtime() -> bool:
+    try:
+        from django.conf import settings
+
+        if settings.configured and not getattr(settings, "DEBUG", True):
+            return True
+    except Exception:
+        pass
+    return os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+
+
 def plaid_api_env() -> str:
-    """Normalized PLAID_ENV (sandbox | development | production)."""
-    return os.environ.get("PLAID_ENV", "sandbox").lower().strip()
+    """Normalized PLAID_ENV (sandbox | development | production).
+
+    Development may omit PLAID_ENV and default to sandbox. Production
+    (DEBUG=False or RENDER=true) refuses that implicit fallback.
+    """
+    raw = os.environ.get("PLAID_ENV", "").strip().lower()
+    if raw:
+        return raw
+    if _is_production_runtime():
+        raise RuntimeError(
+            "PLAID_ENV is not set. Production must set PLAID_ENV=production explicitly. "
+            "The implicit sandbox default is not allowed."
+        )
+    return "sandbox"
 
 
 def secret_for_plaid_env(env: str) -> str:
@@ -98,7 +121,10 @@ def plaid_unconfigured_detail() -> str:
     Plaid account type (free trial / production keys are separate).
     """
     where = plaid_config_location_hint()
-    env = plaid_api_env()
+    try:
+        env = plaid_api_env()
+    except RuntimeError:
+        env = "unset"
     parts = [
         f"Plaid API keys are not set on this server. Add PLAID_CLIENT_ID and a secret for "
         f"PLAID_ENV={env!r} in {where}, then redeploy or restart the backend.",

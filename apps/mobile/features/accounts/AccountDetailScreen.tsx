@@ -50,6 +50,7 @@ import {
 } from "./accountDetailQueries";
 import { ACCOUNT_DETAIL_PREVIEW_LIMIT, accountQueryKeys } from "./queryKeys";
 import { markAccountsTiming } from "./accountsTiming";
+import { useHomeAccountPin } from "./useHomeAccountPin";
 
 function amountsDiffer(a: string | null, b: string | null): boolean {
   if (a == null || b == null) return false;
@@ -69,6 +70,7 @@ export function AccountDetailScreen() {
   const { forecastDays, ready } = usePageForecastWindow();
   const today = todayStr();
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const { toggleHomePin, isPending: pinPending } = useHomeAccountPin();
 
   useEffect(() => {
     markAccountsTiming("detail-mounted", "detail");
@@ -384,8 +386,18 @@ export function AccountDetailScreen() {
         </Card>
       ) : null}
 
+      <View style={{ marginTop: theme.spacing.lg }}>
+        <Button
+          label={account.pinned_to_home ? "Pinned to Home" : "Pin to Home"}
+          variant={account.pinned_to_home ? "secondary" : "ghost"}
+          loading={pinPending}
+          accessibilityLabel={account.pinned_to_home ? "Unpin from Home" : "Pin to Home"}
+          onPress={() => toggleHomePin(account)}
+        />
+      </View>
+
       {isCredit ? (
-        <View style={{ marginTop: theme.spacing.lg, gap: 8 }}>
+        <View style={{ marginTop: theme.spacing.md, gap: 8 }}>
           <Button label="View ledger" onPress={openLedger} />
           <Button
             label="Payment Planner"

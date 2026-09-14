@@ -92,7 +92,7 @@ describe("Payment Planner performance structure", () => {
   it("fetches one household plan from the server", () => {
     expect(hooks).toContain("getDebtPayoffPlan");
     expect(hooks).toContain("useDebtPayoffPlan");
-    expect(screen).toMatch(/useDebtPayoffPlan\(scenarioInputs/);
+    expect(screen).toMatch(/useDebtPayoffPlan\(/);
   });
 
   it("does not run client-side payoff simulation loops", () => {

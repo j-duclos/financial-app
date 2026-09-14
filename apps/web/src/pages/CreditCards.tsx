@@ -7,7 +7,12 @@ import type {
   DebtPayoffStrategy,
   PayoffStrategy,
 } from "@budget-app/shared";
-import { formatCurrency, getEffectiveDisplayName } from "@budget-app/shared";
+import {
+  formatCurrency,
+  getEffectiveDisplayName,
+  PAYMENT_PLANNER_FULL_UPSELL_BODY,
+  PAYMENT_PLANNER_FULL_UPSELL_TITLE,
+} from "@budget-app/shared";
 import {
   PLANNER_SUMMARY_METRICS,
   debtFreeSummary,
@@ -21,7 +26,11 @@ import { METRIC_TILE_GRID_4 } from "../components/dashboard/metricTileLayout";
 import { PAGE_SHELL_PY } from "../lib/pageLayout";
 import PlanningSubnav from "../components/PlanningSubnav";
 import FinancialDisclaimer from "../components/legal/FinancialDisclaimer";
+import PremiumUpgradePrompt from "../components/billing/PremiumUpgradePrompt";
+import { useBillingStatus } from "../hooks/useBillingStatus";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { usePremiumCheckout } from "../hooks/usePremiumCheckout";
+import { canUsePaymentPlannerFull, isPremiumRequiredError } from "../lib/entitlements";
 import { whatIfDebtPath } from "../lib/whatIfContext";
 import {
   DEBT_MODE_OPTIONS,
@@ -49,6 +58,10 @@ import {
 const NEUTRAL_EXTRA_MONTHLY = "0";
 
 export default function CreditCards() {
+  const { billing, isLoading: billingLoading } = useBillingStatus();
+  const plannerFull = canUsePaymentPlannerFull(billing);
+  const { startCheckout, checkoutBusy, checkoutError, emailVerificationRequired } =
+    usePremiumCheckout();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("account") ?? "";
   const amountFromUrl = searchParams.get("amount") ?? "";
@@ -133,10 +146,11 @@ export default function CreditCards() {
         },
         { signal }
       ),
-    enabled: creditCards.length > 0,
+    enabled: !billingLoading && plannerFull && creditCards.length > 0,
     placeholderData: keepPreviousData,
   });
   const plan = planQuery.data;
+  const plannerDenied = isPremiumRequiredError(planQuery.error);
 
   const selectedAccount = useMemo(
     () => creditCards.find((a) => String(a.id) === selectedId) ?? null,
@@ -177,7 +191,7 @@ export default function CreditCards() {
         { signal }
       );
     },
-    enabled: projectionEnabled,
+    enabled: plannerFull && projectionEnabled,
     retry: false,
     placeholderData: keepPreviousData,
   });
@@ -206,7 +220,7 @@ export default function CreditCards() {
     setSearchParams({});
   }
 
-  if (accountsQuery.isLoading) {
+  if (accountsQuery.isLoading || billingLoading) {
     return (
       <div className={PAGE_SHELL_PY}>
         <div className="mb-4 space-y-2">
@@ -215,7 +229,9 @@ export default function CreditCards() {
           <PlanningSubnav />
           <FinancialDisclaimer />
         </div>
-        <p className="text-sm text-gray-500 animate-pulse">Loading credit cards…</p>
+        <p className="text-sm text-gray-500 animate-pulse">
+          {billingLoading && !accountsQuery.isLoading ? "Loading plan…" : "Loading credit cards…"}
+        </p>
       </div>
     );
   }
@@ -246,6 +262,31 @@ export default function CreditCards() {
         <Link to="/accounts" className="text-blue-600 hover:underline">
           Add a credit card
         </Link>
+      </div>
+    );
+  }
+
+  if (!plannerFull || plannerDenied) {
+    return (
+      <div className={`${PAGE_SHELL_PY} space-y-4`}>
+        <div className="space-y-2">
+          <h1 className="text-lg font-semibold text-gray-900">Payment Planner</h1>
+          <p className="text-sm text-gray-600 mt-1">How should I eliminate debt?</p>
+          <PlanningSubnav />
+          <FinancialDisclaimer />
+        </div>
+        <PremiumUpgradePrompt
+          title={PAYMENT_PLANNER_FULL_UPSELL_TITLE}
+          description={PAYMENT_PLANNER_FULL_UPSELL_BODY}
+          onUpgrade={startCheckout}
+          busy={checkoutBusy}
+          error={checkoutError}
+          verificationRequired={emailVerificationRequired}
+        />
+        <p className="text-sm text-gray-600">
+          {creditCards.length} credit card{creditCards.length === 1 ? "" : "s"} ready to plan after
+          upgrade.
+        </p>
       </div>
     );
   }

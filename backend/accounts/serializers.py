@@ -165,7 +165,8 @@ class AccountSerializer(serializers.ModelSerializer):
             "close_reason", "archive_reason", "preserve_in_net_worth", "plaid_sync_enabled",
             "is_active", "archived", "include_in_forecast", "include_in_available_credit",
             "preserve_partner_transfer_legs",
-            "position", "created_at", "updated_at", "balance",
+            "position", "pinned_to_home", "home_pin_order",
+            "created_at", "updated_at", "balance",
             "available_credit", "utilization_percent", "payoff_to_avoid_interest",
             "estimated_monthly_interest", "projected_interest_if_unpaid",
             "is_payment_due_soon", "days_until_due",
@@ -378,7 +379,37 @@ class AccountSerializer(serializers.ModelSerializer):
             attrs["statement_closing_day"] = attrs["billing_cycle_end_day"]
         if not is_credit and attrs.get("target_utilization_percent") is None:
             attrs.pop("target_utilization_percent", None)
+        order = attrs.get("home_pin_order")
+        if order is not None and (order < 1 or order > 4):
+            raise serializers.ValidationError(
+                {"home_pin_order": "home_pin_order must be between 1 and 4."}
+            )
         return attrs
+
+    def _extract_home_pin_writes(self, validated_data):
+        initial = getattr(self, "initial_data", {}) or {}
+        return {
+            "pinned": validated_data.pop("pinned_to_home", None),
+            "order": validated_data.pop("home_pin_order", None),
+            "has_pinned": "pinned_to_home" in initial,
+            "has_order": "home_pin_order" in initial,
+        }
+
+    def _apply_home_pin_writes(self, instance, writes):
+        if not writes["has_pinned"] and not writes["has_order"]:
+            return instance
+        from accounts.services.home_pin import HomePinError, apply_home_pin
+
+        try:
+            apply_home_pin(
+                instance,
+                pinned=writes["pinned"] if writes["has_pinned"] else None,
+                home_pin_order=writes["order"] if writes["has_order"] else None,
+            )
+        except HomePinError as exc:
+            raise serializers.ValidationError({exc.field: str(exc)}) from exc
+        instance.refresh_from_db()
+        return instance
 
     def _extract_minimum_payment_writes(self, validated_data):
         return {
@@ -431,8 +462,10 @@ class AccountSerializer(serializers.ModelSerializer):
             validated_data["role"] = Account.infer_role_from_account_type(
                 validated_data["account_type"]
             )
+        pin_writes = self._extract_home_pin_writes(validated_data)
         instance = super().create(validated_data)
         self._sync_nickname_from_display_name(instance)
+        instance = self._apply_home_pin_writes(instance, pin_writes)
         return self._apply_minimum_payment_writes(instance, writes)
 
     def update(self, instance, validated_data):
@@ -455,7 +488,12 @@ class AccountSerializer(serializers.ModelSerializer):
             validated_data["role"] = Account.infer_role_from_account_type(
                 validated_data["account_type"]
             )
-        instance = super().update(instance, validated_data)
+        pin_writes = self._extract_home_pin_writes(validated_data)
+        # Pin-only writes use QuerySet.update so Account.post_save does not
+        # invalidate household financial caches.
+        if validated_data:
+            instance = super().update(instance, validated_data)
+        instance = self._apply_home_pin_writes(instance, pin_writes)
         if archived_toggle is not None:
             from accounts.services.lifecycle import archive_account, restore_account
 

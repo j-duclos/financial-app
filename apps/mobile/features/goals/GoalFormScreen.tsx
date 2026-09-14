@@ -55,8 +55,11 @@ import { goalDetailPath, goalsListPath } from "./navigation";
 import { goalsQueryKeys, invalidateGoalFundingQueries, invalidateGoalMetadataQueries } from "./queryKeys";
 import { invalidateForecastQueries } from "@/lib/financialQueryRefresh";
 import { describeApiError } from "@/services/api";
-import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
-import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
+import {
+  canOfferStripePremiumPurchase,
+  PREMIUM_UPGRADE_CONTEXT,
+  premiumRequiredActionLabel,
+} from "@/features/billing";
 import { useGoalPlanLimit } from "./useGoalPlanLimit";
 
 const ACTIVE_GOAL_STATUSES: FinancialGoalStatus[] = ["active", "paused"];
@@ -182,6 +185,7 @@ export function GoalFormScreen() {
     limitReachedMessage,
     promptUpgrade,
   } = useGoalPlanLimit();
+  const canPurchase = canOfferStripePremiumPurchase();
   const [form, setForm] = useState<GoalFormValues>(emptyGoalForm);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -418,7 +422,7 @@ export function GoalFormScreen() {
         <EmptyState
           title="Goal limit reached"
           message={limitReachedMessage}
-          actionLabel={UPGRADE_TO_PREMIUM_LABEL}
+          actionLabel={premiumRequiredActionLabel(canPurchase)}
           actionVariant="primary"
           onAction={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.goals)}
         />

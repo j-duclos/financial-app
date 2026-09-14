@@ -32,18 +32,17 @@ describe("mobile Payment Planner Free vs Premium companion", () => {
     expect(hooks).not.toMatch(/for\s*\(.*months/);
   });
 
-  it("FREE: summary, recommended next, and payoff order render without simulator controls", () => {
+  it("FREE: shows the shared Premium upsell instead of simulator controls", () => {
     expect(screen).toMatch(/PlannerSummaryCard/);
     expect(summary).toMatch(/Plan summary/);
     expect(summary).toMatch(/showExtraPayment/);
     expect(screen).toMatch(/showExtraPayment=\{plannerFull\}/);
-    expect(screen).toMatch(/Recommended next/);
-    expect(screen).toMatch(/Payoff order/);
     expect(screen).toMatch(/plannerFull \?/);
     expect(screen).toMatch(/StrategyModePanel/);
     expect(screen).toMatch(/WhatIfPanel/);
     expect(screen).toMatch(/Month-by-month projection/);
     expect(screen).toMatch(/PremiumUpsellCard/);
+    expect(screen).toMatch(/!plannerFull \|\| plannerDenied/);
     expect(upsell).toMatch(/PAYMENT_PLANNER_FULL_UPSELL_TITLE/);
     expect(upsell).toMatch(/PAYMENT_PLANNER_FULL_UPSELL_BODY/);
     expect(PAYMENT_PLANNER_FULL_UPSELL_TITLE).toBe("Build a custom payoff plan");
@@ -59,8 +58,13 @@ describe("mobile Payment Planner Free vs Premium companion", () => {
       lumpSum: "",
       lumpSumAccountId: null,
     });
+    expect(screen).toMatch(
+      /!billingLoading && plannerFull && creditCards\.length > 0/
+    );
     expect(screen).toMatch(/enabled: plannerFull && !!selectedAccount && !!selectedPlanCard/);
     expect(details).toMatch(/plannerFull && creditCards\.length > 0/);
+    expect(details).toMatch(/isPremiumRequiredError/);
+    expect(screen).toMatch(/isPremiumRequiredError\(planQuery\.error\)/);
     expect(screen).not.toMatch(/useAccountPayoffProjection\(\{[\s\S]*enabled: !!selectedAccount && !!selectedPlanCard/);
   });
 

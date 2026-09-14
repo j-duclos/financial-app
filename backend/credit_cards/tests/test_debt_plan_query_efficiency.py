@@ -25,6 +25,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Account
 from accounts.services.credit_card import ledger_owed_balance
+from billing.tests.helpers import grant_premium
 from transactions.services.posting import post_transaction
 
 TODAY = date.today()
@@ -107,6 +108,7 @@ def _expected_weighted_apr(n: int) -> Decimal:
 
 @pytest.mark.django_db
 def test_profile_six_card_plan_endpoint(auth_client, household, user, monkeypatch):
+    grant_premium(user)
     seed_cards(household, user, 6)
     calls = {"n": 0}
     orig = ledger_owed_balance
@@ -177,6 +179,7 @@ def test_profile_six_card_plan_endpoint(auth_client, household, user, monkeypatc
 
 @pytest.mark.django_db
 def test_plan_query_count_scales_with_cards_not_n_plus_one(auth_client, household, user):
+    grant_premium(user)
     counts = {}
     for n in (1, 6, 20):
         Account.objects.filter(household=household, account_type=Account.AccountType.CREDIT).delete()
@@ -191,6 +194,7 @@ def test_plan_query_count_scales_with_cards_not_n_plus_one(auth_client, househol
 
 @pytest.mark.django_db
 def test_plan_get_is_read_only(auth_client, household, user):
+    grant_premium(user)
     seed_cards(household, user, 3)
     stats = _profile_plan(auth_client)
     assert stats["writes"] == 0
@@ -198,6 +202,7 @@ def test_plan_get_is_read_only(auth_client, household, user):
 
 @pytest.mark.django_db
 def test_individual_payoff_uses_one_starting_balance(auth_client, household, user, monkeypatch):
+    grant_premium(user)
     cards = seed_cards(household, user, 1)
     card = cards[0]
     calls = {"n": 0}

@@ -9,6 +9,7 @@ import {
   resendVerification,
 } from "@budget-app/api-client";
 import { describeApiError } from "@/services/api";
+import { logBillingCheckoutErrorIfDev } from "@/lib/billingCheckoutError";
 import {
   ALREADY_PREMIUM_MESSAGE,
   BILLING_STATUS_QUERY_KEY,
@@ -19,7 +20,9 @@ import {
   isEmailVerificationRequiredError,
 } from "@/lib/billing";
 import { PremiumUpgradeContext } from "@/features/billing/premiumUpgradeContext";
+import { canUseStripeBilling } from "@/features/billing/billingProvider";
 import {
+  PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE,
   PREMIUM_NOT_NOW_LABEL,
   PREMIUM_SHEET_TITLE,
   PREMIUM_UPGRADE_CTA_LABEL,
@@ -57,8 +60,13 @@ async function resendVerificationEmail(): Promise<void> {
 export function usePremiumCheckout() {
   const queryClient = useQueryClient();
   const [upgrading, setUpgrading] = useState(false);
+  const stripeAllowed = canUseStripeBilling();
 
   const startUpgrade = useCallback(async () => {
+    if (!stripeAllowed) {
+      Alert.alert(PREMIUM_SHEET_TITLE, PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE);
+      return;
+    }
     setUpgrading(true);
     try {
       const session = await createCheckoutSession();
@@ -69,6 +77,7 @@ export function usePremiumCheckout() {
       await WebBrowser.openBrowserAsync(session.url);
       await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
     } catch (err) {
+      logBillingCheckoutErrorIfDev(err);
       if (isEmailVerificationRequiredError(err)) {
         Alert.alert(EMAIL_VERIFY_BEFORE_UPGRADE_TITLE, EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE, [
           { text: PREMIUM_NOT_NOW_LABEL, style: "cancel" },
@@ -83,9 +92,13 @@ export function usePremiumCheckout() {
     } finally {
       setUpgrading(false);
     }
-  }, [queryClient]);
+  }, [queryClient, stripeAllowed]);
 
   const startPortal = useCallback(async () => {
+    if (!stripeAllowed) {
+      Alert.alert(PREMIUM_SHEET_TITLE, PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE);
+      return;
+    }
     try {
       const session = await createPortalSession();
       if (!session.url) {
@@ -97,9 +110,9 @@ export function usePremiumCheckout() {
     } catch (err) {
       Alert.alert("Billing", upgradeErrorMessage(err));
     }
-  }, [queryClient]);
+  }, [queryClient, stripeAllowed]);
 
-  return { startUpgrade, startPortal, upgrading };
+  return { startUpgrade, startPortal, upgrading, stripeAllowed };
 }
 
 export function usePremiumUpgrade() {
@@ -112,9 +125,11 @@ export function usePremiumUpgrade() {
         sheet.promptUpgrade(contextMessage);
         return;
       }
-      Alert.alert(PREMIUM_SHEET_TITLE, contextMessage ?? "", [
+      Alert.alert(PREMIUM_SHEET_TITLE, contextMessage ?? PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE, [
         { text: PREMIUM_NOT_NOW_LABEL, style: "cancel" },
-        { text: PREMIUM_UPGRADE_CTA_LABEL, onPress: () => void checkout.startUpgrade() },
+        ...(checkout.stripeAllowed
+          ? [{ text: PREMIUM_UPGRADE_CTA_LABEL, onPress: () => void checkout.startUpgrade() }]
+          : []),
       ]);
     },
     [checkout, sheet]

@@ -58,8 +58,11 @@ import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import {
+  canOfferStripePremiumPurchase,
+  canUseStripeBilling,
   MANAGE_SUBSCRIPTION_LABEL,
   PREMIUM_DISCOVERY_SUBTITLE,
+  PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE,
   PREMIUM_MONTHLY_PRICE_LABEL,
   PREMIUM_SHEET_TITLE,
   PREMIUM_UPGRADE_CONTEXT,
@@ -127,6 +130,8 @@ export function ProfileSettingsScreen() {
   const { accounts } = useAccountOptions({ householdId });
   const { billing } = useBillingStatus();
   const { promptUpgrade, startPortal } = usePremiumUpgrade();
+  const canPurchase = canOfferStripePremiumPurchase();
+  const canManageStripe = canUseStripeBilling();
 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -335,19 +340,34 @@ export function ProfileSettingsScreen() {
           <SectionHeader title="Plan" />
           <SettingsGroup>
             {billing?.is_premium ? (
-              <SettingsRow
-                title="Premium"
-                value={MANAGE_SUBSCRIPTION_LABEL}
-                onPress={() => void startPortal()}
-                accessibilityLabel="Premium, Manage subscription"
-              />
+              canManageStripe ? (
+                <SettingsRow
+                  title="Premium"
+                  value={MANAGE_SUBSCRIPTION_LABEL}
+                  onPress={() => void startPortal()}
+                  accessibilityLabel="Premium, Manage subscription"
+                />
+              ) : (
+                <SettingsRow
+                  title="Premium"
+                  value="Active"
+                  subtitle={PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE}
+                  accessibilityLabel={`Premium, Active, ${PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE}`}
+                />
+              )
             ) : (
               <SettingsRow
                 title={PREMIUM_SHEET_TITLE}
-                subtitle={PREMIUM_DISCOVERY_SUBTITLE}
-                value={PREMIUM_MONTHLY_PRICE_LABEL}
+                subtitle={
+                  canPurchase ? PREMIUM_DISCOVERY_SUBTITLE : PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE
+                }
+                value={canPurchase ? PREMIUM_MONTHLY_PRICE_LABEL : undefined}
                 onPress={() => promptUpgrade()}
-                accessibilityLabel={`${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`}
+                accessibilityLabel={
+                  canPurchase
+                    ? `${PREMIUM_SHEET_TITLE}, ${PREMIUM_DISCOVERY_SUBTITLE}, ${PREMIUM_MONTHLY_PRICE_LABEL}`
+                    : `${PREMIUM_SHEET_TITLE}, ${PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE}`
+                }
               />
             )}
           </SettingsGroup>

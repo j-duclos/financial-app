@@ -1,6 +1,12 @@
 import pytest
 from django.contrib.auth import get_user_model
 
+from billing.entitlements import (
+    FEATURE_PAYMENT_PLANNER_FULL,
+    PAYMENT_PLANNER_FULL_DETAIL,
+    EntitlementDenied,
+    require_premium,
+)
 from billing.models import BillingSubscription
 from billing.services import (
     get_billing_status_payload,
@@ -109,3 +115,39 @@ def test_canceled_subscription_does_not_grant_premium(user):
     billing.save()
     assert user_has_premium(user) is False
     assert get_user_plan(user) == "FREE"
+
+
+@pytest.mark.django_db
+def test_require_premium_raises_structured_payload_for_free_user(user):
+    with pytest.raises(EntitlementDenied) as excinfo:
+        require_premium(
+            user,
+            FEATURE_PAYMENT_PLANNER_FULL,
+            detail=PAYMENT_PLANNER_FULL_DETAIL,
+        )
+    payload = excinfo.value.payload()
+    assert payload["code"] == "premium_required"
+    assert payload["feature"] == FEATURE_PAYMENT_PLANNER_FULL
+    assert payload["detail"] == PAYMENT_PLANNER_FULL_DETAIL
+    assert payload["upgrade_required"] is True
+    assert "stripe" not in str(payload).lower()
+
+
+@pytest.mark.django_db
+def test_require_premium_allows_active_and_trialing(user):
+    billing = get_or_create_billing_subscription(user)
+    billing.status = "active"
+    billing.save()
+    require_premium(user, FEATURE_PAYMENT_PLANNER_FULL)
+
+    billing.status = "trialing"
+    billing.save()
+    require_premium(user, FEATURE_PAYMENT_PLANNER_FULL)
+
+
+@pytest.mark.django_db
+def test_unimplemented_apple_iap_does_not_grant_premium(user):
+    from billing.apple_iap import apple_iap_verification_enabled
+
+    assert apple_iap_verification_enabled() is False
+    assert user_has_premium(user) is False

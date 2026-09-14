@@ -20,13 +20,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Handles ?billing=success|canceled after Stripe Checkout.
+ * Handles Stripe return query params.
  * Premium is never granted from the query string — only from refetched server state.
+ * Checkout success may poll briefly for webhook lag. Portal return refetches once.
  */
 export function useBillingReturnNotice(): BillingReturnNotice | null {
   const [searchParams, setSearchParams] = useSearchParams();
   const billingFlag = searchParams.get("billing");
-  const watchingReturn = billingFlag === "success";
+  const watchingReturn = billingFlag === "success" || billingFlag === "portal";
   const { refetch, isLoading, billing } = useBillingStatus({ enabled: watchingReturn });
   const [notice, setNotice] = useState<BillingReturnNotice | null>(null);
   const handledRef = useRef(false);
@@ -42,7 +43,7 @@ export function useBillingReturnNotice(): BillingReturnNotice | null {
   useEffect(() => {
     const flag = searchParams.get("billing");
     if (!flag || handledRef.current) return;
-    if (flag !== "success" && flag !== "canceled") return;
+    if (flag !== "success" && flag !== "canceled" && flag !== "portal") return;
 
     const stripReturnParams = () => {
       const next = new URLSearchParams(searchParams);
@@ -55,6 +56,16 @@ export function useBillingReturnNotice(): BillingReturnNotice | null {
       handledRef.current = true;
       setNotice({ tone: "info", text: CHECKOUT_CANCELED_MESSAGE });
       stripReturnParams();
+      return;
+    }
+
+    if (flag === "portal") {
+      handledRef.current = true;
+      void (async () => {
+        await refetch();
+        if (!mountedRef.current) return;
+        stripReturnParams();
+      })();
       return;
     }
 

@@ -21,6 +21,7 @@ Canonical ledger regression and CI are the merge gate. Do not deploy over a red
 - [ ] Email provider configured
 - [ ] Sentry DSN configured (production only; keep scrubbing enabled)
 - [ ] Legal pages and contact info configured
+- [ ] Mobile store checklist reviewed (`docs/MOBILE_RELEASE_CHECKLIST.md`)
 
 ## After deploy
 

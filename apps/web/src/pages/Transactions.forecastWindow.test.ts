@@ -24,6 +24,14 @@ describe("Transactions Forecast Window", () => {
     expect(source).not.toMatch(/days: 90/);
   });
 
+  it("does not call payoff projection for known Free users and maps premium_required separately from auth", () => {
+    expect(source).toMatch(/canUsePaymentPlannerFull\(billing\)/);
+    expect(source).toMatch(/if \(!plannerFull\)/);
+    expect(source).toMatch(/isPremiumRequiredError\(err\)/);
+    expect(source).toMatch(/err\.status === 401/);
+    expect(source).toMatch(/Payoff projections are available with Premium/);
+  });
+
   it("keeps 30/60/90/6 months and does not offer a 12-month Forecast Window", () => {
     const forecastSelect = source.slice(
       source.indexOf(">Forecast Window<"),

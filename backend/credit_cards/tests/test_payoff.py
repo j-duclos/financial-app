@@ -158,6 +158,9 @@ class TestPayoffApi:
         return api_client
 
     def test_payoff_endpoint_with_strategy(self, auth_client, credit_card, user):
+        from billing.tests.helpers import grant_premium
+
+        grant_premium(user)
         _seed_card_debt(credit_card, user, Decimal("1000"))
         r = auth_client.get(
             f"/api/accounts/{credit_card.pk}/payoff/",
@@ -169,6 +172,9 @@ class TestPayoffApi:
         assert "schedule" in data
 
     def test_payoff_legacy_monthly_payment(self, auth_client, credit_card, user):
+        from billing.tests.helpers import grant_premium
+
+        grant_premium(user)
         _seed_card_debt(credit_card, user, Decimal("1000"))
         r = auth_client.get(
             f"/api/accounts/{credit_card.pk}/payoff/",

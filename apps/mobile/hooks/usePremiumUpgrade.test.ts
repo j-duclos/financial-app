@@ -29,6 +29,21 @@ describe("premium upgrade email verification", () => {
     expect(hookSource).toMatch(/error\.status >= 500/);
     expect(hookSource).toMatch(/BILLING_UNAVAILABLE_MESSAGE/);
     expect(hookSource).toMatch(/<!doctype html/);
+    expect(hookSource).toMatch(/logBillingCheckoutErrorIfDev\(err\)/);
+    expect(hookSource).toMatch(/Alert\.alert\("Upgrade", upgradeErrorMessage\(err\)\)/);
+  });
+
+  it("aborts Stripe checkout and portal when the billing provider forbids them", () => {
+    expect(hookSource).toMatch(/const stripeAllowed = canUseStripeBilling\(\)/);
+    expect(hookSource).toMatch(/if \(!stripeAllowed\)/);
+    expect(hookSource).toMatch(/PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE/);
+    expect(hookSource.indexOf("if (!stripeAllowed)")).toBeLessThan(
+      hookSource.indexOf("createCheckoutSession()")
+    );
+    expect(hookSource.indexOf("if (!stripeAllowed)")).toBeLessThan(
+      hookSource.indexOf("createPortalSession()")
+    );
+    expect(hookSource).toMatch(/checkout\.stripeAllowed/);
   });
 
   it("offers resend verification instead of OK-only", () => {

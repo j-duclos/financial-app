@@ -21,11 +21,14 @@ import { OptionsPickerSheet, SelectField } from "@/components/forms";
 import { useTheme } from "@/theme";
 import { describeApiError } from "@/services/api";
 import { invalidateRecurringRuleDependents } from "@/lib/financialQueryRefresh";
-import { UPGRADE_TO_PREMIUM_LABEL } from "@/lib/billing";
+import {
+  canOfferStripePremiumPurchase,
+  PREMIUM_UPGRADE_CONTEXT,
+  premiumRequiredActionLabel,
+} from "@/features/billing";
 import { todayStr } from "@/lib/dates";
 import { isCalendarOnboardingSource } from "@/features/onboarding/gettingStartedRoutes";
 import { useRecurringPlanLimit } from "@/features/recurring/useRecurringPlanLimit";
-import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { useCategoryOptions } from "@/hooks/useCategoryOptions";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
 import { useHouseholds } from "@/hooks/useHouseholds";
@@ -207,6 +210,7 @@ export function AutomationFormScreen() {
     interceptIfLimited,
     promptUpgrade,
   } = useRecurringPlanLimit();
+  const canPurchase = canOfferStripePremiumPurchase();
   const [step, setStep] = useState<FormStep>("basics");
   const [form, setForm] = useState<FormState>(() => defaultForm());
   const [error, setError] = useState<string | null>(null);
@@ -425,7 +429,7 @@ export function AutomationFormScreen() {
           <EmptyState
             title="Recurring limit reached"
             message={limitReachedMessage}
-            actionLabel={UPGRADE_TO_PREMIUM_LABEL}
+            actionLabel={premiumRequiredActionLabel(canPurchase)}
             actionVariant="primary"
             onAction={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.recurring)}
           />

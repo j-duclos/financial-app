@@ -11,4 +11,17 @@ export {
   PREMIUM_DISCOVERY_SUBTITLE,
   ACCOUNTS_BANK_SYNC_TEASER,
   ACCOUNTS_LIMIT_TEASER,
+  accountsLimitTeaser,
+  PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE,
+  PREMIUM_VIEW_PLAN_LABEL,
+  premiumRequiredActionLabel,
+  PREMIUM_SUBSCRIPTION_NAME,
+  PREMIUM_AUTO_RENEW_STATEMENT,
+  TERMS_OF_SERVICE_LABEL,
+  PRIVACY_POLICY_LABEL,
 } from "./premiumUpgradeCopy";
+export {
+  getAvailableBillingProvider,
+  canUseStripeBilling,
+  canOfferStripePremiumPurchase,
+} from "./billingProvider";

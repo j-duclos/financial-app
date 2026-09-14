@@ -6,6 +6,7 @@ import type { DebtPayoffMode, DebtPayoffStrategy } from "@budget-app/shared";
 import { AppHeader, EmptyState, ErrorState, Screen, SkeletonBlock } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { formatDateDisplay } from "@/lib/dates";
+import { isPremiumRequiredError } from "@budget-app/api-client";
 import { describeApiError } from "@/services/api";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
@@ -79,6 +80,19 @@ export function PlanDetailsScreen() {
       <Screen scroll={false}>
         <AppHeader title="Plan projection" onBack={() => router.back()} />
         <SkeletonBlock lines={8} />
+      </Screen>
+    );
+  }
+
+  if (isPremiumRequiredError(planQuery.error)) {
+    return (
+      <Screen>
+        <AppHeader title="Plan projection" onBack={() => router.back()} />
+        <EmptyState
+          title="Premium projection"
+          message="Month-by-month payoff projections are available with Premium."
+        />
+        <PremiumUpsellCard onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.paymentPlanner)} />
       </Screen>
     );
   }

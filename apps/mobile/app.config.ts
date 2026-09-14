@@ -15,6 +15,15 @@ export const IOS_BUNDLE_IDENTIFIER = "com.jduclos.flowsight";
 /** Android application id. Keep as the single source for Play Store URLs. */
 export const ANDROID_PACKAGE_NAME = "com.budgetapp.mobile";
 
+/** Public legal pages. Keep in sync with packages/shared/src/legalUrls.ts. */
+const DEFAULT_LEGAL_ORIGIN = "https://flowsight360.com";
+export const DEFAULT_PRIVACY_POLICY_URL = `${DEFAULT_LEGAL_ORIGIN}/privacy`;
+export const DEFAULT_TERMS_OF_SERVICE_URL = `${DEFAULT_LEGAL_ORIGIN}/terms`;
+
+/** Store icon: 1024x1024 PNG, no alpha. Splash stays a separate asset. */
+export const IOS_STORE_ICON = "./assets/images/icon.png";
+export const APP_SPLASH_IMAGE = "./assets/images/splash-icon.png";
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const appEnv = (process.env.EXPO_PUBLIC_APP_ENV ?? "development").trim() || "development";
   const apiUrl = (process.env.EXPO_PUBLIC_API_URL ?? "").trim();
@@ -25,12 +34,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     slug: "budget-app",
     version: APP_VERSION,
     orientation: "portrait",
-    icon: "./assets/branding/flowsight-logo.jpg",
+    icon: IOS_STORE_ICON,
     scheme: "budgetapp",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     splash: {
-      image: "./assets/branding/flowsight-logo.jpg",
+      image: APP_SPLASH_IMAGE,
       resizeMode: "contain",
       backgroundColor: "#F4F6F8",
     },
@@ -72,7 +81,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       [
         "expo-notifications",
         {
-          icon: "./assets/branding/flowsight-logo.jpg",
+          icon: IOS_STORE_ICON,
           color: "#1D4ED8",
           defaultChannel: "projected-funds",
         },
@@ -84,8 +93,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       appEnv,
       apiUrl,
-      privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_URL ?? "",
-      termsUrl: process.env.EXPO_PUBLIC_TERMS_URL ?? "",
+      privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || DEFAULT_PRIVACY_POLICY_URL,
+      termsUrl: process.env.EXPO_PUBLIC_TERMS_URL?.trim() || DEFAULT_TERMS_OF_SERVICE_URL,
       supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? "",
       sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN ?? "",
       iosAppStoreId: process.env.EXPO_PUBLIC_IOS_APP_STORE_ID ?? "",

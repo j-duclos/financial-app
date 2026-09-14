@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,9 +18,12 @@ import {
 } from "@budget-app/api-client";
 import { PROFILE_QUERY_KEY } from "../lib/profileQuery";
 import { setMonitoringUser } from "../lib/monitoring";
+import {
+  WEB_ACCESS_KEY,
+  WEB_REFRESH_KEY,
+  clearWebAuthStorage,
+} from "../lib/authSession";
 
-const ACCESS_KEY = "budget_access";
-const REFRESH_KEY = "budget_refresh";
 /** JWTs live in localStorage so login survives refresh. This is XSS-sensitive; httpOnly cookies are a follow-up. */
 
 type AuthState = {
@@ -47,27 +51,29 @@ function profileLabel(profile: { username: string; display_name: string }) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [auth, setAuth] = useState<AuthState>({
-    access: localStorage.getItem(ACCESS_KEY),
-    refresh: localStorage.getItem(REFRESH_KEY),
+    access: localStorage.getItem(WEB_ACCESS_KEY),
+    refresh: localStorage.getItem(WEB_REFRESH_KEY),
     user: null,
     loading: true,
   });
 
   const setTokens = useCallback((access: string, refresh: string) => {
-    localStorage.setItem(ACCESS_KEY, access);
-    localStorage.setItem(REFRESH_KEY, refresh);
+    localStorage.setItem(WEB_ACCESS_KEY, access);
+    localStorage.setItem(WEB_REFRESH_KEY, refresh);
     setAuth((prev) => ({ ...prev, access, refresh }));
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
+    clearWebAuthStorage();
     setAuth({ access: null, refresh: null, user: null, loading: false });
     queryClient.clear();
     setMonitoringUser(null);
   }, [queryClient]);
 
-  useEffect(() => {
+  const logoutRef = useRef(logout);
+  logoutRef.current = logout;
+
+  const wireApiClient = useCallback(() => {
     const fromEnv =
       import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL;
     const baseUrl =
@@ -76,14 +82,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : "";
     configureApiClient({
       baseUrl,
-      getAccessToken: () => localStorage.getItem(ACCESS_KEY),
-      getRefreshToken: () => localStorage.getItem(REFRESH_KEY),
+      getAccessToken: () => localStorage.getItem(WEB_ACCESS_KEY),
+      getRefreshToken: () => localStorage.getItem(WEB_REFRESH_KEY),
       setAccessToken: (access: string) => {
-        localStorage.setItem(ACCESS_KEY, access);
+        localStorage.setItem(WEB_ACCESS_KEY, access);
         setAuth((prev) => ({ ...prev, access }));
+      },
+      onUnauthorized: () => {
+        logoutRef.current();
       },
     });
   }, []);
+
+  useEffect(() => {
+    wireApiClient();
+  }, [wireApiClient]);
 
   useEffect(() => {
     if (auth.user && auth.user.id > 0) {
@@ -141,22 +154,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (username: string, password: string) => {
       const res = await apiLogin(username, password);
       setTokens(res.access, res.refresh);
+      wireApiClient();
       setAuth((prev) => ({ ...prev, user: (res as { user?: { id: number; username: string } }).user ?? { id: 0, username } }));
     },
-    [setTokens]
+    [setTokens, wireApiClient]
   );
 
   const register = useCallback(
     async (username: string, password: string, email: string) => {
       const res = await apiRegister({ username, password, email });
       setTokens(res.access, res.refresh);
+      wireApiClient();
       setAuth((prev) => ({ ...prev, user: res.user ?? { id: 0, username } }));
     },
-    [setTokens]
+    [setTokens, wireApiClient]
   );
 
   const refreshUser = useCallback(async () => {
-    const access = localStorage.getItem(ACCESS_KEY);
+    const access = localStorage.getItem(WEB_ACCESS_KEY);
     if (!access) return;
     try {
       const profile = await getProfile();

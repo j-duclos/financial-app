@@ -44,6 +44,7 @@ CACHES = {
     }
 }
 
+DEBUG = True
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 EMAIL_HOST_PASSWORD = ""
 FRONTEND_ORIGIN = "http://localhost:5173"

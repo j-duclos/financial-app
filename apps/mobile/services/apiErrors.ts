@@ -1,5 +1,5 @@
-export { ApiError } from "@budget-app/api-client";
-import { ApiError } from "@budget-app/api-client";
+export { ApiError, isPremiumRequiredError } from "@budget-app/api-client";
+import { ApiError, isPremiumRequiredError } from "@budget-app/api-client";
 
 const CREDENTIAL_FAILURE_RE =
   /no active account|given credentials|unable to log in|invalid credentials/i;
@@ -16,7 +16,12 @@ export function describeApiError(err: unknown): string {
       }
       return "Your session expired. Please sign in again.";
     }
-    if (err.status === 403) return "You do not have permission to do that.";
+    if (err.status === 403) {
+      if (isPremiumRequiredError(err)) {
+        return err.message || "This feature is available with Premium.";
+      }
+      return "You do not have permission to do that.";
+    }
     if (err.status === 404) return "That resource was not found.";
     if (err.status === 422) return err.message || "Please check your input and try again.";
     if (err.status === 429) return "Too many requests. Please wait a moment and try again.";

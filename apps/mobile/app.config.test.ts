@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { APP_NAME } from "@budget-app/shared";
+import { APP_NAME, PRODUCTION_RENDER_ORIGIN } from "@budget-app/shared";
 import getConfig, { ANDROID_PACKAGE_NAME, IOS_BUNDLE_IDENTIFIER, IOS_DISPLAY_NAME } from "./app.config";
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +35,10 @@ describe("iOS device prep", () => {
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
     expect(configSource).toMatch(/bundleIdentifier: IOS_BUNDLE_IDENTIFIER/);
     expect(configSource).toMatch(/expo-notifications/);
+    expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
+    expect(configSource).toMatch(/APP_SPLASH_IMAGE = "\.\/assets\/images\/splash-icon\.png"/);
+    expect(configSource).toMatch(/adaptiveIcon/);
+    expect(configSource).toMatch(/foregroundImage: "\.\/assets\/images\/adaptive-icon\.png"/);
   });
 
   it("does not bake a Mac IP or Android emulator host into Expo extra", () => {
@@ -53,7 +57,8 @@ describe("iOS device prep", () => {
   it("keeps EAS preview and production on HTTPS Render", () => {
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "production"/);
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "staging"/);
-    expect(easSource).toMatch(/https:\/\/financial-app-1-tu0l\.onrender\.com/);
+    expect(easSource).toContain(PRODUCTION_RENDER_ORIGIN);
+    expect(easSource).not.toContain("financial-app-5ywr.onrender.com");
     expect(easSource).not.toMatch(/localhost/);
     expect(easSource).not.toMatch(/192\.168\./);
   });
@@ -71,12 +76,18 @@ describe("iOS device prep", () => {
     expect(dev.extra?.apiUrl).toBe("http://192.168.1.10:8000");
 
     process.env.EXPO_PUBLIC_APP_ENV = "production";
-    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com";
+    process.env.EXPO_PUBLIC_API_URL = PRODUCTION_RENDER_ORIGIN;
     const prod = getConfig({ config: {} } as never);
     expect(prod.ios?.infoPlist?.NSAppTransportSecurity).toBeUndefined();
     expect(prod.ios?.infoPlist?.NSLocalNetworkUsageDescription).toBeUndefined();
-    expect(prod.extra?.apiUrl).toBe("https://financial-app-1-tu0l.onrender.com");
+    expect(prod.extra?.apiUrl).toBe(PRODUCTION_RENDER_ORIGIN);
     expect(prod.extra?.appEnv).toBe("production");
+    expect(prod.icon).toBe("./assets/images/icon.png");
+    expect(prod.splash?.image).toBe("./assets/images/splash-icon.png");
+    expect((prod.extra as { privacyPolicyUrl?: string }).privacyPolicyUrl).toBe(
+      "https://flowsight360.com/privacy"
+    );
+    expect((prod.extra as { termsUrl?: string }).termsUrl).toBe("https://flowsight360.com/terms");
   });
 
   it("omits extra.eas.projectId unless EAS_PROJECT_ID is set", () => {

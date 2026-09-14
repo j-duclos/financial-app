@@ -76,7 +76,7 @@ describe("mobile Goals Free/Premium goal-limit UX", () => {
     expect(goalFormSource).toMatch(/!isEdit && goalsLimited/);
     expect(goalFormSource).toMatch(/if \(!isEdit && goalsLimited\) return/);
     expect(goalFormSource).toMatch(/Goal limit reached/);
-    expect(goalFormSource).toMatch(/UPGRADE_TO_PREMIUM_LABEL/);
+    expect(goalFormSource).toMatch(/premiumRequiredActionLabel\(canPurchase\)/);
     expect(goalFormSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.goals\)/);
     expect(goalFormSource).toMatch(/createBucket/);
     const mutationFn = goalFormSource.slice(

@@ -42,3 +42,23 @@ describe("Payment Planner Audit Pass 1", () => {
     expect(source).toMatch(/onApplyCustomAmount/);
   });
 });
+
+describe("Payment Planner entitlements", () => {
+  it("locks Free users behind the shared Premium upsell and skips plan APIs", () => {
+    expect(source).toMatch(/useBillingStatus/);
+    expect(source).toMatch(/canUsePaymentPlannerFull\(billing\)/);
+    expect(source).toMatch(/enabled: !billingLoading && plannerFull && creditCards\.length > 0/);
+    expect(source).toMatch(/enabled: plannerFull && projectionEnabled/);
+    expect(source).toMatch(/PremiumUpgradePrompt/);
+    expect(source).toMatch(/PAYMENT_PLANNER_FULL_UPSELL_TITLE/);
+    expect(source).toMatch(/PAYMENT_PLANNER_FULL_UPSELL_BODY/);
+    expect(source).toMatch(/if \(!plannerFull \|\| plannerDenied\)/);
+  });
+
+  it("maps premium_required to upgrade UX and keeps auth errors distinct", () => {
+    expect(source).toMatch(/isPremiumRequiredError\(planQuery\.error\)/);
+    expect(source).toMatch(/usePremiumCheckout/);
+    expect(source).not.toMatch(/onUnauthorized/);
+    expect(source).not.toMatch(/status === 401/);
+  });
+});

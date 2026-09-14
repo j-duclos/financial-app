@@ -10,6 +10,8 @@ import {
 import { BrandLogo } from "@/components/brand";
 import { Button } from "@/components/ui";
 import { useTheme } from "@/theme";
+import { canOfferStripePremiumPurchase } from "@/features/billing/billingProvider";
+import { PREMIUM_VIEW_PLAN_LABEL } from "@/features/billing/premiumUpgradeCopy";
 import { BANK_SYNC_WEB_MESSAGE } from "@/lib/billing";
 
 type Props = {
@@ -20,6 +22,7 @@ type Props = {
 
 export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props) {
   const theme = useTheme();
+  const canPurchase = canOfferStripePremiumPurchase();
 
   return (
     <View
@@ -68,7 +71,7 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
           />
         ) : (
           <Button
-            label="Upgrade for automatic bank syncing"
+            label={canPurchase ? "Upgrade for automatic bank syncing" : PREMIUM_VIEW_PLAN_LABEL}
             variant="secondary"
             onPress={onUpgrade}
           />

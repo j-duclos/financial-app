@@ -334,7 +334,10 @@ async function requestInner<T>(
       feature?: string;
       upgradeRequired?: boolean;
       limit?: number;
-    } = {};
+      contentType?: string;
+    } = {
+      contentType: header("content-type") ?? undefined,
+    };
     try {
       const j = JSON.parse(text) as Record<string, unknown> & {
         detail?: unknown;
@@ -342,6 +345,7 @@ async function requestInner<T>(
         redirect_uri_sent?: string;
       };
       extras = {
+        ...extras,
         code: typeof j.code === "string" ? j.code : undefined,
         feature: typeof j.feature === "string" ? j.feature : undefined,
         upgradeRequired: j.upgrade_required === true,
@@ -413,6 +417,7 @@ export class ApiError extends Error {
   feature?: string;
   upgradeRequired?: boolean;
   limit?: number;
+  contentType?: string;
   constructor(
     status: number,
     message: string,
@@ -421,6 +426,7 @@ export class ApiError extends Error {
       feature?: string;
       upgradeRequired?: boolean;
       limit?: number;
+      contentType?: string;
     }
   ) {
     super(message);
@@ -430,5 +436,6 @@ export class ApiError extends Error {
     this.feature = extras?.feature;
     this.upgradeRequired = extras?.upgradeRequired;
     this.limit = extras?.limit;
+    this.contentType = extras?.contentType;
   }
 }

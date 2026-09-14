@@ -213,18 +213,36 @@ def require_plaid_bank_sync(user, *, sync: bool = False) -> None:
     )
 
 
+def require_premium(user, feature: str, *, detail: str | None = None) -> None:
+    """Authoritative Premium gate for authenticated Free users.
+
+    Returns a stable 403 payload. Does not inspect Stripe customer, checkout
+    session, or subscription IDs — ``user_has_premium`` is the source of truth.
+    Unauthenticated callers get a normal 401, not a billing error.
+    """
+    if not getattr(user, "is_authenticated", False):
+        from rest_framework.exceptions import NotAuthenticated
+
+        raise NotAuthenticated()
+    if _premium(user):
+        return
+    raise EntitlementDenied(
+        feature=feature,
+        detail=detail or "Premium is required for this feature.",
+        code="premium_required",
+    )
+
+
 def user_may_use_payment_planner_full(user) -> bool:
     return _premium(user)
 
 
 def require_payment_planner_full(user) -> None:
-    """Block Premium-only payoff comparison / custom simulation endpoints."""
-    if user_may_use_payment_planner_full(user):
-        return
-    raise EntitlementDenied(
-        feature=FEATURE_PAYMENT_PLANNER_FULL,
+    """Block Payment Planner simulation endpoints for Free users."""
+    require_premium(
+        user,
+        FEATURE_PAYMENT_PLANNER_FULL,
         detail=PAYMENT_PLANNER_FULL_DETAIL,
-        code="premium_required",
     )
 
 

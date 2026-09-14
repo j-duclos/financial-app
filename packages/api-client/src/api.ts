@@ -73,8 +73,23 @@ import type {
   TestPlanOverride,
   TestPlanOverrideResponse,
 } from "@budget-app/shared";
-import { downloadAuthenticatedFile, fetchAuthenticatedFile, request, requestRequired } from "./config";
+import {
+  ApiError,
+  downloadAuthenticatedFile,
+  fetchAuthenticatedFile,
+  getBaseUrl,
+  request,
+  requestRequired,
+} from "./config";
 import type { AuthenticatedFile } from "./config";
+import {
+  BILLING_CHECKOUT_PATH,
+  isCheckoutNetworkFailure,
+  recordBillingCheckoutHttpFailure,
+  recordBillingCheckoutNetworkFailure,
+  recordBillingCheckoutResponse,
+  recordBillingCheckoutStart,
+} from "./billingCheckoutDiagnostics";
 
 export interface PaginatedResponse<T> {
   count: number;
@@ -194,10 +209,34 @@ export async function setTestPlanOverride(
 }
 
 export async function createCheckoutSession(): Promise<CheckoutSessionResponse> {
-  return requestRequired("/api/billing/create-checkout-session/", {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
+  recordBillingCheckoutStart(getBaseUrl());
+  try {
+    const payload = await requestRequired<CheckoutSessionResponse>(BILLING_CHECKOUT_PATH, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    recordBillingCheckoutResponse({ status: 200, durationMs });
+    return payload;
+  } catch (error) {
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    if (isCheckoutNetworkFailure(error)) {
+      recordBillingCheckoutNetworkFailure({ durationMs, error });
+    } else {
+      recordBillingCheckoutHttpFailure({
+        status: error instanceof ApiError ? error.status : 0,
+        durationMs,
+        error,
+        contentType: error instanceof ApiError ? error.contentType ?? null : null,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function createPortalSession(): Promise<PortalSessionResponse> {

@@ -3,6 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { APP_NAME } from "@budget-app/shared";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { resolveProtectedAuthGate } from "./lib/authSession";
 import { createAppQueryClient } from "./lib/queryClient";
 import LoadingScreen from "./components/brand/LoadingScreen";
 import Layout from "./components/Layout";
@@ -36,10 +37,11 @@ const queryClient = createAppQueryClient();
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { auth } = useAuth();
-  if (auth.loading) {
+  const gate = resolveProtectedAuthGate({ loading: auth.loading, access: auth.access });
+  if (gate === "loading") {
     return <LoadingScreen />;
   }
-  if (!auth.access) {
+  if (gate === "login") {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

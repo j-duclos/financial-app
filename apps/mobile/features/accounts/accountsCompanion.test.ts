@@ -38,7 +38,7 @@ describe("mobile Accounts list companion UX", () => {
     expect(accountsSource).toMatch(/atPlanLimit\(billing, "manual_accounts"\)/);
     expect(accountsSource).toMatch(/manualAccountUsageLabel/);
     expect(accountsSource).toMatch(/ACCOUNTS_BANK_SYNC_TEASER/);
-    expect(accountsSource).toMatch(/ACCOUNTS_LIMIT_TEASER/);
+    expect(accountsSource).toMatch(/accountsLimitTeaser\(canPurchase\)/);
     expect(accountsSource).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.accounts\)/);
     expect(accountsSource).toMatch(/isPremium/);
     expect(accountsSource).toMatch(/No accounts yet/);
@@ -103,6 +103,16 @@ describe("mobile Account Detail companion UX", () => {
     expect(accountForm).toMatch(/Starting balance/);
     expect(accountForm).toMatch(/createHousehold/);
     expect(accountForm).toMatch(/getProfile\(\)/);
+  });
+
+  it("exposes Pin to Home on list rows and Account Detail without changing list grouping", () => {
+    expect(accountsSource).toMatch(/groupAccountsByType/);
+    expect(accountsSource).toMatch(/onToggleHomePin=\{\(\) => toggleHomePin\(account\)\}/);
+    expect(accountsSource).not.toMatch(/rankHomePreviewAccounts|resolveHomePreviewAccounts/);
+    expect(accountRow).toMatch(/Pin to Home/);
+    expect(accountRow).toMatch(/Unpin from Home/);
+    expect(accountDetailSource).toMatch(/Pin to Home/);
+    expect(accountDetailSource).toMatch(/Pinned to Home/);
   });
 
   it("does not reproduce desktop Resolve Risk on list rows", () => {

@@ -7,6 +7,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from accounts.models import Account
+from billing.tests.helpers import grant_premium
 from transactions.services.posting import post_transaction
 
 
@@ -24,6 +25,7 @@ def _assert_finite_money(raw):
 
 @pytest.mark.django_db
 def test_plan_endpoint_numeric_contract_no_nan_infinity(user, household):
+    grant_premium(user)
     client = APIClient()
     client.force_authenticate(user=user)
     cards = []
@@ -85,6 +87,7 @@ def test_plan_endpoint_numeric_contract_no_nan_infinity(user, household):
 @pytest.mark.django_db
 def test_plan_endpoint_defaults_extra_monthly_to_zero(user, household):
     """Omitting extra_monthly must not invent a client-style $150 default."""
+    grant_premium(user)
     client = APIClient()
     client.force_authenticate(user=user)
     card = Account.objects.create(
@@ -105,6 +108,7 @@ def test_plan_endpoint_defaults_extra_monthly_to_zero(user, household):
 
 @pytest.mark.django_db
 def test_plan_endpoint_rejects_invalid_extra_and_lump_account(user, household):
+    grant_premium(user)
     client = APIClient()
     client.force_authenticate(user=user)
     card = Account.objects.create(

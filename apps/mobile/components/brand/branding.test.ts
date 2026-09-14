@@ -47,7 +47,8 @@ describe("FlowSight mobile branding", () => {
   it("sets the native display name from shared branding", () => {
     expect(configSource).toMatch(/IOS_DISPLAY_NAME = "FlowSight"/);
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
-    expect(configSource).toMatch(/flowsight-logo\.jpg/);
+    expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
+    expect(configSource).not.toMatch(/icon: "\.\/assets\/branding\/flowsight-logo\.jpg"/);
     expect(APP_NAME).toBe("FlowSight");
     expect(APP_TAGLINE.length).toBeGreaterThan(0);
   });
