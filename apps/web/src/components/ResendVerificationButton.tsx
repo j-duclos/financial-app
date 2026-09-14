@@ -10,7 +10,14 @@ export default function ResendVerificationButton({ className }: { className?: st
     setMessage(null);
     try {
       const result = await resendVerification();
-      setMessage(result.detail);
+      const transport = (result.transport || "").toLowerCase();
+      if (transport && transport !== "smtp" && transport !== "provider") {
+        setMessage(
+          `${result.detail} Mail transport is "${result.transport}" — not an inbox.`
+        );
+      } else {
+        setMessage(result.detail);
+      }
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Could not resend the email.");
     } finally {

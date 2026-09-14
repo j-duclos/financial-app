@@ -32,6 +32,7 @@ import {
   PREMIUM_SHEET_TITLE,
   PREMIUM_UPGRADE_CTA_LABEL,
 } from "@/features/billing/premiumUpgradeCopy";
+import { describeResendVerificationResult } from "@/features/profile/profileSettings";
 
 function upgradeErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -55,7 +56,8 @@ function upgradeErrorMessage(error: unknown): string {
 async function resendVerificationEmail(): Promise<void> {
   try {
     const result = await resendVerification();
-    Alert.alert("Verification email", result.detail || "Verification email sent.");
+    const copy = describeResendVerificationResult(result.detail);
+    Alert.alert(copy.title, copy.message);
   } catch (err) {
     Alert.alert("Couldn’t send email", describeApiError(err));
   }

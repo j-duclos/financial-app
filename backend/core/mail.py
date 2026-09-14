@@ -17,13 +17,59 @@ from core.auth_tokens import (
     verification_max_age,
 )
 from core.email_identity import mark_verification_sent, normalize_email
-from core.frontend_origin import get_frontend_origin
+from core.frontend_origin import get_frontend_origin, is_production_frontend_runtime
 
 logger = logging.getLogger(__name__)
 
 NEUTRAL_PASSWORD_RESET_DETAIL = (
     "If an account exists for that email, we've sent password reset instructions."
 )
+
+
+def email_transport_label() -> str:
+    """Safe backend class label for logs/API. Never includes hosts or credentials."""
+    backend = (getattr(settings, "EMAIL_BACKEND", "") or "").strip().lower()
+    if "console" in backend:
+        return "console"
+    if "dummy" in backend:
+        return "dummy"
+    if "locmem" in backend:
+        return "locmem"
+    if "filebased" in backend:
+        return "file"
+    if "smtp" in backend:
+        return "smtp"
+    if any(token in backend for token in ("anymail", "sendgrid", "mailgun", "ses", "postmark")):
+        return "provider"
+    return "other"
+
+
+def email_backend_delivers_to_inbox() -> bool:
+    return email_transport_label() in {"smtp", "provider"}
+
+
+def _recipient_domain(email: str) -> str:
+    if "@" not in email:
+        return "none"
+    return email.rsplit("@", 1)[-1].lower() or "none"
+
+
+def _must_deliver_to_inbox() -> bool:
+    debug = bool(getattr(settings, "DEBUG", False))
+    return is_production_frontend_runtime(debug=debug)
+
+
+def _refuse_non_inbox_backend() -> bool:
+    """True when this process must not report a successful inbox send."""
+    if not _must_deliver_to_inbox():
+        return False
+    if email_backend_delivers_to_inbox():
+        return False
+    logger.error(
+        "auth_email refusing non-inbox backend transport=%s",
+        email_transport_label(),
+    )
+    return True
 
 
 def _from_email() -> str:
@@ -38,11 +84,26 @@ def _send(subject: str, to_email: str, text_body: str, html_body: str) -> None:
     bounded timeout. Transient SMTP/network failures are retried twice.
     """
 
+    logger.info(
+        "auth_email send_attempt transport=%s recipient_domain=%s",
+        email_transport_label(),
+        _recipient_domain(to_email),
+    )
     timeout = float(getattr(settings, "EMAIL_TIMEOUT", 10) or 10)
     last_error: BaseException | None = None
 
     for attempt in (1, 2, 3):
-        connection = get_connection(fail_silently=False, timeout=timeout)
+        connection = get_connection(
+            backend=getattr(settings, "EMAIL_BACKEND", None),
+            fail_silently=False,
+            timeout=timeout,
+            host=getattr(settings, "EMAIL_HOST", "") or None,
+            port=getattr(settings, "EMAIL_PORT", None),
+            username=getattr(settings, "EMAIL_HOST_USER", "") or None,
+            password=getattr(settings, "EMAIL_HOST_PASSWORD", None),
+            use_tls=getattr(settings, "EMAIL_USE_TLS", True),
+            use_ssl=getattr(settings, "EMAIL_USE_SSL", False),
+        )
         message = EmailMultiAlternatives(
             subject=subject,
             body=text_body,
@@ -88,6 +149,8 @@ def send_verification_email(user) -> bool:
     if not origin:
         logger.warning("Skipping verification email; FRONTEND_ORIGIN is not configured.")
         return False
+    if _refuse_non_inbox_backend():
+        return False
     token = make_verification_token(user)
     verify_url = f"{origin}/verify-email?{urlencode({'token': token}, quote_via=quote)}"
     hours = max(1, verification_max_age() // 3600)
@@ -100,7 +163,12 @@ def send_verification_email(user) -> bool:
     html_body = render_to_string("core/email/verify_email.html", context)
     _send("Verify your email", email, text_body, html_body)
     mark_verification_sent(user)
-    logger.info("Verification email sent user_id=%s", user.pk)
+    logger.info(
+        "Verification email sent user_id=%s transport=%s recipient_domain=%s",
+        user.pk,
+        email_transport_label(),
+        _recipient_domain(email),
+    )
     return True
 
 
@@ -125,6 +193,8 @@ def send_password_reset_email(user) -> bool:
     if not origin:
         logger.warning("Skipping password reset email; FRONTEND_ORIGIN is not configured.")
         return False
+    if _refuse_non_inbox_backend():
+        return False
     uid = make_password_reset_uid(user)
     token = make_password_reset_token(user)
     reset_url = f"{origin}/reset-password?{urlencode({'uid': uid, 'token': token}, quote_via=quote)}"
@@ -132,5 +202,10 @@ def send_password_reset_email(user) -> bool:
     text_body = render_to_string("core/email/reset_password.txt", context)
     html_body = render_to_string("core/email/reset_password.html", context)
     _send("Reset your password", email, text_body, html_body)
-    logger.info("Password reset email sent user_id=%s", user.pk)
+    logger.info(
+        "Password reset email sent user_id=%s transport=%s recipient_domain=%s",
+        user.pk,
+        email_transport_label(),
+        _recipient_domain(email),
+    )
     return True

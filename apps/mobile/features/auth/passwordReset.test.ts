@@ -48,7 +48,7 @@ describe("mobile password reset", () => {
   });
 
   it("surfaces API and rate-limit errors without revealing account existence", () => {
-    expect(describeForgotPasswordError(new ApiError(429, "throttled"))).toMatch(/Too many requests/);
+    expect(describeForgotPasswordError(new ApiError(429, "throttled"))).toMatch(/rate-limited/i);
     expect(describeForgotPasswordError(new ApiError(400, "Enter a valid email."))).toBe(
       "Enter a valid email address."
     );

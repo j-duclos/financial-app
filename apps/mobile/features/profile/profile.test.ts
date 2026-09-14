@@ -53,6 +53,7 @@ describe("Profile & Settings screen", () => {
     expect(emailSource).toMatch(/onProfileRefreshed/);
     expect(emailSource).toMatch(/shouldShowResendVerification/);
     expect(emailSource).toMatch(/resendVerification/);
+    expect(emailSource).toMatch(/describeResendVerificationResult/);
     expect(emailSource).not.toMatch(/updateProfile/);
   });
 

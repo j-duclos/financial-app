@@ -21,6 +21,9 @@ import {
   profileEmailDisplay,
   profileExportFallbackName,
   shouldShowResendVerification,
+  describeResendVerificationResult,
+  EMAIL_ALREADY_VERIFIED_TITLE,
+  EMAIL_ALREADY_VERIFIED_MESSAGE,
   transactionsCsvFallbackName,
 } from "./profileSettings";
 
@@ -173,6 +176,18 @@ describe("profileSettings helpers", () => {
     expect(shouldShowResendVerification({ email: "joe@example.com", verified: false })).toBe(true);
     expect(shouldShowResendVerification({ email: "joe@example.com", verified: true })).toBe(false);
     expect(shouldShowResendVerification({ email: "", verified: false })).toBe(false);
+    const already = describeResendVerificationResult("Email is already verified.");
+    expect(already.emailAttempted).toBe(false);
+    expect(already.title).toBe(EMAIL_ALREADY_VERIFIED_TITLE);
+    expect(already.message).toBe(EMAIL_ALREADY_VERIFIED_MESSAGE);
+    const sent = describeResendVerificationResult(
+      "Verification email sent.",
+      "josephduclos.it@gmail.com"
+    );
+    expect(sent.emailAttempted).toBe(true);
+    expect(sent.title).toBe("Verification email");
+    expect(sent.message).toContain("josephduclos.it@gmail.com");
+    expect(sent.message).toMatch(/^Sent to josephduclos\.it@gmail\.com\./);
   });
 
   it("blocks password mismatch and missing current password", () => {

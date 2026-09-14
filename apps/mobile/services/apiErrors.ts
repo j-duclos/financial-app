@@ -24,7 +24,9 @@ export function describeApiError(err: unknown): string {
     }
     if (err.status === 404) return "That resource was not found.";
     if (err.status === 422) return err.message || "Please check your input and try again.";
-    if (err.status === 429) return "Too many requests. Please wait a moment and try again.";
+    if (err.status === 429) {
+      return "The app did reach the server, but it is rate-limited (too many email requests this hour). No email was sent. Wait, then try once.";
+    }
     if (err.status === 504) return err.message || "The request timed out. Please try again.";
     if (err.status >= 500) return "The server had a problem. Please try again.";
     return err.message || `Request failed (${err.status})`;

@@ -8,6 +8,7 @@ import { useTheme } from "@/theme";
 import {
   EMAIL_CHANGE_SUCCESS,
   applyUpdatedProfileCache,
+  describeResendVerificationResult,
   emailVerificationLabel,
   hasProfileEmail,
   profileEmailDisplay,
@@ -68,8 +69,12 @@ export function EmailSettingsSheet({ visible, profile, onClose, onProfileRefresh
 
   const resendMutation = useMutation({
     mutationFn: resendVerification,
-    onSuccess: (result) => {
-      Alert.alert("Verification email", result.detail || "Verification email sent.");
+    onSuccess: async (result) => {
+      const copy = describeResendVerificationResult(result.detail, email);
+      if (!copy.emailAttempted) {
+        await onProfileRefreshed();
+      }
+      Alert.alert(copy.title, copy.message);
     },
     onError: (err) => Alert.alert("Couldn’t send email", describeApiError(err)),
   });

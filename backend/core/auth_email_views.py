@@ -30,7 +30,7 @@ class StrictResendVerificationView(APIView):
 
     def post(self, request):
         from core.email_identity import is_email_verified, normalize_email
-        from core.mail import send_verification_email
+        from core.mail import email_transport_label, send_verification_email
 
         user = request.user
         email = normalize_email(getattr(user, "email", ""))
@@ -42,7 +42,12 @@ class StrictResendVerificationView(APIView):
         )
 
         if is_email_verified(user):
-            return Response({"detail": "Email is already verified."})
+            return Response(
+                {
+                    "detail": "Email is already verified.",
+                    "transport": email_transport_label(),
+                }
+            )
 
         if not email:
             logger.warning("auth_email verification_missing_email user_id=%s", user.pk)
@@ -70,19 +75,30 @@ class StrictResendVerificationView(APIView):
             )
 
         if sent is not True:
+            transport = email_transport_label()
             logger.error(
-                "auth_email verification_backend_rejected user_id=%s",
+                "auth_email verification_backend_rejected user_id=%s transport=%s",
                 user.pk,
+                transport,
+            )
+            detail = (
+                "This web process is not using SMTP, so no inbox message was sent. "
+                "Restart the Render web service so it loads EMAIL_BACKEND."
+                if transport in {"console", "dummy", "locmem", "file"}
+                else "We couldn't send the verification email right now. Please try again."
             )
             return Response(
-                {
-                    "detail": "We couldn't send the verification email right now. Please try again."
-                },
+                {"detail": detail, "transport": transport},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        logger.info("auth_email verification_accepted user_id=%s", user.pk)
-        return Response({"detail": "Verification email sent."})
+        logger.info("auth_email verification_accepted user_id=%s transport=%s", user.pk, email_transport_label())
+        return Response(
+            {
+                "detail": "Verification email sent.",
+                "transport": email_transport_label(),
+            }
+        )
 
 
 class StrictForgotPasswordView(APIView):
@@ -97,7 +113,7 @@ class StrictForgotPasswordView(APIView):
 
     def post(self, request):
         from core.email_identity import find_users_by_email, normalize_email
-        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL, send_password_reset_email
+        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL, email_transport_label, send_password_reset_email
 
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -105,15 +121,17 @@ class StrictForgotPasswordView(APIView):
         user = find_users_by_email(email).first()
 
         # Log only match state/user id; never log the submitted address or token.
+        transport = email_transport_label()
         logger.info(
-            "auth_email password_reset_lookup matched=%s user_id=%s",
+            "auth_email password_reset_lookup matched=%s user_id=%s transport=%s",
             user is not None,
             user.pk if user is not None else None,
+            transport,
         )
 
         # Keep unknown addresses neutral so the endpoint cannot enumerate users.
         if user is None:
-            return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL})
+            return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL, "transport": transport})
 
         canonical_email = normalize_email(getattr(user, "email", ""))
         if canonical_email and getattr(user, "email", "") != canonical_email:
@@ -133,16 +151,28 @@ class StrictForgotPasswordView(APIView):
             )
 
         if sent is not True:
+            transport = email_transport_label()
             logger.error(
-                "auth_email password_reset_backend_rejected user_id=%s",
+                "auth_email password_reset_backend_rejected user_id=%s transport=%s",
                 user.pk,
+                transport,
+            )
+            detail = (
+                "This web process is not using SMTP, so no inbox message was sent. "
+                "Restart the Render web service so it loads EMAIL_BACKEND."
+                if transport in {"console", "dummy", "locmem", "file"}
+                else "We couldn't send the password reset email right now. Please try again."
             )
             return Response(
-                {
-                    "detail": "We couldn't send the password reset email right now. Please try again."
-                },
+                {"detail": detail, "transport": transport},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        logger.info("auth_email password_reset_accepted user_id=%s", user.pk)
-        return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL})
+        logger.info(
+            "auth_email password_reset_accepted user_id=%s transport=%s",
+            user.pk,
+            email_transport_label(),
+        )
+        return Response(
+            {"detail": NEUTRAL_PASSWORD_RESET_DETAIL, "transport": email_transport_label()}
+        )

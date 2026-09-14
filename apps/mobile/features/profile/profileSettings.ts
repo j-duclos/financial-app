@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { DeleteAccountPreflight, UserProfile } from "@budget-app/api-client";
+import { classifyResendVerificationDetail } from "@budget-app/api-client";
 import {
   FORECAST_WINDOW_LABELS,
   OPERATIONAL_FORECAST_DAY_OPTIONS,
@@ -30,6 +31,9 @@ export const DELETE_CONFIRMATION = "DELETE";
 export const EMAIL_CHANGE_SUCCESS = "Check your new email to verify your address.";
 export const PASSWORD_CHANGE_SUCCESS = "Password updated.";
 export const RESEND_VERIFICATION_SUCCESS = "Verification email sent.";
+export const EMAIL_ALREADY_VERIFIED_TITLE = "Email already verified";
+export const EMAIL_ALREADY_VERIFIED_MESSAGE =
+  "This account's email is already verified, so FlowSight did not send another verification message.";
 export const MIN_PASSWORD_LENGTH = 8;
 
 export const DELETE_ACCOUNT_CONSEQUENCES = [
@@ -163,6 +167,41 @@ export function shouldShowResendVerification(opts: {
   verified?: boolean;
 }): boolean {
   return hasProfileEmail(opts.email) && opts.verified !== true;
+}
+
+/** Hostname only — never the local part of the address. */
+export function accountEmailDomain(email: string | null | undefined): string {
+  const trimmed = (email ?? "").trim();
+  const at = trimmed.lastIndexOf("@");
+  if (at <= 0 || at === trimmed.length - 1) return "";
+  return trimmed.slice(at + 1).toLowerCase();
+}
+
+/** Map the resend-verification 2xx detail to user-facing copy. Already-verified is not a send. */
+export function describeResendVerificationResult(
+  detail: string | undefined,
+  accountEmail?: string | null
+): {
+  title: string;
+  message: string;
+  emailAttempted: boolean;
+} {
+  const outcome = classifyResendVerificationDetail(detail, 200);
+  if (outcome === "already_verified") {
+    return {
+      title: EMAIL_ALREADY_VERIFIED_TITLE,
+      message: EMAIL_ALREADY_VERIFIED_MESSAGE,
+      emailAttempted: false,
+    };
+  }
+  const address = (accountEmail ?? "").trim();
+  return {
+    title: "Verification email",
+    message: address
+      ? `Sent to ${address}. Check that inbox and spam.`
+      : detail?.trim() || RESEND_VERIFICATION_SUCCESS,
+    emailAttempted: true,
+  };
 }
 
 export type PasswordFieldErrors = {

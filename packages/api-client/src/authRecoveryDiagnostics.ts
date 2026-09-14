@@ -4,16 +4,27 @@
  */
 
 export const FORGOT_PASSWORD_PATH = "/api/auth/forgot-password/";
+export const RESEND_VERIFICATION_PATH = "/api/auth/resend-verification/";
+
+export type AuthRecoveryAction = "forgot-password" | "resend-verification";
+
+export type ResendVerificationOutcome =
+  | "sent"
+  | "already_verified"
+  | "missing_email"
+  | "http_error"
+  | "network_failure";
 
 export type AuthRecoveryAttempt = {
-  action: "forgot-password";
+  action: AuthRecoveryAction;
   apiBaseUrl: string;
-  endpoint: typeof FORGOT_PASSWORD_PATH;
+  endpoint: string;
   requested: true;
   networkFailure: boolean;
   status: number | null;
   durationMs: number | null;
   error: string | null;
+  outcome?: ResendVerificationOutcome;
 };
 
 let diagnosticsEnabled = false;
@@ -78,6 +89,19 @@ function safeErrorText(error: unknown): string {
   return "unknown_error";
 }
 
+export function classifyResendVerificationDetail(
+  detail: string | undefined,
+  status: number
+): ResendVerificationOutcome {
+  if (status === 0) return "network_failure";
+  if (status === 400) return "missing_email";
+  if (status >= 400) return "http_error";
+  const text = (detail ?? "").toLowerCase();
+  if (text.includes("already verified")) return "already_verified";
+  if (text.includes("add an email")) return "missing_email";
+  return "sent";
+}
+
 export function recordForgotPasswordStart(apiBaseUrl: string): void {
   lastAttempt = {
     action: "forgot-password",
@@ -97,7 +121,11 @@ export function recordForgotPasswordStart(apiBaseUrl: string): void {
   ]);
 }
 
-export function recordForgotPasswordResponse(input: { status: number; durationMs: number }): void {
+export function recordForgotPasswordResponse(input: {
+  status: number;
+  durationMs: number;
+  transport?: string;
+}): void {
   if (lastAttempt) {
     lastAttempt = {
       ...lastAttempt,
@@ -111,6 +139,7 @@ export function recordForgotPasswordResponse(input: { status: number; durationMs
     "action=forgot-password",
     `status=${input.status}`,
     `duration_ms=${input.durationMs}`,
+    ...(input.transport ? [`transport=${input.transport}`] : []),
   ]);
 }
 
@@ -128,6 +157,87 @@ export function recordForgotPasswordNetworkFailure(input: { durationMs: number; 
   logRecovery([
     "action=forgot-password",
     "network_failure=true",
+    `safe_error=${error}`,
+  ]);
+}
+
+export function recordResendVerificationStart(apiBaseUrl: string): void {
+  lastAttempt = {
+    action: "resend-verification",
+    apiBaseUrl,
+    endpoint: RESEND_VERIFICATION_PATH,
+    requested: true,
+    networkFailure: false,
+    status: null,
+    durationMs: null,
+    error: null,
+  };
+  logRecovery([
+    "action=resend-verification",
+    `api_host=${originFromBase(apiBaseUrl)}`,
+    `endpoint=${RESEND_VERIFICATION_PATH}`,
+    "request_started=true",
+  ]);
+}
+
+export function classifyEmailTransport(value: string | undefined): string {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (!raw) return "unknown";
+  if (raw === "console" || raw === "dummy" || raw === "locmem" || raw === "file") return raw;
+  if (raw === "smtp" || raw === "provider") return raw;
+  return "other";
+}
+
+export function recordResendVerificationResponse(input: {
+  status: number;
+  durationMs: number;
+  detail?: string;
+  transport?: string;
+}): void {
+  const outcome = classifyResendVerificationDetail(input.detail, input.status);
+  const transport = classifyEmailTransport(input.transport);
+  const inboxSend = outcome === "sent" && (transport === "smtp" || transport === "provider");
+  if (lastAttempt) {
+    lastAttempt = {
+      ...lastAttempt,
+      networkFailure: false,
+      status: input.status,
+      durationMs: input.durationMs,
+      error: null,
+      outcome,
+    };
+  }
+  logRecovery([
+    "action=resend-verification",
+    `status=${input.status}`,
+    `duration_ms=${input.durationMs}`,
+    `outcome=${outcome}`,
+    `transport=${transport}`,
+    `smtp_to_inbox=${inboxSend}`,
+    `suspiciously_fast=${outcome === "sent" && input.durationMs < 1000}`,
+  ]);
+}
+
+export function recordResendVerificationNetworkFailure(input: {
+  durationMs: number;
+  error: unknown;
+}): void {
+  const error = sanitizeAuthRecoveryDiagnosticText(safeErrorText(input.error));
+  if (lastAttempt) {
+    lastAttempt = {
+      ...lastAttempt,
+      networkFailure: true,
+      status: null,
+      durationMs: input.durationMs,
+      error,
+      outcome: "network_failure",
+    };
+  }
+  logRecovery([
+    "action=resend-verification",
+    "network_failure=true",
+    "outcome=network_failure",
+    "smtp_attempted=false",
     `safe_error=${error}`,
   ]);
 }

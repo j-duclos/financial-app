@@ -45,7 +45,6 @@ export function SettingsRow({
         {subtitle ? (
           <Text
             style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}
-            numberOfLines={1}
           >
             {subtitle}
           </Text>

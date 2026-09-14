@@ -84,10 +84,14 @@ import {
 import type { AuthenticatedFile } from "./config";
 import {
   FORGOT_PASSWORD_PATH,
+  RESEND_VERIFICATION_PATH,
   isAuthRecoveryNetworkFailure,
   recordForgotPasswordNetworkFailure,
   recordForgotPasswordResponse,
   recordForgotPasswordStart,
+  recordResendVerificationNetworkFailure,
+  recordResendVerificationResponse,
+  recordResendVerificationStart,
 } from "./authRecoveryDiagnostics";
 import {
   BILLING_CHECKOUT_PATH,
@@ -180,21 +184,55 @@ export async function verifyEmail(token: string): Promise<{ status: string }> {
 }
 
 export async function resendVerification(): Promise<{ detail: string }> {
-  return requestRequired("/api/auth/resend-verification/", { method: "POST", body: JSON.stringify({}) });
+  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
+  recordResendVerificationStart(getBaseUrl());
+  try {
+    const payload = await requestRequired<{ detail: string; transport?: string }>(
+      RESEND_VERIFICATION_PATH,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      }
+    );
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    recordResendVerificationResponse({
+      status: 200,
+      durationMs,
+      detail: payload.detail,
+      transport: payload.transport,
+    });
+    return payload;
+  } catch (error) {
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    if (isAuthRecoveryNetworkFailure(error)) {
+      recordResendVerificationNetworkFailure({ durationMs, error });
+    } else {
+      recordResendVerificationResponse({
+        status: error instanceof ApiError ? error.status : 0,
+        durationMs,
+        detail: error instanceof Error ? error.message : undefined,
+      });
+    }
+    throw error;
+  }
 }
 
-export async function forgotPassword(email: string): Promise<{ detail: string }> {
+export async function forgotPassword(email: string): Promise<{ detail: string; transport?: string }> {
   const started = typeof performance !== "undefined" ? performance.now() : Date.now();
   recordForgotPasswordStart(getBaseUrl());
   try {
-    const payload = await requestRequired<{ detail: string }>(FORGOT_PASSWORD_PATH, {
+    const payload = await requestRequired<{ detail: string; transport?: string }>(FORGOT_PASSWORD_PATH, {
       method: "POST",
       body: JSON.stringify({ email }),
     });
     const durationMs = Math.round(
       (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
     );
-    recordForgotPasswordResponse({ status: 200, durationMs });
+    recordForgotPasswordResponse({ status: 200, durationMs, transport: payload.transport });
     return payload;
   } catch (error) {
     const durationMs = Math.round(

@@ -168,6 +168,7 @@ def test_resend_verification(authenticated_client, user):
     r = authenticated_client.post("/api/auth/resend-verification/", {}, format="json")
     assert r.status_code == 200
     assert r.json()["detail"] == "Verification email sent."
+    assert r.json()["transport"] == "locmem"
     assert len(mail.outbox) == 1
     assert mail.outbox[0].to == ["resend@example.com"]
 
@@ -180,6 +181,43 @@ def test_resend_already_verified(authenticated_client, user):
     r = authenticated_client.post("/api/auth/resend-verification/", {}, format="json")
     assert r.status_code == 200
     assert "already verified" in r.json()["detail"].lower()
+    assert mail.outbox == []
+
+
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    FRONTEND_ORIGIN="https://flowsight360.com",
+)
+def test_resend_rejects_console_backend_on_render(authenticated_client, user, monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    mail.outbox.clear()
+    user.email = "console@example.com"
+    user.save(update_fields=["email"])
+    r = authenticated_client.post("/api/auth/resend-verification/", {}, format="json")
+    assert r.status_code == 503
+    assert r.json()["transport"] == "console"
+    assert "smtp" in r.json()["detail"].lower()
+    assert mail.outbox == []
+
+
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    FRONTEND_ORIGIN="https://flowsight360.com",
+)
+def test_forgot_password_rejects_console_backend_on_render(api_client, user, monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    mail.outbox.clear()
+    user.email = "console-reset@example.com"
+    user.save(update_fields=["email"])
+    r = api_client.post(
+        "/api/auth/forgot-password/",
+        {"email": "console-reset@example.com"},
+        format="json",
+    )
+    assert r.status_code == 503
+    assert r.json()["transport"] == "console"
     assert mail.outbox == []
 
 
@@ -199,8 +237,10 @@ def test_forgot_password_neutral_for_existing_and_missing(api_client, user):
     )
     assert existing.status_code == 200
     assert missing.status_code == 200
-    assert existing.json() == missing.json()
+    assert existing.json()["detail"] == missing.json()["detail"]
     assert existing.json()["detail"] == NEUTRAL_PASSWORD_RESET_DETAIL
+    assert existing.json()["transport"] == missing.json()["transport"]
+    assert existing.json()["transport"] == "locmem"
     assert "token" not in existing.json()
     assert "uid" not in existing.json()
     assert len(mail.outbox) == 1

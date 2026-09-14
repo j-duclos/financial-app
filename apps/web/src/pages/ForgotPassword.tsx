@@ -17,7 +17,14 @@ export default function ForgotPassword() {
     setError("");
     setBusy(true);
     try {
-      await forgotPassword(email.trim());
+      const result = await forgotPassword(email.trim());
+      const transport = (result.transport || "").toLowerCase();
+      if (transport && transport !== "smtp" && transport !== "provider") {
+        setError(
+          `The API accepted this request, but mail transport is "${result.transport}" so nothing went to an inbox. Local web talks to Django console mail. Production must use SMTP on the web service, then restart gunicorn.`
+        );
+        return;
+      }
       setSubmitted(true);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not send reset instructions.");

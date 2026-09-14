@@ -1,5 +1,8 @@
 """Rate limits for auth endpoints that are abuse-prone."""
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AuthEmailAnonThrottle(AnonRateThrottle):
@@ -7,11 +10,27 @@ class AuthEmailAnonThrottle(AnonRateThrottle):
 
     scope = "auth_email_anon"
 
+    def allow_request(self, request, view):
+        allowed = super().allow_request(request, view)
+        if not allowed:
+            logger.warning("auth_email throttled scope=%s", self.scope)
+        return allowed
+
 
 class AuthEmailUserThrottle(UserRateThrottle):
-    """Authenticated resend-verification: 6 requests per hour per user."""
+    """Authenticated resend-verification."""
 
     scope = "auth_email_user"
+
+    def allow_request(self, request, view):
+        allowed = super().allow_request(request, view)
+        if not allowed:
+            logger.warning(
+                "auth_email throttled scope=%s user_id=%s",
+                self.scope,
+                getattr(getattr(request, "user", None), "pk", None),
+            )
+        return allowed
 
 
 class AuthLoginAnonThrottle(AnonRateThrottle):

@@ -327,7 +327,7 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "billing.exception_handler.billing_exception_handler",
     "DEFAULT_THROTTLE_RATES": {
         "auth_email_anon": "5/hour",
-        "auth_email_user": "6/hour",
+        "auth_email_user": "30/hour",
         "auth_login_anon": "10/minute",
         "auth_register_anon": "10/hour",
         "auth_sensitive_user": "10/hour",

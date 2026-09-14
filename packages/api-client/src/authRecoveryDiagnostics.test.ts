@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { forgotPassword } from "./api";
+import { forgotPassword, resendVerification } from "./api";
 import {
+  classifyResendVerificationDetail,
   configureAuthRecoveryDiagnostics,
   resetAuthRecoveryDiagnosticsForTests,
   sanitizeAuthRecoveryDiagnosticText,
@@ -100,5 +101,71 @@ describe("forgot-password request diagnostics", () => {
     expect(clean).not.toContain("reset-secret");
     expect(clean).not.toContain("hunter2");
     expect(clean).not.toContain("eyJhbGciOi");
+  });
+});
+
+describe("resend-verification request diagnostics", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetAuthRecoveryDiagnosticsForTests();
+    configureApiClient({ baseUrl: "https://financial-app-1-tu0l.onrender.com" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetAuthRecoveryDiagnosticsForTests();
+  });
+
+  it("classifies already-verified without treating it as an SMTP send", () => {
+    expect(classifyResendVerificationDetail("Email is already verified.", 200)).toBe(
+      "already_verified"
+    );
+    expect(classifyResendVerificationDetail("Verification email sent.", 200)).toBe("sent");
+  });
+
+  it("logs already_verified without emails or tokens", async () => {
+    configureAuthRecoveryDiagnostics(true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { detail: "Email is already verified." }))
+    );
+    await resendVerification();
+    const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("action=resend-verification");
+    expect(output).toContain("endpoint=/api/auth/resend-verification/");
+    expect(output).toContain("outcome=already_verified");
+    expect(output).toContain("smtp_to_inbox=false");
+    expect(output).not.toMatch(/@|Bearer |token=/i);
+  });
+
+  it("logs sent when the backend accepts delivery", async () => {
+    configureAuthRecoveryDiagnostics(true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { detail: "Verification email sent." }))
+    );
+    await resendVerification();
+    const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("outcome=sent");
+    expect(output).toContain("smtp_to_inbox=false");
+    expect(output).toContain("transport=unknown");
+    expect(output).toContain("suspiciously_fast=true");
+  });
+
+  it("only marks smtp_to_inbox when the backend reports smtp/provider", async () => {
+    configureAuthRecoveryDiagnostics(true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, { detail: "Verification email sent.", transport: "smtp" })
+      )
+    );
+    await resendVerification();
+    const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("transport=smtp");
+    expect(output).toContain("smtp_to_inbox=true");
   });
 });

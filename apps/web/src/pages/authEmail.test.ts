@@ -71,6 +71,7 @@ describe("auth email UX", () => {
     expect(forgotSource).toMatch(
       /If an account exists for that email, we've sent password reset instructions/
     );
+    expect(forgotSource).toMatch(/mail transport is/);
     expect(forgotSource).not.toMatch(/No user found/i);
   });
 

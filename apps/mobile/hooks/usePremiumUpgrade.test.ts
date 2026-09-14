@@ -56,6 +56,7 @@ describe("premium upgrade email verification", () => {
     expect(hookSource).toMatch(/RESEND_VERIFICATION_EMAIL_LABEL/);
     expect(hookSource).toMatch(/Not now|PREMIUM_NOT_NOW_LABEL/);
     expect(hookSource).toMatch(/isEmailVerificationRequiredError\(err\)[\s\S]*?return;/);
+    expect(hookSource).toMatch(/describeResendVerificationResult/);
     expect(hookSource).toMatch(/onPress: \(\) => void resendVerificationEmail\(\)/);
     expect(EMAIL_VERIFY_BEFORE_UPGRADE_TITLE).toBe("Verify your email");
     expect(EMAIL_VERIFY_BEFORE_UPGRADE_MESSAGE).toMatch(/FlowSight Premium/);

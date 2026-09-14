@@ -32,6 +32,8 @@ export {
 } from "./billingCheckoutDiagnostics";
 export {
   FORGOT_PASSWORD_PATH,
+  RESEND_VERIFICATION_PATH,
+  classifyResendVerificationDetail,
   configureAuthRecoveryDiagnostics,
   getLastAuthRecoveryAttempt,
   isAuthRecoveryDiagnosticsEnabled,
