@@ -9,7 +9,6 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView
 import logging
-import threading
 
 from .models import Household, HouseholdMembership
 from .permissions import IsHouseholdMember
@@ -38,30 +37,6 @@ from .utils import get_user_profile, get_households_for_user, ensure_default_hou
 from common.services.redis_config import redis_diagnostics, verify_redis_cache
 
 logger = logging.getLogger(__name__)
-
-
-def _send_password_reset_email_detached(user_id: int) -> None:
-    """Send reset mail outside the HTTP request lifecycle.
-
-    Render can terminate/timeout a request while SMTP is still negotiating.  The
-    shell send succeeds because it is not tied to that request timeout.  Re-fetch
-    the user in a fresh thread/DB connection and perform the exact same working
-    send there.
-    """
-    from django.contrib.auth import get_user_model
-    from django.db import close_old_connections
-    from core.mail import send_password_reset_email
-
-    close_old_connections()
-    try:
-        user = get_user_model().objects.filter(pk=user_id).first()
-        if user is None:
-            return
-        send_password_reset_email(user)
-    except Exception:
-        logger.exception("Detached password reset email failed user_id=%s", user_id)
-    finally:
-        close_old_connections()
 
 
 def home(request):
@@ -202,19 +177,21 @@ class ForgotPasswordView(APIView):
 
     def post(self, request):
         from core.email_identity import find_users_by_email, normalize_email
-        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL
+        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL, send_password_reset_email
 
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = normalize_email(serializer.validated_data["email"])
         user = find_users_by_email(email).first()
         if user is not None:
-            threading.Thread(
-                target=_send_password_reset_email_detached,
-                args=(user.pk,),
-                name=f"password-reset-{user.pk}",
-                daemon=True,
-            ).start()
+            try:
+                send_password_reset_email(user)
+            except Exception:
+                # Keep the public response neutral to avoid account enumeration,
+                # but do not detach the send into a daemon thread: Render can end
+                # that thread when the request worker is recycled, producing a
+                # false-success 200 with no email delivered.
+                logger.exception("Failed to send password reset email user_id=%s", user.pk)
         return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL})
 
 
