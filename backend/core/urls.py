@@ -14,13 +14,12 @@ from .views import (
     HouseholdViewSet,
     TokenObtainPairViewNoAuth,
     VerifyEmailView,
-    ResendVerificationView,
-    ForgotPasswordView,
     ResetPasswordView,
     OnboardingStatusView,
     OnboardingCompleteView,
     OnboardingDismissView,
 )
+from .auth_email_views import StrictForgotPasswordView, StrictResendVerificationView
 from .feedback_views import FeedbackView, ReviewPromptView
 from timeline.views import TimelineView
 
@@ -32,8 +31,12 @@ urlpatterns = [
     path("auth/token/", TokenObtainPairViewNoAuth.as_view(), name="token_obtain_pair"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),
-    path("auth/resend-verification/", ResendVerificationView.as_view(), name="resend-verification"),
-    path("auth/forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
+    path(
+        "auth/resend-verification/",
+        StrictResendVerificationView.as_view(),
+        name="resend-verification",
+    ),
+    path("auth/forgot-password/", StrictForgotPasswordView.as_view(), name="forgot-password"),
     path("auth/reset-password/", ResetPasswordView.as_view(), name="reset-password"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/change-email/", ChangeEmailView.as_view(), name="profile-change-email"),
