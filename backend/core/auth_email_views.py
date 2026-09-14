@@ -32,20 +32,36 @@ class StrictResendVerificationView(APIView):
         from core.email_identity import is_email_verified, normalize_email
         from core.mail import send_verification_email
 
-        if is_email_verified(request.user):
+        user = request.user
+        email = normalize_email(getattr(user, "email", ""))
+        logger.info(
+            "auth_email verification_request user_id=%s has_email=%s verified=%s",
+            user.pk,
+            bool(email),
+            is_email_verified(user),
+        )
+
+        if is_email_verified(user):
             return Response({"detail": "Email is already verified."})
 
-        email = normalize_email(request.user.email)
         if not email:
+            logger.warning("auth_email verification_missing_email user_id=%s", user.pk)
             return Response(
                 {"detail": "Add an email address to your account before verifying."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Repair legacy whitespace/case in-place so every future auth-email path
+        # addresses the exact same canonical recipient.
+        if getattr(user, "email", "") != email:
+            user.email = email
+            user.save(update_fields=["email"])
+            logger.info("auth_email verification_recipient_normalized user_id=%s", user.pk)
+
         try:
-            sent = send_verification_email(request.user)
+            sent = send_verification_email(user)
         except Exception:
-            logger.exception("Verification email delivery failed user_id=%s", request.user.pk)
+            logger.exception("auth_email verification_delivery_failed user_id=%s", user.pk)
             return Response(
                 {
                     "detail": "We couldn't send the verification email right now. Please try again."
@@ -55,8 +71,8 @@ class StrictResendVerificationView(APIView):
 
         if sent is not True:
             logger.error(
-                "Verification email backend did not accept message user_id=%s",
-                request.user.pk,
+                "auth_email verification_backend_rejected user_id=%s",
+                user.pk,
             )
             return Response(
                 {
@@ -65,7 +81,7 @@ class StrictResendVerificationView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        logger.info("Verification resend accepted user_id=%s", request.user.pk)
+        logger.info("auth_email verification_accepted user_id=%s", user.pk)
         return Response({"detail": "Verification email sent."})
 
 
@@ -88,14 +104,27 @@ class StrictForgotPasswordView(APIView):
         email = normalize_email(serializer.validated_data["email"])
         user = find_users_by_email(email).first()
 
+        # Log only match state/user id; never log the submitted address or token.
+        logger.info(
+            "auth_email password_reset_lookup matched=%s user_id=%s",
+            user is not None,
+            user.pk if user is not None else None,
+        )
+
         # Keep unknown addresses neutral so the endpoint cannot enumerate users.
         if user is None:
             return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL})
 
+        canonical_email = normalize_email(getattr(user, "email", ""))
+        if canonical_email and getattr(user, "email", "") != canonical_email:
+            user.email = canonical_email
+            user.save(update_fields=["email"])
+            logger.info("auth_email password_reset_recipient_normalized user_id=%s", user.pk)
+
         try:
             sent = send_password_reset_email(user)
         except Exception:
-            logger.exception("Password reset email delivery failed user_id=%s", user.pk)
+            logger.exception("auth_email password_reset_delivery_failed user_id=%s", user.pk)
             return Response(
                 {
                     "detail": "We couldn't send the password reset email right now. Please try again."
@@ -105,7 +134,7 @@ class StrictForgotPasswordView(APIView):
 
         if sent is not True:
             logger.error(
-                "Password reset email backend did not accept message user_id=%s",
+                "auth_email password_reset_backend_rejected user_id=%s",
                 user.pk,
             )
             return Response(
@@ -115,5 +144,5 @@ class StrictForgotPasswordView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        logger.info("Password reset email accepted user_id=%s", user.pk)
+        logger.info("auth_email password_reset_accepted user_id=%s", user.pk)
         return Response({"detail": NEUTRAL_PASSWORD_RESET_DETAIL})
