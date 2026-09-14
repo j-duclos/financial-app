@@ -1,13 +1,31 @@
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from config.email_runtime import CONSOLE_BACKEND, SMTP_BACKEND, resolve_email_backend
+from config.email_runtime import (
+    CONSOLE_BACKEND,
+    RESEND_SMTP_HOST,
+    SMTP_BACKEND,
+    apply_inbox_smtp_env,
+    resolve_email_backend,
+)
 
 
 def test_local_defaults_to_console():
     assert (
         resolve_email_backend(on_render=False, configured="", host="", allow_console=True)
         == CONSOLE_BACKEND
+    )
+
+
+def test_host_overrides_console_even_when_not_on_render():
+    assert (
+        resolve_email_backend(
+            on_render=False,
+            configured=CONSOLE_BACKEND,
+            host="smtp.resend.com",
+            allow_console=True,
+        )
+        == SMTP_BACKEND
     )
 
 
@@ -56,3 +74,27 @@ def test_render_management_command_can_use_console_without_host():
         )
         == CONSOLE_BACKEND
     )
+
+
+def test_resend_api_key_fills_smtp_host_and_password():
+    host, user, password = apply_inbox_smtp_env(
+        email_host="",
+        email_user="",
+        email_password="",
+        resend_api_key="re_test_key",
+    )
+    assert host == RESEND_SMTP_HOST
+    assert user == "resend"
+    assert password == "re_test_key"
+
+
+def test_explicit_smtp_env_wins_over_resend_key():
+    host, user, password = apply_inbox_smtp_env(
+        email_host="smtp.example.com",
+        email_user="apikey",
+        email_password="smtp-pass",
+        resend_api_key="re_test_key",
+    )
+    assert host == "smtp.example.com"
+    assert user == "apikey"
+    assert password == "smtp-pass"

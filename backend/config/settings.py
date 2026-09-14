@@ -8,7 +8,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
-from config.email_runtime import resolve_email_backend
+from config.email_runtime import apply_inbox_smtp_env, resolve_email_backend
 from config.security_policy import (
     merge_allowed_hosts,
     merge_production_web_origins,
@@ -388,18 +388,26 @@ BILLING_SUCCESS_URL = os.environ.get("BILLING_SUCCESS_URL", "").strip()
 BILLING_CANCEL_URL = os.environ.get("BILLING_CANCEL_URL", "").strip()
 BILLING_PORTAL_RETURN_URL = os.environ.get("BILLING_PORTAL_RETURN_URL", "").strip()
 
-# Email — console locally. On Render, SMTP wins whenever EMAIL_HOST is set so a
-# stale EMAIL_BACKEND=console (gunicorn started before SMTP env) cannot swallow mail.
+# Email — console locally. If EMAIL_HOST or RESEND_API_KEY is set, use SMTP even
+# when EMAIL_BACKEND is still the Django console default (gunicorn does not
+# pick up dashboard env until the web service is rebuilt).
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "").strip()
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "").strip()
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD = apply_inbox_smtp_env(
+    email_host=EMAIL_HOST,
+    email_user=EMAIL_HOST_USER,
+    email_password=EMAIL_HOST_PASSWORD,
+    resend_api_key=os.environ.get("RESEND_API_KEY", ""),
+)
+_email_on_render = _ON_RENDER or bool(os.environ.get("RENDER_EXTERNAL_URL", "").strip())
 EMAIL_BACKEND = resolve_email_backend(
-    on_render=_ON_RENDER,
+    on_render=_email_on_render,
     configured=os.environ.get("EMAIL_BACKEND", ""),
     host=EMAIL_HOST,
     allow_console=_is_management_command(),
 )
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587") or 587)
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "").strip()
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").strip().lower() in ("true", "1", "yes")
 EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "false").strip().lower() in ("true", "1", "yes")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@localhost").strip()

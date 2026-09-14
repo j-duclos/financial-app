@@ -48,6 +48,20 @@ def email_backend_delivers_to_inbox() -> bool:
     return email_transport_label() in {"smtp", "provider"}
 
 
+def non_inbox_send_detail() -> str:
+    """User-facing 503 when this process cannot deliver to an inbox."""
+    host_set = bool((getattr(settings, "EMAIL_HOST", "") or "").strip())
+    if not host_set:
+        return (
+            "This web process has no EMAIL_HOST and no RESEND_API_KEY. "
+            "Put SMTP or Resend on the Render Web service Environment, not a shell."
+        )
+    return (
+        "EMAIL_HOST is set but this process is still using the console mail backend. "
+        "Redeploy the Web service so gunicorn loads the latest code."
+    )
+
+
 def _recipient_domain(email: str) -> str:
     if "@" not in email:
         return "none"

@@ -197,7 +197,7 @@ def test_resend_rejects_console_backend_on_render(authenticated_client, user, mo
     r = authenticated_client.post("/api/auth/resend-verification/", {}, format="json")
     assert r.status_code == 503
     assert r.json()["transport"] == "console"
-    assert "smtp" in r.json()["detail"].lower()
+    assert "email_host" in r.json()["detail"].lower()
     assert mail.outbox == []
 
 

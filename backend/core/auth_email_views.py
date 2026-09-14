@@ -30,7 +30,7 @@ class StrictResendVerificationView(APIView):
 
     def post(self, request):
         from core.email_identity import is_email_verified, normalize_email
-        from core.mail import email_transport_label, send_verification_email
+        from core.mail import email_transport_label, non_inbox_send_detail, send_verification_email
 
         user = request.user
         email = normalize_email(getattr(user, "email", ""))
@@ -94,8 +94,7 @@ class StrictResendVerificationView(APIView):
                 transport,
             )
             detail = (
-                "This web process is not using SMTP, so no inbox message was sent. "
-                "Restart the Render web service so it loads EMAIL_BACKEND."
+                non_inbox_send_detail()
                 if transport in {"console", "dummy", "locmem", "file"}
                 else "We couldn't send the verification email right now. Please try again."
             )
@@ -125,7 +124,7 @@ class StrictForgotPasswordView(APIView):
 
     def post(self, request):
         from core.email_identity import find_users_by_email, normalize_email
-        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL, email_transport_label, send_password_reset_email
+        from core.mail import NEUTRAL_PASSWORD_RESET_DETAIL, email_transport_label, non_inbox_send_detail, send_password_reset_email
 
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -170,8 +169,7 @@ class StrictForgotPasswordView(APIView):
                 transport,
             )
             detail = (
-                "This web process is not using SMTP, so no inbox message was sent. "
-                "Restart the Render web service so it loads EMAIL_BACKEND."
+                non_inbox_send_detail()
                 if transport in {"console", "dummy", "locmem", "file"}
                 else "We couldn't send the password reset email right now. Please try again."
             )
