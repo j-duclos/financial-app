@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import smtplib
+import time
 from urllib.parse import quote, urlencode
 
 from django.conf import settings
@@ -29,14 +31,42 @@ def _from_email() -> str:
 
 
 def _send(subject: str, to_email: str, text_body: str, html_body: str) -> None:
-    message = EmailMultiAlternatives(
-        subject=subject,
-        body=text_body,
-        from_email=_from_email(),
-        to=[to_email],
-    )
-    message.attach_alternative(html_body, "text/html")
-    message.send(fail_silently=False)
+    """Send a transactional email, retrying one transient SMTP/network failure.
+
+    Render cold starts can occasionally make the first SMTP connection fail or
+    time out even though the exact same credentials work immediately afterward.
+    We retry only connection/SMTP failures, never template or application errors.
+    """
+
+    last_error: BaseException | None = None
+    for attempt in (1, 2):
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=text_body,
+            from_email=_from_email(),
+            to=[to_email],
+        )
+        message.attach_alternative(html_body, "text/html")
+        try:
+            sent_count = message.send(fail_silently=False)
+            if sent_count != 1:
+                raise smtplib.SMTPException(
+                    f"Email backend reported {sent_count} messages sent; expected 1."
+                )
+            return
+        except (smtplib.SMTPException, OSError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+            logger.warning(
+                "Transient email delivery failure; retrying once subject=%s error_type=%s",
+                subject,
+                type(exc).__name__,
+            )
+            time.sleep(0.5)
+
+    if last_error is not None:
+        raise last_error
 
 
 def send_verification_email(user) -> bool:
