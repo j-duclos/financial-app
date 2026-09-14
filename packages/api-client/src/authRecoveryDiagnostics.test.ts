@@ -168,4 +168,23 @@ describe("resend-verification request diagnostics", () => {
     expect(output).toContain("transport=smtp");
     expect(output).toContain("smtp_to_inbox=true");
   });
+
+  it("logs transport from a 503 instead of unknown", async () => {
+    configureAuthRecoveryDiagnostics(true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(503, {
+          detail: "This web process is not using SMTP, so no inbox message was sent.",
+          transport: "console",
+        })
+      )
+    );
+    await expect(resendVerification()).rejects.toBeInstanceOf(ApiError);
+    const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("status=503");
+    expect(output).toContain("transport=console");
+    expect(output).toContain("outcome=http_error");
+  });
 });

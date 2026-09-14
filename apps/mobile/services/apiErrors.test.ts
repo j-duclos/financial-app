@@ -10,6 +10,11 @@ describe("describeApiError", () => {
     expect(describeApiError(new ApiError(422, "Bad field"))).toBe("Bad field");
     expect(describeApiError(new ApiError(429, "x"))).toMatch(/rate-limited/i);
     expect(describeApiError(new ApiError(504, "Gateway timeout"))).toMatch(/timeout/i);
+    expect(
+      describeApiError(
+        new ApiError(503, "This web process is not using SMTP, so no inbox message was sent.")
+      )
+    ).toMatch(/smtp/i);
   });
 
   it("maps premium_required 403s to upgrade copy without treating every 403 as billing", () => {

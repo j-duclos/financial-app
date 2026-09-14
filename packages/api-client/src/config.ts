@@ -335,6 +335,7 @@ async function requestInner<T>(
       upgradeRequired?: boolean;
       limit?: number;
       contentType?: string;
+      transport?: string;
     } = {
       contentType: header("content-type") ?? undefined,
     };
@@ -343,6 +344,7 @@ async function requestInner<T>(
         detail?: unknown;
         message?: string;
         redirect_uri_sent?: string;
+        transport?: string;
       };
       extras = {
         ...extras,
@@ -350,6 +352,7 @@ async function requestInner<T>(
         feature: typeof j.feature === "string" ? j.feature : undefined,
         upgradeRequired: j.upgrade_required === true,
         limit: typeof j.limit === "number" ? j.limit : undefined,
+        transport: typeof j.transport === "string" ? j.transport : undefined,
       };
       const detailStr =
         typeof j.detail === "string"
@@ -371,7 +374,8 @@ async function requestInner<T>(
           key === "code" ||
           key === "feature" ||
           key === "upgrade_required" ||
-          key === "limit"
+          key === "limit" ||
+          key === "transport"
         ) {
           continue;
         }
@@ -418,6 +422,7 @@ export class ApiError extends Error {
   upgradeRequired?: boolean;
   limit?: number;
   contentType?: string;
+  transport?: string;
   constructor(
     status: number,
     message: string,
@@ -427,6 +432,7 @@ export class ApiError extends Error {
       upgradeRequired?: boolean;
       limit?: number;
       contentType?: string;
+      transport?: string;
     }
   ) {
     super(message);
@@ -437,5 +443,6 @@ export class ApiError extends Error {
     this.upgradeRequired = extras?.upgradeRequired;
     this.limit = extras?.limit;
     this.contentType = extras?.contentType;
+    this.transport = extras?.transport;
   }
 }

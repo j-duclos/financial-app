@@ -63,6 +63,18 @@ class StrictResendVerificationView(APIView):
             user.save(update_fields=["email"])
             logger.info("auth_email verification_recipient_normalized user_id=%s", user.pk)
 
+        from core.frontend_origin import get_frontend_origin
+
+        if not get_frontend_origin():
+            logger.error("auth_email verification_missing_frontend_origin user_id=%s", user.pk)
+            return Response(
+                {
+                    "detail": "This server cannot build a verification link (FRONTEND_ORIGIN is missing).",
+                    "transport": email_transport_label(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         try:
             sent = send_verification_email(user)
         except Exception:

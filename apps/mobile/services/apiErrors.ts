@@ -28,6 +28,9 @@ export function describeApiError(err: unknown): string {
       return "The app did reach the server, but it is rate-limited (too many email requests this hour). No email was sent. Wait, then try once.";
     }
     if (err.status === 504) return err.message || "The request timed out. Please try again.";
+    if (err.status === 503) {
+      return err.message?.trim() || "The server had a problem. Please try again.";
+    }
     if (err.status >= 500) return "The server had a problem. Please try again.";
     return err.message || `Request failed (${err.status})`;
   }

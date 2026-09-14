@@ -8,6 +8,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
+from config.email_runtime import resolve_email_backend
 from config.security_policy import (
     merge_allowed_hosts,
     merge_production_web_origins,
@@ -387,11 +388,15 @@ BILLING_SUCCESS_URL = os.environ.get("BILLING_SUCCESS_URL", "").strip()
 BILLING_CANCEL_URL = os.environ.get("BILLING_CANCEL_URL", "").strip()
 BILLING_PORTAL_RETURN_URL = os.environ.get("BILLING_PORTAL_RETURN_URL", "").strip()
 
-# Email — console backend locally; set a real SMTP backend in production.
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
-).strip()
+# Email — console locally. On Render, SMTP wins whenever EMAIL_HOST is set so a
+# stale EMAIL_BACKEND=console (gunicorn started before SMTP env) cannot swallow mail.
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "").strip()
+EMAIL_BACKEND = resolve_email_backend(
+    on_render=_ON_RENDER,
+    configured=os.environ.get("EMAIL_BACKEND", ""),
+    host=EMAIL_HOST,
+    allow_console=_is_management_command(),
+)
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587") or 587)
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "").strip()
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")

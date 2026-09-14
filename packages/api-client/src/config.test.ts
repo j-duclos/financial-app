@@ -156,6 +156,22 @@ describe("configureApiClient unauthorized handling", () => {
       message: expect.stringContaining("source_account_id"),
     });
   });
+
+  it("keeps 503 detail and transport without appending transport as a field error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(503, {
+        detail: "This web process is not using SMTP, so no inbox message was sent.",
+        transport: "console",
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(request("/api/auth/resend-verification/")).rejects.toMatchObject({
+      status: 503,
+      message: "This web process is not using SMTP, so no inbox message was sent.",
+      transport: "console",
+    });
+  });
 });
 
 describe("fetchAuthenticatedFile", () => {

@@ -215,6 +215,7 @@ export async function resendVerification(): Promise<{ detail: string }> {
         status: error instanceof ApiError ? error.status : 0,
         durationMs,
         detail: error instanceof Error ? error.message : undefined,
+        transport: error instanceof ApiError ? error.transport : undefined,
       });
     }
     throw error;
