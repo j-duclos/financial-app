@@ -20,7 +20,12 @@ import {
   isEmailVerificationRequiredError,
 } from "@/lib/billing";
 import { PremiumUpgradeContext } from "@/features/billing/premiumUpgradeContext";
-import { canUseStripeBilling } from "@/features/billing/billingProvider";
+import {
+  canUseStripeBilling,
+  describeStripeCheckoutBlockReason,
+  logBillingProviderDecision,
+  logCheckoutBlockedLocally,
+} from "@/features/billing/billingProvider";
 import {
   PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE,
   PREMIUM_NOT_NOW_LABEL,
@@ -63,7 +68,11 @@ export function usePremiumCheckout() {
   const stripeAllowed = canUseStripeBilling();
 
   const startUpgrade = useCallback(async () => {
+    logBillingProviderDecision();
     if (!stripeAllowed) {
+      logCheckoutBlockedLocally(
+        describeStripeCheckoutBlockReason() ?? "stripe_checkout_not_allowed_for_provider"
+      );
       Alert.alert(PREMIUM_SHEET_TITLE, PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE);
       return;
     }

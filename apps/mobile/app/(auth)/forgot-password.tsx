@@ -6,9 +6,9 @@ import { Button, Screen, TextField } from "@/components/ui";
 import {
   NEUTRAL_PASSWORD_RESET_DETAIL,
   RESET_EMAIL_NEXT_STEP,
-  describeForgotPasswordError,
   isValidResetEmail,
   normalizeResetEmail,
+  runForgotPasswordSubmit,
 } from "@/features/auth/passwordReset";
 import { forgotPassword } from "@budget-app/api-client";
 import { useTheme } from "@/theme";
@@ -30,10 +30,12 @@ export default function ForgotPasswordScreen() {
     }
     setSubmitting(true);
     try {
-      await forgotPassword(normalized);
-      setSubmitted(true);
-    } catch (err: unknown) {
-      setError(describeForgotPasswordError(err));
+      const result = await runForgotPasswordSubmit(forgotPassword, normalized);
+      if (result.submitted) {
+        setSubmitted(true);
+      } else {
+        setError(result.error);
+      }
     } finally {
       setSubmitting(false);
     }

@@ -1,7 +1,9 @@
 import {
   configureApiClient,
+  configureAuthRecoveryDiagnostics,
   configureBillingCheckoutDiagnostics,
   configurePerfLogging,
+  shouldEnableAuthRecoveryDiagnostics,
   shouldEnableBillingCheckoutDiagnostics,
 } from "@budget-app/api-client";
 import { getApiBaseUrl, getApiTargetLabel, getAppEnvironment } from "@/constants/env";
@@ -73,8 +75,12 @@ export function wireApiClient(refs: TokenRefs): void {
     },
   });
   const isDev = typeof __DEV__ !== "undefined" && __DEV__;
-  if (shouldEnableBillingCheckoutDiagnostics({ isDev, appEnv: getAppEnvironment() })) {
+  const appEnv = getAppEnvironment();
+  if (shouldEnableBillingCheckoutDiagnostics({ isDev, appEnv })) {
     configureBillingCheckoutDiagnostics(true);
+  }
+  if (shouldEnableAuthRecoveryDiagnostics({ isDev, appEnv })) {
+    configureAuthRecoveryDiagnostics(true);
   }
   if (!wired && isDev) {
     configurePerfLogging(true, getApiTargetLabel());

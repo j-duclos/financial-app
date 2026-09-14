@@ -12,11 +12,15 @@
  * - staging — EAS preview / internal beta; HTTPS required; no localhost
  * - production — store builds; HTTPS required; no localhost
  *
- * Physical iPhone: set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000 (never localhost).
+ * Physical iPhone Xcode Debug (`npx expo run:ios --device` / Xcode Run):
+ * EXPO_PUBLIC_* are inlined by Metro from apps/mobile/.env (and extra.apiUrl /
+ * extra.appEnv from app.config.ts evaluated in that Metro process).
+ * eas.json is NOT applied. ios/.xcode.env only exports NODE_BINARY.
  * See apps/mobile/IOS_DEVICE.md.
  */
 import { parseFinancialEngineMode, type FinancialEngineMode } from "@budget-app/shared/financial-engine";
 import {
+  PRODUCTION_RENDER_HOST,
   PRODUCTION_RENDER_ORIGIN,
   isStaleRenderHost,
 } from "@budget-app/shared";
@@ -26,6 +30,17 @@ export type AppEnvironment = "development" | "staging" | "production";
 
 /** Coarse target for logs/UI: local Django vs Render (or other hosted) API. */
 export type ApiTargetLabel = "local" | "render" | "other";
+
+/** Classification of the hostname the physical device will actually call. */
+export type ResolvedApiHostKind =
+  | "expected_render"
+  | "localhost"
+  | "loopback"
+  | "lan"
+  | "stale_render"
+  | "flowsight360"
+  | "empty"
+  | "other";
 
 type ExpoExtra = {
   appEnv?: string;
@@ -191,6 +206,25 @@ export function getApiHostname(): string {
   } catch {
     return "unknown";
   }
+}
+
+export function classifyResolvedApiHost(hostname: string): ResolvedApiHostKind {
+  const host = hostname.trim().toLowerCase();
+  if (!host || host === "unknown") return "empty";
+  if (host === "localhost") return "localhost";
+  if (host === "127.0.0.1" || host === "::1") return "loopback";
+  if (isStaleRenderHost(host)) return "stale_render";
+  if (host === PRODUCTION_RENDER_HOST) return "expected_render";
+  if (host === "flowsight360.com" || host.endsWith(".flowsight360.com")) return "flowsight360";
+  if (
+    host.startsWith("10.0.2.") ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    return "lan";
+  }
+  return "other";
 }
 
 export function getApiTargetLabel(): ApiTargetLabel {

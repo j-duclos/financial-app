@@ -24,4 +24,7 @@ export {
   getAvailableBillingProvider,
   canUseStripeBilling,
   canOfferStripePremiumPurchase,
+  describeStripeCheckoutBlockReason,
+  logBillingProviderDecision,
+  logCheckoutBlockedLocally,
 } from "./billingProvider";

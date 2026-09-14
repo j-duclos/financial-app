@@ -83,6 +83,13 @@ import {
 } from "./config";
 import type { AuthenticatedFile } from "./config";
 import {
+  FORGOT_PASSWORD_PATH,
+  isAuthRecoveryNetworkFailure,
+  recordForgotPasswordNetworkFailure,
+  recordForgotPasswordResponse,
+  recordForgotPasswordStart,
+} from "./authRecoveryDiagnostics";
+import {
   BILLING_CHECKOUT_PATH,
   isCheckoutNetworkFailure,
   recordBillingCheckoutHttpFailure,
@@ -177,10 +184,32 @@ export async function resendVerification(): Promise<{ detail: string }> {
 }
 
 export async function forgotPassword(email: string): Promise<{ detail: string }> {
-  return requestRequired("/api/auth/forgot-password/", {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
+  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
+  recordForgotPasswordStart(getBaseUrl());
+  try {
+    const payload = await requestRequired<{ detail: string }>(FORGOT_PASSWORD_PATH, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    recordForgotPasswordResponse({ status: 200, durationMs });
+    return payload;
+  } catch (error) {
+    const durationMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - started
+    );
+    if (isAuthRecoveryNetworkFailure(error)) {
+      recordForgotPasswordNetworkFailure({ durationMs, error });
+    } else {
+      recordForgotPasswordResponse({
+        status: error instanceof ApiError ? error.status : 0,
+        durationMs,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function resetPassword(body: {

@@ -51,6 +51,19 @@ export function describeForgotPasswordError(err: unknown): string {
   return describeApiError(err);
 }
 
+/** Maps the forgot-password HTTP result to UI state. Network failures never count as submitted. */
+export async function runForgotPasswordSubmit(
+  request: (email: string) => Promise<unknown>,
+  email: string
+): Promise<{ submitted: boolean; error: string }> {
+  try {
+    await request(email);
+    return { submitted: true, error: "" };
+  } catch (err: unknown) {
+    return { submitted: false, error: describeForgotPasswordError(err) };
+  }
+}
+
 export function describeResetPasswordError(err: unknown): string {
   if (err instanceof ApiError && err.status === 400) {
     if (/invalid or has expired/i.test(err.message)) {

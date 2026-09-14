@@ -13,6 +13,7 @@ import {
   parseResetLinkParams,
   resetPasswordClientError,
   sanitizeAuthRecoveryText,
+  runForgotPasswordSubmit,
 } from "./passwordReset";
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +32,7 @@ describe("mobile password reset", () => {
 
   it("submits a valid email and shows a generic success message", () => {
     expect(isValidResetEmail("person@example.com")).toBe(true);
-    expect(forgotSource).toMatch(/forgotPassword\(/);
+    expect(forgotSource).toMatch(/runForgotPasswordSubmit\(forgotPassword/);
     expect(forgotSource).toMatch(/NEUTRAL_PASSWORD_RESET_DETAIL/);
     expect(NEUTRAL_PASSWORD_RESET_DETAIL).toMatch(
       /If an account exists for that email, we've sent password reset instructions/
@@ -52,7 +53,7 @@ describe("mobile password reset", () => {
       "Enter a valid email address."
     );
     expect(describeForgotPasswordError(new Error("Network request failed"))).toMatch(/Network/);
-    expect(forgotSource).toMatch(/describeForgotPasswordError/);
+    expect(forgotSource).toMatch(/runForgotPasswordSubmit/);
   });
 
   it("completes reset, handles invalid tokens, and returns to login", () => {
@@ -74,11 +75,26 @@ describe("mobile password reset", () => {
     expect(RESET_SUCCESS_MESSAGE).toBe("Your password has been reset.");
   });
 
+  it("does not treat a network failure as forgot-password success", async () => {
+    const result = await runForgotPasswordSubmit(
+      async () => {
+        throw new TypeError("Network request failed");
+      },
+      "person@example.com"
+    );
+    expect(result.submitted).toBe(false);
+    expect(result.error).toMatch(/Network/);
+    expect(forgotSource).toMatch(/if \(result\.submitted\)/);
+    expect(forgotSource).not.toMatch(/setSubmitted\(true\);\s*\} catch/s);
+  });
+
   it("never logs reset tokens, JWTs, or passwords", () => {
+    expect(forgotSource).toMatch(/runForgotPasswordSubmit/);
     const combined = `${forgotSource}\n${resetSource}`;
     expect(combined).not.toMatch(/console\.(log|info|debug|warn).*token/);
     expect(combined).not.toMatch(/console\.(log|info|debug|warn).*password/);
     expect(combined).not.toMatch(/console\.(log|info|debug|warn).*uid/);
+    expect(combined).not.toMatch(/console\.(log|info|debug|warn).*email/);
     const dirty =
       "https://flowsight360.com/reset-password?uid=abc&token=secret Authorization: Bearer eyJhbGciOi.aaa.bbb";
     const clean = sanitizeAuthRecoveryText(dirty);

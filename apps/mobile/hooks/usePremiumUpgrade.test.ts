@@ -36,6 +36,8 @@ describe("premium upgrade email verification", () => {
   it("aborts Stripe checkout and portal when the billing provider forbids them", () => {
     expect(hookSource).toMatch(/const stripeAllowed = canUseStripeBilling\(\)/);
     expect(hookSource).toMatch(/if \(!stripeAllowed\)/);
+    expect(hookSource).toMatch(/logBillingProviderDecision\(\)/);
+    expect(hookSource).toMatch(/logCheckoutBlockedLocally/);
     expect(hookSource).toMatch(/PREMIUM_MANAGEMENT_UNAVAILABLE_MESSAGE/);
     expect(hookSource.indexOf("if (!stripeAllowed)")).toBeLessThan(
       hookSource.indexOf("createCheckoutSession()")

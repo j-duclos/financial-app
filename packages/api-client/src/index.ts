@@ -30,5 +30,14 @@ export {
   sanitizeBillingDiagnosticText,
   shouldEnableBillingCheckoutDiagnostics,
 } from "./billingCheckoutDiagnostics";
+export {
+  FORGOT_PASSWORD_PATH,
+  configureAuthRecoveryDiagnostics,
+  getLastAuthRecoveryAttempt,
+  isAuthRecoveryDiagnosticsEnabled,
+  resetAuthRecoveryDiagnosticsForTests,
+  sanitizeAuthRecoveryDiagnosticText,
+  shouldEnableAuthRecoveryDiagnostics,
+} from "./authRecoveryDiagnostics";
 export type { BillingCheckoutAttempt } from "./billingCheckoutDiagnostics";
 export * from "./api";

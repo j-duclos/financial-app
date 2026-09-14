@@ -54,6 +54,16 @@ describe("iOS device prep", () => {
     expect(configSource).not.toMatch(/NSFaceIDUsageDescription/);
   });
 
+  it("does not treat EAS env as the Xcode Debug runtime", () => {
+    const eas = JSON.parse(easSource) as {
+      build: { development: { env?: Record<string, string> } };
+    };
+    expect(eas.build.development.env?.EXPO_PUBLIC_APP_ENV).toBe("development");
+    expect(eas.build.development.env?.EXPO_PUBLIC_API_URL).toBeUndefined();
+    expect(configSource).toMatch(/process\.env\.EXPO_PUBLIC_API_URL/);
+    expect(configSource).toMatch(/process\.env\.EXPO_PUBLIC_APP_ENV/);
+  });
+
   it("keeps EAS preview and production on HTTPS Render", () => {
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "production"/);
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "staging"/);
