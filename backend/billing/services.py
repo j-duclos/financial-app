@@ -20,6 +20,7 @@ from billing.stripe_api import (
     create_customer,
     create_portal_configuration,
     create_portal_session,
+    is_definitively_nonbillable_subscription_error,
     list_portal_configurations,
     list_subscriptions,
     retrieve_subscription,
@@ -37,10 +38,7 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
-# Central definition of which Stripe subscription statuses grant paid access.
-# past_due / unpaid / canceled / incomplete / paused do not grant Premium.
 PAID_ACCESS_STATUSES = frozenset({"active", "trialing"})
-
 METADATA_USER_ID_KEY = "django_user_id"
 
 
@@ -55,35 +53,26 @@ def status_grants_premium(status: str | None) -> bool:
 def get_or_create_billing_subscription(user) -> BillingSubscription:
     billing, _created = BillingSubscription.objects.get_or_create(
         user=user,
-        defaults={
-            "plan": BillingSubscription.Plan.FREE,
-            "status": "inactive",
-        },
+        defaults={"plan": BillingSubscription.Plan.FREE, "status": "inactive"},
     )
     return billing
 
 
 def subscription_grants_premium(billing: BillingSubscription | None) -> bool:
-    if billing is None:
-        return False
-    return status_grants_premium(billing.status)
+    return bool(billing and status_grants_premium(billing.status))
 
 
 def stripe_plan_for_user(user, *, create_row: bool = True) -> str:
-    """Stripe-authoritative plan. Ignores development test overrides."""
     if create_row:
         billing = get_or_create_billing_subscription(user)
     else:
         billing = BillingSubscription.objects.filter(user_id=user.pk).first()
         if billing is None:
             return BillingSubscription.Plan.FREE
-    if subscription_grants_premium(billing):
-        return BillingSubscription.Plan.PREMIUM
-    return BillingSubscription.Plan.FREE
+    return BillingSubscription.Plan.PREMIUM if subscription_grants_premium(billing) else BillingSubscription.Plan.FREE
 
 
 def get_user_plan(user, *, create_billing_row: bool = True) -> str:
-    """Effective plan: development override when enabled, otherwise Stripe status."""
     from billing.plan_override import active_test_plan_override
 
     override = active_test_plan_override(user)
@@ -109,11 +98,10 @@ def get_billing_status_payload(user) -> dict[str, Any]:
 
     billing = get_or_create_billing_subscription(user)
     effective_plan = get_user_plan(user)
-    is_premium = effective_plan == BillingSubscription.Plan.PREMIUM
     period_end = billing.current_period_end
     payload: dict[str, Any] = {
         "plan": effective_plan,
-        "is_premium": is_premium,
+        "is_premium": effective_plan == BillingSubscription.Plan.PREMIUM,
         "status": billing.status,
         "cancel_at_period_end": bool(billing.cancel_at_period_end),
         "current_period_end": period_end.isoformat() if period_end else None,
@@ -175,53 +163,45 @@ def extract_price_id(subscription: Any) -> str:
     return str(plan_id) if plan_id else ""
 
 
-def apply_stripe_subscription(
-    billing: BillingSubscription,
-    subscription: Any,
-    *,
-    deleted: bool = False,
-) -> BillingSubscription:
-    """Synchronize local billing state from a Stripe Subscription object."""
+def apply_stripe_subscription(billing: BillingSubscription, subscription: Any, *, deleted: bool = False) -> BillingSubscription:
     sub_id = _normalize_stripe_id(_obj_get(subscription, "id"))
     if sub_id:
         billing.stripe_subscription_id = sub_id
     customer_id = _normalize_stripe_id(_obj_get(subscription, "customer"))
     if customer_id:
         billing.stripe_customer_id = customer_id
-    raw_status = "canceled" if deleted else str(_obj_get(subscription, "status") or "inactive")
-    billing.status = raw_status
-    billing.cancel_at_period_end = bool(_obj_get(subscription, "cancel_at_period_end") or False)
-    if deleted:
-        billing.cancel_at_period_end = False
+    billing.status = "canceled" if deleted else str(_obj_get(subscription, "status") or "inactive")
+    billing.cancel_at_period_end = False if deleted else bool(_obj_get(subscription, "cancel_at_period_end") or False)
     billing.current_period_end = extract_current_period_end(subscription)
     price_id = extract_price_id(subscription)
     if price_id:
         billing.stripe_price_id = price_id
-    grants = status_grants_premium(billing.status)
-    billing.plan = (
-        BillingSubscription.Plan.PREMIUM if grants else BillingSubscription.Plan.FREE
-    )
+    billing.plan = BillingSubscription.Plan.PREMIUM if status_grants_premium(billing.status) else BillingSubscription.Plan.FREE
     billing.save()
     return billing
 
 
-def downgrade_to_free(
-    billing: BillingSubscription,
-    *,
-    status: str = "canceled",
-) -> BillingSubscription:
-    """Revoke paid access. Financial data is never deleted."""
+def downgrade_to_free(billing: BillingSubscription, *, status: str = "canceled") -> BillingSubscription:
     billing.plan = BillingSubscription.Plan.FREE
     billing.status = status
     billing.cancel_at_period_end = False
-    billing.save(
-        update_fields=["plan", "status", "cancel_at_period_end", "updated_at"]
-    )
+    billing.save(update_fields=["plan", "status", "cancel_at_period_end", "updated_at"])
     return billing
 
 
 def _user_metadata(user) -> dict[str, str]:
     return {METADATA_USER_ID_KEY: str(user.pk)}
+
+
+def _create_and_store_stripe_customer(user, billing: BillingSubscription) -> str:
+    email = (getattr(user, "email", None) or "").strip() or None
+    customer = create_customer(email=email, name=user.get_username(), metadata=_user_metadata(user))
+    customer_id = _normalize_stripe_id(_obj_get(customer, "id"))
+    if not customer_id:
+        raise BillingConfigurationError("Stripe did not return a customer id.")
+    billing.stripe_customer_id = customer_id
+    billing.save(update_fields=["stripe_customer_id", "updated_at"])
+    return customer_id
 
 
 def get_or_create_stripe_customer(user, billing: BillingSubscription) -> str:
@@ -231,25 +211,28 @@ def get_or_create_stripe_customer(user, billing: BillingSubscription) -> str:
     with transaction.atomic():
         locked = BillingSubscription.objects.select_for_update().get(pk=billing.pk)
         if locked.stripe_customer_id:
+            billing.stripe_customer_id = locked.stripe_customer_id
             return locked.stripe_customer_id
-        email = (getattr(user, "email", None) or "").strip() or None
-        customer = create_customer(
-            email=email,
-            name=user.get_username(),
-            metadata=_user_metadata(user),
-        )
-        customer_id = _normalize_stripe_id(_obj_get(customer, "id"))
-        if not customer_id:
-            raise BillingConfigurationError("Stripe did not return a customer id.")
-        locked.stripe_customer_id = customer_id
-        locked.save(update_fields=["stripe_customer_id", "updated_at"])
+        customer_id = _create_and_store_stripe_customer(user, locked)
         billing.stripe_customer_id = customer_id
         return customer_id
 
 
+def _replace_stale_stripe_customer(user, billing: BillingSubscription) -> str:
+    """Discard a local/dev/deleted Stripe customer id and create a real live customer."""
+    old_customer_id = billing.stripe_customer_id
+    billing.stripe_customer_id = None
+    billing.save(update_fields=["stripe_customer_id", "updated_at"])
+    logger.warning(
+        "Replacing stale Stripe customer user_id=%s old_customer_id=%s",
+        user.pk,
+        old_customer_id,
+    )
+    return get_or_create_stripe_customer(user, billing)
+
+
 def _iter_subscription_list(result: Any):
-    data = _obj_get(result, "data") or []
-    return list(data)
+    return list(_obj_get(result, "data") or [])
 
 
 def find_live_premium_subscription(customer_id: str) -> Any | None:
@@ -261,18 +244,15 @@ def find_live_premium_subscription(customer_id: str) -> Any | None:
 
 
 def create_premium_checkout_session(user) -> dict[str, str]:
-    """Create a Stripe Checkout Session for Premium. Price ID is server-selected."""
     require_checkout_config()
     billing = get_or_create_billing_subscription(user)
     if subscription_grants_premium(billing):
         raise BillingConflictError("You already have an active Premium subscription.")
-
     customer_id = get_or_create_stripe_customer(user, billing)
     existing = find_live_premium_subscription(customer_id)
     if existing is not None:
         apply_stripe_subscription(billing, existing)
         raise BillingConflictError("You already have an active Premium subscription.")
-
     price_id = require_premium_price_id()
     metadata = _user_metadata(user)
     session = create_checkout_session(
@@ -293,35 +273,25 @@ def create_premium_checkout_session(user) -> dict[str, str]:
 
 
 def _recover_portal_customer(user, billing: BillingSubscription) -> str:
-    """Repair an old/local billing row that has a subscription but no customer id."""
     if billing.stripe_customer_id:
         return billing.stripe_customer_id
-
     if billing.stripe_subscription_id:
         try:
             subscription = retrieve_subscription(billing.stripe_subscription_id)
             apply_stripe_subscription(billing, subscription)
         except Exception:
-            logger.warning(
-                "Could not recover Stripe customer from subscription user_id=%s",
-                user.pk,
-                exc_info=True,
-            )
+            logger.warning("Could not recover Stripe customer from subscription user_id=%s", user.pk, exc_info=True)
         if billing.stripe_customer_id:
             return billing.stripe_customer_id
-
     return get_or_create_stripe_customer(user, billing)
 
 
 def _active_portal_configuration_id() -> str:
-    """Return an active portal config, creating a minimal one once if needed."""
     configs = list_portal_configurations(limit=10)
-    data = _obj_get(configs, "data") or []
-    for config in data:
+    for config in _obj_get(configs, "data") or []:
         config_id = _normalize_stripe_id(_obj_get(config, "id"))
         if config_id:
             return config_id
-
     created = create_portal_configuration()
     config_id = _normalize_stripe_id(_obj_get(created, "id"))
     if not config_id:
@@ -333,18 +303,37 @@ def create_customer_portal_session(user) -> dict[str, str]:
     require_stripe_secret()
     billing = get_or_create_billing_subscription(user)
     customer_id = _recover_portal_customer(user, billing)
+    configuration_id = _active_portal_configuration_id()
+
     try:
-        configuration_id = _active_portal_configuration_id()
         session = create_portal_session(
             customer=customer_id,
             return_url=portal_return_url(),
             configuration=configuration_id,
         )
     except Exception as exc:
-        logger.exception("Stripe Customer Portal session creation failed user_id=%s", user.pk)
-        raise BillingConfigurationError(
-            "Stripe subscription management is temporarily unavailable."
-        ) from exc
+        # Legacy/dev rows may contain fake ids such as cus_local_<username>, or
+        # a real Stripe customer that was deleted. Stripe reports resource_missing.
+        # Repair that state automatically and retry exactly once.
+        if is_definitively_nonbillable_subscription_error(exc):
+            customer_id = _replace_stale_stripe_customer(user, billing)
+            try:
+                session = create_portal_session(
+                    customer=customer_id,
+                    return_url=portal_return_url(),
+                    configuration=configuration_id,
+                )
+            except Exception as retry_exc:
+                logger.exception("Stripe Customer Portal retry failed user_id=%s", user.pk)
+                raise BillingConfigurationError(
+                    "Stripe subscription management is temporarily unavailable."
+                ) from retry_exc
+        else:
+            logger.exception("Stripe Customer Portal session creation failed user_id=%s", user.pk)
+            raise BillingConfigurationError(
+                "Stripe subscription management is temporarily unavailable."
+            ) from exc
+
     url = _obj_get(session, "url")
     if not url:
         raise BillingConfigurationError("Stripe Customer Portal did not return a session URL.")
@@ -374,11 +363,7 @@ def resolve_billing_for_subscription_id(subscription_id: str | None) -> BillingS
     sid = _normalize_stripe_id(subscription_id)
     if not sid:
         return None
-    return (
-        BillingSubscription.objects.filter(stripe_subscription_id=sid)
-        .select_related("user")
-        .first()
-    )
+    return BillingSubscription.objects.filter(stripe_subscription_id=sid).select_related("user").first()
 
 
 def resolve_billing_for_user_id(user_id: int | None) -> BillingSubscription | None:
