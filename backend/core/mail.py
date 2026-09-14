@@ -26,8 +26,22 @@ NEUTRAL_PASSWORD_RESET_DETAIL = (
 )
 
 
+def _email_host() -> str:
+    return (getattr(settings, "EMAIL_HOST", "") or "").strip()
+
+
+def _smtp_backend_class() -> str:
+    return "django.core.mail.backends.smtp.EmailBackend"
+
+
 def email_transport_label() -> str:
-    """Safe backend class label for logs/API. Never includes hosts or credentials."""
+    """Safe backend class label for logs/API. Never includes hosts or credentials.
+
+    If EMAIL_HOST is set, this process sends over SMTP even when EMAIL_BACKEND
+    is still the Django console default.
+    """
+    if _email_host():
+        return "smtp"
     backend = (getattr(settings, "EMAIL_BACKEND", "") or "").strip().lower()
     if "console" in backend:
         return "console"
@@ -77,7 +91,7 @@ def _refuse_non_inbox_backend() -> bool:
     """True when this process must not report a successful inbox send."""
     if not _must_deliver_to_inbox():
         return False
-    if email_backend_delivers_to_inbox():
+    if _email_host() or email_backend_delivers_to_inbox():
         return False
     logger.error(
         "auth_email refusing non-inbox backend transport=%s",
@@ -105,13 +119,17 @@ def _send(subject: str, to_email: str, text_body: str, html_body: str) -> None:
     )
     timeout = float(getattr(settings, "EMAIL_TIMEOUT", 10) or 10)
     last_error: BaseException | None = None
+    host = _email_host() or None
+    backend = getattr(settings, "EMAIL_BACKEND", None)
+    if host:
+        backend = _smtp_backend_class()
 
     for attempt in (1, 2, 3):
         connection = get_connection(
-            backend=getattr(settings, "EMAIL_BACKEND", None),
+            backend=backend,
             fail_silently=False,
             timeout=timeout,
-            host=getattr(settings, "EMAIL_HOST", "") or None,
+            host=host,
             port=getattr(settings, "EMAIL_PORT", None),
             username=getattr(settings, "EMAIL_HOST_USER", "") or None,
             password=getattr(settings, "EMAIL_HOST_PASSWORD", None),

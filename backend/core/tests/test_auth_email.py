@@ -187,6 +187,7 @@ def test_resend_already_verified(authenticated_client, user):
 @override_settings(
     DEBUG=False,
     EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="",
     FRONTEND_ORIGIN="https://flowsight360.com",
 )
 def test_resend_rejects_console_backend_on_render(authenticated_client, user, monkeypatch):
@@ -204,6 +205,7 @@ def test_resend_rejects_console_backend_on_render(authenticated_client, user, mo
 @override_settings(
     DEBUG=False,
     EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="",
     FRONTEND_ORIGIN="https://flowsight360.com",
 )
 def test_forgot_password_rejects_console_backend_on_render(api_client, user, monkeypatch):
@@ -219,6 +221,27 @@ def test_forgot_password_rejects_console_backend_on_render(api_client, user, mon
     assert r.status_code == 503
     assert r.json()["transport"] == "console"
     assert mail.outbox == []
+
+
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="smtp.resend.com",
+    EMAIL_HOST_USER="resend",
+    EMAIL_HOST_PASSWORD="re_test",
+    FRONTEND_ORIGIN="https://flowsight360.com",
+)
+def test_resend_sends_when_smtp_host_set_even_if_backend_is_console(
+    authenticated_client, user, monkeypatch
+):
+    monkeypatch.setenv("RENDER", "true")
+    user.email = "host-overrides-console@example.com"
+    user.save(update_fields=["email"])
+    with patch("core.mail._send") as send:
+        r = authenticated_client.post("/api/auth/resend-verification/", {}, format="json")
+    assert r.status_code == 200
+    assert r.json()["transport"] == "smtp"
+    send.assert_called_once()
 
 
 def test_forgot_password_neutral_for_existing_and_missing(api_client, user):
