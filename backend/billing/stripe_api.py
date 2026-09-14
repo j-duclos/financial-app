@@ -89,9 +89,43 @@ def create_checkout_session(**kwargs: Any) -> Any:
     return stripe.checkout.Session.create(**kwargs)
 
 
-def create_portal_session(*, customer: str, return_url: str) -> Any:
+def list_portal_configurations(*, limit: int = 10) -> Any:
     _configure()
-    return stripe.billing_portal.Session.create(customer=customer, return_url=return_url)
+    return stripe.billing_portal.Configuration.list(active=True, limit=limit)
+
+
+def create_portal_configuration() -> Any:
+    """Create a minimal customer-portal config for FlowSight subscriptions."""
+    _configure()
+    return stripe.billing_portal.Configuration.create(
+        business_profile={"headline": "Manage your FlowSight subscription"},
+        features={
+            "customer_update": {
+                "enabled": True,
+                "allowed_updates": ["email", "address"],
+            },
+            "invoice_history": {"enabled": True},
+            "payment_method_update": {"enabled": True},
+            "subscription_cancel": {
+                "enabled": True,
+                "mode": "at_period_end",
+                "proration_behavior": "none",
+            },
+        },
+    )
+
+
+def create_portal_session(
+    *,
+    customer: str,
+    return_url: str,
+    configuration: str | None = None,
+) -> Any:
+    _configure()
+    kwargs: dict[str, Any] = {"customer": customer, "return_url": return_url}
+    if configuration:
+        kwargs["configuration"] = configuration
+    return stripe.billing_portal.Session.create(**kwargs)
 
 
 def retrieve_account() -> Any:
