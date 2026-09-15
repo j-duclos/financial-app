@@ -149,6 +149,7 @@ describe("getting started checklist on Home", () => {
     expect(dashboardSource).toMatch(/GettingStartedCard/);
     expect(dashboardSource).toMatch(/gettingStartedCard/);
     expect(dashboardSource).toMatch(/if \(firstRun\)/);
+    expect(dashboardSource).toMatch(/EmailVerificationReminderCard/);
     expect(cardSource).toMatch(/GETTING_STARTED_COPY\.checklistTitle/);
     expect(GETTING_STARTED_COPY.checklistTitle).toBe("Getting started with FlowSight");
   });

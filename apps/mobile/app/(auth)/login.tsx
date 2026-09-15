@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   consumePendingPostLoginRedirect,
+  POST_LOGIN_HOME_ROUTE,
   sanitizePostLoginRedirect,
 } from "@/lib/postLoginRedirect";
 import { BrandLogo } from "@/components/brand";
@@ -35,7 +36,7 @@ export default function LoginScreen() {
       const destination =
         sanitizePostLoginRedirect(typeof redirect === "string" ? redirect : undefined) ??
         consumePendingPostLoginRedirect() ??
-        "/(app)/(tabs)";
+        POST_LOGIN_HOME_ROUTE;
       router.replace(destination as never);
     } catch (e: unknown) {
       setError(describeAuthFormError(e));

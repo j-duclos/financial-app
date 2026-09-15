@@ -1,5 +1,6 @@
 /**
  * Safe post-login redirect for deep links. Only in-app paths are allowed.
+ * Explicit logout must not restore the previous screen (e.g. Profile).
  */
 const ALLOWED_PREFIXES = [
   "/(app)",
@@ -21,6 +22,9 @@ const ALLOWED_PREFIXES = [
   "/reconcile",
 ] as const;
 
+/** Home tab — used after logout/login so we do not restore More/Profile. */
+export const POST_LOGIN_HOME_ROUTE = "/(app)/(tabs)/index";
+
 export function sanitizePostLoginRedirect(raw: string | undefined | null): string | null {
   if (!raw || typeof raw !== "string") return null;
   const trimmed = raw.trim();
@@ -31,13 +35,29 @@ export function sanitizePostLoginRedirect(raw: string | undefined | null): strin
 }
 
 let pendingRedirect: string | null = null;
+/** Set during logout so AppLayout cannot recapture the current path. */
+let ignoreUnauthenticatedPathCapture = false;
+
+export function beginLogoutSession(): void {
+  pendingRedirect = null;
+  ignoreUnauthenticatedPathCapture = true;
+}
 
 export function setPendingPostLoginRedirect(path: string): void {
+  if (ignoreUnauthenticatedPathCapture) {
+    return;
+  }
   pendingRedirect = sanitizePostLoginRedirect(path);
 }
 
 export function consumePendingPostLoginRedirect(): string | null {
   const next = pendingRedirect;
   pendingRedirect = null;
+  ignoreUnauthenticatedPathCapture = false;
   return next;
+}
+
+export function resetPostLoginRedirectForTests(): void {
+  pendingRedirect = null;
+  ignoreUnauthenticatedPathCapture = false;
 }

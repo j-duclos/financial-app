@@ -162,6 +162,7 @@ describe("Profile & Settings screen", () => {
     expect(screenSource).toMatch(/logout\(\)/);
     expect(authSource).toMatch(/clearUserQueryCache/);
     expect(authSource).toMatch(/clearTokens/);
+    expect(authSource).toMatch(/beginLogoutSession/);
     expect(clearCacheSource).toMatch(/FINANCIAL_QUERY_PREFIXES/);
   });
 

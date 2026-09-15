@@ -106,6 +106,10 @@ describe("mobile Home companion metrics", () => {
   it("places the Getting Started card below the Home header and above Financial Health", () => {
     expect(dashboardSource).toMatch(/GettingStartedCard/);
     const established = dashboardSource.slice(dashboardSource.lastIndexOf("ForecastWindowSelect"));
+    expect(established.indexOf("{emailVerificationReminder}")).toBeGreaterThan(-1);
+    expect(established.indexOf("{emailVerificationReminder}")).toBeLessThan(
+      established.indexOf("{gettingStartedCard}")
+    );
     expect(established.indexOf("{gettingStartedCard}")).toBeGreaterThan(-1);
     expect(established.indexOf("{gettingStartedCard}")).toBeLessThan(
       established.indexOf("<FinancialHealthSection")

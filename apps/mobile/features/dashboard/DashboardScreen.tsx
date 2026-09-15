@@ -26,7 +26,11 @@ import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
 import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
-import { useAuth } from "@/features/auth";
+import {
+  EmailVerificationReminderCard,
+  shouldShowEmailVerificationReminder,
+  useAuth,
+} from "@/features/auth";
 import { useProfile } from "@/lib/profileQuery";
 import { describeApiError } from "@/services/api";
 import { getLastViewedTransactionAccountId } from "@/features/transactions/transactionsSession";
@@ -317,6 +321,11 @@ export function DashboardScreen() {
     [router]
   );
 
+  const reminderProfile = profile ?? auth.profile;
+  const emailVerificationReminder = shouldShowEmailVerificationReminder(reminderProfile) ? (
+    <EmailVerificationReminderCard email={reminderProfile!.email!.trim()} />
+  ) : null;
+
   const gettingStartedCard = gettingStarted.showChecklist ? (
     <GettingStartedCard
       completion={gettingStarted.completion}
@@ -497,6 +506,7 @@ export function DashboardScreen() {
         <Text style={{ color: theme.colors.text, ...theme.typography.title, marginBottom: theme.spacing.md }}>
           Home
         </Text>
+        {emailVerificationReminder}
         {gettingStartedCard}
         <DashboardFirstRun
           isPremium={isPremium}
@@ -540,6 +550,7 @@ export function DashboardScreen() {
         <ForecastWindowSelect value={forecastDays} onChange={setForecastDays} updating={recalculating} />
       </View>
 
+      {emailVerificationReminder}
       {gettingStartedCard}
 
       {showAccountBalances ? (

@@ -22,6 +22,11 @@ describe("auth screens autofill", () => {
     expect(loginSource).toMatch(/autoComplete="password"/);
   });
 
+  it("login falls back to Home after logout instead of the last app screen", () => {
+    expect(loginSource).toMatch(/POST_LOGIN_HOME_ROUTE/);
+    expect(loginSource).toMatch(/consumePendingPostLoginRedirect/);
+  });
+
   it("login offers Forgot password without revealing account existence", () => {
     expect(loginSource).toMatch(/Forgot password\?/);
     expect(loginSource).toMatch(/\/\(auth\)\/forgot-password/);
@@ -30,6 +35,13 @@ describe("auth screens autofill", () => {
   it("acknowledges Terms of Service and Privacy Policy without a checkbox", () => {
     expect(registerSource).toMatch(/LegalInlineLinks/);
     expect(registerSource).not.toMatch(/checkbox/i);
+  });
+
+  it("shows account-created verification copy after signup without blocking the app", () => {
+    expect(registerSource).toMatch(/RegistrationSuccessPanel/);
+    expect(registerSource).toMatch(/setCreatedEmail\(registeredEmail\)/);
+    expect(registerSource).toMatch(/POST_LOGIN_HOME_ROUTE/);
+    expect(registerSource).not.toMatch(/describeApiError/);
   });
 
   it("maps login/register 401s to credential copy, not session expiry", () => {

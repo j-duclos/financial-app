@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
+  beginLogoutSession,
   consumePendingPostLoginRedirect,
+  POST_LOGIN_HOME_ROUTE,
+  resetPostLoginRedirectForTests,
   sanitizePostLoginRedirect,
   setPendingPostLoginRedirect,
 } from "./postLoginRedirect";
 
 describe("postLoginRedirect", () => {
+  beforeEach(() => {
+    resetPostLoginRedirectForTests();
+  });
+
   it("allows safe in-app paths", () => {
     expect(sanitizePostLoginRedirect("/transaction/42")).toBe("/transaction/42");
     expect(sanitizePostLoginRedirect("/(app)/(tabs)")).toBe("/(app)/(tabs)");
@@ -25,5 +32,14 @@ describe("postLoginRedirect", () => {
     setPendingPostLoginRedirect("/account/7");
     expect(consumePendingPostLoginRedirect()).toBe("/account/7");
     expect(consumePendingPostLoginRedirect()).toBeNull();
+  });
+
+  it("does not restore the last screen after logout", () => {
+    setPendingPostLoginRedirect("/profile");
+    beginLogoutSession();
+    setPendingPostLoginRedirect("/profile");
+    setPendingPostLoginRedirect("/profile");
+    expect(consumePendingPostLoginRedirect()).toBeNull();
+    expect(POST_LOGIN_HOME_ROUTE).toBe("/(app)/(tabs)/index");
   });
 });
