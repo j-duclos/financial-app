@@ -67,8 +67,8 @@ describe("iOS device prep", () => {
   it("keeps EAS preview and production on HTTPS Render", () => {
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "production"/);
     expect(easSource).toMatch(/"EXPO_PUBLIC_APP_ENV": "staging"/);
-    expect(easSource).toContain(PRODUCTION_RENDER_ORIGIN);
-    expect(easSource).not.toContain("financial-app-5ywr.onrender.com");
+    expect(easSource).toContain("https://flowsight360.com");
+    expect(easSource).not.toContain("financial-app-1-tu0l.onrender.com");
     expect(easSource).not.toMatch(/localhost/);
     expect(easSource).not.toMatch(/192\.168\./);
   });

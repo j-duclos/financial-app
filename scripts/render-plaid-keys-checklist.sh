@@ -2,7 +2,7 @@
 # Print the exact Plaid env var names + whether local .env has values (not the secrets).
 set -o errexit
 ENV="${1:-$(dirname "$0")/../backend/.env}"
-HOST="${RENDER_APP_HOST:-financial-app-1-tu0l.onrender.com}"
+HOST="${RENDER_APP_HOST:-financial-app-5ywr.onrender.com}"
 
 echo "=== Plaid keys for Render Web Service: ${HOST} ==="
 echo ""

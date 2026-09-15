@@ -46,13 +46,13 @@ describe("getApiBaseUrl", () => {
   });
 
   it("keeps explicit Render URL and labels it render", async () => {
-    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com";
+    process.env.EXPO_PUBLIC_API_URL = "https://flowsight360.com";
     process.env.EXPO_PUBLIC_APP_ENV = "development";
     vi.stubGlobal("__DEV__", true);
 
     const { getApiBaseUrl, resetApiBaseUrlCacheForTests, getApiTargetLabel } = await loadEnv();
     resetApiBaseUrlCacheForTests();
-    expect(getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
+    expect(getApiBaseUrl()).toBe("https://flowsight360.com");
     expect(getApiTargetLabel()).toBe("render");
   });
 
@@ -161,7 +161,7 @@ describe("getApiBaseUrl", () => {
   });
 
   it("strips trailing slash", async () => {
-    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com/";
+    process.env.EXPO_PUBLIC_API_URL = "https://flowsight360.com/";
     process.env.EXPO_PUBLIC_APP_ENV = "staging";
     vi.stubGlobal("__DEV__", false);
 
@@ -169,7 +169,7 @@ describe("getApiBaseUrl", () => {
       appEnv: "staging",
     });
     resetApiBaseUrlCacheForTests();
-    expect(getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
+    expect(getApiBaseUrl()).toBe("https://flowsight360.com");
   });
 
   it("does not rewrite localhost to LAN for physical devices", async () => {
@@ -279,7 +279,7 @@ describe("production API host + runtime diagnostic", () => {
 
   it("rejects the stale Render host in staging/production", async () => {
     process.env.EXPO_PUBLIC_APP_ENV = "production";
-    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-5ywr.onrender.com";
+    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com";
     vi.stubGlobal("__DEV__", false);
 
     const env = await loadEnv({ appEnv: "production" });
@@ -289,17 +289,17 @@ describe("production API host + runtime diagnostic", () => {
 
   it("physical-device Xcode Debug with Render Metro env resolves the expected host", async () => {
     process.env.EXPO_PUBLIC_APP_ENV = "development";
-    process.env.EXPO_PUBLIC_API_URL = "https://financial-app-1-tu0l.onrender.com";
+    process.env.EXPO_PUBLIC_API_URL = "https://flowsight360.com";
     vi.stubGlobal("__DEV__", true);
 
     const env = await loadEnv({
       appEnv: "development",
-      apiUrl: "https://financial-app-1-tu0l.onrender.com",
+      apiUrl: "https://flowsight360.com",
     });
     env.resetApiBaseUrlCacheForTests();
     expect(env.getAppEnvironment()).toBe("development");
-    expect(env.getApiBaseUrl()).toBe("https://financial-app-1-tu0l.onrender.com");
-    expect(env.classifyResolvedApiHost(env.getApiHostname())).toBe("expected_render");
+    expect(env.getApiBaseUrl()).toBe("https://flowsight360.com");
+    expect(env.classifyResolvedApiHost(env.getApiHostname())).toBe("flowsight360");
   });
 
   it("classifies localhost, loopback, LAN, stale, and legal hosts", async () => {
@@ -310,7 +310,7 @@ describe("production API host + runtime diagnostic", () => {
     expect(env.classifyResolvedApiHost("localhost")).toBe("localhost");
     expect(env.classifyResolvedApiHost("127.0.0.1")).toBe("loopback");
     expect(env.classifyResolvedApiHost("192.168.1.174")).toBe("lan");
-    expect(env.classifyResolvedApiHost("financial-app-5ywr.onrender.com")).toBe("stale_render");
+    expect(env.classifyResolvedApiHost("financial-app-1-tu0l.onrender.com")).toBe("stale_render");
     expect(env.classifyResolvedApiHost("flowsight360.com")).toBe("flowsight360");
     expect(env.classifyResolvedApiHost("")).toBe("empty");
     expect(env.classifyResolvedApiHost("example.com")).toBe("other");

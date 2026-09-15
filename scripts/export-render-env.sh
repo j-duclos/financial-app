@@ -8,7 +8,7 @@ OUT="$ROOT/scripts/.render-env-export"
 ENV_LOCAL="$ROOT/backend/.env"
 ENV_RENDER="$ROOT/backend/.env.render"
 # Your live app URL — must match the Web Service you configure in Render (not a stale/other service).
-RENDER_APP_HOST="${RENDER_APP_HOST:-financial-app-1-tu0l.onrender.com}"
+RENDER_APP_HOST="${RENDER_APP_HOST:-financial-app-5ywr.onrender.com}"
 CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-flowsight360.com}"
 
 if [[ ! -f "$ENV_LOCAL" ]]; then

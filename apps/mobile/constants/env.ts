@@ -231,6 +231,7 @@ export function getApiTargetLabel(): ApiTargetLabel {
   const host = getApiHostname().toLowerCase();
   if (isLocalhostHost(host)) return "local";
   if (host.endsWith(".onrender.com") || host.includes("onrender.com")) return "render";
+  if (host === "flowsight360.com" || host.endsWith(".flowsight360.com")) return "render";
   return "other";
 }
 
