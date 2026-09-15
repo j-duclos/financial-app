@@ -49,7 +49,18 @@ def home(request):
 
 
 def health(request):
-    payload: dict = {"status": "ok"}
+    import os
+
+    from django.conf import settings as django_settings
+
+    from core.mail import email_transport_label
+
+    payload: dict = {
+        "status": "ok",
+        "git": (os.environ.get("RENDER_GIT_COMMIT") or "")[:12] or "unknown",
+        "mail": email_transport_label(),
+        "mail_host_configured": bool((getattr(django_settings, "EMAIL_HOST", "") or "").strip()),
+    }
     diag = redis_diagnostics()
     payload["redis"] = {
         "configured": diag["redis_configured"],

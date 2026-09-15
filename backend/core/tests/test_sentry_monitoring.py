@@ -26,6 +26,8 @@ def test_health_does_not_depend_on_sentry(client: Client):
     body = response.json()
     assert body["status"] in ("ok", "degraded")
     assert "sentry" not in body
+    assert "mail" in body
+    assert "git" in body
 
 
 def test_init_sentry_noop_without_dsn(monkeypatch):
