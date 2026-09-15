@@ -78,11 +78,9 @@ def ensure_default_household(user):
         return household
 
     with transaction.atomic():
-        profile = (
-            UserProfile.objects.select_for_update()
-            .select_related("default_household")
-            .get(pk=profile.pk)
-        )
+        # Do not select_related nullable FKs here: Postgres rejects
+        # SELECT FOR UPDATE on the nullable side of an outer join.
+        profile = UserProfile.objects.select_for_update().get(pk=profile.pk)
         households = list(get_households_for_user(user).order_by("id"))
         if profile.default_household_id and any(
             h.id == profile.default_household_id for h in households

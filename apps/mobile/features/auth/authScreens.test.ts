@@ -38,4 +38,8 @@ describe("auth screens autofill", () => {
     expect(loginSource).not.toMatch(/describeApiError/);
     expect(registerSource).not.toMatch(/describeApiError/);
   });
+
+  it("scrolls the register form so Sign up stays reachable above the keyboard", () => {
+    expect(registerSource).toMatch(/<Screen scroll/);
+  });
 });
