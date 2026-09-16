@@ -5,7 +5,12 @@ from typing import Any
 
 import stripe
 
-from billing.stripe_config import require_stripe_secret, require_webhook_secret, stripe_secret_key
+from billing.stripe_config import (
+    FLOWSIGHT_PORTAL_HEADLINE,
+    require_stripe_secret,
+    require_webhook_secret,
+    stripe_secret_key,
+)
 
 
 def _configure() -> None:
@@ -98,7 +103,11 @@ def create_portal_configuration() -> Any:
     """Create a minimal customer-portal config for FlowSight subscriptions."""
     _configure()
     return stripe.billing_portal.Configuration.create(
-        business_profile={"headline": "Manage your FlowSight subscription"},
+        business_profile={
+            "headline": FLOWSIGHT_PORTAL_HEADLINE,
+            "privacy_policy_url": "https://flowsight360.com/privacy",
+            "terms_of_service_url": "https://flowsight360.com/terms",
+        },
         features={
             "customer_update": {
                 "enabled": True,

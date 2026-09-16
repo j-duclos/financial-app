@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APIClient
 
 from billing.models import BillingSubscription
@@ -251,7 +252,17 @@ def test_portal_uses_own_customer_not_request_body(authenticated_client, user):
     billing = get_or_create_billing_subscription(user)
     billing.stripe_customer_id = "cus_mine"
     billing.save()
-    with patch("billing.services.create_portal_session") as mock_portal:
+    with patch("billing.services.list_portal_configurations") as mock_list, patch(
+        "billing.services.create_portal_session"
+    ) as mock_portal:
+        mock_list.return_value = MagicMock(
+            data=[
+                {
+                    "id": "bpc_flowsight",
+                    "business_profile": {"headline": "Manage your FlowSight subscription"},
+                }
+            ]
+        )
         mock_portal.return_value = MagicMock(url="https://billing.stripe.com/p/session/mine")
         r = authenticated_client.post(
             "/api/billing/create-portal-session/",
@@ -262,6 +273,8 @@ def test_portal_uses_own_customer_not_request_body(authenticated_client, user):
     assert r.json()["url"] == "https://billing.stripe.com/p/session/mine"
     mock_portal.assert_called_once()
     assert mock_portal.call_args.kwargs["customer"] == "cus_mine"
+    assert mock_portal.call_args.kwargs["return_url"] == "http://localhost:5173/billing/return"
+    assert mock_portal.call_args.kwargs["configuration"] == "bpc_flowsight"
 
 
 @pytest.mark.django_db
@@ -272,9 +285,57 @@ def test_portal_does_not_require_verified_email(authenticated_client, user):
     billing = get_or_create_billing_subscription(user)
     billing.stripe_customer_id = "cus_existing"
     billing.save()
-    with patch("billing.services.create_portal_session") as mock_portal:
+    with patch("billing.services.list_portal_configurations") as mock_list, patch(
+        "billing.services.create_portal_session"
+    ) as mock_portal:
+        mock_list.return_value = MagicMock(
+            data=[
+                {
+                    "id": "bpc_flowsight",
+                    "business_profile": {"headline": "Manage your FlowSight subscription"},
+                }
+            ]
+        )
         mock_portal.return_value = MagicMock(url="https://billing.stripe.com/p/session/existing")
         r = authenticated_client.post("/api/billing/create-portal-session/", {}, format="json")
     assert r.status_code == 200
     mock_portal.assert_called_once()
     assert mock_portal.call_args.kwargs["customer"] == "cus_existing"
+
+
+def test_portal_return_url_stays_off_the_profile_login_gate():
+    from billing.stripe_config import portal_return_url
+
+    with override_settings(
+        FRONTEND_ORIGIN="https://flowsight360.com",
+        BILLING_PORTAL_RETURN_URL="",
+        DEBUG=False,
+    ):
+        assert portal_return_url() == "https://flowsight360.com/billing/return"
+
+    with override_settings(
+        FRONTEND_ORIGIN="https://flowsight360.com",
+        BILLING_PORTAL_RETURN_URL="https://flowsight360.com/profile?billing=portal",
+        DEBUG=False,
+    ):
+        assert portal_return_url() == "https://flowsight360.com/billing/return"
+
+
+def test_flowsight_portal_configuration_skips_account_default():
+    from billing.services import flowsight_portal_configuration_id
+
+    assert (
+        flowsight_portal_configuration_id(
+            {
+                "data": [
+                    {"id": "bpc_dfe", "business_profile": {"headline": "DFE LLC"}},
+                    {
+                        "id": "bpc_flowsight",
+                        "business_profile": {"headline": "Manage your FlowSight subscription"},
+                    },
+                ]
+            }
+        )
+        == "bpc_flowsight"
+    )
+    assert flowsight_portal_configuration_id({"data": [{"id": "bpc_dfe"}]}) is None

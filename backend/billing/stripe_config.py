@@ -85,8 +85,20 @@ def checkout_cancel_url() -> str:
     return f"{get_frontend_origin()}/profile?billing=canceled"
 
 
+FLOWSIGHT_PORTAL_HEADLINE = "Manage your FlowSight subscription"
+_PORTAL_RETURN_PATH = "/billing/return"
+
+
 def portal_return_url() -> str:
+    """Public FlowSight page — never the authenticated /profile login gate."""
+    from urllib.parse import urlparse
+
+    origin = get_frontend_origin()
+    public_return = f"{origin}{_PORTAL_RETURN_PATH}"
     explicit = (getattr(settings, "BILLING_PORTAL_RETURN_URL", "") or "").strip()
-    if explicit:
-        return explicit
-    return f"{get_frontend_origin()}/profile?billing=portal"
+    if not explicit:
+        return public_return
+    path = (urlparse(explicit).path or "").rstrip("/") or "/"
+    if path == "/profile" or path.endswith("/profile"):
+        return public_return
+    return explicit

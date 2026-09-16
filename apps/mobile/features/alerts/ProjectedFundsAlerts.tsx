@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listProjectedFundsAlerts, patchProjectedFundsAlert } from "@budget-app/api-client";
 import {
@@ -15,10 +16,12 @@ import { accountDetailPath, transactionsForForecastRiskPath } from "@/features/p
 
 export function ProjectedFundsInAppBanner() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { auth } = useAuth();
   const queryClient = useQueryClient();
   const [detail, setDetail] = useState<ProjectedFundsAlert | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => new Set());
   const enabled = auth.isAuthenticated && auth.profile?.projected_funds_alerts_enabled !== false;
 
   const { data } = useQuery({
@@ -27,7 +30,8 @@ export function ProjectedFundsInAppBanner() {
     staleTime: 60_000,
     enabled,
   });
-  const alert = unreadProjectedFundsAlerts(data?.results)[0] ?? null;
+  const alert =
+    unreadProjectedFundsAlerts(data?.results).find((item) => !hiddenIds.has(item.id)) ?? null;
   const mark = useMutation({
     mutationFn: (payload: { id: number; dismissed?: boolean; read?: boolean }) =>
       patchProjectedFundsAlert(payload.id, payload),
@@ -41,24 +45,53 @@ export function ProjectedFundsInAppBanner() {
   return (
     <>
       {alert ? (
-        <Pressable
-          onPress={() => {
-            setDetail(alert);
-            mark.mutate({ id: alert.id, read: true });
-          }}
+        <View
           style={{
-            backgroundColor: theme.colors.warningBg,
-            paddingHorizontal: theme.spacing.md,
-            paddingVertical: theme.spacing.sm,
+            backgroundColor: theme.colors.background,
+            paddingTop: insets.top,
           }}
-          accessibilityRole="button"
-          testID="projected-funds-mobile-banner"
         >
-          <Text style={{ color: theme.colors.text, ...theme.typography.body }}>{alert.banner_message}</Text>
-          <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}>
-            View details
-          </Text>
-        </Pressable>
+          <View
+            style={{
+              backgroundColor: theme.colors.warningBg,
+              paddingHorizontal: theme.spacing.md,
+              paddingVertical: theme.spacing.sm,
+              flexDirection: "row",
+              alignItems: "flex-start",
+              gap: theme.spacing.sm,
+            }}
+            testID="projected-funds-mobile-banner"
+          >
+            <Pressable
+              onPress={() => {
+                setDetail(alert);
+                mark.mutate({ id: alert.id, read: true });
+              }}
+              style={{ flex: 1 }}
+              accessibilityRole="button"
+              accessibilityLabel={`${alert.banner_message}. View details`}
+            >
+              <Text style={{ color: theme.colors.text, ...theme.typography.body }}>
+                {alert.banner_message}
+              </Text>
+              <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 2 }}>
+                View details
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setHiddenIds((prev) => new Set(prev).add(alert.id));
+                mark.mutate({ id: alert.id, dismissed: true });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+              hitSlop={8}
+              style={{ paddingVertical: 2, paddingHorizontal: 4 }}
+            >
+              <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption }}>Dismiss</Text>
+            </Pressable>
+          </View>
+        </View>
       ) : null}
       <ProjectedFundsAlertSheet
         alert={detail}

@@ -32,6 +32,7 @@ import Profile from "./pages/Profile";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import PlaidOAuthReturn from "./pages/PlaidOAuthReturn";
+import BillingPortalReturn from "./pages/BillingPortalReturn";
 
 const queryClient = createAppQueryClient();
 
@@ -57,6 +58,7 @@ function AppRoutes() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/terms" element={<Terms />} />
+      <Route path="/billing/return" element={<BillingPortalReturn />} />
       <Route
         path="/plaid/oauth-return"
         element={

@@ -1,4 +1,4 @@
-import { Alert, Linking } from "react-native";
+import { Alert } from "react-native";
 import { useCallback, useContext, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import * as WebBrowser from "expo-web-browser";
@@ -118,14 +118,7 @@ export function usePremiumCheckout() {
         return;
       }
 
-      // Customer Portal is an external Stripe management page. Use the OS URL
-      // handler instead of an in-app browser session; this avoids the iOS
-      // WebBrowser failure that could make a valid portal URL look unavailable.
-      const canOpen = await Linking.canOpenURL(session.url);
-      if (!canOpen) {
-        throw new Error("This device could not open the Stripe billing portal.");
-      }
-      await Linking.openURL(session.url);
+      await WebBrowser.openBrowserAsync(session.url);
       await queryClient.invalidateQueries({ queryKey: BILLING_STATUS_QUERY_KEY });
     } catch (err) {
       Alert.alert("Billing", upgradeErrorMessage(err));

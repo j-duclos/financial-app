@@ -26,6 +26,7 @@ from billing.stripe_api import (
     retrieve_subscription,
 )
 from billing.stripe_config import (
+    FLOWSIGHT_PORTAL_HEADLINE,
     checkout_cancel_url,
     checkout_success_url,
     portal_return_url,
@@ -286,12 +287,22 @@ def _recover_portal_customer(user, billing: BillingSubscription) -> str:
     return get_or_create_stripe_customer(user, billing)
 
 
+def flowsight_portal_configuration_id(configs: Any) -> str | None:
+    """Use the FlowSight-branded portal config, not the Stripe account default (DFE LLC)."""
+    for config in _obj_get(configs, "data") or []:
+        profile = _obj_get(config, "business_profile") or {}
+        headline = str(_obj_get(profile, "headline") or "")
+        config_id = _normalize_stripe_id(_obj_get(config, "id"))
+        if config_id and FLOWSIGHT_PORTAL_HEADLINE in headline:
+            return config_id
+    return None
+
+
 def _active_portal_configuration_id() -> str:
     configs = list_portal_configurations(limit=10)
-    for config in _obj_get(configs, "data") or []:
-        config_id = _normalize_stripe_id(_obj_get(config, "id"))
-        if config_id:
-            return config_id
+    existing = flowsight_portal_configuration_id(configs)
+    if existing:
+        return existing
     created = create_portal_configuration()
     config_id = _normalize_stripe_id(_obj_get(created, "id"))
     if not config_id:

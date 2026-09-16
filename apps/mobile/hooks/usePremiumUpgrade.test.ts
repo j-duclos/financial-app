@@ -51,6 +51,8 @@ describe("premium upgrade email verification", () => {
   it("offers resend verification instead of OK-only", () => {
     expect(hookSource).toMatch(/createCheckoutSession/);
     expect(hookSource).toMatch(/createPortalSession/);
+    expect(hookSource).toMatch(/WebBrowser\.openBrowserAsync\(session\.url\)/);
+    expect(hookSource).not.toMatch(/Linking\.openURL\(session\.url\)/);
     expect(hookSource).toMatch(/resendVerification/);
     expect(hookSource).toMatch(/EMAIL_VERIFY_BEFORE_UPGRADE_TITLE/);
     expect(hookSource).toMatch(/RESEND_VERIFICATION_EMAIL_LABEL/);

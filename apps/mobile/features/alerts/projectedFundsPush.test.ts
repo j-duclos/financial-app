@@ -80,6 +80,9 @@ describe("mobile projected funds push", () => {
 
   it("shows in-app alerts from the server and settings toggles", () => {
     expect(alertsSource).toMatch(/listProjectedFundsAlerts/);
+    expect(alertsSource).toMatch(/useSafeAreaInsets/);
+    expect(alertsSource).toMatch(/Dismiss/);
+    expect(alertsSource).toMatch(/dismissed: true/);
     expect(alertsSource).not.toMatch(/build_forecast/);
     expect(settingsSource).toMatch(/projected_funds_alerts_enabled/);
     expect(settingsSource).toMatch(/projected_funds_push_enabled/);
