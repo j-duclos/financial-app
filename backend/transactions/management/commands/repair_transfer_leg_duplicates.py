@@ -10,7 +10,11 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from transactions.services.matching import repair_broken_transfer_payment_wiring, repair_transfer_leg_duplicates
+from transactions.services.matching import (
+    rematch_materialized_transfer_imports,
+    repair_broken_transfer_payment_wiring,
+    repair_transfer_leg_duplicates,
+)
 
 
 class Command(BaseCommand):
@@ -42,6 +46,19 @@ class Command(BaseCommand):
 
         summary: dict = {}
         if not wiring_only:
+            if not dry_run:
+                if account_ids:
+                    for aid in account_ids:
+                        rematch_materialized_transfer_imports(account_id=aid)
+                elif user_id is not None:
+                    from accounts.models import Account
+                    from core.models import HouseholdMembership
+
+                    hids = HouseholdMembership.objects.filter(user_id=user_id).values_list(
+                        "household_id", flat=True
+                    )
+                    for aid in Account.objects.filter(household_id__in=hids).values_list("pk", flat=True):
+                        rematch_materialized_transfer_imports(account_id=aid)
             summary["leg_duplicates"] = repair_transfer_leg_duplicates(
                 user_id=user_id,
                 account_ids=account_ids,

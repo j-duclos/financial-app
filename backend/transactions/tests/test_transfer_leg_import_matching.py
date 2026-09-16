@@ -387,3 +387,93 @@ class TransferLegImportMatchingTestCase(TestCase):
         )
         self.assertEqual(visible.count(), 1)
         self.assertEqual(visible.first().pk, savings_leg.pk)
+
+    def test_checking_match_then_card_plaid_does_not_double_count_payment(self):
+        """Checking -$100 plus Venture dest must absorb CAPITAL ONE ONLINE PYMT +$100."""
+        out_leg, in_leg = self._create_payment()
+        src_imp = Transaction.objects.create(
+            account=self.checking,
+            date=self.pay_date,
+            payee="CAPITAL ONE ONLINE PMT CA0CDCD81CBB5EF6 WEB ID: 9279744391",
+            amount=-self.amount,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-chase-100",
+            imported_description="CAPITAL ONE ONLINE PMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(src_imp)
+        dest_imp = Transaction.objects.create(
+            account=self.savor,
+            date=self.pay_date + timedelta(days=1),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=self.amount,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-venture-100",
+            imported_description="CAPITAL ONE ONLINE PYMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(dest_imp)
+        dest_imp.refresh_from_db()
+        in_leg.refresh_from_db()
+        self.assertEqual(dest_imp.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.savor, amount=self.amount)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, in_leg.pk)
+
+    def test_second_plaid_id_on_card_hides_when_dest_already_has_pending_id(self):
+        out_leg, in_leg = self._create_payment()
+        pending = self._plaid_import(
+            account=self.savor, amount=self.amount, plaid_id="pl-venture-pending"
+        )
+        match_imported_transaction(pending)
+        in_leg.refresh_from_db()
+        self.assertEqual(in_leg.plaid_transaction_id, "pl-venture-pending")
+        posted = Transaction.objects.create(
+            account=self.savor,
+            date=self.pay_date + timedelta(days=1),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=self.amount,
+            source=Transaction.Source.PLAID,
+            plaid_transaction_id="pl-venture-posted",
+            pending_transaction_id="pl-venture-pending",
+            imported_description="CAPITAL ONE ONLINE PYMT",
+            import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+        )
+        match_imported_transaction(posted)
+        posted.refresh_from_db()
+        in_leg.refresh_from_db()
+        self.assertEqual(posted.import_match_status, Transaction.ImportMatchStatus.DUPLICATE)
+        self.assertEqual(in_leg.plaid_transaction_id, "pl-venture-posted")
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.savor, amount=self.amount)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, in_leg.pk)
+
+    def test_materialized_card_inflow_merges_on_rematch(self):
+        from transactions.services.matching import rematch_materialized_transfer_imports
+
+        out_leg, in_leg = self._create_payment()
+        imp = Transaction.objects.create(
+            account=self.savor,
+            date=self.pay_date + timedelta(days=1),
+            payee="CAPITAL ONE ONLINE PYMT",
+            amount=self.amount,
+            source=Transaction.Source.ACTUAL,
+            plaid_transaction_id="pl-venture-actual",
+            imported_description="CAPITAL ONE ONLINE PYMT",
+            import_match_status=Transaction.ImportMatchStatus.NONE,
+            cleared=True,
+            status=Transaction.Status.CLEARED,
+        )
+        rematch_materialized_transfer_imports(account_id=self.savor.id)
+        in_leg.refresh_from_db()
+        self.assertFalse(Transaction.objects.filter(pk=imp.pk).exists())
+        self.assertEqual(in_leg.plaid_transaction_id, "pl-venture-actual")
+        visible = ledger_visible_transactions(
+            Transaction.objects.filter(account=self.savor, amount=self.amount)
+        )
+        self.assertEqual(visible.count(), 1)
+        self.assertEqual(visible.first().pk, in_leg.pk)

@@ -1249,8 +1249,6 @@ def _transfer_leg_already_import_matched(leg: Transaction) -> bool:
     Counterpart confirm sets MATCHED on the sibling without copying a Plaid id.
     That must not block this account's own bank row from merging.
     """
-    if leg.reconciled:
-        return True
     if leg.source == Transaction.Source.PLAID:
         return True
     if (leg.plaid_transaction_id or "").strip():
@@ -1258,6 +1256,41 @@ def _transfer_leg_already_import_matched(leg: Transaction) -> bool:
     if TransactionMatch.objects.filter(planned_transaction_id=leg.pk).exists():
         return True
     return False
+
+
+def _import_looks_like_transfer_payment(imported: Transaction, leg: Transaction) -> bool:
+    """True when this import is another bank confirmation of ``leg`` (not a same-amount sibling).
+
+    Checking can have two Capital One ONLINE PMTs of the same amount on one day (two real
+    payments). Only absorb extras on the credit-card destination, or pending→posted.
+    """
+    pending = (imported.pending_transaction_id or "").strip()
+    dest_pid = (leg.plaid_transaction_id or "").strip()
+    if pending and dest_pid and pending == dest_pid:
+        return True
+    account = getattr(leg, "account", None)
+    if account is not None and account.account_type == Account.AccountType.CREDIT:
+        return imported.amount is not None and imported.amount > 0
+    return False
+
+
+def _leg_accepts_additional_payment_import(leg: Transaction, imported: Transaction) -> bool:
+    """Hide a second bank row that confirms a payment already on this dest/source leg.
+
+    Typical cases: checking matched first (counterpart MATCHED, no dest Plaid id — handled as
+    a primary match), pending then posted Plaid ids, or dest already reconciled.
+    """
+    if imported.pk == leg.pk:
+        return False
+    if imported.reconciled:
+        return False
+    if not _import_looks_like_transfer_payment(imported, leg):
+        return False
+    dest_pid = (leg.plaid_transaction_id or "").strip()
+    new_pid = (imported.plaid_transaction_id or "").strip()
+    if dest_pid and new_pid and dest_pid == new_pid:
+        return False
+    return True
 
 
 def _is_transfer_source_leg(leg: Transaction, tg: TransferGroup) -> bool:
@@ -1329,14 +1362,14 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
         )
         .exclude(pk=imported.pk)
         .exclude(source=Transaction.Source.PLAID)
-        .select_related("transfer_group")
+        .select_related("transfer_group", "account")
         .order_by("date", "id")
     )
     best: Transaction | None = None
     best_dd = 9999
+    confirmation: Transaction | None = None
+    confirmation_dd = 9999
     for leg in candidates:
-        if _transfer_leg_already_import_matched(leg):
-            continue
         tg = leg.transfer_group
         if tg is None and leg.transfer_group_id:
             tg = TransferGroup.objects.filter(pk=leg.transfer_group_id).first()
@@ -1347,10 +1380,15 @@ def find_transfer_payment_leg_for_import(imported: Transaction) -> Transaction |
         if not _amounts_equal(leg.amount, imported.amount):
             continue
         dd = abs((leg.date - imported.date).days)
+        if _transfer_leg_already_import_matched(leg):
+            if _leg_accepts_additional_payment_import(leg, imported) and dd < confirmation_dd:
+                confirmation_dd = dd
+                confirmation = leg
+            continue
         if dd < best_dd:
             best_dd = dd
             best = leg
-    return best
+    return best or confirmation
 
 
 def _leg_is_bank_confirmed(leg: Transaction) -> bool:
@@ -1404,6 +1442,10 @@ def apply_import_fields_to_transfer_leg(leg: Transaction, imported: Transaction)
     if pid and not (leg.plaid_transaction_id or "").strip():
         leg.plaid_transaction_id = pid[:128]
         update_fields.append("plaid_transaction_id")
+    pending = (imported.pending_transaction_id or "").strip()
+    if pending and (leg.pending_transaction_id or "").strip() != pending:
+        leg.pending_transaction_id = pending[:128]
+        update_fields.append("pending_transaction_id")
     if not leg.cleared:
         leg.cleared = True
         update_fields.append("cleared")
@@ -1447,7 +1489,9 @@ def merge_import_into_transfer_payment_leg(imported: Transaction, leg: Transacti
             imported.plaid_transaction_id = None
             imported.save(update_fields=["plaid_transaction_id", "updated_at"])
         update_fields = apply_import_fields_to_transfer_leg(leg, imported)
-        if pid:
+        dest_pid = (leg.plaid_transaction_id or "").strip()
+        pending_link = (imported.pending_transaction_id or "").strip()
+        if pid and (not dest_pid or pending_link == dest_pid):
             leg.plaid_transaction_id = pid[:128]
             if "plaid_transaction_id" not in update_fields:
                 update_fields.append("plaid_transaction_id")
@@ -1518,6 +1562,29 @@ def rematch_pending_transfer_imports_for_group(tg: TransferGroup) -> int:
         for imp in qs:
             if try_match_import_to_transfer_payment_leg(imp):
                 matched += 1
+    return matched
+
+
+def rematch_materialized_transfer_imports(*, account_id: int | None = None) -> int:
+    """Merge materialized bank rows (source=ACTUAL + Plaid id) into existing transfer legs."""
+    qs = (
+        Transaction.objects.filter(
+            source=Transaction.Source.ACTUAL,
+            scenario__isnull=True,
+            transfer_group__isnull=True,
+            transfer_out__isnull=True,
+            transfer_in__isnull=True,
+        )
+        .exclude(plaid_transaction_id__isnull=True)
+        .exclude(plaid_transaction_id="")
+        .exclude(import_match_status=Transaction.ImportMatchStatus.DUPLICATE)
+    )
+    if account_id is not None:
+        qs = qs.filter(account_id=account_id)
+    matched = 0
+    for imp in qs.iterator(chunk_size=200):
+        if try_match_import_to_transfer_payment_leg(imp):
+            matched += 1
     return matched
 
 

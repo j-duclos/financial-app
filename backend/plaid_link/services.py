@@ -45,10 +45,12 @@ from transactions.services.matching import (
     reconcile_orphan_matched_plaid_imports,
     release_excess_duplicate_plaid_imports,
     rematch_unmatched_manual_actuals,
+    rematch_materialized_transfer_imports,
     repair_invalid_transaction_matches,
     repair_materialized_plaid_resync_duplicates,
     repair_mismatched_import_links,
     repair_orphan_absorbed_resync_matches,
+    repair_transfer_leg_duplicates,
 )
 
 from .crypto import (
@@ -216,8 +218,15 @@ def _rematch_unmatched_imports_for_plaid_item(plaid_item: PlaidItem) -> None:
         return
     qs = Transaction.objects.filter(
         account_id__in=account_pks,
-        source=Transaction.Source.PLAID,
-        import_match_status=Transaction.ImportMatchStatus.UNMATCHED,
+    ).filter(
+        Q(source=Transaction.Source.PLAID, import_match_status=Transaction.ImportMatchStatus.UNMATCHED)
+        | (
+            Q(source=Transaction.Source.ACTUAL)
+            & Q(transfer_group__isnull=True)
+            & Q(transfer_out__isnull=True)
+            & Q(transfer_in__isnull=True)
+            & ~Q(import_match_status=Transaction.ImportMatchStatus.DUPLICATE)
+        )
     ).exclude(plaid_transaction_id__isnull=True).exclude(plaid_transaction_id="")
     for imp in qs.iterator(chunk_size=200):
         if is_import_date_locked(imp.account, imp.date):
@@ -962,6 +971,8 @@ def sync_transactions_for_item(plaid_item: PlaidItem, *, liabilities_force: bool
             collapsed = collapse_materialized_actual_duplicates(account_id=aid)
             rematch_unmatched_manual_actuals(account_id=aid)
             materialized = materialize_unmatched_plaid_imports(account_id=aid)
+            rematch_materialized_transfer_imports(account_id=aid)
+            repair_transfer_leg_duplicates(account_ids=[aid])
             totals.setdefault("collapsed", 0)
             totals["collapsed"] += collapsed
             totals.setdefault("materialized", 0)
