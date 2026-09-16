@@ -40,6 +40,6 @@ describe("postLoginRedirect", () => {
     setPendingPostLoginRedirect("/profile");
     setPendingPostLoginRedirect("/profile");
     expect(consumePendingPostLoginRedirect()).toBeNull();
-    expect(POST_LOGIN_HOME_ROUTE).toBe("/(app)/(tabs)/index");
+    expect(POST_LOGIN_HOME_ROUTE).toBe("/(app)/(tabs)");
   });
 });

@@ -22,8 +22,8 @@ const ALLOWED_PREFIXES = [
   "/reconcile",
 ] as const;
 
-/** Home tab — used after logout/login so we do not restore More/Profile. */
-export const POST_LOGIN_HOME_ROUTE = "/(app)/(tabs)/index";
+/** Tabs root (Home). `/(app)/(tabs)/index` is not a valid Expo Router href. */
+export const POST_LOGIN_HOME_ROUTE = "/(app)/(tabs)";
 
 export function sanitizePostLoginRedirect(raw: string | undefined | null): string | null {
   if (!raw || typeof raw !== "string") return null;
