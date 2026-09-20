@@ -43,31 +43,48 @@ export function BalanceDisplay({
         alignSelf: fullWidth ? "stretch" : undefined,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <View
-          accessible
-          accessibilityRole="summary"
-          accessibilityLabel={summaryLabel}
-          accessibilityHint={hasInfo ? undefined : accessibilityHint}
-          style={{ flex: 1, paddingRight: hasInfo ? 4 : 0 }}
+      {hasInfo ? (
+        <IconButton
+          name="info-circle"
+          size={16}
+          accessibilityLabel={infoAccessibilityLabel}
+          accessibilityHint={accessibilityHint}
+          onPress={onInfoPress}
+          style={{ position: "absolute", top: 8, right: 8, zIndex: 1 }}
+        />
+      ) : null}
+      <View
+        accessible
+        accessibilityRole="summary"
+        accessibilityLabel={summaryLabel}
+        accessibilityHint={hasInfo ? undefined : accessibilityHint}
+      >
+        <Text
+          style={{
+            color: theme.colors.textMuted,
+            ...theme.typography.label,
+            paddingRight: hasInfo ? 28 : 0,
+          }}
         >
-          <Text style={{ color: theme.colors.textMuted, ...theme.typography.label }}>{label}</Text>
-          <CurrencyDisplay amount={amount} tone={tone} style={{ marginTop: 6, ...theme.typography.metric }} />
-          {subtitle ? (
-            <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 4 }}>
-              {subtitle}
-            </Text>
-          ) : null}
-        </View>
-        {hasInfo ? (
-          <IconButton
-            name="info-circle"
-            size={16}
-            accessibilityLabel={infoAccessibilityLabel}
-            accessibilityHint={accessibilityHint}
-            onPress={onInfoPress}
-            style={{ marginTop: -8, marginRight: -8 }}
-          />
+          {label}
+        </Text>
+        <CurrencyDisplay
+          amount={amount}
+          tone={tone}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}
+          ellipsizeMode="clip"
+          style={{
+            marginTop: 6,
+            ...theme.typography.metric,
+            width: "100%",
+          }}
+        />
+        {subtitle ? (
+          <Text style={{ color: theme.colors.textSecondary, ...theme.typography.caption, marginTop: 4 }}>
+            {subtitle}
+          </Text>
         ) : null}
       </View>
     </View>
