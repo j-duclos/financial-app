@@ -274,16 +274,36 @@ def create_premium_checkout_session(user) -> dict[str, str]:
 
 
 def _recover_portal_customer(user, billing: BillingSubscription) -> str:
-    if billing.stripe_customer_id:
-        return billing.stripe_customer_id
+    """Resolve the Stripe customer that actually owns the user's subscription.
+
+    Prefer the subscription as the source of truth. A locally stored customer id
+    can be valid in Stripe yet still be the wrong/empty customer, which would
+    open a portal with no invoices, payment method, or cancellation controls.
+    """
     if billing.stripe_subscription_id:
         try:
             subscription = retrieve_subscription(billing.stripe_subscription_id)
             apply_stripe_subscription(billing, subscription)
+            subscription_customer_id = _normalize_stripe_id(
+                _obj_get(subscription, "customer")
+            )
+            if subscription_customer_id:
+                if billing.stripe_customer_id != subscription_customer_id:
+                    billing.stripe_customer_id = subscription_customer_id
+                    billing.save(
+                        update_fields=["stripe_customer_id", "updated_at"]
+                    )
+                return subscription_customer_id
         except Exception:
-            logger.warning("Could not recover Stripe customer from subscription user_id=%s", user.pk, exc_info=True)
-        if billing.stripe_customer_id:
-            return billing.stripe_customer_id
+            logger.warning(
+                "Could not recover Stripe customer from subscription user_id=%s",
+                user.pk,
+                exc_info=True,
+            )
+
+    if billing.stripe_customer_id:
+        return billing.stripe_customer_id
+
     return get_or_create_stripe_customer(user, billing)
 
 
