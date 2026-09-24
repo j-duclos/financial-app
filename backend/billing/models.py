@@ -67,3 +67,54 @@ class StripeWebhookEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.event_type} {self.stripe_event_id}"
+
+
+class ComplimentaryPremiumInvitation(models.Model):
+    """Admin-issued complimentary Premium invite. Raw tokens are never stored."""
+
+    email = models.EmailField(db_index=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    complimentary_premium_until = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_complimentary_invitations",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_complimentary_invitations",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "billing_complimentary_premium_invitation"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["email", "accepted_at"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.email} ({self.status_label()})"
+
+    def status_label(self) -> str:
+        from django.utils import timezone
+
+        if self.accepted_at:
+            return "accepted"
+        if self.revoked_at:
+            return "revoked"
+        if not self.expires_at:
+            return "pending"
+        if self.expires_at <= timezone.now():
+            return "expired"
+        return "pending"

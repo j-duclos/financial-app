@@ -150,9 +150,11 @@ describe("permanent discovery and Premium portal", () => {
     expect(PREMIUM_DISCOVERY_SUBTITLE).toMatch(/Automatic bank sync/);
   });
 
-  it("Premium users see Manage subscription and no upgrade CTA", () => {
+  it("Premium users see Manage subscription only with a Stripe customer, and no upgrade CTA", () => {
     expect(profile).toMatch(/title="Premium"/);
     expect(profile).toMatch(/MANAGE_SUBSCRIPTION_LABEL/);
+    expect(profile).toMatch(/canManageStripeSubscription\(billing\)/);
+    expect(profile).toMatch(/hasComplimentaryPremium/);
     expect(profile).toMatch(/startPortal/);
     expect(profile).not.toMatch(/title="Subscription"/);
     expect(hook).toMatch(/createPortalSession/);

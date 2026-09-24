@@ -37,6 +37,8 @@ def test_status_endpoint_for_free_user(authenticated_client, user):
     assert body["cancel_at_period_end"] is False
     assert body["current_period_end"] is None
     assert body["has_stripe_customer"] is False
+    assert body["complimentary_premium"] is False
+    assert body["complimentary_premium_until"] is None
     assert body["entitlements"]["plaid_bank_sync"] is False
     assert body["entitlements"]["payment_planner_full"] is False
     assert body["entitlements"]["reports_advanced"] is False

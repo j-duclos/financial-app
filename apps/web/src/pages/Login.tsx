@@ -1,8 +1,12 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import BrandLockup from "../components/brand/BrandLockup";
 import PublicScreen from "../components/legal/PublicScreen";
+import {
+  persistPremiumInviteToken,
+  readPremiumInviteToken,
+} from "../lib/premiumInvite";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -11,6 +15,9 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [params] = useSearchParams();
+  const inviteToken = (params.get("invite") || readPremiumInviteToken() || "").trim();
+  if (inviteToken) persistPremiumInviteToken(inviteToken);
   const notice =
     location.state &&
     typeof location.state === "object" &&
@@ -24,6 +31,10 @@ export default function Login() {
     setError("");
     try {
       await login(username, password);
+      if (inviteToken) {
+        navigate(`/invite?token=${encodeURIComponent(inviteToken)}`, { replace: true });
+        return;
+      }
       navigate("/", { replace: true });
     } catch (err: unknown) {
       setError(err && typeof err === "object" && "message" in err ? String((err as Error).message) : "Login failed");

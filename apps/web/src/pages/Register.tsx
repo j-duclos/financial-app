@@ -1,23 +1,38 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import BrandLockup from "../components/brand/BrandLockup";
 import PublicScreen from "../components/legal/PublicScreen";
+import {
+  persistPremiumInviteToken,
+  readPremiumInviteToken,
+} from "../lib/premiumInvite";
 
 export default function Register() {
+  const [params] = useSearchParams();
+  const inviteToken = (params.get("invite") || readPremiumInviteToken() || "").trim();
+  const invitedEmail = (params.get("email") || "").trim();
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(invitedEmail);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checkEmail, setCheckEmail] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
 
+  if (inviteToken) {
+    persistPremiumInviteToken(inviteToken);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     try {
       await register(username, password, email.trim());
+      if (inviteToken) {
+        navigate(`/invite?token=${encodeURIComponent(inviteToken)}`, { replace: true });
+        return;
+      }
       setCheckEmail(true);
     } catch (err: unknown) {
       setError(err && typeof err === "object" && "message" in err ? String((err as Error).message) : "Registration failed");
@@ -68,10 +83,14 @@ export default function Register() {
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                if (invitedEmail) return;
+                setEmail(e.target.value);
+              }}
               className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
               required
               autoComplete="email"
+              readOnly={Boolean(invitedEmail)}
             />
           </div>
           <div>

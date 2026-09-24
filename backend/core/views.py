@@ -140,8 +140,20 @@ class VerifyEmailView(APIView):
             )
             return Response({"status": exc.code}, status=status_code)
         if is_email_verified(user):
+            try:
+                from billing.invitations import claim_pending_invitations_for_verified_user
+
+                claim_pending_invitations_for_verified_user(user)
+            except Exception:
+                logger.exception("complimentary_invite_auto_claim_failed user_id=%s", user.pk)
             return Response({"status": "already_verified"})
         mark_email_verified(user)
+        try:
+            from billing.invitations import claim_pending_invitations_for_verified_user
+
+            claim_pending_invitations_for_verified_user(user)
+        except Exception:
+            logger.exception("complimentary_invite_auto_claim_failed user_id=%s", user.pk)
         return Response({"status": "verified"})
 
 

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: sans-serif; line-height: 1.5; color: #111;">
+    <h1 style="font-size: 1.25rem;">You're invited to FlowSight Premium</h1>
+    <p>You've been invited to use FlowSight Premium at no cost as a beta tester.</p>
+    <p>FlowSight helps you see where your money is headed before the bills hit.</p>
+    <p>Accept your invitation to create your account and activate complimentary Premium access.</p>
+    <p>
+      <a href="{{ invite_url }}" style="display: inline-block; background: #2563eb; color: #fff; padding: 10px 16px; text-decoration: none; border-radius: 6px;">
+        Accept invitation
+      </a>
+    </p>
+    {% if until_display %}
+    <p style="font-size: 0.875rem; color: #555;">Complimentary Premium is available through {{ until_display }}.</p>
+    {% endif %}
+    <p style="font-size: 0.875rem; color: #555;">If you weren't expecting this invitation, you can ignore this message.</p>
+  </body>
+</html>

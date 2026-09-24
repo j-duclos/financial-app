@@ -113,6 +113,16 @@ class UserProfile(models.Model):
             "ALLOW_PLAN_TEST_OVERRIDE are both true. Does not change Stripe."
         ),
     )
+    complimentary_premium_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Admin-granted complimentary Premium for beta testers. A future "
+            "timestamp grants Premium without Stripe. Clear the field to revoke. "
+            "Expired timestamps do not grant Premium. Does not change Stripe IDs."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

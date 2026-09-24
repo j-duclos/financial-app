@@ -68,6 +68,10 @@ export function isNavMenuActive(pathname: string, children: AppNavLink[]): boole
   return children.some((child) => pathMatchesNavLink(pathname, child));
 }
 
+/** Internal staff tools. Not part of customer PRIMARY_NAV / MORE_NAV_LINKS. */
+export const STAFF_BETA_TESTERS_PATH = "/internal/beta-testers";
+export const STAFF_BETA_TESTERS_LABEL = "Beta Testers";
+
 export function isPrimaryLinkActive(
   pathname: string,
   item: Extract<AppNavItem, { kind: "link" }>

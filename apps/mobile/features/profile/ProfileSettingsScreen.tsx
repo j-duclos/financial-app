@@ -16,6 +16,10 @@ import {
   APP_WEB_URL,
   DEFAULT_OPERATIONAL_FORECAST_DAYS,
   DEFAULT_TARGET_UTILIZATION_PERCENT,
+  COMPLIMENTARY_ACCESS_LABEL,
+  canManageStripeSubscription,
+  complimentaryPremiumUntilCopy,
+  hasComplimentaryPremium,
   clampForecastDaysForPlan,
   canShowPlanTestControls,
   choiceToTestPlanOverride,
@@ -340,12 +344,24 @@ export function ProfileSettingsScreen() {
           <SectionHeader title="Plan" />
           <SettingsGroup>
             {billing?.is_premium ? (
-              canManageStripe ? (
+              canManageStripe && canManageStripeSubscription(billing) ? (
                 <SettingsRow
                   title="Premium"
                   value={MANAGE_SUBSCRIPTION_LABEL}
+                  subtitle={
+                    hasComplimentaryPremium(billing)
+                      ? complimentaryPremiumUntilCopy(billing) ?? COMPLIMENTARY_ACCESS_LABEL
+                      : undefined
+                  }
                   onPress={() => void startPortal()}
                   accessibilityLabel="Premium, Manage subscription"
+                />
+              ) : hasComplimentaryPremium(billing) ? (
+                <SettingsRow
+                  title="Premium"
+                  value={COMPLIMENTARY_ACCESS_LABEL}
+                  subtitle={complimentaryPremiumUntilCopy(billing) ?? undefined}
+                  accessibilityLabel={`Premium, ${COMPLIMENTARY_ACCESS_LABEL}`}
                 />
               ) : (
                 <SettingsRow

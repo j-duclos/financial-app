@@ -2782,6 +2782,9 @@ export interface BillingStatus {
   current_period_end: string | null;
   has_stripe_customer: boolean;
   entitlements?: BillingEntitlements;
+  /** Admin-granted beta Premium. Independent of Stripe. */
+  complimentary_premium?: boolean;
+  complimentary_premium_until?: string | null;
   /** Present only when the backend allows development plan simulation. */
   test_override_available?: boolean;
   test_plan_override?: TestPlanOverride;
@@ -2791,6 +2794,28 @@ export interface BillingStatus {
 export interface TestPlanOverrideResponse {
   test_plan_override: TestPlanOverride;
   effective_plan: BillingPlan;
+}
+
+export type ComplimentaryInvitationPreviewStatus =
+  | "pending"
+  | "invalid"
+  | "expired"
+  | "revoked"
+  | "accepted";
+
+export interface ComplimentaryInvitationPreview {
+  status: ComplimentaryInvitationPreviewStatus;
+  email?: string;
+  complimentary_premium_until?: string;
+  expires_at?: string;
+}
+
+export interface ComplimentaryInvitationAcceptResponse {
+  status: "accepted";
+  complimentary_premium_until: string;
+  plan: BillingPlan;
+  is_premium: boolean;
+  entitlements?: BillingEntitlements;
 }
 
 export interface BillingPlanLimits {

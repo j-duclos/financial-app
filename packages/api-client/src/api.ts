@@ -72,6 +72,8 @@ import type {
   PortalSessionResponse,
   TestPlanOverride,
   TestPlanOverrideResponse,
+  ComplimentaryInvitationPreview,
+  ComplimentaryInvitationAcceptResponse,
 } from "@budget-app/shared";
 import {
   ApiError,
@@ -267,6 +269,95 @@ export async function getBillingStatus(): Promise<BillingStatus> {
   return requestRequired("/api/billing/status/");
 }
 
+export async function previewComplimentaryInvitation(
+  token: string
+): Promise<ComplimentaryInvitationPreview> {
+  const params = new URLSearchParams({ token });
+  return requestRequired(`/api/billing/invitations/preview/?${params.toString()}`);
+}
+
+export async function acceptComplimentaryInvitation(
+  token: string
+): Promise<ComplimentaryInvitationAcceptResponse> {
+  return requestRequired("/api/billing/invitations/accept/", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export type StaffInvitationStatus = "pending" | "accepted" | "expired" | "revoked";
+
+export type StaffBetaTesterInvitation = {
+  id: number;
+  email: string;
+  status: StaffInvitationStatus | string;
+  complimentary_premium_until: string | null;
+  expires_at: string | null;
+  created_at: string | null;
+  accepted_at: string | null;
+  accepted_user: { id: number; username: string; email: string } | null;
+  created_by_id?: number | null;
+  detail?: string;
+};
+
+export type StaffBetaTesterInvitationList = {
+  count: number;
+  results: StaffBetaTesterInvitation[];
+};
+
+export async function listStaffBetaTesterInvitations(params?: {
+  q?: string;
+  status?: string;
+}): Promise<StaffBetaTesterInvitationList> {
+  const search = new URLSearchParams();
+  if (params?.q) search.set("q", params.q);
+  if (params?.status) search.set("status", params.status);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestRequired(`/api/billing/staff/beta-testers/${suffix}`);
+}
+
+export async function createStaffBetaTesterInvitation(payload: {
+  email: string;
+  complimentary_premium_until: string;
+  expires_at?: string | null;
+}): Promise<StaffBetaTesterInvitation> {
+  return requestRequired("/api/billing/staff/beta-testers/invitations/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resendStaffBetaTesterInvitation(
+  invitationId: number
+): Promise<StaffBetaTesterInvitation> {
+  return requestRequired(`/api/billing/staff/beta-testers/invitations/${invitationId}/resend/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function revokeStaffBetaTesterInvitation(
+  invitationId: number
+): Promise<StaffBetaTesterInvitation> {
+  return requestRequired(`/api/billing/staff/beta-testers/invitations/${invitationId}/revoke/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function extendStaffComplimentaryPremium(
+  userId: number,
+  complimentaryPremiumUntil: string
+): Promise<{ user_id: number; complimentary_premium_until: string }> {
+  return requestRequired(
+    `/api/billing/staff/beta-testers/users/${userId}/complimentary-premium/`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ complimentary_premium_until: complimentaryPremiumUntil }),
+    }
+  );
+}
+
 export async function setTestPlanOverride(
   plan: TestPlanOverride
 ): Promise<TestPlanOverrideResponse> {
@@ -332,6 +423,7 @@ export type UserProfile = {
   notify_3_days_before?: boolean;
   notify_1_day_before?: boolean;
   notify_day_of?: boolean;
+  is_staff?: boolean;
 };
 
 // Profile

@@ -34,6 +34,61 @@ class BillingStatusView(APIView):
         return Response(get_billing_status_payload(request.user))
 
 
+class ComplimentaryInvitationPreviewView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = []
+
+    def get_throttles(self):
+        from core.throttles import InvitationAnonThrottle
+
+        return [InvitationAnonThrottle()]
+
+    def get(self, request):
+        from billing.invitations import preview_invitation
+
+        token = (request.query_params.get("token") or "").strip()
+        payload = preview_invitation(token)
+        return Response(payload)
+
+
+class ComplimentaryInvitationAcceptView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get_throttles(self):
+        from core.throttles import InvitationUserThrottle
+
+        return [InvitationUserThrottle()]
+
+    def post(self, request):
+        from billing.invitations import InvitationError, accept_invitation
+        from billing.services import get_billing_status_payload
+
+        token = ""
+        if isinstance(request.data, dict):
+            token = str(request.data.get("token") or "").strip()
+        try:
+            invite = accept_invitation(request.user, token)
+        except InvitationError as exc:
+            http_status = status.HTTP_400_BAD_REQUEST
+            if exc.code == "email_mismatch":
+                http_status = status.HTTP_403_FORBIDDEN
+            elif exc.code == "email_verification_required":
+                http_status = status.HTTP_403_FORBIDDEN
+            return Response({"code": exc.code, "detail": exc.detail}, status=http_status)
+        billing = get_billing_status_payload(request.user)
+        return Response(
+            {
+                "status": "accepted",
+                "complimentary_premium_until": invite.complimentary_premium_until.isoformat(),
+                "plan": billing["plan"],
+                "is_premium": billing["is_premium"],
+                "entitlements": billing.get("entitlements"),
+            }
+        )
+
+
 class CreateCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 

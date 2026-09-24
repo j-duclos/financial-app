@@ -1,0 +1,12 @@
+You've been invited to use FlowSight Premium at no cost as a beta tester.
+
+FlowSight helps you see where your money is headed before the bills hit.
+
+Accept your invitation to create your account and activate complimentary Premium access.
+
+Accept invitation:
+{{ invite_url }}
+{% if until_display %}
+
+Complimentary Premium is available through {{ until_display }}.
+{% endif %}

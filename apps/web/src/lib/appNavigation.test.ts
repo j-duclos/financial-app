@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   isNavMenuActive,
@@ -6,7 +9,18 @@ import {
   pathMatchesNavLink,
   PLANNING_NAV_LINKS,
   PRIMARY_NAV,
+  STAFF_BETA_TESTERS_LABEL,
+  STAFF_BETA_TESTERS_PATH,
 } from "./appNavigation";
+
+const appNavSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../components/AppNav.tsx"),
+  "utf8"
+);
+const appSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../App.tsx"),
+  "utf8"
+);
 
 describe("appNavigation", () => {
   it("exposes workflow-first primary destinations", () => {
@@ -51,6 +65,28 @@ describe("appNavigation", () => {
     expect(isNavMenuActive("/profile", MORE_NAV_LINKS)).toBe(true);
     expect(isNavMenuActive("/automation", MORE_NAV_LINKS)).toBe(true);
     expect(isNavMenuActive("/goals", MORE_NAV_LINKS)).toBe(false);
+  });
+
+  it("keeps Beta Testers out of customer navigation", () => {
+    const customerLabels = [
+      ...PRIMARY_NAV.map((item) => item.label),
+      ...MORE_NAV_LINKS.map((l) => l.label),
+      ...PLANNING_NAV_LINKS.map((l) => l.label),
+    ];
+    expect(customerLabels).not.toContain("Beta Testers");
+    expect(MORE_NAV_LINKS.some((l) => l.to.includes("beta-testers"))).toBe(false);
+    expect(PRIMARY_NAV.some((item) => item.kind === "link" && item.to.includes("beta-testers"))).toBe(
+      false
+    );
+  });
+
+  it("shows Beta Testers in staff navigation only", () => {
+    expect(STAFF_BETA_TESTERS_PATH).toBe("/internal/beta-testers");
+    expect(STAFF_BETA_TESTERS_LABEL).toBe("Beta Testers");
+    expect(appNavSource).toMatch(/is_staff/);
+    expect(appNavSource).toMatch(/STAFF_BETA_TESTERS_LABEL/);
+    expect(appNavSource).toMatch(/FlaskConical/);
+    expect(appSource).toMatch(/path="internal\/beta-testers"/);
   });
 
   it("marks Dashboard active only on the index path", () => {

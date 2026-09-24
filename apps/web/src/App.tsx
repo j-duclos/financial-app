@@ -32,7 +32,9 @@ import Profile from "./pages/Profile";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import PlaidOAuthReturn from "./pages/PlaidOAuthReturn";
+import Invite from "./pages/Invite";
 import BillingPortalReturn from "./pages/BillingPortalReturn";
+import BetaTesters from "./pages/BetaTesters";
 
 const queryClient = createAppQueryClient();
 
@@ -56,6 +58,7 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/invite" element={<Invite />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/billing/return" element={<BillingPortalReturn />} />
@@ -96,6 +99,7 @@ function AppRoutes() {
         <Route path="reconcile" element={<Reconcile />} />
         <Route path="reports" element={<Reports />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="internal/beta-testers" element={<BetaTesters />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

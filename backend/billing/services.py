@@ -1,8 +1,13 @@
 """Billing entitlements and Stripe Checkout/Portal orchestration.
 
-Premium access is granted only from locally synchronized Stripe subscription
-status, except for an optional development-only test override that never runs
-in production. Presence of a Stripe Customer ID does not imply Premium.
+Effective plan precedence:
+1. Development test override when legitimately enabled (never on Render)
+2. Active complimentary Premium (admin-owned UserProfile timestamp)
+3. Stripe subscription-derived plan
+4. FREE
+
+Complimentary access never writes Stripe IDs or BillingSubscription status.
+Presence of a Stripe Customer ID does not imply Premium.
 """
 from __future__ import annotations
 
@@ -74,11 +79,14 @@ def stripe_plan_for_user(user, *, create_row: bool = True) -> str:
 
 
 def get_user_plan(user, *, create_billing_row: bool = True) -> str:
+    from billing.complimentary import has_complimentary_premium
     from billing.plan_override import active_test_plan_override
 
     override = active_test_plan_override(user)
     if override:
         return override
+    if has_complimentary_premium(user):
+        return BillingSubscription.Plan.PREMIUM
     return stripe_plan_for_user(user, create_row=create_billing_row)
 
 
@@ -95,6 +103,7 @@ def get_entitlements(user) -> dict[str, Any]:
 
 
 def get_billing_status_payload(user) -> dict[str, Any]:
+    from billing.complimentary import complimentary_status_fields
     from billing.plan_override import test_override_status_fields
 
     billing = get_or_create_billing_subscription(user)
@@ -109,6 +118,7 @@ def get_billing_status_payload(user) -> dict[str, Any]:
         "has_stripe_customer": bool(billing.stripe_customer_id),
         "entitlements": get_entitlements(user),
     }
+    payload.update(complimentary_status_fields(user))
     payload.update(test_override_status_fields(user, effective_plan=effective_plan))
     return payload
 

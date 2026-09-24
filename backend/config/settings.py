@@ -333,6 +333,8 @@ REST_FRAMEWORK = {
         "auth_register_anon": "10/hour",
         "auth_sensitive_user": "10/hour",
         "feedback_user": "5/hour",
+        "invitation_anon": "30/hour",
+        "invitation_user": "30/hour",
     },
 }
 

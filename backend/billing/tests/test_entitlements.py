@@ -46,6 +46,7 @@ def test_billing_status_for_free_user(user):
     assert payload["cancel_at_period_end"] is False
     assert payload["current_period_end"] is None
     assert payload["has_stripe_customer"] is False
+    assert payload["complimentary_premium"] is False
 
 
 @pytest.mark.django_db

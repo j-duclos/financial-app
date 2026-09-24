@@ -18,6 +18,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(read_only=True, source="user.username")
     email = serializers.EmailField(read_only=True, source="user.email")
     email_verified = serializers.SerializerMethodField()
+    is_staff = serializers.BooleanField(read_only=True, source="user.is_staff")
     phone_e164 = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, max_length=20
     )
@@ -30,6 +31,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "username",
             "email",
             "email_verified",
+            "is_staff",
             "display_name",
             "phone_e164",
             "default_household",
@@ -42,7 +44,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "notify_1_day_before",
             "notify_day_of",
         ]
-        read_only_fields = ["id", "username", "email", "email_verified"]
+        read_only_fields = ["id", "username", "email", "email_verified", "is_staff"]
 
     def validate_phone_e164(self, value):
         if value is None:

@@ -1,13 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { ChevronDown, Menu, X } from "lucide-react";
+import { ChevronDown, FlaskConical, Menu, X } from "lucide-react";
 import {
   isNavMenuActive,
   isPrimaryLinkActive,
   PRIMARY_NAV,
+  STAFF_BETA_TESTERS_LABEL,
+  STAFF_BETA_TESTERS_PATH,
   type AppNavItem,
   type AppNavLink,
 } from "../lib/appNavigation";
+import { useProfileQuery } from "../lib/profileQuery";
 
 const linkClass = (active: boolean) =>
   `px-2 py-2 rounded text-sm font-medium whitespace-nowrap ${
@@ -92,9 +95,11 @@ function pathActive(pathname: string, child: AppNavLink): boolean {
 function MobileNavPanel({
   pathname,
   onClose,
+  showStaffTools,
 }: {
   pathname: string;
   onClose: () => void;
+  showStaffTools: boolean;
 }) {
   return (
     <div className="lg:hidden border-t border-gray-200 bg-white px-3 py-3 space-y-3">
@@ -137,6 +142,16 @@ function MobileNavPanel({
           </div>
         );
       })}
+      {showStaffTools ? (
+        <NavLink
+          to={STAFF_BETA_TESTERS_PATH}
+          className={`flex items-center gap-1.5 ${linkClass(pathname === STAFF_BETA_TESTERS_PATH || pathname.startsWith(`${STAFF_BETA_TESTERS_PATH}/`))}`}
+          onClick={onClose}
+        >
+          <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+          {STAFF_BETA_TESTERS_LABEL}
+        </NavLink>
+      ) : null}
     </div>
   );
 }
@@ -145,6 +160,8 @@ export default function AppNav() {
   const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const mobileId = useId();
+  const { data: profile } = useProfileQuery();
+  const showStaffTools = profile?.is_staff === true;
 
   return (
     <div className="min-w-0 flex-1">
@@ -175,11 +192,26 @@ export default function AppNav() {
             }
             return <NavDropdown key={item.id} item={item} pathname={pathname} />;
           })}
+          {showStaffTools ? (
+            <NavLink
+              to={STAFF_BETA_TESTERS_PATH}
+              className={({ isActive }) =>
+                `${linkClass(isActive)} inline-flex items-center gap-1`
+              }
+            >
+              <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+              {STAFF_BETA_TESTERS_LABEL}
+            </NavLink>
+          ) : null}
         </nav>
       </div>
       {mobileOpen && (
         <div id={mobileId}>
-          <MobileNavPanel pathname={pathname} onClose={() => setMobileOpen(false)} />
+          <MobileNavPanel
+            pathname={pathname}
+            onClose={() => setMobileOpen(false)}
+            showStaffTools={showStaffTools}
+          />
         </div>
       )}
     </div>

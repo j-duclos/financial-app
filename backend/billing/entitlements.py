@@ -1,8 +1,9 @@
 """Launch plan limits and server-side entitlement checks.
 
 Premium is determined by ``user_has_premium`` (Stripe subscription status,
-with an optional development-only test override that never runs in production).
-Limits are not inferred from a Stripe customer id.
+optional development-only test override that never runs in production, and
+admin-granted complimentary Premium). Limits are not inferred from a Stripe
+customer id.
 
 Downgrade never deletes accounts, Plaid Items, transactions, or history.
 Enforcement blocks *new* Premium-only work (new Plaid connections, extra

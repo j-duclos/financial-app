@@ -241,3 +241,32 @@ def send_password_reset_email(user) -> bool:
         _recipient_domain(email),
     )
     return True
+
+
+def send_complimentary_premium_invitation_email(
+    *,
+    to_email: str,
+    invite_url: str,
+    complimentary_until,
+) -> bool:
+    email = normalize_email(to_email)
+    if not email or not invite_url:
+        return False
+    if _refuse_non_inbox_backend():
+        return False
+    until_display = ""
+    if complimentary_until is not None:
+        until_display = complimentary_until.strftime("%B %d, %Y")
+    context = {
+        "invite_url": invite_url,
+        "until_display": until_display,
+    }
+    text_body = render_to_string("core/email/complimentary_premium_invite.txt", context)
+    html_body = render_to_string("core/email/complimentary_premium_invite.html", context)
+    _send("You're invited to FlowSight Premium", email, text_body, html_body)
+    logger.info(
+        "complimentary_invite_email_transport=%s recipient_domain=%s",
+        email_transport_label(),
+        _recipient_domain(email),
+    )
+    return True

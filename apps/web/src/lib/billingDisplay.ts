@@ -1,5 +1,6 @@
 import { ApiError } from "@budget-app/api-client";
 import type { BillingPlan, BillingStatus } from "@budget-app/shared";
+import { stripeStatusGrantsPremium } from "@budget-app/shared";
 import { formatFullDate } from "./dateDisplay";
 import {
   ACCESS_UNTIL_PERIOD_END_MESSAGE,
@@ -31,7 +32,15 @@ export function subscriptionStatusLabel(status: string | null | undefined): stri
   return STATUS_LABELS[key] ?? "Subscription update needed";
 }
 
-export function billingStatusLabel(billing: Pick<BillingStatus, "is_premium" | "status">): string {
+export function billingStatusLabel(
+  billing: Pick<BillingStatus, "is_premium" | "status" | "complimentary_premium">
+): string {
+  if (stripeStatusGrantsPremium(billing.status)) {
+    return subscriptionStatusLabel(billing.status);
+  }
+  if (billing.complimentary_premium) {
+    return "Complimentary Premium";
+  }
   if (!billing.is_premium && (billing.status === "inactive" || !billing.status)) {
     return "Free plan";
   }
@@ -48,6 +57,7 @@ export function premiumPeriodCopy(billing: BillingStatus): {
   cancelNotice: string | null;
 } | null {
   if (!billing.is_premium) return null;
+  if (!stripeStatusGrantsPremium(billing.status)) return null;
   const date = formatBillingPeriodEnd(billing.current_period_end);
   if (!date) return null;
   if (billing.cancel_at_period_end) {

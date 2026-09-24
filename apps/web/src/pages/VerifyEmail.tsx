@@ -4,6 +4,7 @@ import { verifyEmail } from "@budget-app/api-client";
 import { useAuth } from "../context/AuthContext";
 import BrandWordmark from "../components/brand/BrandWordmark";
 import PublicScreen from "../components/legal/PublicScreen";
+import { readPremiumInviteToken } from "../lib/premiumInvite";
 
 type Status = "verifying" | "verified" | "already_verified" | "expired" | "invalid";
 
@@ -62,7 +63,11 @@ export default function VerifyEmail() {
         <p className="text-sm text-gray-700">{copy}</p>
         {status === "verified" || status === "already_verified" ? (
           <Link
-            to="/"
+            to={
+              readPremiumInviteToken()
+                ? `/invite?token=${encodeURIComponent(readPremiumInviteToken() as string)}`
+                : "/"
+            }
             className="inline-flex justify-center w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
             Continue to app

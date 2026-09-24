@@ -98,6 +98,12 @@ describe("Profile & Settings screen", () => {
     expect(clearCacheSource).toMatch(/PROFILE_QUERY_KEY/);
   });
 
+  it("does not treat complimentary Premium as a Stripe subscription to manage", () => {
+    expect(screenSource).toMatch(/canManageStripeSubscription\(billing\)/);
+    expect(screenSource).toMatch(/hasComplimentaryPremium\(billing\)/);
+    expect(screenSource).toMatch(/COMPLIMENTARY_ACCESS_LABEL/);
+  });
+
   it("preserves subscription, forecast entitlement, and utilization editing", () => {
     expect(screenSource).toMatch(/PREMIUM_SHEET_TITLE|Subscription/);
     expect(screenSource).toMatch(/createPortalSession|startPortal/);

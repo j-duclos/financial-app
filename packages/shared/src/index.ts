@@ -6,6 +6,7 @@ export * from "./appleIap";
 export * from "./utils";
 export * from "./forecastWindow";
 export * from "./planLimits";
+export * from "./complimentaryPremium";
 export * from "./planTestOverride";
 export * from "./severity";
 export * from "./dateDisplay";

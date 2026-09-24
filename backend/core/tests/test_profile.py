@@ -69,6 +69,7 @@ def test_get_profile(authenticated_client, user):
     assert r.status_code == 200
     body = r.json()
     assert body["username"] == user.username
+    assert body["is_staff"] is False
     assert "password" not in body
     assert "display_name" in body
     assert "phone_e164" in body
@@ -171,6 +172,14 @@ def test_username_is_not_writable(authenticated_client, user):
     user.refresh_from_db()
     assert user.username == "testuser"
     assert r.json()["username"] == "testuser"
+
+
+def test_is_staff_is_read_only_on_profile(authenticated_client, user):
+    r = authenticated_client.patch("/api/profile/", {"is_staff": True}, format="json")
+    assert r.status_code == 200
+    user.refresh_from_db()
+    assert user.is_staff is False
+    assert r.json()["is_staff"] is False
 
 
 @pytest.mark.parametrize("days", [30, 60, 90])

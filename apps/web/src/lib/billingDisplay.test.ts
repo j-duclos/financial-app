@@ -76,15 +76,39 @@ describe("billing display helpers", () => {
     expect(copy?.cancelNotice).toBeNull();
   });
 
-  it("does not invent premium period copy when is_premium is false", () => {
-    expect(
-      premiumPeriodCopy({
-        ...freeStatus,
-        current_period_end: "2026-10-05T00:00:00Z",
-        has_stripe_customer: true,
-      })
-    ).toBeNull();
-  });
+    it("labels complimentary Premium instead of Free plan when Stripe is inactive", () => {
+      expect(
+        billingStatusLabel({
+          ...freeStatus,
+          is_premium: true,
+          complimentary_premium: true,
+        })
+      ).toBe("Complimentary Premium");
+    });
+
+    it("does not invent a Stripe billing period for complimentary Premium", () => {
+      expect(
+        premiumPeriodCopy({
+          plan: "PREMIUM",
+          is_premium: true,
+          status: "inactive",
+          cancel_at_period_end: false,
+          current_period_end: "2026-10-05T00:00:00Z",
+          has_stripe_customer: false,
+          complimentary_premium: true,
+        })
+      ).toBeNull();
+    });
+
+    it("does not invent premium period copy when is_premium is false", () => {
+      expect(
+        premiumPeriodCopy({
+          ...freeStatus,
+          current_period_end: "2026-10-05T00:00:00Z",
+          has_stripe_customer: true,
+        })
+      ).toBeNull();
+    });
 
   it("maps checkout conflicts and missing Stripe config without leaking secrets", () => {
     expect(billingActionErrorMessage(new ApiError(409, "already subscribed"))).toBe(

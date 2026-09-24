@@ -3,6 +3,11 @@ import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, createCheckoutSession, createPortalSession } from "@budget-app/api-client";
 import {
+  canManageStripeSubscription,
+  complimentaryPremiumUntilCopy,
+  hasComplimentaryPremium,
+} from "@budget-app/shared";
+import {
   ALREADY_PREMIUM_MESSAGE,
   BILLING_STATUS_QUERY_KEY,
   EMAIL_VERIFICATION_REQUIRED_MESSAGE,
@@ -113,6 +118,9 @@ export default function PlanBillingSection() {
   }
 
   const isPremium = billing.is_premium;
+  const complimentary = hasComplimentaryPremium(billing);
+  const complimentaryUntil = complimentaryPremiumUntilCopy(billing);
+  const showStripeManage = canManageStripeSubscription(billing);
   const period = premiumPeriodCopy(billing);
   const checkoutBusy = checkoutMu.isPending;
   const portalBusy = portalMu.isPending;
@@ -144,6 +152,15 @@ export default function PlanBillingSection() {
             <dd className="mt-0.5 font-medium text-gray-900">{period.date}</dd>
             {period.cancelNotice ? (
               <p className="mt-1 text-sm text-gray-600">{period.cancelNotice}</p>
+            ) : null}
+          </div>
+        ) : null}
+        {complimentary ? (
+          <div className="sm:col-span-2" data-testid="complimentary-premium-label">
+            <dt className="text-gray-500">Access</dt>
+            <dd className="mt-0.5 font-medium text-gray-900">Complimentary access</dd>
+            {complimentaryUntil ? (
+              <p className="mt-1 text-sm text-gray-600">{complimentaryUntil}</p>
             ) : null}
           </div>
         ) : null}
@@ -203,7 +220,7 @@ export default function PlanBillingSection() {
         </>
       ) : null}
 
-      {billing.has_stripe_customer ? (
+      {showStripeManage ? (
         <div className="space-y-2">
           {isPremium ? (
             <p className="text-sm text-gray-600">

@@ -104,6 +104,43 @@ describe("PlanBillingSection", () => {
     expect(screen.queryByRole("button", { name: "Manage Billing" })).not.toBeInTheDocument();
   });
 
+  it("shows Complimentary Premium without Stripe manage or checkout", async () => {
+    api.getBillingStatus.mockResolvedValue({
+      plan: "PREMIUM",
+      is_premium: true,
+      status: "inactive",
+      cancel_at_period_end: false,
+      current_period_end: null,
+      has_stripe_customer: false,
+      complimentary_premium: true,
+      complimentary_premium_until: "2026-12-01T00:00:00Z",
+    });
+    renderSection();
+    expect(await screen.findByTestId("complimentary-premium-label")).toHaveTextContent(
+      "Complimentary access"
+    );
+    expect(screen.getByText("Complimentary access")).toBeInTheDocument();
+    expect(screen.getByText("Active through December 1, 2026")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upgrade to Premium" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage Billing" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Manage Billing for complimentary users who also have a Stripe subscription", async () => {
+    api.getBillingStatus.mockResolvedValue({
+      plan: "PREMIUM",
+      is_premium: true,
+      status: "active",
+      cancel_at_period_end: false,
+      current_period_end: "2026-12-01T00:00:00Z",
+      has_stripe_customer: true,
+      complimentary_premium: true,
+      complimentary_premium_until: "2026-12-01T00:00:00Z",
+    });
+    renderSection();
+    expect(await screen.findByRole("button", { name: "Manage Billing" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Upgrade to Premium" })).not.toBeInTheDocument();
+  });
+
   it("shows Premium and Manage Billing for an active subscription", async () => {
     api.getBillingStatus.mockResolvedValue(premiumStatus);
     renderSection();

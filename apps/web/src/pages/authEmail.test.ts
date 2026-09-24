@@ -65,6 +65,9 @@ describe("auth email UX", () => {
   it("keeps email verification on the web verify-email route", () => {
     expect(verifySource).toMatch(/verifyEmail\(/);
     expect(appSource).toMatch(/path="\/verify-email"/);
+    expect(appSource).toMatch(/path="\/invite"/);
+    expect(registerSource).toMatch(/inviteToken/);
+    expect(loginSource).toMatch(/inviteToken/);
   });
 
   it("shows a neutral forgot-password confirmation", () => {

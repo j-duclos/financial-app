@@ -55,3 +55,15 @@ class FeedbackUserThrottle(UserRateThrottle):
     """Authenticated product feedback: 5 submissions per hour per user."""
 
     scope = "feedback_user"
+
+
+class InvitationAnonThrottle(AnonRateThrottle):
+    """Public invitation preview: 30 requests per hour per IP."""
+
+    scope = "invitation_anon"
+
+
+class InvitationUserThrottle(UserRateThrottle):
+    """Authenticated invitation accept: 30 requests per hour per user."""
+
+    scope = "invitation_user"
