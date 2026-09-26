@@ -12,8 +12,6 @@ export const RESEND_VERIFICATION_EMAIL_LABEL = "Resend verification email";
 export const BILLING_UNAVAILABLE_MESSAGE =
   "Billing is temporarily unavailable. Please try again later.";
 export const ALREADY_PREMIUM_MESSAGE = "Your Premium subscription is already active.";
-export const BANK_SYNC_WEB_MESSAGE =
-  "Automatic bank syncing is available on the web app. You can add accounts manually here.";
 export const UPGRADE_TO_PREMIUM_LABEL = "Upgrade to Premium";
 
 export function isEmailVerificationRequiredError(err: unknown): boolean {

@@ -132,6 +132,11 @@ describe("mobile Home onboarding status", () => {
     expect(firstRunSource).toMatch(/Add account manually/);
     expect(firstRunSource).toMatch(/Upgrade for automatic bank syncing/);
     expect(firstRunSource).toMatch(/Connect bank/);
+    expect(firstRunSource).toMatch(/onConnectBank/);
+    expect(firstRunSource).not.toMatch(/BANK_SYNC_WEB_MESSAGE/);
+    expect(firstRunSource).not.toMatch(/Alert\.alert/);
+    expect(dashboardSource).toMatch(/onConnectBank=\{\(\) => void connectBank\(\)\}/);
+    expect(dashboardSource).toMatch(/useConnectBank/);
   });
 
   it("mentions the FlowSight web app as a secondary first-run action", () => {

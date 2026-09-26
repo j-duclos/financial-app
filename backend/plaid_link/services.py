@@ -467,6 +467,7 @@ def create_link_token(
     phone_number: str | None = None,
     email_address: str | None = None,
     link_redirect_uri: str | None = None,
+    android_package_name: str | None = None,
     access_token: str | None = None,
 ) -> str:
     """
@@ -514,6 +515,9 @@ def create_link_token(
         req_kw["webhook"] = webhook_url
     if redirect_uri:
         req_kw["redirect_uri"] = redirect_uri
+    package = (android_package_name or "").strip()
+    if package:
+        req_kw["android_package_name"] = package
     req = LinkTokenCreateRequest(**req_kw)
     resp = client.link_token_create(req)
     return resp.link_token

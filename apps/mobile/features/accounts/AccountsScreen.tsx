@@ -5,6 +5,7 @@ import {
   EmptyState,
   ErrorState,
   AppHeader,
+  Button,
   IconButton,
   Screen,
   SectionHeader,
@@ -31,6 +32,7 @@ import { useAccountsList } from "./useAccountsList";
 import { AccountRow } from "./AccountRow";
 import { markAccountsTiming } from "./accountsTiming";
 import { useHomeAccountPin } from "./useHomeAccountPin";
+import { useConnectBank } from "./useConnectBank";
 
 export function AccountsScreen() {
   const theme = useTheme();
@@ -50,6 +52,7 @@ export function AccountsScreen() {
     { forecastReady: ready }
   );
   const { toggleHomePin, isPending: pinPending, pendingAccountId } = useHomeAccountPin();
+  const { connectBank, busy: connectBusy } = useConnectBank();
 
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
@@ -152,6 +155,15 @@ export function AccountsScreen() {
         </Pressable>
       ) : null}
 
+      <View style={{ marginTop: theme.spacing.md }}>
+        <Button
+          label="Connect bank"
+          variant="secondary"
+          loading={connectBusy}
+          onPress={() => void connectBank()}
+        />
+      </View>
+
       {attentionFilterActive ? (
         <View
           style={{
@@ -187,7 +199,7 @@ export function AccountsScreen() {
             attentionFilterActive
               ? "All accounts look healthy in the current forecast window."
               : isPremium
-                ? "Add your first account to start tracking balances and transactions. Connect banks from the web app when you want automatic syncing."
+                ? "Add your first account to start tracking balances and transactions. Connect a bank here to import accounts automatically."
                 : "Add your first account to start tracking balances and transactions."
           }
           actionLabel={attentionFilterActive ? "Clear filter" : "Add account"}

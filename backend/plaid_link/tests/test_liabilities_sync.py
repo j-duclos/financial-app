@@ -449,6 +449,30 @@ def test_update_mode_link_token_requests_additional_liabilities_consent():
     assert captured["redirect_uri"] == "https://example.test/plaid/oauth-return"
 
 
+@override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="sandbox")
+def test_create_link_token_includes_android_package_name():
+    from plaid_link.services import create_link_token
+
+    captured = {}
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    api = MagicMock()
+    api.link_token_create.return_value = SimpleNamespace(link_token="link-android-token")
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            android_package_name="com.budgetapp.mobile",
+        )
+    assert token == "link-android-token"
+    assert captured["android_package_name"] == "com.budgetapp.mobile"
+
+
 @override_settings(PLAID_ENABLE_LIABILITIES=True, PLAID_ENV="sandbox")
 @pytest.mark.django_db
 def test_link_token_update_endpoint_accepts_redirect_uri(plaid_setup, auth_client):

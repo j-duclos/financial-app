@@ -75,6 +75,7 @@ import {
   shouldStartHomeSummaryFast,
 } from "./homeReadiness";
 import { accountQueryKeys } from "@/features/accounts/queryKeys";
+import { useConnectBank } from "@/features/accounts/useConnectBank";
 import { classifyQueryClientCache, timedStartupQueryFn } from "@/lib/startupQueries";
 
 export function DashboardScreen() {
@@ -97,6 +98,7 @@ export function DashboardScreen() {
   const [helpTopic, setHelpTopic] = useState<GettingStartedHelpTopic | null>(null);
   const { billing } = useBillingStatus();
   const { promptUpgrade } = usePremiumUpgrade();
+  const { connectBank, busy: connectBusy } = useConnectBank();
   const isPremium = canUsePlaidBankSync(billing);
   const missingAccounts = isMissingAccounts(onboarding);
   const firstRun = shouldShowHomeFirstRun({
@@ -512,6 +514,8 @@ export function DashboardScreen() {
           isPremium={isPremium}
           onAddAccount={() => router.push("/account/new")}
           onUpgrade={() => promptUpgrade(PREMIUM_UPGRADE_CONTEXT.bankSync)}
+          onConnectBank={() => void connectBank()}
+          connectBusy={connectBusy}
         />
         {educationLayers}
       </Screen>

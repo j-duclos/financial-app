@@ -1,4 +1,5 @@
 from rest_framework import serializers
+import re
 
 from core.models import HouseholdMembership
 from core.phone_e164 import normalize_to_e164
@@ -43,6 +44,7 @@ class PlaidLinkTokenRequestSerializer(serializers.Serializer):
     household_id = serializers.IntegerField()
     phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
     redirect_uri = serializers.CharField(required=False, allow_blank=True, max_length=512)
+    android_package_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     def validate_redirect_uri(self, value):
         v = (value or "").strip()
@@ -60,6 +62,14 @@ class PlaidLinkTokenRequestSerializer(serializers.Serializer):
         if not n:
             raise serializers.ValidationError("Invalid phone number; use 10-digit US or E.164 with +country.")
         return n
+
+    def validate_android_package_name(self, value):
+        name = (value or "").strip()
+        if not name:
+            return ""
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", name):
+            raise serializers.ValidationError("Enter a valid Android application id.")
+        return name
 
     def validate_household_id(self, value):
         request = self.context.get("request")

@@ -45,6 +45,8 @@ export type ResolvedApiHostKind =
 type ExpoExtra = {
   appEnv?: string;
   apiUrl?: string;
+  androidPackageName?: string;
+  plaidRedirectUri?: string;
 };
 
 function extra(): ExpoExtra {
@@ -330,7 +332,16 @@ export function getApiConnectivityHint(): string {
   }
 }
 
-export const API_REQUEST_TIMEOUT_MS = 90_000;
+export function getAndroidPackageName(): string {
+  return (extra().androidPackageName ?? "com.budgetapp.mobile").trim() || "com.budgetapp.mobile";
+}
+
+/** HTTPS Plaid OAuth redirect; must match Plaid Dashboard allowed redirect URIs. */
+export function getMobilePlaidRedirectUri(): string {
+  const fromEnv = (process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI ?? extra().plaidRedirectUri ?? "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  return "https://flowsight360.com/plaid/oauth-return";
+}
 
 /**
  * Client financial-engine display mode. Off (`server`) unless explicitly set.

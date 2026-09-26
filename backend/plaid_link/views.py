@@ -74,6 +74,8 @@ class PlaidLinkTokenView(APIView):
                 phone_number=phone_final,
                 email_address=email_final,
                 link_redirect_uri=rid or None,
+                android_package_name=(ser.validated_data.get("android_package_name") or "").strip()
+                or None,
             )
         except ApiException as e:
             attempted = resolve_plaid_link_redirect_uri(rid or None)

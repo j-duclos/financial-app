@@ -46,6 +46,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       supportsTablet: true,
       bundleIdentifier: IOS_BUNDLE_IDENTIFIER,
+      associatedDomains: ["applinks:flowsight360.com"],
       buildNumber: process.env.IOS_BUILD_NUMBER ?? "1",
       infoPlist: {
         CFBundleDisplayName: IOS_DISPLAY_NAME,
@@ -100,6 +101,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       iosAppStoreId: process.env.EXPO_PUBLIC_IOS_APP_STORE_ID ?? "",
       googlePlayStoreUrl: process.env.EXPO_PUBLIC_GOOGLE_PLAY_STORE_URL ?? "",
       androidPackageName: ANDROID_PACKAGE_NAME,
+      plaidRedirectUri: process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI?.trim() || "https://flowsight360.com/plaid/oauth-return",
       eas: {
         ...(process.env.EAS_PROJECT_ID?.trim()
           ? { projectId: process.env.EAS_PROJECT_ID.trim() }

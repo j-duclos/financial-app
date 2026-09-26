@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Linking, Text, View } from "react-native";
+import { Linking, Text, View } from "react-native";
 import {
   APP_WEB_COMPANION_MESSAGE,
   APP_WEB_URL,
@@ -12,15 +12,22 @@ import { Button } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { canOfferStripePremiumPurchase } from "@/features/billing/billingProvider";
 import { PREMIUM_VIEW_PLAN_LABEL } from "@/features/billing/premiumUpgradeCopy";
-import { BANK_SYNC_WEB_MESSAGE } from "@/lib/billing";
 
 type Props = {
   isPremium: boolean;
   onAddAccount: () => void;
   onUpgrade: () => void;
+  onConnectBank: () => void;
+  connectBusy?: boolean;
 };
 
-export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props) {
+export function DashboardFirstRun({
+  isPremium,
+  onAddAccount,
+  onUpgrade,
+  onConnectBank,
+  connectBusy = false,
+}: Props) {
   const theme = useTheme();
   const canPurchase = canOfferStripePremiumPurchase();
 
@@ -67,7 +74,8 @@ export function DashboardFirstRun({ isPremium, onAddAccount, onUpgrade }: Props)
           <Button
             label="Connect bank"
             variant="secondary"
-            onPress={() => Alert.alert("Connect bank", BANK_SYNC_WEB_MESSAGE)}
+            loading={connectBusy}
+            onPress={onConnectBank}
           />
         ) : (
           <Button

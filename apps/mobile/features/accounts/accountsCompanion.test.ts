@@ -43,7 +43,9 @@ describe("mobile Accounts list companion UX", () => {
     expect(accountsSource).toMatch(/isPremium/);
     expect(accountsSource).toMatch(/No accounts yet/);
     expect(accountsSource).toMatch(/Add your first account to start tracking balances and transactions/);
-    expect(accountsSource).toMatch(/Connect banks from the web app/);
+    expect(accountsSource).toMatch(/Connect bank/);
+    expect(accountsSource).toMatch(/useConnectBank/);
+    expect(accountsSource).not.toMatch(/Connect banks from the web app/);
   });
 });
 
@@ -97,6 +99,9 @@ describe("mobile Account Detail companion UX", () => {
 
   it("keeps Edit behind existing form permissions and does not imply synced-balance override", () => {
     expect(accountDetailSource).toMatch(/\/account\/edit\/\$\{account\.id\}/);
+    expect(accountDetailSource).toMatch(/Connect bank/);
+    expect(accountDetailSource).toMatch(/useConnectBank/);
+    expect(accountDetailSource).toMatch(/!account\.plaid_item_id/);
     expect(accountForm).toMatch(/plaid_item_id/);
     expect(accountForm).toMatch(/synced balances from the bank/);
     expect(accountForm).toMatch(/!isEdit \?/);

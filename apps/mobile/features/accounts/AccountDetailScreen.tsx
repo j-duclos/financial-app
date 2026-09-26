@@ -51,6 +51,7 @@ import {
 import { ACCOUNT_DETAIL_PREVIEW_LIMIT, accountQueryKeys } from "./queryKeys";
 import { markAccountsTiming } from "./accountsTiming";
 import { useHomeAccountPin } from "./useHomeAccountPin";
+import { useConnectBank } from "./useConnectBank";
 
 function amountsDiffer(a: string | null, b: string | null): boolean {
   if (a == null || b == null) return false;
@@ -71,6 +72,7 @@ export function AccountDetailScreen() {
   const today = todayStr();
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const { toggleHomePin, isPending: pinPending } = useHomeAccountPin();
+  const { connectBank, busy: connectBusy } = useConnectBank();
 
   useEffect(() => {
     markAccountsTiming("detail-mounted", "detail");
@@ -384,6 +386,16 @@ export function AccountDetailScreen() {
             <Text style={{ color: theme.colors.tint, fontWeight: "600" }}>View in ledger</Text>
           </Pressable>
         </Card>
+      ) : null}
+
+      {!account.plaid_item_id ? (
+        <View style={{ marginTop: theme.spacing.lg }}>
+          <Button
+            label="Connect bank"
+            loading={connectBusy}
+            onPress={() => void connectBank()}
+          />
+        </View>
       ) : null}
 
       <View style={{ marginTop: theme.spacing.lg }}>

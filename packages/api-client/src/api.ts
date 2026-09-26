@@ -1387,7 +1387,7 @@ export type PlaidSyncAllResult = {
 
 export async function createPlaidLinkToken(
   householdId: number,
-  options?: { phone_number?: string; redirect_uri?: string }
+  options?: { phone_number?: string; redirect_uri?: string; android_package_name?: string }
 ): Promise<{ link_token: string }> {
   const body: Record<string, unknown> = { household_id: householdId };
   if (options?.phone_number != null && String(options.phone_number).trim() !== "") {
@@ -1395,6 +1395,9 @@ export async function createPlaidLinkToken(
   }
   if (options?.redirect_uri != null && String(options.redirect_uri).trim() !== "") {
     body.redirect_uri = String(options.redirect_uri).trim();
+  }
+  if (options?.android_package_name != null && String(options.android_package_name).trim() !== "") {
+    body.android_package_name = String(options.android_package_name).trim();
   }
   return requestRequired("/api/plaid/link-token/", {
     method: "POST",

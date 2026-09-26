@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createPlaidLinkToken,
   createPlaidUpdateModeLinkToken,
   syncHouseholdLiabilities,
   syncPlaidItemLiabilities,
@@ -72,6 +73,22 @@ describe("Plaid liabilities API client", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/plaid/items/12/link-token-update/");
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({
       redirect_uri: "https://example.test/plaid/oauth-return",
+    });
+  });
+
+  it("posts android_package_name when creating a link token", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { link_token: "link-sandbox" }));
+    const result = await createPlaidLinkToken(4, {
+      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
+      android_package_name: "com.budgetapp.mobile",
+    });
+    expect(result.link_token).toBe("link-sandbox");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/plaid/link-token/");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      household_id: 4,
+      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
+      android_package_name: "com.budgetapp.mobile",
     });
   });
 });

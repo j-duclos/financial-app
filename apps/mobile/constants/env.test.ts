@@ -326,4 +326,17 @@ describe("production API host + runtime diagnostic", () => {
     expect(env.shouldLogApiRuntimeDiagnostic(false, "staging")).toBe(true);
     expect(env.shouldLogApiRuntimeDiagnostic(false, "production")).toBe(false);
   });
+
+  it("defaults Android package and OAuth redirect for Link", async () => {
+    delete process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI;
+    const env = await loadEnv();
+    expect(env.getAndroidPackageName()).toBe("com.budgetapp.mobile");
+    expect(env.getMobilePlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
+  });
+
+  it("uses EXPO_PUBLIC_PLAID_REDIRECT_URI when set", async () => {
+    process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI = "https://flowsight360.com/plaid/oauth-return/";
+    const env = await loadEnv();
+    expect(env.getMobilePlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
+  });
 });

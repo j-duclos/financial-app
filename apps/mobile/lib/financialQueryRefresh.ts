@@ -90,6 +90,12 @@ export function invalidateAccountQueries(queryClient: QueryClient): void {
   invalidateAccountOptionsQueries(queryClient);
 }
 
+export function refreshAfterPlaidSync(queryClient: QueryClient): void {
+  invalidateLedgerQueries(queryClient);
+  invalidateForecastQueries(queryClient);
+  invalidateAccountQueries(queryClient);
+}
+
 export function invalidateDashboardQueries(queryClient: QueryClient): void {
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.dashboardSummary);
   invalidateRoot(queryClient, LIVE_QUERY_KEY_ROOTS.dashboardSummaryFast);
