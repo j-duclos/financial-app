@@ -24,7 +24,7 @@ describe("native Plaid connect on mobile", () => {
 
   it("opens native Link via a dynamic SDK import", () => {
     expect(native).toMatch(/createPlaidLinkSession/);
-    expect(native).toMatch(/session\.open\(\)/);
+    expect(native).toMatch(/session\.open\(Platform\.OS === "ios"\)/);
     expect(native).toMatch(/import\("react-native-plaid-link-sdk"\)/);
     expect(native).toMatch(/PlaidLinkUnavailableError/);
     expect(native).toMatch(/Expo Go cannot open Plaid/);

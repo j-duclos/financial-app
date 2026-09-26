@@ -4,8 +4,9 @@ import { BrandWordmark } from "@/components/brand";
 import { useTheme } from "@/theme";
 
 /**
- * Covers sensitive UI in the app switcher when the app is inactive/backgrounded.
- * Does not encrypt snapshots — reduces casual shoulder-surfing in task switcher.
+ * Covers sensitive UI in the app switcher when backgrounded.
+ * Do not cover on `inactive` — iOS uses that state when Plaid Link / in-app
+ * auth sheets present, and a full-screen overlay looks like the app closed.
  */
 export function PrivacyOverlay() {
   const theme = useTheme();
@@ -13,7 +14,7 @@ export function PrivacyOverlay() {
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      setObscure(state === "inactive" || state === "background");
+      setObscure(state === "background");
     });
     return () => sub.remove();
   }, []);

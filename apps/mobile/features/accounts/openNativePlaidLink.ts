@@ -1,3 +1,5 @@
+import { Platform } from "react-native";
+
 export type NativePlaidSuccess = {
   publicToken?: string;
   public_token?: string;
@@ -32,6 +34,18 @@ export async function openNativePlaidLink(linkToken: string): Promise<string | n
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
     void (async () => {
       try {
         const session = await createPlaidLinkSession({
@@ -39,27 +53,27 @@ export async function openNativePlaidLink(linkToken: string): Promise<string | n
           onSuccess: (success) => {
             const publicToken = successPublicToken(success);
             if (!publicToken) {
-              reject(new Error("Plaid did not return a connection token."));
+              fail(new Error("Plaid did not return a connection token."));
               return;
             }
-            resolve(publicToken);
+            finish(publicToken);
           },
           onExit: (exit) => {
+            const code = String(exit?.error?.errorCode ?? "").trim();
             const display =
               exit?.error?.displayMessage ||
               exit?.error?.errorMessage ||
-              exit?.error?.errorCode ||
-              "";
+              code;
             if (exit?.error && display) {
-              reject(new Error(String(display)));
+              fail(new Error(String(display)));
               return;
             }
-            resolve(null);
+            finish(null);
           },
         });
-        await session.open();
+        await session.open(Platform.OS === "ios");
       } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
+        fail(err instanceof Error ? err : new Error(String(err)));
       }
     })();
   });

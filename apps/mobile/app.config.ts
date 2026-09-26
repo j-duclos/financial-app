@@ -46,7 +46,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       supportsTablet: true,
       bundleIdentifier: IOS_BUNDLE_IDENTIFIER,
-      associatedDomains: ["applinks:flowsight360.com"],
       buildNumber: process.env.IOS_BUILD_NUMBER ?? "1",
       infoPlist: {
         CFBundleDisplayName: IOS_DISPLAY_NAME,

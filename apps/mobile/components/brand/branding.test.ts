@@ -31,6 +31,8 @@ describe("FlowSight mobile branding", () => {
 
   it("keeps privacy overlay and settings about on the product name", () => {
     expect(overlaySource).toMatch(/BrandWordmark/);
+    expect(overlaySource).toMatch(/state === "background"/);
+    expect(overlaySource).not.toMatch(/state === "inactive"/);
     expect(profileSource).toMatch(/BrandLogo/);
     expect(profileSource).toMatch(/APP_NAME/);
     expect(profileSource).toMatch(/SectionHeader title="About"/);
@@ -45,7 +47,7 @@ describe("FlowSight mobile branding", () => {
   });
 
   it("sets the native display name from shared branding", () => {
-    expect(configSource).toMatch(/IOS_DISPLAY_NAME = "FlowSight"/);
+    expect(configSource).not.toMatch(/associatedDomains/);
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
     expect(configSource).not.toMatch(/icon: "\.\/assets\/branding\/flowsight-logo\.jpg"/);

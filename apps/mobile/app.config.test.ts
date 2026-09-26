@@ -33,7 +33,7 @@ describe("iOS device prep", () => {
     expect(configSource).not.toMatch(/iosAppStoreId: "\d/);
     expect(configSource).toMatch(/name: IOS_DISPLAY_NAME/);
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
-    expect(configSource).toMatch(/associatedDomains: \["applinks:flowsight360.com"\]/);
+    expect(configSource).not.toMatch(/associatedDomains/);
     expect(configSource).toMatch(/plaidRedirectUri:/);
     expect(configSource).toMatch(/expo-notifications/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
