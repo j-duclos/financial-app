@@ -41,10 +41,8 @@ def format_plaid_api_exception(
     elif code == "INVALID_FIELD" and "oauth redirect uri" in lower_msg and "dashboard" in lower_msg:
         u = redirect_uri_attempted or ""
         detail = (
-            "Plaid rejected redirect_uri: it must exactly match an entry under Allowed redirect URIs. "
-            "If you allowlisted a tunnel (…lhr.life) but this browser tab is on localhost, open the app using the "
-            "same https://… tunnel URL you added to Plaid (not http://localhost:5173). "
-            "Each new tunnel session gets a new hostname — add that new …/plaid/oauth-return row and Save. "
+            "Plaid rejected redirect_uri: it must exactly match an Allowed redirect URI "
+            "(Developers → API), including https vs http and www vs non-www. "
             "Dashboard: https://dashboard.plaid.com/developers/api"
         )
         if u:

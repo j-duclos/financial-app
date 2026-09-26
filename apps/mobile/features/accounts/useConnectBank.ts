@@ -7,7 +7,7 @@ import {
   syncAllPlaidItems,
 } from "@budget-app/api-client";
 import { canUsePlaidBankSync } from "@budget-app/shared";
-import { getAndroidPackageName, getMobilePlaidRedirectUri } from "@/constants/env";
+import { getAndroidPackageName } from "@/constants/env";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
@@ -38,10 +38,10 @@ export function useConnectBank() {
     if (busy) return;
     setBusy(true);
     try {
-      const { link_token } = await createPlaidLinkToken(householdId, {
-        redirect_uri: getMobilePlaidRedirectUri(),
-        android_package_name: Platform.OS === "android" ? getAndroidPackageName() : undefined,
-      });
+      const { link_token } = await createPlaidLinkToken(
+        householdId,
+        Platform.OS === "android" ? { android_package_name: getAndroidPackageName() } : undefined
+      );
       const publicToken = await openNativePlaidLink(link_token);
       if (!publicToken) return;
       await exchangePlaidPublicToken({ public_token: publicToken, household_id: householdId });

@@ -471,6 +471,66 @@ def test_create_link_token_includes_android_package_name():
         )
     assert token == "link-android-token"
     assert captured["android_package_name"] == "com.budgetapp.mobile"
+    assert "redirect_uri" not in captured
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="sandbox")
+def test_create_link_token_drops_redirect_uri_when_android_package_set():
+    from plaid_link.services import create_link_token
+
+    captured = {}
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    api = MagicMock()
+    api.link_token_create.return_value = SimpleNamespace(link_token="link-android-only")
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            link_redirect_uri="https://flowsight360.com/plaid/oauth-return",
+            android_package_name="com.budgetapp.mobile",
+        )
+    assert token == "link-android-only"
+    assert captured["android_package_name"] == "com.budgetapp.mobile"
+    assert "redirect_uri" not in captured
+
+
+@override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="production")
+def test_create_link_token_retries_www_redirect_uri_host():
+    from plaid_link.services import create_link_token
+
+    captured_uris = []
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured_uris.append(kwargs.get("redirect_uri"))
+
+    api = MagicMock()
+    api.link_token_create.side_effect = [
+        _api_exc(
+            "INVALID_FIELD",
+            "oauth redirect uri https://flowsight360.com/plaid/oauth-return is not configured in the developer dashboard",
+        ),
+        SimpleNamespace(link_token="link-www-ok"),
+    ]
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            link_redirect_uri="https://flowsight360.com/plaid/oauth-return",
+        )
+    assert token == "link-www-ok"
+    assert captured_uris == [
+        "https://flowsight360.com/plaid/oauth-return",
+        "https://www.flowsight360.com/plaid/oauth-return",
+    ]
 
 
 @override_settings(PLAID_ENABLE_LIABILITIES=True, PLAID_ENV="sandbox")

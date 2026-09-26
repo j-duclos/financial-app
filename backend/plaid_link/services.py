@@ -1,6 +1,7 @@
 """Plaid link exchange, account provisioning, and transactions sync."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -384,15 +385,61 @@ def _apply_plaid_defaults_to_existing(existing: Transaction, defaults: dict[str,
         setattr(existing, key, val)
 
 
+# Production OAuth return used when PLAID_REDIRECT_URI and FRONTEND_ORIGIN are unset.
+DEFAULT_PRODUCTION_PLAID_REDIRECT_URI = "https://flowsight360.com/plaid/oauth-return"
+
+
 def _link_redirect_uri() -> str | None:
     """
     Server default from PLAID_REDIRECT_URI. Used when the link-token request omits redirect_uri.
     When the browser sends redirect_uri, that value wins (see resolve_plaid_link_redirect_uri).
     """
     raw = _clean_cred(os.environ.get("PLAID_REDIRECT_URI"))
-    if not raw:
-        return None
-    return normalize_browser_plaid_redirect_uri(raw)
+    if raw:
+        return normalize_browser_plaid_redirect_uri(raw)
+    from django.conf import settings as django_settings
+
+    origin = (getattr(django_settings, "FRONTEND_ORIGIN", "") or "").strip().rstrip("/")
+    if origin:
+        try:
+            return normalize_browser_plaid_redirect_uri(f"{origin}/plaid/oauth-return")
+        except RuntimeError:
+            pass
+    if plaid_api_env() == "production":
+        return DEFAULT_PRODUCTION_PLAID_REDIRECT_URI
+    return None
+
+
+def _redirect_uri_host_variants(uri: str) -> list[str]:
+    """Apex and www must both be tried — Plaid allowlists are exact-match."""
+    primary = normalize_browser_plaid_redirect_uri(uri)
+    parsed = urlparse(primary)
+    host = (parsed.hostname or "").lower()
+    if not host or host in ("localhost", "127.0.0.1"):
+        return [primary]
+    alt_host = host[4:] if host.startswith("www.") else f"www.{host}"
+    netloc = alt_host
+    if parsed.port:
+        netloc = f"{alt_host}:{parsed.port}"
+    alternate = urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+    if alternate == primary:
+        return [primary]
+    return [primary, alternate]
+
+
+def _plaid_rejected_redirect_uri(exc: ApiException) -> bool:
+    raw_body = exc.body
+    if isinstance(raw_body, (bytes, bytearray)):
+        raw_body = raw_body.decode("utf-8", errors="replace")
+    if not isinstance(raw_body, str) or not raw_body.strip():
+        return False
+    try:
+        parsed = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return "redirect_uri" in raw_body.lower()
+    code = str(parsed.get("error_code") or "")
+    msg = str(parsed.get("error_message") or "").lower()
+    return code == "INVALID_FIELD" and ("redirect_uri" in msg or "redirect uri" in msg)
 
 
 def normalize_browser_plaid_redirect_uri(raw: str) -> str:
@@ -513,14 +560,30 @@ def create_link_token(
     webhook_url = (getattr(django_settings, "PLAID_WEBHOOK_URL", "") or "").strip()
     if webhook_url:
         req_kw["webhook"] = webhook_url
-    if redirect_uri:
-        req_kw["redirect_uri"] = redirect_uri
     package = (android_package_name or "").strip()
     if package:
+        # Android / RN Android: Plaid rejects redirect_uri when android_package_name is set.
         req_kw["android_package_name"] = package
-    req = LinkTokenCreateRequest(**req_kw)
-    resp = client.link_token_create(req)
-    return resp.link_token
+        redirect_uri = None
+    candidates: list[str | None] = [None]
+    if redirect_uri:
+        candidates = _redirect_uri_host_variants(redirect_uri)
+    last_exc: ApiException | None = None
+    for candidate in candidates:
+        attempt_kw = dict(req_kw)
+        if candidate:
+            attempt_kw["redirect_uri"] = candidate
+        try:
+            req = LinkTokenCreateRequest(**attempt_kw)
+            resp = client.link_token_create(req)
+            return resp.link_token
+        except ApiException as exc:
+            last_exc = exc
+            if candidate is None or not _plaid_rejected_redirect_uri(exc):
+                raise
+            logger.info("Plaid rejected redirect_uri %s; trying host variant", candidate)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _normalize_plaid_mask(mask: str | None) -> str:

@@ -11,9 +11,11 @@ describe("native Plaid connect on mobile", () => {
   it("reuses backend link-token, exchange, and sync APIs", () => {
     expect(hook).toMatch(/canUsePlaidBankSync\(billing\)/);
     expect(hook).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.bankSync\)/);
-    expect(hook).toMatch(/createPlaidLinkToken\(householdId/);
-    expect(hook).toMatch(/getMobilePlaidRedirectUri\(\)/);
-    expect(hook).toMatch(/getAndroidPackageName\(\)/);
+    expect(hook).toMatch(/createPlaidLinkToken\(/);
+    expect(hook).toMatch(/householdId/);
+    expect(hook).not.toMatch(/getMobilePlaidRedirectUri/);
+    expect(hook).toMatch(/android_package_name: getAndroidPackageName\(\)/);
+    expect(hook).toMatch(/Platform\.OS === "android"/);
     expect(hook).toMatch(/exchangePlaidPublicToken/);
     expect(hook).toMatch(/syncAllPlaidItems\(\{ household: householdId, force: true \}\)/);
     expect(hook).toMatch(/refreshAfterPlaidSync\(queryClient\)/);
