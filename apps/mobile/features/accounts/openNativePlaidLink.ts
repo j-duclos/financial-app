@@ -1,3 +1,5 @@
+import { requireOptionalNativeModule } from "expo";
+
 export type NativePlaidSuccess = {
   publicToken?: string;
   public_token?: string;
@@ -6,7 +8,7 @@ export type NativePlaidSuccess = {
 export class PlaidLinkUnavailableError extends Error {
   constructor() {
     super(
-      "Bank linking needs a native FlowSight build. Rebuild the iOS app after this update (Expo Go cannot open Plaid)."
+      "Plaid is not in this iOS build. Stop Expo Go / the current Debug app, then from apps/mobile run: npx expo run:ios --device"
     );
     this.name = "PlaidLinkUnavailableError";
   }
@@ -16,11 +18,24 @@ function successPublicToken(success: NativePlaidSuccess): string {
   return (success.publicToken || success.public_token || "").trim();
 }
 
+function hasPlaidNativeModule(): boolean {
+  try {
+    return requireOptionalNativeModule("ReactNativePlaidLinkSdk") != null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Opens native Plaid Link and returns the public token, or null if the user exited.
- * Dynamically imports the native SDK so unit tests do not load it.
+ * Never import the SDK until the native module is present — loading it otherwise
+ * fatally errors with "Cannot find native module 'ReactNativePlaidLinkSdk'".
  */
 export async function openNativePlaidLink(linkToken: string): Promise<string | null> {
+  if (!hasPlaidNativeModule()) {
+    throw new PlaidLinkUnavailableError();
+  }
+
   let createPlaidLinkSession: typeof import("react-native-plaid-link-sdk").createPlaidLinkSession;
   try {
     ({ createPlaidLinkSession } = await import("react-native-plaid-link-sdk"));

@@ -26,8 +26,9 @@ describe("native Plaid connect on mobile", () => {
     expect(native).toMatch(/createPlaidLinkSession/);
     expect(native).toMatch(/session\.open\(\)/);
     expect(native).toMatch(/onEvent:/);
+    expect(native).toMatch(/requireOptionalNativeModule\("ReactNativePlaidLinkSdk"\)/);
     expect(native).toMatch(/import\("react-native-plaid-link-sdk"\)/);
     expect(native).toMatch(/PlaidLinkUnavailableError/);
-    expect(native).toMatch(/Expo Go cannot open Plaid/);
+    expect(native).toMatch(/npx expo run:ios --device/);
   });
 });
