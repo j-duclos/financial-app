@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Alert, Platform } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,6 +24,7 @@ export function useConnectBank() {
   const { promptUpgrade } = usePremiumUpgrade();
   const plaidAllowed = canUsePlaidBankSync(billing);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
 
   const connectBank = useCallback(async () => {
     if (!plaidAllowed) {
@@ -35,13 +36,15 @@ export function useConnectBank() {
       Alert.alert("Household required", "Set a default household in Settings, then connect a bank.");
       return;
     }
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const { link_token } = await createPlaidLinkToken(
         householdId,
         Platform.OS === "android" ? { android_package_name: getAndroidPackageName() } : undefined
       );
+      setBusy(false);
       const publicToken = await openNativePlaidLink(link_token);
       if (!publicToken) return;
       await exchangePlaidPublicToken({ public_token: publicToken, household_id: householdId });
@@ -65,9 +68,10 @@ export function useConnectBank() {
       }
       Alert.alert("Couldn’t connect bank", describeApiError(err));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
-  }, [busy, householdId, isReady, plaidAllowed, promptUpgrade, queryClient]);
+  }, [householdId, isReady, plaidAllowed, promptUpgrade, queryClient]);
 
   return { connectBank, busy, plaidAllowed };
 }

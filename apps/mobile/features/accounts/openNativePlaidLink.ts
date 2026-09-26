@@ -1,5 +1,3 @@
-import { Platform } from "react-native";
-
 export type NativePlaidSuccess = {
   publicToken?: string;
   public_token?: string;
@@ -70,8 +68,10 @@ export async function openNativePlaidLink(linkToken: string): Promise<string | n
             }
             finish(null);
           },
+          // v13 invokes this on every native event without optional chaining.
+          onEvent: () => undefined,
         });
-        await session.open(Platform.OS === "ios");
+        await session.open();
       } catch (err) {
         fail(err instanceof Error ? err : new Error(String(err)));
       }
