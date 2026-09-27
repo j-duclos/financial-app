@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -94,6 +95,8 @@ def test_admin_can_list_and_create_invitation():
     assert body["email"] == "beta@example.com"
     assert body["status"] == "pending"
     assert body["detail"] == "Beta invitation sent to beta@example.com."
+    assert body["email_sent"] is True
+    assert body["sent_at"]
     assert _secret_keys(body) == []
     assert "token_hash" not in body
     assert len(mail.outbox) == 1
@@ -131,6 +134,48 @@ def test_create_requires_valid_email():
 
 
 @pytest.mark.django_db
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="",
+    FRONTEND_ORIGIN="https://flowsight360.com",
+)
+def test_create_does_not_claim_email_sent_when_inbox_backend_is_missing(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    client, _admin = _staff_client()
+    mail.outbox.clear()
+    created = client.post(
+        CREATE_URL,
+        {"email": "beta@example.com", "complimentary_premium_until": _until().isoformat()},
+        format="json",
+    )
+    assert created.status_code == 503
+    assert "email_host" in created.json()["detail"].lower()
+    assert ComplimentaryPremiumInvitation.objects.filter(email="beta@example.com").exists()
+    stored = ComplimentaryPremiumInvitation.objects.get()
+    assert stored.sent_at is None
+    assert mail.outbox == []
+
+
+@pytest.mark.django_db
+@override_settings(FRONTEND_ORIGIN="https://flowsight360.com")
+def test_create_returns_503_when_smtp_delivery_fails():
+    client, _admin = _staff_client()
+    mail.outbox.clear()
+    with patch("core.mail._send", side_effect=OSError("smtp down")):
+        created = client.post(
+            CREATE_URL,
+            {"email": "beta@example.com", "complimentary_premium_until": _until().isoformat()},
+            format="json",
+        )
+    assert created.status_code == 503
+    assert "couldn't send the invitation email" in created.json()["detail"].lower()
+    stored = ComplimentaryPremiumInvitation.objects.get()
+    assert stored.sent_at is None
+    assert mail.outbox == []
+
+
+@pytest.mark.django_db
 @override_settings(FRONTEND_ORIGIN="https://flowsight360.com")
 def test_admin_can_resend_pending_invitation_and_rotates_token():
     client, _admin = _staff_client()
@@ -149,7 +194,31 @@ def test_admin_can_resend_pending_invitation_and_rotates_token():
     new_raw = parse_qs(urlparse(url).query)["token"][0]
     assert invite.token_hash == hash_invitation_token(new_raw)
     assert hash_invitation_token(raw) != invite.token_hash
+    assert r.json()["email_sent"] is True
     assert _secret_keys(r.json()) == []
+
+
+@pytest.mark.django_db
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="",
+    FRONTEND_ORIGIN="https://flowsight360.com",
+)
+def test_resend_does_not_claim_success_when_inbox_backend_is_missing(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    client, _admin = _staff_client()
+    invite, _raw = create_invitation(
+        email="resend-fail@example.com",
+        complimentary_premium_until=_until(),
+        send_email=False,
+    )
+    mail.outbox.clear()
+    r = client.post(f"{CREATE_URL}{invite.pk}/resend/", {}, format="json")
+    assert r.status_code == 503
+    invite.refresh_from_db()
+    assert invite.sent_at is None
+    assert mail.outbox == []
 
 
 @pytest.mark.django_db

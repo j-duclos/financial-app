@@ -1,9 +1,19 @@
 import { requireOptionalNativeModule } from "expo";
+import {
+  logPlaidLinkDiagnostic,
+  PlaidLinkExitError,
+  shouldLogPlaidLinkEvent,
+  summarizePlaidExit,
+  summarizePlaidLinkEvent,
+  type PlaidLinkExitFields,
+} from "./plaidLinkDiagnostics";
 
 export type NativePlaidSuccess = {
   publicToken?: string;
   public_token?: string;
 };
+
+export { PlaidLinkExitError };
 
 export class PlaidLinkUnavailableError extends Error {
   constructor() {
@@ -24,6 +34,31 @@ function hasPlaidNativeModule(): boolean {
   } catch {
     return false;
   }
+}
+
+function exitFields(exit: {
+  error?: {
+    errorCode?: string;
+    errorType?: string;
+    displayMessage?: string;
+    errorMessage?: string;
+  };
+  metadata?: {
+    requestId?: string;
+    status?: string;
+    institution?: { id?: string; name?: string };
+  };
+}): PlaidLinkExitFields {
+  return {
+    errorCode: exit.error?.errorCode,
+    errorType: exit.error?.errorType,
+    displayMessage: exit.error?.displayMessage,
+    errorMessage: exit.error?.errorMessage,
+    institutionId: exit.metadata?.institution?.id,
+    institutionName: exit.metadata?.institution?.name,
+    requestId: exit.metadata?.requestId,
+    status: exit.metadata?.status,
+  };
 }
 
 /**
@@ -72,19 +107,25 @@ export async function openNativePlaidLink(linkToken: string): Promise<string | n
             finish(publicToken);
           },
           onExit: (exit) => {
-            const code = String(exit?.error?.errorCode ?? "").trim();
-            const display =
-              exit?.error?.displayMessage ||
-              exit?.error?.errorMessage ||
-              code;
-            if (exit?.error && display) {
-              fail(new Error(String(display)));
+            const fields = exitFields(exit);
+            if (exit?.error) {
+              logPlaidLinkDiagnostic("exit", summarizePlaidExit(fields));
+              fail(new PlaidLinkExitError(fields));
               return;
             }
             finish(null);
           },
-          // v13 invokes this on every native event without optional chaining.
-          onEvent: () => undefined,
+          onEvent: (event) => {
+            const name = String(event?.eventName ?? "");
+            if (!shouldLogPlaidLinkEvent(name)) return;
+            logPlaidLinkDiagnostic(
+              "event",
+              summarizePlaidLinkEvent({
+                eventName: name,
+                metadata: event?.metadata as Record<string, unknown> | undefined,
+              })
+            );
+          },
         });
         await session.open();
       } catch (err) {

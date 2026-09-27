@@ -1,4 +1,6 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import type { ConfigPlugin } from "expo/config-plugins";
+import { withPodfileProperties } from "expo/config-plugins";
 
 /** Bump for beta releases; EAS production profile may auto-increment native build numbers. */
 const APP_VERSION = "0.9.0";
@@ -23,6 +25,13 @@ export const DEFAULT_TERMS_OF_SERVICE_URL = `${DEFAULT_LEGAL_ORIGIN}/terms`;
 /** Store icon: 1024x1024 PNG, no alpha. Splash stays a separate asset. */
 export const IOS_STORE_ICON = "./assets/images/icon.png";
 export const APP_SPLASH_IMAGE = "./assets/images/splash-icon.png";
+
+/** Prebuilt RN Core on SDK 54 omits Fabric Sealable; ExpoModulesCore (Plaid views) need it at link. */
+const withReactNativeFromSource: ConfigPlugin = (config) =>
+  withPodfileProperties(config, (mod) => {
+    mod.modResults["ios.buildReactNativeFromSource"] = "true";
+    return mod;
+  });
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const appEnv = (process.env.EXPO_PUBLIC_APP_ENV ?? "development").trim() || "development";
@@ -78,6 +87,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins: [
       "expo-router",
       "expo-secure-store",
+      withReactNativeFromSource,
       [
         "expo-notifications",
         {

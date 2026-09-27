@@ -118,19 +118,25 @@ def send_invitation_email(invite: ComplimentaryPremiumInvitation, raw_token: str
     if not url:
         logger.error("complimentary_invite_missing_frontend_origin invitation_id=%s", invite.pk)
         return False
-    sent = send_complimentary_premium_invitation_email(
-        to_email=invite.email,
-        invite_url=url,
-        complimentary_until=invite.complimentary_premium_until,
-    )
+    try:
+        sent = send_complimentary_premium_invitation_email(
+            to_email=invite.email,
+            invite_url=url,
+            complimentary_until=invite.complimentary_premium_until,
+        )
+    except Exception:
+        logger.exception("complimentary_invite_email_failed invitation_id=%s", invite.pk)
+        return False
     if sent:
         invite.sent_at = timezone.now()
         invite.save(update_fields=["sent_at"])
         logger.info("complimentary_invite_email_sent invitation_id=%s", invite.pk)
-    return sent
+        return True
+    logger.error("complimentary_invite_email_not_accepted invitation_id=%s", invite.pk)
+    return False
 
 
-def resend_invitation(invite: ComplimentaryPremiumInvitation, *, created_by=None) -> str:
+def resend_invitation(invite: ComplimentaryPremiumInvitation, *, created_by=None) -> tuple[str, bool]:
     if invite.accepted_at:
         raise InvitationError("accepted", "This invitation has already been accepted.")
     if invite.revoked_at:
@@ -142,8 +148,8 @@ def resend_invitation(invite: ComplimentaryPremiumInvitation, *, created_by=None
         invite.created_by = created_by
     invite.save(update_fields=["token_hash", "expires_at", "created_by"])
     logger.info("complimentary_invite_resent invitation_id=%s", invite.pk)
-    send_invitation_email(invite, raw)
-    return raw
+    sent = send_invitation_email(invite, raw)
+    return raw, sent
 
 
 def revoke_invitation(invite: ComplimentaryPremiumInvitation) -> ComplimentaryPremiumInvitation:
@@ -294,6 +300,8 @@ def invitation_staff_payload(invite: ComplimentaryPremiumInvitation) -> dict[str
         "accepted_at": _iso(invite.accepted_at),
         "accepted_user": accepted_user,
         "created_by_id": invite.created_by_id,
+        "sent_at": _iso(invite.sent_at),
+        "email_sent": invite.sent_at is not None,
     }
 
 

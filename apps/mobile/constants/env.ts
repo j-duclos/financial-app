@@ -337,10 +337,15 @@ export function getAndroidPackageName(): string {
 }
 
 /** HTTPS Plaid OAuth redirect; must match Plaid Dashboard allowed redirect URIs. */
-export function getMobilePlaidRedirectUri(): string {
+export function getPlaidRedirectUri(): string {
   const fromEnv = (process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI ?? extra().plaidRedirectUri ?? "").trim();
   if (fromEnv) return fromEnv.replace(/\/$/, "");
   return "https://flowsight360.com/plaid/oauth-return";
+}
+
+/** @deprecated Use getPlaidRedirectUri */
+export function getMobilePlaidRedirectUri(): string {
+  return getPlaidRedirectUri();
 }
 
 /**

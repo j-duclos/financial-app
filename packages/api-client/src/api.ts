@@ -297,6 +297,8 @@ export type StaffBetaTesterInvitation = {
   accepted_at: string | null;
   accepted_user: { id: number; username: string; email: string } | null;
   created_by_id?: number | null;
+  sent_at?: string | null;
+  email_sent?: boolean;
   detail?: string;
 };
 

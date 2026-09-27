@@ -294,7 +294,8 @@ def test_resend_issues_new_token_without_changing_premium_until():
     invite, raw = make_invite(send_email=True)
     until = invite.complimentary_premium_until
     mail.outbox.clear()
-    new_raw = resend_invitation(invite)
+    new_raw, emailed = resend_invitation(invite)
+    assert emailed is True
     invite.refresh_from_db()
     assert new_raw != raw
     assert invite.token_hash == hash_invitation_token(new_raw)

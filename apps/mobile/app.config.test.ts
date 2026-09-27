@@ -35,7 +35,8 @@ describe("iOS device prep", () => {
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
     expect(configSource).not.toMatch(/associatedDomains/);
     expect(configSource).toMatch(/plaidRedirectUri:/);
-    expect(configSource).toMatch(/expo-notifications/);
+    expect(configSource).toMatch(/ios\.buildReactNativeFromSource/);
+    expect(configSource).toMatch(/withReactNativeFromSource/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
     expect(configSource).toMatch(/APP_SPLASH_IMAGE = "\.\/assets\/images\/splash-icon\.png"/);
     expect(configSource).toMatch(/adaptiveIcon/);

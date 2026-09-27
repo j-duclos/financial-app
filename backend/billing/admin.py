@@ -243,8 +243,9 @@ class ComplimentaryPremiumInvitationAdmin(admin.ModelAdmin):
         sent = 0
         for invite in queryset:
             try:
-                resend_invitation(invite, created_by=request.user)
-                sent += 1
+                _raw, emailed = resend_invitation(invite, created_by=request.user)
+                if emailed:
+                    sent += 1
             except InvitationError:
                 continue
         self.message_user(

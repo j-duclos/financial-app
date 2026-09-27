@@ -14,6 +14,7 @@ from billing.invitations import (
     list_invitations_for_staff,
     resend_invitation,
     revoke_invitation,
+    send_invitation_email,
 )
 from billing.models import BillingSubscription, ComplimentaryPremiumInvitation
 from billing.permissions import IsStaffUser
@@ -38,6 +39,26 @@ def _invitation_error_response(exc: InvitationError) -> Response:
     return Response({"code": exc.code, "detail": exc.detail}, status=http_status)
 
 
+def _invitation_email_failure_response() -> Response:
+    from django.conf import settings as django_settings
+
+    from core.frontend_origin import get_frontend_origin, is_production_frontend_runtime
+    from core.mail import email_transport_label, non_inbox_send_detail
+
+    transport = email_transport_label()
+    production = is_production_frontend_runtime(debug=bool(django_settings.DEBUG))
+    if not get_frontend_origin():
+        detail = "This server cannot build an invitation link (FRONTEND_ORIGIN is missing)."
+    elif production and transport in {"console", "dummy", "locmem", "file"}:
+        detail = non_inbox_send_detail()
+    else:
+        detail = "We couldn't send the invitation email right now. Please try again."
+    return Response(
+        {"detail": detail, "transport": transport},
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 class StaffBetaTesterInvitationListCreateView(APIView):
     permission_classes = [IsAuthenticated, IsStaffUser]
 
@@ -54,15 +75,17 @@ class StaffBetaTesterInvitationListCreateView(APIView):
         serializer = InvitationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            invite, _raw = create_invitation(
+            invite, raw = create_invitation(
                 email=serializer.validated_data["email"],
                 complimentary_premium_until=serializer.validated_data["complimentary_premium_until"],
                 expires_at=serializer.validated_data.get("expires_at"),
                 created_by=request.user,
-                send_email=True,
+                send_email=False,
             )
         except InvitationError as exc:
             return _invitation_error_response(exc)
+        if send_invitation_email(invite, raw) is not True:
+            return _invitation_email_failure_response()
         payload = invitation_staff_payload(invite)
         payload["detail"] = f"Beta invitation sent to {invite.email}."
         return Response(payload, status=status.HTTP_201_CREATED)
@@ -74,9 +97,11 @@ class StaffBetaTesterInvitationResendView(APIView):
     def post(self, request, invitation_id: int):
         invite = get_object_or_404(ComplimentaryPremiumInvitation, pk=invitation_id)
         try:
-            resend_invitation(invite, created_by=request.user)
+            _raw, sent = resend_invitation(invite, created_by=request.user)
         except InvitationError as exc:
             return _invitation_error_response(exc)
+        if sent is not True:
+            return _invitation_email_failure_response()
         invite.refresh_from_db()
         payload = invitation_staff_payload(invite)
         payload["detail"] = f"Invitation resent to {invite.email}."

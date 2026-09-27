@@ -253,6 +253,11 @@ def send_complimentary_premium_invitation_email(
     if not email or not invite_url:
         return False
     if _refuse_non_inbox_backend():
+        logger.error(
+            "complimentary_invite refusing non-inbox backend transport=%s recipient_domain=%s",
+            email_transport_label(),
+            _recipient_domain(email),
+        )
         return False
     until_display = ""
     if complimentary_until is not None:

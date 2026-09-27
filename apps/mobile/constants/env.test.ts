@@ -17,6 +17,7 @@ describe("getApiBaseUrl", () => {
     appEnv?: string;
     apiUrl?: string;
     hostUri?: string;
+    plaidRedirectUri?: string;
   }) {
     vi.doMock("expo-constants", () => ({
       default: {
@@ -25,6 +26,7 @@ describe("getApiBaseUrl", () => {
           extra: {
             appEnv: mocks?.appEnv,
             apiUrl: mocks?.apiUrl ?? "",
+            plaidRedirectUri: mocks?.plaidRedirectUri,
           },
         },
       },
@@ -332,11 +334,21 @@ describe("production API host + runtime diagnostic", () => {
     const env = await loadEnv();
     expect(env.getAndroidPackageName()).toBe("com.budgetapp.mobile");
     expect(env.getMobilePlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
+    expect(env.getPlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
+  });
+
+  it("uses extra.plaidRedirectUri when Expo extra is set", async () => {
+    delete process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI;
+    const env = await loadEnv({
+      plaidRedirectUri: "https://flowsight360.com/plaid/oauth-return/",
+    });
+    expect(env.getPlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
   });
 
   it("uses EXPO_PUBLIC_PLAID_REDIRECT_URI when set", async () => {
     process.env.EXPO_PUBLIC_PLAID_REDIRECT_URI = "https://flowsight360.com/plaid/oauth-return/";
     const env = await loadEnv();
     expect(env.getMobilePlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
+    expect(env.getPlaidRedirectUri()).toBe("https://flowsight360.com/plaid/oauth-return");
   });
 });

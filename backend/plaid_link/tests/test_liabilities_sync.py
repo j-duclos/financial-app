@@ -500,6 +500,43 @@ def test_create_link_token_drops_redirect_uri_when_android_package_set():
     assert "redirect_uri" not in captured
 
 
+@override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="sandbox")
+def test_create_link_token_uses_normalized_client_mobile_redirect_uri():
+    from plaid_link.services import create_link_token, normalize_browser_plaid_redirect_uri
+
+    captured = {}
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    api = MagicMock()
+    api.link_token_create.return_value = SimpleNamespace(link_token="link-ios-oauth")
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            link_redirect_uri="https://flowsight360.com/plaid/oauth-return/",
+        )
+    assert token == "link-ios-oauth"
+    expected = normalize_browser_plaid_redirect_uri(
+        "https://flowsight360.com/plaid/oauth-return/"
+    )
+    assert expected == "https://flowsight360.com/plaid/oauth-return"
+    assert captured["redirect_uri"] == expected
+    assert "android_package_name" not in captured
+
+
+@override_settings(PLAID_ENV="production")
+def test_normalize_redirect_uri_requires_https_in_production():
+    from plaid_link.services import normalize_browser_plaid_redirect_uri
+
+    with pytest.raises(RuntimeError, match="http://"):
+        normalize_browser_plaid_redirect_uri("http://flowsight360.com/plaid/oauth-return")
+
+
 @override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="production")
 def test_create_link_token_retries_www_redirect_uri_host():
     from plaid_link.services import create_link_token

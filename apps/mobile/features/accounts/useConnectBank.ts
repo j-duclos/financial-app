@@ -7,7 +7,12 @@ import {
   syncAllPlaidItems,
 } from "@budget-app/api-client";
 import { canUsePlaidBankSync } from "@budget-app/shared";
-import { getAndroidPackageName } from "@/constants/env";
+import { plaidLinkTokenCreateOptions } from "./plaidLinkTokenOptions";
+import {
+  openNativePlaidLink,
+  PlaidLinkExitError,
+  PlaidLinkUnavailableError,
+} from "./openNativePlaidLink";
 import { useBillingStatus } from "@/hooks/useBillingStatus";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { usePremiumUpgrade } from "@/hooks/usePremiumUpgrade";
@@ -15,7 +20,6 @@ import { PREMIUM_UPGRADE_CONTEXT } from "@/features/billing";
 import { describeApiError } from "@/services/api";
 import { refreshAfterPlaidSync } from "@/lib/financialQueryRefresh";
 import { recordPlaidRefreshTiming } from "@/lib/startupTrace";
-import { openNativePlaidLink, PlaidLinkUnavailableError } from "./openNativePlaidLink";
 
 export function useConnectBank() {
   const queryClient = useQueryClient();
@@ -42,7 +46,7 @@ export function useConnectBank() {
     try {
       const { link_token } = await createPlaidLinkToken(
         householdId,
-        Platform.OS === "android" ? { android_package_name: getAndroidPackageName() } : undefined
+        plaidLinkTokenCreateOptions(Platform.OS)
       );
       setBusy(false);
       const publicToken = await openNativePlaidLink(link_token);
@@ -64,6 +68,10 @@ export function useConnectBank() {
     } catch (err) {
       if (err instanceof PlaidLinkUnavailableError) {
         Alert.alert("Rebuild required", err.message);
+        return;
+      }
+      if (err instanceof PlaidLinkExitError) {
+        Alert.alert("Couldn’t connect bank", err.userMessage);
         return;
       }
       Alert.alert("Couldn’t connect bank", describeApiError(err));

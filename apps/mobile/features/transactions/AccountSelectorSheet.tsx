@@ -1,10 +1,14 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { useQuery } from "@tanstack/react-query";
+import { listAccounts } from "@budget-app/api-client";
 import type { Account } from "@budget-app/shared";
-import { formatCurrency, getAccountInstitutionSubtitle, getEffectiveDisplayName } from "@budget-app/shared";
+import { getAccountInstitutionSubtitle, getEffectiveDisplayName } from "@budget-app/shared";
 import { BottomSheet } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { groupAccountsByType } from "@/lib/accountGroups";
+import { accountQueryKeys } from "@/features/accounts/queryKeys";
+import { formatAccountSelectorBalanceLine } from "./accountSelectorBalance";
 
 type Props = {
   visible: boolean;
@@ -13,17 +17,6 @@ type Props = {
   onClose: () => void;
   onSelect: (accountId: number) => void;
 };
-
-function accountBalanceLine(account: Account): string | null {
-  if (account.account_type === "CREDIT") {
-    if (account.balance_owed != null) return `Owed ${formatCurrency(account.balance_owed, account.currency)}`;
-    if (account.current_balance != null) return `Balance ${formatCurrency(account.current_balance, account.currency)}`;
-    return null;
-  }
-  const balance = account.available_balance ?? account.balance;
-  if (balance != null) return `Balance ${formatCurrency(balance, account.currency)}`;
-  return null;
-}
 
 export function AccountSelectorSheet({
   visible,
@@ -34,6 +27,19 @@ export function AccountSelectorSheet({
 }: Props) {
   const theme = useTheme();
   const groups = groupAccountsByType(accounts);
+  const balanceListQuery = useQuery({
+    queryKey: accountQueryKeys.mainList(),
+    queryFn: () => listAccounts({ balance: "true", page_size: 500, active_only: true }),
+    enabled: visible,
+    staleTime: 30_000,
+  });
+  const balancesById = useMemo(() => {
+    const map = new Map<number, Account>();
+    for (const row of balanceListQuery.data?.results ?? []) {
+      map.set(row.id, row);
+    }
+    return map;
+  }, [balanceListQuery.data?.results]);
 
   return (
     <BottomSheet visible={visible} title="Select account" onClose={onClose}>
@@ -55,7 +61,7 @@ export function AccountSelectorSheet({
               <View style={{ gap: 4 }}>
                 {group.accounts.map((account) => {
                   const selected = account.id === selectedAccountId;
-                  const balanceLine = accountBalanceLine(account);
+                  const balanceLine = formatAccountSelectorBalanceLine(balancesById.get(account.id));
                   return (
                     <Pressable
                       key={account.id}

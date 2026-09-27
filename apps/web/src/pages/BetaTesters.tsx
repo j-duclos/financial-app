@@ -106,7 +106,10 @@ export default function BetaTesters() {
       setInviteOpen(false);
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
     },
-    onError: (err) => setError(errorMessage(err)),
+    onError: async (err) => {
+      setError(errorMessage(err));
+      await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
   });
 
   const resendMu = useMutation({
@@ -116,7 +119,10 @@ export default function BetaTesters() {
       setError(null);
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
     },
-    onError: (err) => setError(errorMessage(err)),
+    onError: async (err) => {
+      setError(errorMessage(err));
+      await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
   });
 
   const revokeMu = useMutation({

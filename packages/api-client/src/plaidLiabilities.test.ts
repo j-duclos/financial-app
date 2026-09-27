@@ -79,7 +79,6 @@ describe("Plaid liabilities API client", () => {
   it("posts android_package_name when creating a link token", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { link_token: "link-sandbox" }));
     const result = await createPlaidLinkToken(4, {
-      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
       android_package_name: "com.budgetapp.mobile",
     });
     expect(result.link_token).toBe("link-sandbox");
@@ -87,8 +86,19 @@ describe("Plaid liabilities API client", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/plaid/link-token/");
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({
       household_id: 4,
-      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
       android_package_name: "com.budgetapp.mobile",
+    });
+  });
+
+  it("posts redirect_uri when creating an iOS link token", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { link_token: "link-ios" }));
+    await createPlaidLinkToken(4, {
+      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      household_id: 4,
+      redirect_uri: "https://flowsight360.com/plaid/oauth-return",
     });
   });
 });
