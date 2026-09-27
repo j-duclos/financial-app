@@ -1,9 +1,25 @@
-import { Redirect } from "expo-router";
+import { Text, View } from "react-native";
+import { useTheme } from "@/theme";
 
 /**
- * Safety net if an HTTPS OAuth return ever opens the app.
- * Plaid Link should keep the OAuth session in-app; this must not remount Home.
+ * Universal Link landing for Plaid iOS OAuth.
+ * Stay on this screen. Navigating away tears down the native Link session.
  */
 export default function PlaidOAuthReturnScreen() {
-  return <Redirect href="/(app)/(tabs)/accounts" />;
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.colors.background,
+        padding: 24,
+      }}
+    >
+      <Text style={{ color: theme.colors.text, textAlign: "center", ...theme.typography.body }}>
+        Finishing bank sign-in…
+      </Text>
+    </View>
+  );
 }

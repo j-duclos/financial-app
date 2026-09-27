@@ -240,6 +240,9 @@ def _serve_react_app() -> bool:
 
 
 SERVE_REACT_APP = _serve_react_app()
+
+# Apple Developer team id for applinks (Plaid iOS OAuth Universal Links).
+APPLE_TEAM_ID = (os.environ.get("APPLE_TEAM_ID") or "8T4R887TAQ").strip()
 if not DEBUG:
     STORAGES = {
         "staticfiles": {

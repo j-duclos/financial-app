@@ -45,9 +45,16 @@ export class PlaidLinkExitError extends Error {
 }
 
 export function plaidExitUserMessage(fields: PlaidLinkExitFields): string {
+  const code = (fields.errorCode ?? "").trim().toUpperCase();
   const display = (fields.displayMessage ?? "").trim();
+  if (code === "ITEM_LOCKED" || /account is locked/i.test(display)) {
+    return (
+      "Plaid stopped this bank login (ITEM_LOCKED). That is Plaid’s connector, not FlowSight, " +
+      "and it is often wrong after failed OAuth. If you can still sign in at the bank’s own app, " +
+      "wait 15–30 minutes, then tap Connect bank again."
+    );
+  }
   if (display) return display;
-  const code = (fields.errorCode ?? "").trim();
   if (code) return "Bank linking didn’t finish. Try again.";
   return "Bank linking didn’t finish. Try again.";
 }

@@ -41,6 +41,17 @@ describe("Plaid Link exit diagnostics", () => {
     expect(plaidExitUserMessage({ requestId: "req-1" })).not.toMatch(/req-/);
   });
 
+  it("does not treat Plaid ITEM_LOCKED as the bank account being locked", () => {
+    const msg = plaidExitUserMessage({
+      errorCode: "ITEM_LOCKED",
+      displayMessage: "Your account is locked. Please visit your financial institution’s website.",
+      institutionName: "Capital One",
+    });
+    expect(msg).toMatch(/ITEM_LOCKED/);
+    expect(msg).toMatch(/Plaid/);
+    expect(msg).not.toMatch(/visit your financial institution/i);
+  });
+
   it("summarizes exits without tokens or credentials", () => {
     const summary = summarizePlaidExit({
       errorCode: "INVALID_CREDENTIALS",

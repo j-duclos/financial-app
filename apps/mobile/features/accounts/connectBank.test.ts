@@ -14,7 +14,8 @@ describe("native Plaid connect on mobile", () => {
     expect(hook).toMatch(/canUsePlaidBankSync\(billing\)/);
     expect(hook).toMatch(/promptUpgrade\(PREMIUM_UPGRADE_CONTEXT\.bankSync\)/);
     expect(hook).toMatch(/createPlaidLinkToken\(/);
-    expect(hook).toMatch(/plaidLinkTokenCreateOptions\(Platform\.OS\)/);
+    expect(hook).toMatch(/plaidLinkTokenCreateAttempts\(Platform\.OS\)/);
+    expect(hook).toMatch(/isPlaidRedirectUriRejected/);
     expect(hook).toMatch(/exchangePlaidPublicToken/);
     expect(hook).toMatch(/syncAllPlaidItems\(\{ household: householdId, force: true \}\)/);
     expect(hook).toMatch(/refreshAfterPlaidSync\(queryClient\)/);
@@ -25,6 +26,8 @@ describe("native Plaid connect on mobile", () => {
   it("sends iOS redirect_uri and Android package name as mutually exclusive options", () => {
     expect(options).toMatch(/getPlaidRedirectUri\(\)/);
     expect(options).toMatch(/redirect_uri: getPlaidRedirectUri\(\)/);
+    expect(options).toMatch(/plaidLinkTokenCreateAttempts/);
+    expect(options).toMatch(/undefined/);
     expect(options).toMatch(/android_package_name: getAndroidPackageName\(\)/);
     expect(options).toMatch(/platform === "android"/);
     expect(options).toMatch(/platform === "ios"/);
@@ -32,7 +35,7 @@ describe("native Plaid connect on mobile", () => {
 
   it("opens native Link via a dynamic SDK import", () => {
     expect(native).toMatch(/createPlaidLinkSession/);
-    expect(native).toMatch(/session\.open\(\)/);
+    expect(native).toMatch(/session\.open\(true\)/);
     expect(native).toMatch(/onEvent:/);
     expect(native).toMatch(/PlaidLinkExitError/);
     expect(native).toMatch(/requireOptionalNativeModule\("ReactNativePlaidLinkSdk"\)/);
@@ -41,7 +44,10 @@ describe("native Plaid connect on mobile", () => {
     expect(native).toMatch(/npx expo run:ios --device/);
   });
 
-  it("does not reintroduce associatedDomains for Plaid OAuth", () => {
-    expect(config).not.toMatch(/associatedDomains/);
+  it("keeps the native OAuth return screen mounted for Universal Links", () => {
+    expect(config).toMatch(/associatedDomains/);
+    const oauthReturn = readFileSync(join(dir, "../../app/plaid/oauth-return.tsx"), "utf8");
+    expect(oauthReturn).toMatch(/Finishing bank sign-in/);
+    expect(oauthReturn).not.toMatch(/from "expo-router"/);
   });
 });

@@ -570,6 +570,48 @@ def test_create_link_token_retries_www_redirect_uri_host():
     ]
 
 
+@override_settings(PLAID_ENABLE_LIABILITIES=False, PLAID_ENV="production")
+def test_create_link_token_falls_back_to_server_redirect_uri_after_client_reject():
+    from plaid_link.services import create_link_token
+
+    captured_uris = []
+
+    class FakeReq:
+        def __init__(self, **kwargs):
+            captured_uris.append(kwargs.get("redirect_uri"))
+
+    api = MagicMock()
+    api.link_token_create.side_effect = [
+        _api_exc(
+            "INVALID_FIELD",
+            "oauth redirect uri https://flowsight360.com/plaid/oauth-return is not configured in the developer dashboard",
+        ),
+        _api_exc(
+            "INVALID_FIELD",
+            "oauth redirect uri https://www.flowsight360.com/plaid/oauth-return is not configured in the developer dashboard",
+        ),
+        SimpleNamespace(link_token="link-server-ok"),
+    ]
+    with (
+        patch("plaid_link.services.get_plaid_client", return_value=api),
+        patch("plaid_link.services.LinkTokenCreateRequest", FakeReq),
+        patch(
+            "plaid_link.services._link_redirect_uri",
+            return_value="https://flowsight360.com/accounts",
+        ),
+    ):
+        token = create_link_token(
+            client_user_id="user-1",
+            link_redirect_uri="https://flowsight360.com/plaid/oauth-return",
+        )
+    assert token == "link-server-ok"
+    assert captured_uris == [
+        "https://flowsight360.com/plaid/oauth-return",
+        "https://www.flowsight360.com/plaid/oauth-return",
+        "https://flowsight360.com/accounts",
+    ]
+
+
 @override_settings(PLAID_ENABLE_LIABILITIES=True, PLAID_ENV="sandbox")
 @pytest.mark.django_db
 def test_link_token_update_endpoint_accepts_redirect_uri(plaid_setup, auth_client):

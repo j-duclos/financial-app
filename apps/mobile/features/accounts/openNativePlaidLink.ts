@@ -127,7 +127,7 @@ export async function openNativePlaidLink(linkToken: string): Promise<string | n
             );
           },
         });
-        await session.open();
+        await session.open(true);
       } catch (err) {
         fail(err instanceof Error ? err : new Error(String(err)));
       }

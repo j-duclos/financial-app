@@ -427,6 +427,23 @@ def _redirect_uri_host_variants(uri: str) -> list[str]:
     return [primary, alternate]
 
 
+def _link_token_redirect_candidates(client_resolved: str | None) -> list[str | None]:
+    """Client URI (apex/www) then server PLAID_REDIRECT_URI variants if different."""
+    ordered: list[str] = []
+    if client_resolved:
+        for uri in _redirect_uri_host_variants(client_resolved):
+            if uri not in ordered:
+                ordered.append(uri)
+    server = _link_redirect_uri()
+    if server:
+        for uri in _redirect_uri_host_variants(server):
+            if uri not in ordered:
+                ordered.append(uri)
+    if ordered:
+        return ordered
+    return [None]
+
+
 def _plaid_rejected_redirect_uri(exc: ApiException) -> bool:
     raw_body = exc.body
     if isinstance(raw_body, (bytes, bytearray)):
@@ -566,8 +583,8 @@ def create_link_token(
         req_kw["android_package_name"] = package
         redirect_uri = None
     candidates: list[str | None] = [None]
-    if redirect_uri:
-        candidates = _redirect_uri_host_variants(redirect_uri)
+    if not package:
+        candidates = _link_token_redirect_candidates(redirect_uri)
     last_exc: ApiException | None = None
     for candidate in candidates:
         attempt_kw = dict(req_kw)

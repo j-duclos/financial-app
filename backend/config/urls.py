@@ -20,12 +20,19 @@ from django.urls import path, include, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from billing.dev_views import TestPlanOverrideView
+from core.apple_app_site import apple_app_site_association
 from core.spa import serve_frontend
 from core.views import health
 from timeline.views import TimelineView, TimelineCalendarView
 
 urlpatterns = [
     path("health/", health, name="health"),
+    path(
+        ".well-known/apple-app-site-association",
+        apple_app_site_association,
+        name="apple-app-site-association",
+    ),
+    path("apple-app-site-association", apple_app_site_association),
     path("admin/", admin.site.urls),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

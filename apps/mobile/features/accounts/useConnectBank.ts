@@ -7,7 +7,10 @@ import {
   syncAllPlaidItems,
 } from "@budget-app/api-client";
 import { canUsePlaidBankSync } from "@budget-app/shared";
-import { plaidLinkTokenCreateOptions } from "./plaidLinkTokenOptions";
+import {
+  isPlaidRedirectUriRejected,
+  plaidLinkTokenCreateAttempts,
+} from "./plaidLinkTokenOptions";
 import {
   openNativePlaidLink,
   PlaidLinkExitError,
@@ -44,10 +47,21 @@ export function useConnectBank() {
     inFlight.current = true;
     setBusy(true);
     try {
-      const { link_token } = await createPlaidLinkToken(
-        householdId,
-        plaidLinkTokenCreateOptions(Platform.OS)
-      );
+      const attempts = plaidLinkTokenCreateAttempts(Platform.OS);
+      let link_token = "";
+      for (let i = 0; i < attempts.length; i += 1) {
+        try {
+          ({ link_token } = await createPlaidLinkToken(householdId, attempts[i]));
+          break;
+        } catch (err) {
+          const canRetry =
+            i < attempts.length - 1 && isPlaidRedirectUriRejected(err);
+          if (!canRetry) throw err;
+        }
+      }
+      if (!link_token) {
+        throw new Error("Plaid did not return a link token.");
+      }
       setBusy(false);
       const publicToken = await openNativePlaidLink(link_token);
       if (!publicToken) return;

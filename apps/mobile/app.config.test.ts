@@ -33,7 +33,8 @@ describe("iOS device prep", () => {
     expect(configSource).not.toMatch(/iosAppStoreId: "\d/);
     expect(configSource).toMatch(/name: IOS_DISPLAY_NAME/);
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
-    expect(configSource).not.toMatch(/associatedDomains/);
+    expect(configSource).toMatch(/associatedDomains: \["applinks:flowsight360.com"/);
+    expect(configSource).toMatch(/applinks:www\.flowsight360\.com/);
     expect(configSource).toMatch(/plaidRedirectUri:/);
     expect(configSource).toMatch(/ios\.buildReactNativeFromSource/);
     expect(configSource).toMatch(/withReactNativeFromSource/);
@@ -80,7 +81,10 @@ describe("iOS device prep", () => {
     process.env.EXPO_PUBLIC_API_URL = "http://192.168.1.10:8000";
     const dev = getConfig({ config: {} } as never);
     expect(dev.name).toBe("FlowSight");
-    expect(dev.ios?.bundleIdentifier).toBe("com.jduclos.flowsight");
+    expect(dev.ios?.associatedDomains).toEqual([
+      "applinks:flowsight360.com",
+      "applinks:www.flowsight360.com",
+    ]);
     expect(dev.ios?.infoPlist?.CFBundleDisplayName).toBe("FlowSight");
     expect(dev.ios?.infoPlist?.NSAppTransportSecurity).toEqual({
       NSAllowsLocalNetworking: true,
