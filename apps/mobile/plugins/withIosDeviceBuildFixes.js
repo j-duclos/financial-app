@@ -1,5 +1,9 @@
-import type { ConfigPlugin } from "expo/config-plugins";
-import { withEntitlementsPlist, withInfoPlist, withPodfile, withXcodeProject } from "expo/config-plugins";
+const {
+  withEntitlementsPlist,
+  withInfoPlist,
+  withPodfile,
+  withXcodeProject,
+} = require("expo/config-plugins");
 
 const FMT_POST_INSTALL = `
     # FlowSight: Xcode 26 Apple clang rejects fmt 11 FMT_STRING consteval
@@ -22,7 +26,7 @@ const FMT_POST_INSTALL = `
     end
 `;
 
-export function injectFmtXcode26Podfile(contents: string): string {
+function injectFmtXcode26Podfile(contents) {
   if (contents.includes("FlowSight: Xcode 26 Apple clang rejects fmt")) {
     return contents;
   }
@@ -39,13 +43,13 @@ export function injectFmtXcode26Podfile(contents: string): string {
   return contents.slice(0, insertAt) + FMT_POST_INSTALL + contents.slice(insertAt);
 }
 
-function isPaidAppleIosCapabilities(): boolean {
+function isPaidAppleIosCapabilities() {
   const paid = (process.env.APPLE_PAID_IOS_CAPABILITIES ?? "").trim().toLowerCase();
   return paid === "1" || paid === "true" || paid === "yes";
 }
 
 /** Personal Apple teams cannot sign Push; leftover capability blocks iPhone installs. */
-export const withStripPushEntitlementsForPersonalTeam: ConfigPlugin = (config) => {
+function withStripPushEntitlementsForPersonalTeam(config) {
   if (isPaidAppleIosCapabilities()) {
     return config;
   }
@@ -64,9 +68,7 @@ export const withStripPushEntitlementsForPersonalTeam: ConfigPlugin = (config) =
     return mod;
   });
   return withXcodeProject(config, (mod) => {
-    const objects = mod.modResults.hash.project.objects as {
-      PBXProject?: Record<string, { attributes?: { TargetAttributes?: Record<string, { SystemCapabilities?: Record<string, unknown> }> } }>;
-    };
+    const objects = mod.modResults.hash.project.objects;
     const projects = objects.PBXProject ?? {};
     for (const project of Object.values(projects)) {
       const attrs = project.attributes?.TargetAttributes;
@@ -79,11 +81,18 @@ export const withStripPushEntitlementsForPersonalTeam: ConfigPlugin = (config) =
     }
     return mod;
   });
-};
+}
 
 /** fmt 11 + Xcode 26: same fix for iPhone and Simulator destinations. */
-export const withFmtXcode26Fix: ConfigPlugin = (config) =>
-  withPodfile(config, (mod) => {
+function withFmtXcode26Fix(config) {
+  return withPodfile(config, (mod) => {
     mod.modResults.contents = injectFmtXcode26Podfile(mod.modResults.contents);
     return mod;
   });
+}
+
+module.exports = {
+  injectFmtXcode26Podfile,
+  withStripPushEntitlementsForPersonalTeam,
+  withFmtXcode26Fix,
+};

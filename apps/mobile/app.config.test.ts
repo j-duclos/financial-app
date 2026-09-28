@@ -46,6 +46,7 @@ describe("iOS device prep", () => {
     expect(configSource).toMatch(/withReactNativeFromSource/);
     expect(configSource).toMatch(/withFmtXcode26Fix/);
     expect(configSource).toMatch(/withStripPushEntitlementsForPersonalTeam/);
+    expect(configSource).toMatch(/from "\.\/plugins\/withIosDeviceBuildFixes"/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
     expect(configSource).toMatch(/APP_SPLASH_IMAGE = "\.\/assets\/images\/splash-icon\.png"/);
     expect(configSource).toMatch(/adaptiveIcon/);
