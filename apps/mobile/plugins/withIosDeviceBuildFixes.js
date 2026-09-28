@@ -1,4 +1,7 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const {
+  withDangerousMod,
   withEntitlementsPlist,
   withInfoPlist,
   withPodfile,
@@ -91,8 +94,111 @@ function withFmtXcode26Fix(config) {
   });
 }
 
+const APP_DELEGATE_BUNDLE_URL = `  override func sourceURL(for bridge: RCTBridge) -> URL? {
+    bundleURL()
+  }
+
+  override func bundleURL() -> URL? {
+#if targetEnvironment(simulator)
+#if DEBUG
+    return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
+#else
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+#endif
+#else
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+#endif
+  }`;
+
+const APP_DELEGATE_BUNDLE_URL_STOCK = `  override func sourceURL(for bridge: RCTBridge) -> URL? {
+    // needed to return the correct URL for expo-dev-client.
+    bridge.bundleURL ?? bundleURL()
+  }
+
+  override func bundleURL() -> URL? {
+#if DEBUG
+    return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
+#else
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+#endif
+  }`;
+
+function replaceAppDelegateBundleURL(src) {
+  if (src.includes("targetEnvironment(simulator)")) {
+    return src;
+  }
+  if (src.includes(APP_DELEGATE_BUNDLE_URL_STOCK)) {
+    return src.replace(APP_DELEGATE_BUNDLE_URL_STOCK, APP_DELEGATE_BUNDLE_URL);
+  }
+  const start = src.indexOf("  override func sourceURL(for bridge: RCTBridge)");
+  const end = src.indexOf("\n}", start);
+  if (start === -1 || end === -1) return src;
+  const classEnd = src.indexOf("\n}", end + 1);
+  if (classEnd === -1) return src;
+  return src.slice(0, start) + APP_DELEGATE_BUNDLE_URL + src.slice(classEnd);
+}
+
+/** iPhone never loads Metro. Simulator Debug still can. */
+function withPreferEmbeddedJsBundle(config) {
+  return withDangerousMod(config, [
+    "ios",
+    (mod) => {
+      const file = path.join(mod.modRequest.platformProjectRoot, "FlowSight", "AppDelegate.swift");
+      if (!fs.existsSync(file)) return mod;
+      const src = fs.readFileSync(file, "utf8");
+      const next = replaceAppDelegateBundleURL(src);
+      if (next !== src) fs.writeFileSync(file, next);
+      return mod;
+    },
+  ]);
+}
+
+const XCODE_ENV_UPDATES = `# Physical iPhone: always embed JavaScript.
+# Expo Debug sets SKIP_BUNDLING=1, which makes the app load Metro on the LAN.
+# That is not the API. It breaks cellular. Unset skip after Expo's Debug default.
+if [ "$PLATFORM_NAME" = "iphoneos" ]; then
+  unset SKIP_BUNDLING
+  export FORCE_BUNDLING=1
+fi
+`;
+
+function withIphoneosAlwaysBundleJs(config) {
+  return withDangerousMod(config, [
+    "ios",
+    (mod) => {
+      const file = path.join(mod.modRequest.platformProjectRoot, ".xcode.env.updates");
+      fs.writeFileSync(file, XCODE_ENV_UPDATES);
+      return mod;
+    },
+  ]);
+}
+
+/** Xcode Run defaults to Debug, which always asks Metro. Device installs should be Release. */
+function withReleaseLaunchScheme(config) {
+  return withDangerousMod(config, [
+    "ios",
+    (mod) => {
+      const file = path.join(
+        mod.modRequest.platformProjectRoot,
+        "FlowSight.xcodeproj/xcshareddata/xcschemes/FlowSight.xcscheme"
+      );
+      if (!fs.existsSync(file)) return mod;
+      let src = fs.readFileSync(file, "utf8");
+      src = src.replace(
+        /<LaunchAction(\s+)buildConfiguration = "Debug"/,
+        `<LaunchAction$1buildConfiguration = "Release"`
+      );
+      fs.writeFileSync(file, src);
+      return mod;
+    },
+  ]);
+}
+
 module.exports = {
   injectFmtXcode26Podfile,
   withStripPushEntitlementsForPersonalTeam,
   withFmtXcode26Fix,
+  withPreferEmbeddedJsBundle,
+  withReleaseLaunchScheme,
+  withIphoneosAlwaysBundleJs,
 };

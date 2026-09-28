@@ -8,6 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "ios:device": "expo run:ios --device",
+    "ios:device:release": "expo run:ios --device --configuration Release --no-bundler",
     "prebuild:ios": "expo prebuild -p ios",
     "web": "expo start --web",
     "test": "vitest run",

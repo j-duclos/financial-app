@@ -6,31 +6,33 @@ Expo-managed app. Native `ios/` is generated on your Mac and is gitignored — d
 **Home-screen name:** FlowSight  
 **API env var:** `EXPO_PUBLIC_API_URL`
 
-## 1. API URL (physical iPhone)
+## 1. Two different URLs (do not mix these up)
 
-The iPhone cannot reach Django at `localhost` on your Mac. Set the LAN origin in `apps/mobile/.env` (copied from `.env.local.example`):
+- **API** (`EXPO_PUBLIC_API_URL`) — Django. For production data this is `https://flowsight360.com`. Copy `apps/mobile/.env.render.example` to `.env`.
+- **Metro** (`host:8081`) — Debug JavaScript packager on your Mac. A Debug Xcode install **must** reach this host. It is not the API and it is not flowsight360.com.
 
-```bash
-EXPO_PUBLIC_APP_ENV=development
-EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000
-```
-
-Find the Mac LAN IP:
+**Cellular / away from the Mac:** Debug will crash with “Could not connect to the server” on `:8081`. Install **Release** so JS is inside the app. Then the phone only needs the internet for `https://flowsight360.com`.
 
 ```bash
-ipconfig getifaddr en0
+cd apps/mobile
+# .env already has EXPO_PUBLIC_API_URL=https://flowsight360.com
+# Delete FlowSight from the iPhone first (old Debug still looks for Metro).
+npm run ios:device:release
 ```
 
-Do not put a Mac IP in source code. Restart Metro after changing `.env` (`npx expo start --clear`).
+`--no-bundler` is required. Without it, Expo still starts Metro and the phone keeps trying `:8081`.
 
-| Client | `EXPO_PUBLIC_API_URL` |
-|--------|------------------------|
-| iOS Simulator | `http://localhost:8000` |
-| Android Emulator | `http://10.0.2.2:8000` |
-| Physical iPhone | `http://<MAC_LAN_IP>:8000` |
-| Production / EAS | `https://financial-app-1-tu0l.onrender.com` (from `eas.json`) |
+Or in Xcode: scheme **FlowSight**, destination your iPhone, configuration **Release**, Run. After install, open the app from the Home Screen — ignore “Waiting on localhost:8081”.
 
-Staging and production builds **reject** localhost, LAN IPs, and plain HTTP (`constants/env.ts`).
+**Home Wi‑Fi Debug** (live reload): same `.env` API, plus Metro (`npx expo start --dev-client --host lan`). Keep that terminal open.
+
+| Client | API (`EXPO_PUBLIC_API_URL`) | Needs Metro? |
+|--------|------------------------------|--------------|
+| Simulator Debug | localhost Django or Render | Yes (Mac) |
+| iPhone Debug on home Wi‑Fi | `https://flowsight360.com` or LAN Django | Yes (Mac `:8081`) |
+| iPhone Release / TestFlight | `https://flowsight360.com` | No |
+
+Staging and production **app env** (`EXPO_PUBLIC_APP_ENV`) reject localhost, LAN IPs, and plain HTTP (`constants/env.ts`). Debug + HTTPS Render is allowed.
 
 ## 2. Django on the LAN
 
@@ -72,11 +74,12 @@ Same native project as Xcode. `expo run:ios` and `expo run:ios --device` only pi
 cd apps/mobile
 npx expo run:ios
 npx expo run:ios --device
+npm run ios:device:release   # cellular / no Metro
 ```
 
 Or: `npm run ios` / `npm run ios:device`.
 
-Keep Metro running for Debug builds. A Debug install still talks to Metro for JS unless you archive a Release configuration.
+Keep Metro running only for **Debug**. Release embeds the JS bundle.
 
 ## 5. Xcode signing (automatic)
 
@@ -113,7 +116,7 @@ Paid Apple Developer Program is required for TestFlight / App Store, push alerts
 7. If iOS says the developer is not trusted: **Settings → General → VPN & Device Management** → trust the developer app.
 8. Unlock the phone and keep it awake until the install finishes.
 
-First launch of a Debug build expects Metro (`npx expo start` from `apps/mobile`) unless you built Release.
+First launch of a **Debug** build expects Metro on the Mac. That does not work on cellular. Use **Release** (`npm run ios:device:release`) to use the app away from home against `https://flowsight360.com`.
 
 ## 7. Local network checklist
 

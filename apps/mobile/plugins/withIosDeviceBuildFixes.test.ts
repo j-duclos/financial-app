@@ -1,5 +1,13 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { injectFmtXcode26Podfile } from "./withIosDeviceBuildFixes";
+
+const pluginJs = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "withIosDeviceBuildFixes.js"),
+  "utf8"
+);
 
 describe("injectFmtXcode26Podfile", () => {
   it("injects C++17 for the fmt pod after react_native_post_install", () => {
@@ -23,5 +31,12 @@ end
     )
 `);
     expect(injectFmtXcode26Podfile(once)).toBe(once);
+  });
+});
+
+describe("iPhone JS embedding", () => {
+  it("embeds JS on physical iPhone instead of Metro", () => {
+    expect(pluginJs).toMatch(/FORCE_BUNDLING=1/);
+    expect(pluginJs).toMatch(/targetEnvironment\(simulator\)/);
   });
 });

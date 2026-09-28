@@ -45,7 +45,12 @@ describe("iOS device prep", () => {
     expect(configSource).toMatch(/ios\.buildReactNativeFromSource/);
     expect(configSource).toMatch(/withReactNativeFromSource/);
     expect(configSource).toMatch(/withFmtXcode26Fix/);
+    expect(configSource).toMatch(/withPreferEmbeddedJsBundle/);
+    expect(configSource).toMatch(/withIphoneosAlwaysBundleJs/);
+    expect(configSource).toMatch(/withReleaseLaunchScheme/);
     expect(configSource).toMatch(/withStripPushEntitlementsForPersonalTeam/);
+    expect(configSource).toMatch(/NSBonjourServices/);
+    expect(configSource).toMatch(/_metro\._tcp/);
     expect(configSource).toMatch(/from "\.\/plugins\/withIosDeviceBuildFixes"/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
     expect(configSource).toMatch(/APP_SPLASH_IMAGE = "\.\/assets\/images\/splash-icon\.png"/);
@@ -102,7 +107,8 @@ describe("iOS device prep", () => {
     process.env.EXPO_PUBLIC_API_URL = PRODUCTION_RENDER_ORIGIN;
     const prod = getConfig({ config: {} } as never);
     expect(prod.ios?.infoPlist?.NSAppTransportSecurity).toBeUndefined();
-    expect(prod.ios?.infoPlist?.NSLocalNetworkUsageDescription).toBeUndefined();
+    expect(prod.ios?.infoPlist?.NSLocalNetworkUsageDescription).toMatch(/Debug build/);
+    expect(prod.ios?.infoPlist?.NSBonjourServices).toEqual(["_expo._tcp", "_metro._tcp"]);
     expect(prod.extra?.apiUrl).toBe(PRODUCTION_RENDER_ORIGIN);
     expect(prod.extra?.appEnv).toBe("production");
     process.env.APPLE_PAID_IOS_CAPABILITIES = "1";

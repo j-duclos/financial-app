@@ -3,6 +3,9 @@ import type { ConfigPlugin } from "expo/config-plugins";
 import { withPodfileProperties } from "expo/config-plugins";
 import {
   withFmtXcode26Fix,
+  withIphoneosAlwaysBundleJs,
+  withPreferEmbeddedJsBundle,
+  withReleaseLaunchScheme,
   withStripPushEntitlementsForPersonalTeam,
 } from "./plugins/withIosDeviceBuildFixes";
 
@@ -81,13 +84,14 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       infoPlist: {
         CFBundleDisplayName: IOS_DISPLAY_NAME,
         CFBundleName: IOS_DISPLAY_NAME,
+        NSBonjourServices: ["_expo._tcp", "_metro._tcp"],
+        NSLocalNetworkUsageDescription:
+          "FlowSight loads the development JavaScript packager on your Mac when you run a Debug build. Allow Local Network, or use an Xcode Release build to run without the packager.",
         ...(appEnv === "development"
           ? {
               NSAppTransportSecurity: {
                 NSAllowsLocalNetworking: true,
               },
-              NSLocalNetworkUsageDescription:
-                "FlowSight connects to your local development API on the same Wi-Fi network.",
             }
           : {}),
       },
@@ -111,6 +115,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       "expo-secure-store",
       withReactNativeFromSource,
       withFmtXcode26Fix,
+      withPreferEmbeddedJsBundle,
+      withIphoneosAlwaysBundleJs,
+      withReleaseLaunchScheme,
       ...(paidIos
         ? ([
             [
