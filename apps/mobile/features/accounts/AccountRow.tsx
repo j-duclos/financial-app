@@ -81,6 +81,9 @@ export const AccountRow = React.memo(function AccountRow({
           <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
             {getAccountInstitutionSubtitle(account)}
           </Text>
+          {account.plaid_item_id ? (
+            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>Linked</Text>
+          ) : null}
           {shouldShowAccountHealthBadge(health) ? (
             <StatusChip
               label={

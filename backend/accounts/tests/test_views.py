@@ -377,3 +377,35 @@ def test_credit_balance_owed_uses_ledger_when_db_stale(auth_client, household, u
     assert float(data["balance_owed"]) == 200.00
     assert float(data["utilization_percent"]) == 20.00
     assert float(data["available_credit"]) == 800.00
+
+
+@pytest.mark.django_db
+def test_checking_account_includes_plaid_item_id_when_linked(auth_client, household):
+    from plaid_link.models import PlaidItem, PlaidLinkedAccount
+
+    checking = Account.objects.create(
+        household=household,
+        account_type=Account.AccountType.CHECKING,
+        name="360 Checking",
+        currency="USD",
+    )
+    item = PlaidItem.objects.create(
+        household=household,
+        item_id="item-checking-link",
+        access_token_cipher="cipher",
+        institution_name="Capital One",
+    )
+    PlaidLinkedAccount.objects.create(
+        item=item,
+        plaid_account_id="pa-checking-1",
+        mask="1234",
+        account=checking,
+    )
+    response = auth_client.get(f"/api/accounts/{checking.id}/")
+    assert response.status_code == 200
+    assert response.json()["plaid_item_id"] == item.id
+
+    listed = auth_client.get("/api/accounts/?active_only=true")
+    assert listed.status_code == 200
+    row = next(a for a in listed.json()["results"] if a["id"] == checking.id)
+    assert row["plaid_item_id"] == item.id

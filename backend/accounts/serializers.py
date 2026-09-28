@@ -591,11 +591,6 @@ class AccountSerializer(serializers.ModelSerializer):
             from .services.minimum_payment import serialize_minimum_payment
 
             data.update(serialize_minimum_payment(instance))
-            item_pk = getattr(instance, "plaid_item_pk", None)
-            if item_pk is None:
-                cached_link = instance.__dict__.get("plaid_link")
-                item_pk = cached_link.item_id if cached_link is not None else None
-            data["plaid_item_id"] = item_pk
             from .services.credit_card import credit_payment_due_state
 
             due_state = credit_payment_due_state(instance)
@@ -645,5 +640,11 @@ class AccountSerializer(serializers.ModelSerializer):
         payoff_est = payoff_by_id.get(instance.pk)
         if payoff_est is not None:
             data["payoff_estimate"] = payoff_est
+
+        item_pk = getattr(instance, "plaid_item_pk", None)
+        if item_pk is None:
+            cached_link = instance.__dict__.get("plaid_link")
+            item_pk = cached_link.item_id if cached_link is not None else None
+        data["plaid_item_id"] = item_pk
 
         return data

@@ -87,7 +87,7 @@ export function AccountsScreen() {
     });
   }, [accounts, attentionFilterActive]);
 
-  const groups = useMemo(() => groupAccountsByType(visibleAccounts), [visibleAccounts]);
+  const anyPlaidLinked = accounts.some((account) => account.plaid_item_id != null);
 
   const onAddAccount = useCallback(() => {
     if (accountsLimited) {
@@ -157,7 +157,7 @@ export function AccountsScreen() {
 
       <View style={{ marginTop: theme.spacing.md }}>
         <Button
-          label="Connect bank"
+          label={anyPlaidLinked ? "Add another bank" : "Connect bank"}
           variant="secondary"
           loading={connectBusy}
           onPress={() => void connectBank()}

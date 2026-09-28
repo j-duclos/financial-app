@@ -45,7 +45,7 @@ describe("native Plaid connect on mobile", () => {
   });
 
   it("keeps the native OAuth return screen mounted for Universal Links", () => {
-    expect(config).toMatch(/associatedDomains/);
+    expect(config).toMatch(/APPLE_PAID_IOS_CAPABILITIES/);
     const oauthReturn = readFileSync(join(dir, "../../app/plaid/oauth-return.tsx"), "utf8");
     expect(oauthReturn).toMatch(/Finishing bank sign-in/);
     expect(oauthReturn).not.toMatch(/from "expo-router"/);

@@ -1,6 +1,10 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 import type { ConfigPlugin } from "expo/config-plugins";
 import { withPodfileProperties } from "expo/config-plugins";
+import {
+  withFmtXcode26Fix,
+  withStripPushEntitlementsForPersonalTeam,
+} from "./plugins/withIosDeviceBuildFixes";
 
 /** Bump for beta releases; EAS production profile may auto-increment native build numbers. */
 const APP_VERSION = "0.9.0";
@@ -33,9 +37,19 @@ const withReactNativeFromSource: ConfigPlugin = (config) =>
     return mod;
   });
 
+/**
+ * Associated Domains + Push require a paid Apple Developer Program team.
+ * Free/personal teams cannot sign those entitlements (Xcode error).
+ */
+export function applePaidIosCapabilitiesEnabled(): boolean {
+  const v = (process.env.APPLE_PAID_IOS_CAPABILITIES ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const appEnv = (process.env.EXPO_PUBLIC_APP_ENV ?? "development").trim() || "development";
   const apiUrl = (process.env.EXPO_PUBLIC_API_URL ?? "").trim();
+  const paidIos = applePaidIosCapabilitiesEnabled();
 
   return {
     ...config,
@@ -56,7 +70,14 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       supportsTablet: true,
       bundleIdentifier: IOS_BUNDLE_IDENTIFIER,
       buildNumber: process.env.IOS_BUILD_NUMBER ?? "1",
-      associatedDomains: ["applinks:flowsight360.com", "applinks:www.flowsight360.com"],
+      ...(paidIos
+        ? {
+            associatedDomains: [
+              "applinks:flowsight360.com",
+              "applinks:www.flowsight360.com",
+            ],
+          }
+        : {}),
       infoPlist: {
         CFBundleDisplayName: IOS_DISPLAY_NAME,
         CFBundleName: IOS_DISPLAY_NAME,
@@ -82,21 +103,27 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     web: {
       bundler: "metro",
-      output: "static",
+      output: "single",
       favicon: "./assets/images/favicon.png",
     },
     plugins: [
       "expo-router",
       "expo-secure-store",
       withReactNativeFromSource,
-      [
-        "expo-notifications",
-        {
-          icon: IOS_STORE_ICON,
-          color: "#1D4ED8",
-          defaultChannel: "projected-funds",
-        },
-      ],
+      withFmtXcode26Fix,
+      ...(paidIos
+        ? ([
+            [
+              "expo-notifications",
+              {
+                icon: IOS_STORE_ICON,
+                color: "#1D4ED8",
+                defaultChannel: "projected-funds",
+              },
+            ],
+          ] as NonNullable<ExpoConfig["plugins"]>)
+        : []),
+      withStripPushEntitlementsForPersonalTeam,
     ],
     experiments: {
       typedRoutes: true,

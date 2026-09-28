@@ -15,6 +15,11 @@ describe("iOS device prep", () => {
   afterEach(() => {
     process.env.EXPO_PUBLIC_APP_ENV = originalEnv.EXPO_PUBLIC_APP_ENV;
     process.env.EXPO_PUBLIC_API_URL = originalEnv.EXPO_PUBLIC_API_URL;
+    if (originalEnv.APPLE_PAID_IOS_CAPABILITIES === undefined) {
+      delete process.env.APPLE_PAID_IOS_CAPABILITIES;
+    } else {
+      process.env.APPLE_PAID_IOS_CAPABILITIES = originalEnv.APPLE_PAID_IOS_CAPABILITIES;
+    }
     if (originalEnv.EAS_PROJECT_ID === undefined) {
       delete process.env.EAS_PROJECT_ID;
     } else {
@@ -33,11 +38,14 @@ describe("iOS device prep", () => {
     expect(configSource).not.toMatch(/iosAppStoreId: "\d/);
     expect(configSource).toMatch(/name: IOS_DISPLAY_NAME/);
     expect(configSource).toMatch(/CFBundleDisplayName: IOS_DISPLAY_NAME/);
-    expect(configSource).toMatch(/associatedDomains: \["applinks:flowsight360.com"/);
-    expect(configSource).toMatch(/applinks:www\.flowsight360\.com/);
+    expect(configSource).toMatch(/associatedDomains:/);
+    expect(configSource).toMatch(/applinks:flowsight360.com/);
+    expect(configSource).toMatch(/APPLE_PAID_IOS_CAPABILITIES/);
     expect(configSource).toMatch(/plaidRedirectUri:/);
     expect(configSource).toMatch(/ios\.buildReactNativeFromSource/);
     expect(configSource).toMatch(/withReactNativeFromSource/);
+    expect(configSource).toMatch(/withFmtXcode26Fix/);
+    expect(configSource).toMatch(/withStripPushEntitlementsForPersonalTeam/);
     expect(configSource).toMatch(/IOS_STORE_ICON = "\.\/assets\/images\/icon\.png"/);
     expect(configSource).toMatch(/APP_SPLASH_IMAGE = "\.\/assets\/images\/splash-icon\.png"/);
     expect(configSource).toMatch(/adaptiveIcon/);
@@ -77,14 +85,12 @@ describe("iOS device prep", () => {
   });
 
   it("emits local ATS only for development prebuilds", () => {
+    delete process.env.APPLE_PAID_IOS_CAPABILITIES;
     process.env.EXPO_PUBLIC_APP_ENV = "development";
     process.env.EXPO_PUBLIC_API_URL = "http://192.168.1.10:8000";
     const dev = getConfig({ config: {} } as never);
     expect(dev.name).toBe("FlowSight");
-    expect(dev.ios?.associatedDomains).toEqual([
-      "applinks:flowsight360.com",
-      "applinks:www.flowsight360.com",
-    ]);
+    expect(dev.ios?.associatedDomains).toBeUndefined();
     expect(dev.ios?.infoPlist?.CFBundleDisplayName).toBe("FlowSight");
     expect(dev.ios?.infoPlist?.NSAppTransportSecurity).toEqual({
       NSAllowsLocalNetworking: true,
@@ -98,6 +104,12 @@ describe("iOS device prep", () => {
     expect(prod.ios?.infoPlist?.NSLocalNetworkUsageDescription).toBeUndefined();
     expect(prod.extra?.apiUrl).toBe(PRODUCTION_RENDER_ORIGIN);
     expect(prod.extra?.appEnv).toBe("production");
+    process.env.APPLE_PAID_IOS_CAPABILITIES = "1";
+    const paid = getConfig({ config: {} } as never);
+    expect(paid.ios?.associatedDomains).toEqual([
+      "applinks:flowsight360.com",
+      "applinks:www.flowsight360.com",
+    ]);
     expect(prod.icon).toBe("./assets/images/icon.png");
     expect(prod.splash?.image).toBe("./assets/images/splash-icon.png");
     expect((prod.extra as { privacyPolicyUrl?: string }).privacyPolicyUrl).toBe(

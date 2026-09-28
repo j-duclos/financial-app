@@ -66,14 +66,15 @@ Equivalent npm scripts: `npm run prebuild:ios` then open the workspace.
 
 ## 4. Alternative: Expo CLI deploy
 
-This also generates `ios/` if missing, runs `pod install`, builds, and installs:
+Same native project as Xcode. `expo run:ios` and `expo run:ios --device` only pick the **destination** (simulator vs plugged-in iPhone). Both must compile.
 
 ```bash
 cd apps/mobile
+npx expo run:ios
 npx expo run:ios --device
 ```
 
-Or: `npm run ios:device`.
+Or: `npm run ios` / `npm run ios:device`.
 
 Keep Metro running for Debug builds. A Debug install still talks to Metro for JS unless you archive a Release configuration.
 
@@ -89,14 +90,24 @@ No Apple Team ID is stored in this repo. On your Mac:
 6. Choose your **Apple Developer Team**.
 7. Confirm the bundle identifier is `com.jduclos.flowsight`.
 
-You must be signed into Xcode with an Apple ID (**Xcode → Settings → Accounts**). A free Apple ID can install on your own device; a paid Developer Program membership is required for TestFlight / App Store.
+You must be signed into Xcode with an Apple ID (**Xcode → Settings → Accounts**).
+
+A **free / personal** team cannot sign **Associated Domains** or **Push Notifications**. Local `expo run:ios` omits those unless `APPLE_PAID_IOS_CAPABILITIES=1`. After changing that, regenerate native iOS:
+
+```bash
+cd apps/mobile
+npx expo prebuild -p ios --clean
+npx expo run:ios --device
+```
+
+Paid Apple Developer Program is required for TestFlight / App Store, push alerts, and Plaid iOS Universal Links. EAS preview/production sets `APPLE_PAID_IOS_CAPABILITIES=1`.
 
 ## 6. Run on the iPhone
 
 1. Connect the iPhone with a cable, or use trusted wireless debugging.
 2. Trust the Mac on the iPhone if prompted.
 3. On the iPhone: **Settings → Privacy & Security → Developer Mode** (enable and restart if iOS asks).
-4. In Xcode, set the run destination to your iPhone (not a simulator).
+4. In Xcode, pick **any** run destination: your physical iPhone **or** a Simulator. Same scheme (`FlowSight`). Switch destinations in the toolbar; do not use a second project.
 5. Resolve signing warnings if the banner appears.
 6. Press **Run**.
 7. If iOS says the developer is not trusted: **Settings → General → VPN & Device Management** → trust the developer app.

@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { listAccounts } from "@budget-app/api-client";
+import { listAccounts, listPlaidItems } from "@budget-app/api-client";
 import { timedStartupQueryFn } from "@/lib/startupQueries";
 import type { Account } from "@budget-app/shared";
 import type { OperationalForecastDays } from "@budget-app/shared";
@@ -20,6 +20,25 @@ function mergeEnrichedAccounts(base: Account[], enriched: Account[] | undefined)
     if (!seen.has(extra.id)) merged.push(extra);
   }
   return merged;
+}
+
+function withPlaidItemIds(
+  accounts: Account[],
+  items: { id: number; linked_accounts?: { account_id: number }[] }[] | undefined
+): Account[] {
+  if (!items?.length) return accounts;
+  const byAccount = new Map<number, number>();
+  for (const item of items) {
+    for (const row of item.linked_accounts ?? []) {
+      if (row.account_id) byAccount.set(row.account_id, item.id);
+    }
+  }
+  if (byAccount.size === 0) return accounts;
+  return accounts.map((account) => {
+    if (account.plaid_item_id != null) return account;
+    const itemId = byAccount.get(account.id);
+    return itemId != null ? { ...account, plaid_item_id: itemId } : account;
+  });
 }
 
 export function useAccountsList(
@@ -66,19 +85,30 @@ export function useAccountsList(
     staleTime: ENRICHED_LIST_STALE_MS,
   });
 
+  const plaidQuery = useQuery({
+    queryKey: ["plaid-items", "mobile-link-status"],
+    queryFn: () => listPlaidItems({ page_size: 100 }),
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const accounts = useMemo(() => {
     const main = mainQuery.data?.results ?? lastNonEmpty.current;
     const enriched = enrichQuery.isSuccess ? enrichQuery.data?.results : undefined;
-    const next = mergeEnrichedAccounts(main, enriched);
+    const next = withPlaidItemIds(
+      mergeEnrichedAccounts(main, enriched),
+      plaidQuery.data?.results
+    );
     if (next.length > 0) lastNonEmpty.current = next;
     return next;
-  }, [mainQuery.data, enrichQuery.data, enrichQuery.isSuccess]);
+  }, [mainQuery.data, enrichQuery.data, enrichQuery.isSuccess, plaidQuery.data]);
 
   const refetch = async () => {
     const mainResult = await mainQuery.refetch();
     if (forecastReady && mainResult.isSuccess) {
       await enrichQuery.refetch();
     }
+    await plaidQuery.refetch();
   };
 
   return {
