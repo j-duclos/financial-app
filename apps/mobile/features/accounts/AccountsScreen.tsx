@@ -87,6 +87,7 @@ export function AccountsScreen() {
     });
   }, [accounts, attentionFilterActive]);
 
+  const groups = useMemo(() => groupAccountsByType(visibleAccounts), [visibleAccounts]);
   const anyPlaidLinked = accounts.some((account) => account.plaid_item_id != null);
 
   const onAddAccount = useCallback(() => {
