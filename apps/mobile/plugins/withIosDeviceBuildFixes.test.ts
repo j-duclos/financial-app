@@ -37,6 +37,8 @@ end
 describe("iPhone JS embedding", () => {
   it("embeds JS on physical iPhone instead of Metro", () => {
     expect(pluginJs).toMatch(/FORCE_BUNDLING=1/);
+    expect(pluginJs).toMatch(/SKIP_BUNDLING_METRO_IP=1/);
+    expect(pluginJs).toMatch(/export CONFIGURATION=Release/);
     expect(pluginJs).toMatch(/targetEnvironment\(simulator\)/);
   });
 });

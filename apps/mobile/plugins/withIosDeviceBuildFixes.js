@@ -153,12 +153,18 @@ function withPreferEmbeddedJsBundle(config) {
   ]);
 }
 
-const XCODE_ENV_UPDATES = `# Physical iPhone: always embed JavaScript.
-# Expo Debug sets SKIP_BUNDLING=1, which makes the app load Metro on the LAN.
-# That is not the API. It breaks cellular. Unset skip after Expo's Debug default.
+const XCODE_ENV_UPDATES = `# Physical iPhone: ship a production JS bundle. Do not talk to Metro.
+# Expo Debug sets SKIP_BUNDLING=1 and React Native writes ip.txt (LAN Metro IP).
+# That is not flowsight360.com. Cellular / Local Network prohibited then red-screens.
 if [ "$PLATFORM_NAME" = "iphoneos" ]; then
   unset SKIP_BUNDLING
   export FORCE_BUNDLING=1
+  export SKIP_BUNDLING_METRO_IP=1
+  # react-native-xcode.sh sets DEV from CONFIGURATION; keep this script-local.
+  export CONFIGURATION=Release
+  rm -f "\${TARGET_BUILD_DIR:-}/\${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}/ip.txt" 2>/dev/null || true
+  rm -f "\${CONFIGURATION_BUILD_DIR:-}/ip.txt" 2>/dev/null || true
+  rm -f "\${CONFIGURATION_BUILD_DIR:-}/\${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}/ip.txt" 2>/dev/null || true
 fi
 `;
 
