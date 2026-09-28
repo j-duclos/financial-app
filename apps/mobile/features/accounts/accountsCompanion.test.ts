@@ -22,6 +22,9 @@ const webQuickActions = readFileSync(
 describe("mobile Accounts list companion UX", () => {
   it("keeps type grouping and compact credit rows without portfolio cards", () => {
     expect(accountsSource).toMatch(/groupAccountsByType/);
+    expect(accountsSource).toMatch(
+      /const groups = useMemo\(\(\) => groupAccountsByType\(visibleAccounts\), \[visibleAccounts\]\)/
+    );
     expect(accountsSource).not.toMatch(/Portfolio Summary|Net Position|Total Debt/);
     expect(accountRow).not.toMatch(/Portfolio Summary|Net Position|Total Debt/);
     expect(accountRow).not.toMatch(/Payment Planner/);
