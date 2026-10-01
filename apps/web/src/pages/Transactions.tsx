@@ -21,7 +21,7 @@ import {
   moveTransactionDate,
   getAccount,
   getTransaction,
-  resolveExpectedAsImported,
+  resolveExpectedAsImportedHonoringUser,
   resolveRuleOccurrence,
   listProjectedFundsAlerts,
   getAccountPayoff,
@@ -1319,7 +1319,7 @@ export default function Transactions() {
   });
 
   const matchImportMu = useMutation({
-    mutationFn: (plannedId: number) => resolveExpectedAsImported(plannedId),
+    mutationFn: (plannedId: number) => resolveExpectedAsImportedHonoringUser(plannedId),
     onMutate: () => {
       setAwaitingTimelineRecalc(true);
       setDeleteError(null);

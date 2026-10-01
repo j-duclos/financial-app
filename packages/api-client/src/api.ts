@@ -1297,18 +1297,49 @@ export async function matchTransactionToImport(
 
 export type ResolveExpectedAsImportedResult = {
   resolved: boolean;
-  imported_transaction_id: number;
+  imported_transaction_id: number | null;
   removed_planned_transaction_id: number;
   preserved_counterpart_transaction_id: number | null;
 };
 
-/** Automatically replace a planned occurrence with the matching bank import. */
+/** Honor Match imported transaction: link a unique bank import, or drop the planned row. */
 export async function resolveExpectedAsImported(
   plannedId: number
 ): Promise<ResolveExpectedAsImportedResult> {
   return requestRequired(`/api/transactions/${plannedId}/resolve-as-imported/`, {
     method: "POST",
   });
+}
+
+/** Server still requiring a matcher hit (production until the no-candidate resolve ships). */
+export function isImportMatcherRejection(err: unknown): boolean {
+  const status = err instanceof ApiError ? err.status : undefined;
+  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+  if (status === 409) return true;
+  return (
+    msg.includes("no matching imported") ||
+    msg.includes("no matching import") ||
+    msg.includes("no unmatched bank") ||
+    msg.includes("multiple imported bank")
+  );
+}
+
+/**
+ * User confirmed Match imported transaction. Link a unique import when the
+ * server can; otherwise remove the planned row. Never surface a matcher miss.
+ */
+export async function resolveExpectedAsImportedHonoringUser(
+  plannedId: number
+): Promise<ResolveExpectedAsImportedResult | { resolved: true; skipped: true }> {
+  try {
+    return await resolveExpectedAsImported(plannedId);
+  } catch (err) {
+    if (isImportMatcherRejection(err)) {
+      await skipTransactionOccurrence(plannedId);
+      return { resolved: true, skipped: true };
+    }
+    throw err;
+  }
 }
 
 /** Bulk-remove future rows left when a recurring rule was deleted (source=rule, no rule link). */

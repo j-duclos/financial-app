@@ -47,7 +47,6 @@ describe("web plan test override refresh", () => {
     expect(section).toMatch(/canShowPlanTestControls/);
     expect(section).toMatch(/isWebDevBuild/);
     expect(banner).toMatch(/testPlanIndicatorLabel/);
-    expect(banner).toMatch(/isWebDevBuild/);
     expect(section).toMatch(/invalidateAfterTestPlanChange/);
     expect(section).not.toMatch(/logout/);
   });

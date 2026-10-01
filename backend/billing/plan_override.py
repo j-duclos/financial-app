@@ -19,12 +19,27 @@ ALLOWED_OVERRIDE_PLANS = frozenset({PLAN_FREE, PLAN_PREMIUM})
 
 
 def plan_test_override_enabled() -> bool:
-    """True only for local DEBUG with the explicit allow flag, never on Render."""
+    """True for local DEBUG with the explicit allow flag, never merely because we are on Render."""
     if getattr(settings, "ON_RENDER", False):
         return False
     if not bool(getattr(settings, "DEBUG", False)):
         return False
     return bool(getattr(settings, "ALLOW_PLAN_TEST_OVERRIDE", False))
+
+
+def user_may_use_plan_test_override(user) -> bool:
+    """Local DEBUG override, staff, or a temporary username allowlist (no DB staff flag)."""
+    if plan_test_override_enabled():
+        return True
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+        return True
+    username = (getattr(user, "username", None) or "").strip().lower()
+    if not username:
+        return False
+    allowed = getattr(settings, "PLAN_TEST_OVERRIDE_USERNAMES", frozenset()) or frozenset()
+    return username in {str(name).strip().lower() for name in allowed}
 
 
 def get_stored_test_plan_override(user) -> str | None:
@@ -42,8 +57,8 @@ def get_stored_test_plan_override(user) -> str | None:
 
 
 def active_test_plan_override(user) -> str | None:
-    """Return the override only when development override functionality is enabled."""
-    if not plan_test_override_enabled():
+    """Return the override only when this user is allowed to simulate a plan."""
+    if not user_may_use_plan_test_override(user):
         return None
     return get_stored_test_plan_override(user)
 
@@ -68,8 +83,8 @@ def set_own_test_plan_override(user, plan: str | None) -> str | None:
 
 
 def test_override_status_fields(user, *, effective_plan: str) -> dict[str, Any]:
-    """Dev-only billing payload fields. Empty when override capability is disabled."""
-    if not plan_test_override_enabled():
+    """Billing payload fields for plan simulation. Empty when this user cannot simulate."""
+    if not user_may_use_plan_test_override(user):
         return {}
     return {
         "test_override_available": True,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -9,9 +10,17 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getEffectiveDisplayName } from "@budget-app/shared";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { MATCH_IMPORTED_TRANSACTION_LABEL, NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE, getEffectiveDisplayName } from "@budget-app/shared";
+import type { TimelineRow } from "@budget-app/shared";
+import {
+  isImportMatcherRejection,
+  resolveExpectedAsImported,
+  skipTransactionOccurrence,
+} from "@budget-app/api-client";
 import {
   BottomSheet,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   IconButton,
@@ -21,8 +30,10 @@ import {
 import { useTheme } from "@/theme";
 import { FINANCIAL_LIST_PROPS } from "@/lib/flatListDefaults";
 import { describeApiError } from "@/services/api";
+import { refreshAfterTransactionEdit } from "@/lib/financialQueryRefresh";
 import { useDefaultHouseholdId } from "@/hooks/useDefaultHouseholdId";
 import { useAccountOptions } from "@/hooks/useAccountOptions";
+import { usePlaidBankSync } from "@/features/accounts/usePlaidBankSync";
 import { useProfile } from "@/lib/profileQuery";
 import { usePageForecastWindow } from "@/hooks/usePageForecastWindow";
 import { ForecastWindowOptionList } from "@/features/dashboard/ForecastWindowSelect";
@@ -64,6 +75,14 @@ import {
   getTransactionRowDestination,
   navigateToTransactionRowDestination,
 } from "./transactionRowNavigation";
+import { PendingRowActionsSheet } from "./PendingRowActionsSheet";
+import {
+  getPendingRowActions,
+  pendingSkipConfirmationMessage,
+  pendingRowEditHref,
+  resolvePendingRowTransactionId,
+  type PendingRowAction,
+} from "./pendingLedgerActions";
 
 function listHasActivityRows(rows: TransactionListRow[]): boolean {
   return rows.some(
@@ -81,6 +100,7 @@ function listIsOnlyPlaceholders(rows: TransactionListRow[]): boolean {
 export function TransactionsScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const params = useLocalSearchParams<{
     account?: string | string[];
     accountName?: string | string[];
@@ -166,6 +186,37 @@ export function TransactionsScreen() {
   const { forecastDays, setForecastDays, ready: forecastReady } = usePageForecastWindow();
   const accountOptionsQuery = useAccountOptions({ householdId: defaultHouseholdId });
   const accounts = accountOptionsQuery.accounts;
+  const { syncBanks, plaidAllowed } = usePlaidBankSync();
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [pendingActionsRow, setPendingActionsRow] = useState<TimelineRow | null>(null);
+  const [skipConfirmRow, setSkipConfirmRow] = useState<TimelineRow | null>(null);
+  const [noMatchImportRow, setNoMatchImportRow] = useState<TimelineRow | null>(null);
+
+  const matchImportMu = useMutation({
+    mutationFn: (vars: { plannedId: number; row: TimelineRow }) =>
+      resolveExpectedAsImported(vars.plannedId),
+    onSuccess: () => {
+      setNoMatchImportRow(null);
+      refreshAfterTransactionEdit(queryClient);
+    },
+    onError: (err, vars) => {
+      if (isImportMatcherRejection(err)) {
+        setNoMatchImportRow(vars.row);
+        return;
+      }
+      Alert.alert(MATCH_IMPORTED_TRANSACTION_LABEL, describeApiError(err));
+    },
+  });
+
+  const skipOccurrenceMu = useMutation({
+    mutationFn: skipTransactionOccurrence,
+    onSuccess: () => {
+      setSkipConfirmRow(null);
+      setNoMatchImportRow(null);
+      refreshAfterTransactionEdit(queryClient);
+    },
+    onError: (err) => Alert.alert("Could not skip occurrence", describeApiError(err)),
+  });
 
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.id === filters.accountId) ?? null,
@@ -396,6 +447,19 @@ export function TransactionsScreen() {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [newestFirstHistory, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  const anyPlaidLinked = accounts.some((account) => account.plaid_item_id != null);
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      if (anyPlaidLinked && plaidAllowed) {
+        await syncBanks({ silent: true });
+      }
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [anyPlaidLinked, plaidAllowed, refetch, syncBanks]);
+
   const onPressLoadOlder = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
@@ -409,6 +473,86 @@ export function TransactionsScreen() {
     [router]
   );
 
+  const onPressPendingActions = useCallback((item: TransactionListRow) => {
+    if (item.kind !== "pending") return;
+    setPendingActionsRow(item.row);
+  }, []);
+
+  const skipPendingRow = useCallback(
+    (row: TimelineRow) => {
+      void (async () => {
+        try {
+          const transactionId = await resolvePendingRowTransactionId(row);
+          if (transactionId == null) {
+            Alert.alert(
+              "Could not skip occurrence",
+              "Could not load this scheduled transaction to skip."
+            );
+            return;
+          }
+          skipOccurrenceMu.mutate(transactionId);
+        } catch (err) {
+          Alert.alert("Could not skip occurrence", describeApiError(err));
+        }
+      })();
+    },
+    [skipOccurrenceMu]
+  );
+
+  const beginMatchImportRow = useCallback(
+    async (row: TimelineRow) => {
+      if (matchImportMu.isPending) return;
+      try {
+        const transactionId = await resolvePendingRowTransactionId(row);
+        if (transactionId == null) {
+          Alert.alert(
+            MATCH_IMPORTED_TRANSACTION_LABEL,
+            "Could not load this scheduled transaction."
+          );
+          return;
+        }
+        matchImportMu.mutate({ plannedId: transactionId, row });
+      } catch (err) {
+        Alert.alert(MATCH_IMPORTED_TRANSACTION_LABEL, describeApiError(err));
+      }
+    },
+    [matchImportMu]
+  );
+
+  const beginEditPendingRow = useCallback(
+    async (row: TimelineRow) => {
+      try {
+        const transactionId = await resolvePendingRowTransactionId(row);
+        if (transactionId == null) {
+          Alert.alert("Could not edit", "Could not load this scheduled transaction.");
+          return;
+        }
+        router.push(pendingRowEditHref(transactionId));
+      } catch (err) {
+        Alert.alert("Could not edit", describeApiError(err));
+      }
+    },
+    [router]
+  );
+
+  const onSelectPendingAction = useCallback(
+    (action: PendingRowAction) => {
+      const row = pendingActionsRow;
+      setPendingActionsRow(null);
+      if (row == null) return;
+      if (action.kind === "matchImport") {
+        void beginMatchImportRow(row);
+        return;
+      }
+      if (action.kind === "skip") {
+        setSkipConfirmRow(row);
+        return;
+      }
+      void beginEditPendingRow(row);
+    },
+    [pendingActionsRow, beginMatchImportRow, beginEditPendingRow]
+  );
+
   const renderItem = useCallback(
     ({ item, index }: { item: TransactionListRow; index: number }) => (
       <TransactionListItem
@@ -417,6 +561,7 @@ export function TransactionsScreen() {
         onPressRecentRange={onPressRecentRange}
         onPressUpcomingRange={onPressUpcomingRange}
         onPressLoadOlder={onPressLoadOlder}
+        onPressPendingActions={onPressPendingActions}
         focusHighlight={focusHighlightActive && index === focusHighlightIndex}
       />
     ),
@@ -425,6 +570,7 @@ export function TransactionsScreen() {
       onPressRecentRange,
       onPressUpcomingRange,
       onPressLoadOlder,
+      onPressPendingActions,
       focusHighlightActive,
       focusHighlightIndex,
     ]
@@ -665,8 +811,8 @@ export function TransactionsScreen() {
           onScrollToIndexFailed={onScrollToIndexFailed}
           refreshControl={
             <RefreshControl
-              refreshing={historyQuery.isFetching && !isRecentLoading}
-              onRefresh={() => void refetch()}
+              refreshing={pullRefreshing}
+              onRefresh={() => void onPullRefresh()}
               tintColor={theme.colors.tint}
             />
           }
@@ -755,6 +901,42 @@ export function TransactionsScreen() {
           setSearchDraft("");
           setFilters((prev) => ({ ...prev, search: "" }));
           setSearchOpen(false);
+        }}
+      />
+
+      <PendingRowActionsSheet
+        visible={pendingActionsRow != null}
+        title={pendingActionsRow?.description || "Pending transaction"}
+        actions={pendingActionsRow ? getPendingRowActions(pendingActionsRow) : []}
+        disabled={matchImportMu.isPending || skipOccurrenceMu.isPending}
+        onClose={() => setPendingActionsRow(null)}
+        onSelect={onSelectPendingAction}
+      />
+
+      <ConfirmDialog
+        visible={skipConfirmRow != null}
+        title="Skip this occurrence?"
+        message={
+          skipConfirmRow ? pendingSkipConfirmationMessage(skipConfirmRow) : ""
+        }
+        confirmLabel="Skip"
+        loading={skipOccurrenceMu.isPending}
+        onCancel={() => setSkipConfirmRow(null)}
+        onConfirm={() => {
+          if (skipConfirmRow) skipPendingRow(skipConfirmRow);
+        }}
+      />
+
+      <ConfirmDialog
+        visible={noMatchImportRow != null}
+        title={MATCH_IMPORTED_TRANSACTION_LABEL}
+        message={NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE}
+        confirmLabel="Skip"
+        cancelLabel="Cancel"
+        loading={skipOccurrenceMu.isPending}
+        onCancel={() => setNoMatchImportRow(null)}
+        onConfirm={() => {
+          if (noMatchImportRow) skipPendingRow(noMatchImportRow);
         }}
       />
     </Screen>

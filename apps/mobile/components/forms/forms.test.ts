@@ -109,6 +109,7 @@ describe("overflow sheet action row consolidation", () => {
     expect(read("features/goals/GoalActionsSheet.tsx")).toMatch(/SheetActionRow/);
     expect(read("features/what-if/components/PlanActionsSheet.tsx")).toMatch(/SheetActionRow/);
     expect(read("features/action-center/RecommendationOverflowSheet.tsx")).toMatch(/SheetActionRow/);
+    expect(read("features/transactions/PendingRowActionsSheet.tsx")).toMatch(/SheetActionRow/);
   });
 });
 

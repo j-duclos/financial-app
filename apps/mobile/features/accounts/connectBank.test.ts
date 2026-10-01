@@ -17,8 +17,9 @@ describe("native Plaid connect on mobile", () => {
     expect(hook).toMatch(/plaidLinkTokenCreateAttempts\(Platform\.OS\)/);
     expect(hook).toMatch(/isPlaidRedirectUriRejected/);
     expect(hook).toMatch(/exchangePlaidPublicToken/);
-    expect(hook).toMatch(/syncAllPlaidItems\(\{ household: householdId, force: true \}\)/);
-    expect(hook).toMatch(/refreshAfterPlaidSync\(queryClient\)/);
+    expect(hook).toMatch(/runHouseholdPlaidSync\(\{/);
+    expect(hook).toMatch(/force: true/);
+    expect(hook).toMatch(/Bank connected, import incomplete/);
     expect(hook).toMatch(/PlaidLinkExitError/);
     expect(hook).not.toMatch(/from "\.\.\/\.\.\/\.\.\/app\.config"/);
   });

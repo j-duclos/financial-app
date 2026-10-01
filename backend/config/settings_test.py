@@ -49,3 +49,4 @@ EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 EMAIL_HOST_PASSWORD = ""
 FRONTEND_ORIGIN = "http://localhost:5173"
 PROJECTED_FUNDS_PUSH_DRY_RUN = True
+PLAN_TEST_OVERRIDE_USERNAMES = frozenset()

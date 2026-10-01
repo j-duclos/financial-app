@@ -17,7 +17,7 @@ const menuSource = readFileSync(
 
 describe("Transactions import match wiring", () => {
   it("match action calls the single automatic-resolution API", () => {
-    expect(transactionsSource).toMatch(/resolveExpectedAsImported/);
+    expect(transactionsSource).toMatch(/resolveExpectedAsImportedHonoringUser/);
     expect(transactionsSource).toMatch(/matchImportMu\.mutate\(transactionId\)/);
     expect(transactionsSource).not.toMatch(/getTransactionImportCandidates/);
     expect(transactionsSource).not.toMatch(/matchTransactionToImport/);

@@ -5,17 +5,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteTransaction,
   getTransaction,
-  getTransactionImportCandidates,
-  matchTransactionToImport,
+  resolveExpectedAsImported,
+  isImportMatcherRejection,
   skipTransactionOccurrence,
   updateTransaction,
-  type ImportMatchCandidate,
 } from "@budget-app/api-client";
 import {
-  formatCurrency,
   getEffectiveDisplayName,
   MATCH_BANK_TRANSACTION_LABEL,
-  selectableImportMatchCandidates,
+  MATCH_IMPORTED_TRANSACTION_LABEL,
+  NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE,
   sortCategoriesForPicker,
   transactionSourceDisplayLabel,
 } from "@budget-app/shared";
@@ -50,7 +49,6 @@ import {
   canOpenLinkedTransactionDetail,
   canOpenRecurringRuleDetail,
   getTransactionDetailActions,
-  isEligibleForImportMatch,
   linkedTransactionDetailPath,
   recurringRuleDetailPath,
   type TransactionDetailAction,
@@ -64,11 +62,8 @@ export function TransactionDetailScreen() {
   const txnId = Number(id);
   const [confirmAction, setConfirmAction] = useState<TransactionDetailAction | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
-  const [matchSheetOpen, setMatchSheetOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [pendingMatchCandidate, setPendingMatchCandidate] = useState<ImportMatchCandidate | null>(
-    null
-  );
+  const [noMatchModalOpen, setNoMatchModalOpen] = useState(false);
   const [categoryId, setCategoryId] = useState<number | null>(null);
 
   const query = useQuery({
@@ -151,31 +146,21 @@ export function TransactionDetailScreen() {
   });
 
   const matchMutation = useMutation({
-    mutationFn: (importedTransactionId: number) =>
-      matchTransactionToImport(txnId, importedTransactionId),
+    mutationFn: () => resolveExpectedAsImported(txnId),
     onSuccess: () => {
-      setMatchSheetOpen(false);
-      setPendingMatchCandidate(null);
-      queryClient.removeQueries({ queryKey: transactionQueryKeys.importCandidates(txnId) });
+      setNoMatchModalOpen(false);
       finishNavigatingMutation();
     },
-    onError: (err) => Alert.alert("Could not match bank transaction", describeApiError(err)),
+    onError: (err) => {
+      if (isImportMatcherRejection(err)) {
+        setNoMatchModalOpen(true);
+        return;
+      }
+      Alert.alert(MATCH_BANK_TRANSACTION_LABEL, describeApiError(err));
+    },
   });
 
   const lockMessage = txn ? transactionEditLockMessage(txn, getEffectiveDisplayName(txn.account)) : null;
-  const eligibleForImportMatch = txn ? isEligibleForImportMatch(txn) : false;
-
-  const importCandidatesQuery = useQuery({
-    queryKey: transactionQueryKeys.importCandidates(txnId),
-    queryFn: () => getTransactionImportCandidates(txnId),
-    enabled: matchSheetOpen && eligibleForImportMatch,
-    staleTime: 30_000,
-  });
-
-  const selectableCandidates = useMemo(
-    () => selectableImportMatchCandidates(importCandidatesQuery.data?.candidates ?? []),
-    [importCandidatesQuery.data?.candidates]
-  );
 
   const detailActions = useMemo(() => {
     if (!txn) return [];
@@ -194,7 +179,7 @@ export function TransactionDetailScreen() {
         return;
       }
       if (action.kind === "matchImport") {
-        setMatchSheetOpen(true);
+        matchMutation.mutate();
         return;
       }
       if (action.kind === "skip") {
@@ -209,7 +194,7 @@ export function TransactionDetailScreen() {
         setConfirmAction(action);
       }
     },
-    [router, txnId, skipMutation]
+    [router, txnId, skipMutation, matchMutation]
   );
 
   const selectCategory = useCallback(
@@ -439,65 +424,6 @@ export function TransactionDetailScreen() {
         ))}
       </BottomSheet>
 
-      <BottomSheet
-        visible={matchSheetOpen}
-        title={MATCH_BANK_TRANSACTION_LABEL}
-        onClose={() => {
-          if (matchMutation.isPending) return;
-          setMatchSheetOpen(false);
-          setPendingMatchCandidate(null);
-        }}
-      >
-        {importCandidatesQuery.isLoading ? (
-          <ActivityIndicator color={theme.colors.tint} style={{ marginVertical: 24 }} />
-        ) : importCandidatesQuery.isError ? (
-          <ErrorState
-            message={describeApiError(importCandidatesQuery.error)}
-            onRetry={() => void importCandidatesQuery.refetch()}
-          />
-        ) : selectableCandidates.length === 0 ? (
-          <View style={{ gap: 12, paddingVertical: 8 }}>
-            <Text style={{ color: theme.colors.textMuted, ...theme.typography.body }}>
-              No unmatched bank transactions were found for this scheduled payment.
-            </Text>
-            <Button
-              label="Skip occurrence"
-              variant="secondary"
-              onPress={() => {
-                setMatchSheetOpen(false);
-                const skipAction = detailActions.find((a) => a.kind === "skip");
-                if (skipAction) runAction(skipAction);
-              }}
-            />
-          </View>
-        ) : (
-          <ScrollView>
-            <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption, marginBottom: 12 }}>
-              Choose the bank transaction that corresponds to this scheduled transaction.
-            </Text>
-            {selectableCandidates.map((candidate) => (
-              <Pressable
-                key={candidate.imported_transaction_id}
-                onPress={() => setPendingMatchCandidate(candidate)}
-                style={{
-                  paddingVertical: 14,
-                  borderBottomWidth: 1,
-                  borderBottomColor: theme.colors.border,
-                  gap: 4,
-                }}
-              >
-                <Text style={{ color: theme.colors.text, ...theme.typography.bodyStrong }}>
-                  {candidate.payee}
-                </Text>
-                <Text style={{ color: theme.colors.textMuted, ...theme.typography.caption }}>
-                  {formatDateDisplay(candidate.date)} · {formatCurrency(candidate.amount)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
-      </BottomSheet>
-
       <ConfirmDialog
         visible={confirmAction != null}
         title={confirmAction?.confirmationTitle ?? "Confirm"}
@@ -524,21 +450,14 @@ export function TransactionDetailScreen() {
       />
 
       <ConfirmDialog
-        visible={pendingMatchCandidate != null}
-        title="Confirm match"
-        message={
-          pendingMatchCandidate
-            ? `Link this scheduled payment to ${pendingMatchCandidate.payee} on ${formatDateDisplay(pendingMatchCandidate.date)} for ${formatCurrency(pendingMatchCandidate.amount)}?`
-            : ""
-        }
-        confirmLabel="Match"
-        loading={matchMutation.isPending}
-        onCancel={() => setPendingMatchCandidate(null)}
-        onConfirm={() => {
-          if (pendingMatchCandidate) {
-            matchMutation.mutate(pendingMatchCandidate.imported_transaction_id);
-          }
-        }}
+        visible={noMatchModalOpen}
+        title={MATCH_IMPORTED_TRANSACTION_LABEL}
+        message={NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE}
+        confirmLabel="Skip"
+        cancelLabel="Cancel"
+        loading={skipMutation.isPending}
+        onCancel={() => setNoMatchModalOpen(false)}
+        onConfirm={() => skipMutation.mutate()}
       />
     </Screen>
   );

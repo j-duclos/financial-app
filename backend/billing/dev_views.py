@@ -1,7 +1,6 @@
-"""Authenticated development-only plan simulation API.
+"""Authenticated plan simulation API.
 
-Unavailable (HTTP 404) unless DEBUG and ALLOW_PLAN_TEST_OVERRIDE are both true
-and the process is not running on Render.
+Local DEBUG (ALLOW_PLAN_TEST_OVERRIDE) or staff/superuser accounts.
 """
 from __future__ import annotations
 
@@ -14,8 +13,8 @@ from rest_framework.views import APIView
 from billing.plan_override import (
     PLAN_FREE,
     PLAN_PREMIUM,
-    plan_test_override_enabled,
     set_own_test_plan_override,
+    user_may_use_plan_test_override,
 )
 from billing.services import get_user_plan
 
@@ -33,10 +32,10 @@ except ImportError:  # pragma: no cover
 class TestPlanOverrideView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def dispatch(self, request, *args, **kwargs):
-        if not plan_test_override_enabled():
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not user_may_use_plan_test_override(request.user):
             raise Http404()
-        return super().dispatch(request, *args, **kwargs)
 
     def post(self, request):
         if "plan" not in request.data:

@@ -1,10 +1,9 @@
 import { testPlanIndicatorLabel } from "@budget-app/shared";
 import { useBillingStatus } from "../../hooks/useBillingStatus";
-import { isWebDevBuild } from "../../lib/planTestOverride";
 
 export default function TestPlanBanner() {
-  const { billing } = useBillingStatus({ enabled: isWebDevBuild() });
-  const label = testPlanIndicatorLabel(billing, isWebDevBuild());
+  const { billing } = useBillingStatus();
+  const label = testPlanIndicatorLabel(billing);
   if (!label) return null;
   return (
     <span

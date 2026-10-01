@@ -41,7 +41,8 @@ describe("DashboardScreen request ordering", () => {
     expect(dashboardSource).not.toMatch(/350/);
   });
 
-  it("sequences pull-to-refresh: summary-fast before details and extended risk", () => {
+  it("sequences pull-to-refresh: Plaid import then summary-fast before details", () => {
+    expect(dashboardSource).toMatch(/syncBanks\(\{ silent: true \}\)/);
     expect(dashboardSource).toMatch(/await refetchFast\(\)/);
     expect(dashboardSource).not.toMatch(
       /await Promise\.all\(\[\s*refetchFast\(\),\s*refetchDetails\(\)/

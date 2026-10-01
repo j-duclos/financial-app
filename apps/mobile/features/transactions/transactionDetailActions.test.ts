@@ -165,7 +165,7 @@ describe("TransactionDetailScreen wiring", () => {
     expect(src).not.toMatch(/See paired transaction/);
   });
 
-  it("match import action does not call skipTransactionOccurrence", async () => {
+  it("match import honors the user without a candidate picker", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
@@ -175,9 +175,12 @@ describe("TransactionDetailScreen wiring", () => {
       src.indexOf('action.kind === "matchImport"'),
       src.indexOf('action.kind === "skip"')
     );
-    expect(matchBlock).toMatch(/setMatchSheetOpen\(true\)/);
-    expect(matchBlock).not.toMatch(/skipTransactionOccurrence/);
-    expect(matchBlock).not.toMatch(/skipMutation\.mutate/);
+    expect(matchBlock).toMatch(/matchMutation\.mutate\(\)/);
+    expect(matchBlock).not.toMatch(/setMatchSheetOpen/);
+    expect(src).toMatch(/resolveExpectedAsImported/);
+    expect(src).toMatch(/NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE/);
+    expect(src).toMatch(/confirmLabel="Skip"/);
+    expect(src).not.toMatch(/resolveExpectedAsImportedHonoringUser/);
   });
 
   it("skip action uses skipTransactionOccurrence only", async () => {
@@ -187,21 +190,11 @@ describe("TransactionDetailScreen wiring", () => {
     const dir = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
     expect(src).toMatch(/skipMutation = useMutation\([\s\S]*skipTransactionOccurrence/);
-    expect(src).toMatch(/matchTransactionToImport/);
-    expect(src).toMatch(/getTransactionImportCandidates/);
+    expect(src).not.toMatch(/matchTransactionToImport/);
+    expect(src).not.toMatch(/getTransactionImportCandidates/);
     expect(src).not.toMatch(/getTimeline/);
     expect(src).not.toMatch(/scheduledRowHasMatchingImport/);
     expect(src).not.toMatch(/useAccountOptions/);
-  });
-
-  it("loads import candidates lazily when the match sheet opens", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(dir, "TransactionDetailScreen.tsx"), "utf8");
-    expect(src).toMatch(/transactionQueryKeys\.importCandidates/);
-    expect(src).toMatch(/enabled:\s*matchSheetOpen && eligibleForImportMatch/);
   });
 
   it("loads category options only when editing is allowed and the sheet opens", async () => {

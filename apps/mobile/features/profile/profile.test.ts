@@ -144,7 +144,8 @@ describe("Profile & Settings screen", () => {
     expect(screenSource).toMatch(/canShowPlanTestControls/);
     expect(screenSource).toMatch(/setTestPlanOverride/);
     expect(screenSource).toMatch(/invalidateAfterTestPlanChange/);
-    expect(screenSource).toMatch(/Simulated plan/);
+    expect(screenSource).toMatch(/Premium test override/);
+    expect(screenSource).toMatch(/Temporary test override/);
     expect(layoutSource).toMatch(/TestPlanBanner/);
   });
 

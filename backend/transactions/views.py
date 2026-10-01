@@ -697,7 +697,7 @@ class TransactionViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="resolve-as-imported")
     def resolve_as_imported(self, request: Request, pk=None):
-        """Automatically replace this planned occurrence with the matching bank import."""
+        """Replace this planned occurrence with the bank post, or drop it if the user confirmed."""
         return self._resolve_expected_import_response(request, pk)
 
     @action(detail=True, methods=["post"], url_path="match")

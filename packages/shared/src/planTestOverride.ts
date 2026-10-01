@@ -4,9 +4,9 @@ export type SimulatedPlanChoice = "real" | "FREE" | "PREMIUM";
 
 export function canShowPlanTestControls(
   billing: BillingStatus | undefined | null,
-  isDevBuild: boolean
+  _isDevBuild?: boolean
 ): boolean {
-  return Boolean(isDevBuild && billing?.test_override_available === true);
+  return billing?.test_override_available === true;
 }
 
 export function simulatedPlanChoice(
@@ -25,9 +25,9 @@ export function simulatedPlanChoiceLabel(choice: SimulatedPlanChoice): string {
 
 export function testPlanIndicatorLabel(
   billing: BillingStatus | undefined | null,
-  isDevBuild: boolean
+  _isDevBuild?: boolean
 ): string | null {
-  if (!canShowPlanTestControls(billing, isDevBuild)) return null;
+  if (!canShowPlanTestControls(billing)) return null;
   const override = billing?.test_plan_override;
   if (override !== "FREE" && override !== "PREMIUM") return null;
   return override === "PREMIUM" ? "TEST: Premium" : "TEST: Free";

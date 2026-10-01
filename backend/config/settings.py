@@ -63,6 +63,14 @@ ON_RENDER = _ON_RENDER
 # Honored only when DEBUG is True AND this flag is True AND ON_RENDER is False.
 ALLOW_PLAN_TEST_OVERRIDE = _env_bool("ALLOW_PLAN_TEST_OVERRIDE", default=False)
 
+# Temporary tester logins that may simulate Free/Premium on Render without staff.
+# Remove with the Settings premium test switch.
+PLAN_TEST_OVERRIDE_USERNAMES = frozenset(
+    part.strip().lower()
+    for part in os.environ.get("PLAN_TEST_OVERRIDE_USERNAMES", "cazcapone").split(",")
+    if part.strip()
+)
+
 # Performance instrumentation ([PERF] logs) — on by default on Render; set ENABLE_PERF_LOGS=false to disable.
 ENABLE_PERF_LOGS = _env_bool("ENABLE_PERF_LOGS", default=_ON_RENDER)
 

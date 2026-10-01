@@ -16,3 +16,6 @@ export const MATCH_IMPORTED_TRANSACTION_LABEL = "Match imported transaction";
 export const MATCH_BANK_TRANSACTION_LABEL = "Match bank transaction";
 
 export const NO_IMPORT_CANDIDATES_MESSAGE = "No unmatched bank imports were found.";
+
+export const NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE =
+  "No matching imported transaction was found for the scheduled item. You can skip this transaction instead.";

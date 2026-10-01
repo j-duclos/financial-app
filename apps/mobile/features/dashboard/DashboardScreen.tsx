@@ -76,6 +76,7 @@ import {
 } from "./homeReadiness";
 import { accountQueryKeys } from "@/features/accounts/queryKeys";
 import { useConnectBank } from "@/features/accounts/useConnectBank";
+import { usePlaidBankSync } from "@/features/accounts/usePlaidBankSync";
 import { classifyQueryClientCache, timedStartupQueryFn } from "@/lib/startupQueries";
 
 export function DashboardScreen() {
@@ -99,6 +100,7 @@ export function DashboardScreen() {
   const { billing } = useBillingStatus();
   const { promptUpgrade } = usePremiumUpgrade();
   const { connectBank, busy: connectBusy } = useConnectBank();
+  const { syncBanks, plaidAllowed } = usePlaidBankSync();
   const isPremium = canUsePlaidBankSync(billing);
   const missingAccounts = isMissingAccounts(onboarding);
   const firstRun = shouldShowHomeFirstRun({
@@ -159,6 +161,7 @@ export function DashboardScreen() {
   });
   const homeAccounts = accountsPage?.results ?? [];
   const accountsPending = accountsPendingRaw && homeAccounts.length === 0;
+  const anyPlaidLinked = homeAccounts.some((account) => account.plaid_item_id != null);
 
   useEffect(() => {
     if (summaryFast && !fastIsPlaceholderData) {
@@ -301,6 +304,9 @@ export function DashboardScreen() {
   const onRefresh = useCallback(async () => {
     setPullRefreshing(true);
     try {
+      if (anyPlaidLinked && plaidAllowed) {
+        await syncBanks({ silent: true });
+      }
       await refetchFast();
       await Promise.all([
         refetchDetails(),
@@ -310,7 +316,7 @@ export function DashboardScreen() {
     } finally {
       setPullRefreshing(false);
     }
-  }, [queryClient, refetchDetails, refetchFast]);
+  }, [anyPlaidLinked, plaidAllowed, queryClient, refetchDetails, refetchFast, syncBanks]);
 
   const onViewAllAttention = useCallback(() => {
     router.push(attentionViewAllPath());

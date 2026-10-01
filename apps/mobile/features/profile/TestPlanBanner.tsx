@@ -6,8 +6,8 @@ import { useTheme } from "@/theme";
 
 export function TestPlanBanner() {
   const theme = useTheme();
-  const { billing } = useBillingStatus({ enabled: typeof __DEV__ !== "undefined" && __DEV__ });
-  const label = testPlanIndicatorLabel(billing, typeof __DEV__ !== "undefined" && __DEV__);
+  const { billing } = useBillingStatus();
+  const label = testPlanIndicatorLabel(billing);
   if (!label) return null;
   return (
     <View

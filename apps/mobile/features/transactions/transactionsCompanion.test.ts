@@ -134,6 +134,14 @@ describe("mobile Transactions companion list", () => {
     expect(listSource).toMatch(/Add a transaction to start tracking this account\./);
     expect(listSource).toMatch(/actionLabel=\{[\s\S]*"Add transaction"/);
   });
+
+  it("offers Match imported transaction from the pending row overflow", () => {
+    expect(listSource).toMatch(/PendingRowActionsSheet/);
+    expect(listSource).toMatch(/MATCH_IMPORTED_TRANSACTION_LABEL/);
+    expect(listSource).toMatch(/resolveExpectedAsImported/);
+    expect(listSource).toMatch(/NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE/);
+    expect(listSource).toMatch(/onPressPendingActions/);
+  });
 });
 
 describe("mobile Transactions companion detail", () => {
@@ -152,9 +160,9 @@ describe("mobile Transactions companion detail", () => {
     expect(detailSource).toMatch(/placement === "primary"/);
     expect(detailSource).toMatch(/placement === "overflow"/);
     expect(detailSource).not.toMatch(/variant="primary"[\s\S]{0,80}matchImport/);
-    expect(detailSource).toMatch(
-      /Choose the bank transaction that corresponds to this scheduled transaction/
-    );
+    expect(detailSource).toMatch(/resolveExpectedAsImported/);
+    expect(detailSource).toMatch(/NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE/);
+    expect(detailSource).not.toMatch(/getTransactionImportCandidates/);
   });
 
   it("navigates linked transfer and recurring rule without prefetching the pair", () => {

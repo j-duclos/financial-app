@@ -24,10 +24,7 @@ from transactions.services import (
     resolve_expected_as_imported,
     skip_scheduled_transaction,
 )
-from transactions.services.expected_lifecycle import (
-    AmbiguousImportResolution,
-    ImportResolutionError,
-)
+from transactions.services.expected_lifecycle import AmbiguousImportResolution
 
 User = get_user_model()
 
@@ -589,15 +586,26 @@ class TestResolveExpectedAsImported(ExpectedLifecycleFixture):
         self.assertEqual(resp.status_code, 409)
         self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
 
-    def test_no_matching_import_returns_error_and_deletes_nothing(self):
+    def test_no_matching_import_still_removes_planned(self):
         planned = self._expected_planned()
-        with self.assertRaises(ImportResolutionError):
-            resolve_expected_as_imported(planned, user=self.user)
-        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+        planned_id = planned.pk
+        occ_date = planned.date
+        result = resolve_expected_as_imported(planned, user=self.user)
+        self.assertTrue(result["resolved"])
+        self.assertIsNone(result["imported_transaction_id"])
+        self.assertEqual(result["removed_planned_transaction_id"], planned_id)
+        self.assertFalse(Transaction.objects.filter(pk=planned_id).exists())
+        self.assertTrue(
+            RecurringRuleSkip.objects.filter(rule_id=self.rule.id, date=occ_date).exists()
+        )
+
+        planned = self._expected_planned()
+        planned_id = planned.pk
         resp = self.client.post(f"/api/transactions/{planned.pk}/resolve-as-imported/")
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("No matching imported bank transaction", resp.json()["detail"])
-        self.assertTrue(Transaction.objects.filter(pk=planned.pk).exists())
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["resolved"])
+        self.assertIsNone(resp.json()["imported_transaction_id"])
+        self.assertFalse(Transaction.objects.filter(pk=planned_id).exists())
 
     def test_reconciled_planned_cannot_be_changed(self):
         planned = self._expected_planned()

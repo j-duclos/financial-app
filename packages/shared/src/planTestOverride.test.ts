@@ -26,17 +26,16 @@ const overrideAvailable: BillingStatus = {
 };
 
 describe("plan test override helpers", () => {
-  it("hides developer controls unless the backend reports capability and this is a dev build", () => {
-    expect(canShowPlanTestControls(overrideAvailable, false)).toBe(false);
+  it("hides developer controls unless the backend reports capability", () => {
+    expect(canShowPlanTestControls(overrideAvailable, false)).toBe(true);
     expect(canShowPlanTestControls(freeBilling, true)).toBe(false);
     expect(canShowPlanTestControls(undefined, true)).toBe(false);
     expect(canShowPlanTestControls(overrideAvailable, true)).toBe(true);
   });
 
-  it("never shows an indicator in production builds even if the payload is misconfigured", () => {
+  it("does not show an indicator without backend capability even if override fields are present", () => {
     const spoofed: BillingStatus = {
       ...freeBilling,
-      test_override_available: true,
       test_plan_override: "PREMIUM",
       effective_plan: "PREMIUM",
     };

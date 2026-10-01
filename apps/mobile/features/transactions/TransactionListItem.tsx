@@ -1,10 +1,11 @@
 import React, { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { SkeletonBlock } from "@/components/ui";
+import { IconButton, SkeletonBlock } from "@/components/ui";
 import { useTheme } from "@/theme";
 import { TransactionRowCard } from "./TransactionRowCard";
 import type { TransactionListRow } from "./buildTransactionList";
+import { pendingRowHasActions } from "./pendingLedgerActions";
 
 type Props = {
   item: TransactionListRow;
@@ -12,6 +13,7 @@ type Props = {
   onPressRecentRange?: () => void;
   onPressUpcomingRange?: () => void;
   onPressLoadOlder?: () => void;
+  onPressPendingActions?: (item: TransactionListRow) => void;
   focusHighlight?: boolean;
 };
 
@@ -21,6 +23,7 @@ export const TransactionListItem = memo(function TransactionListItem({
   onPressRecentRange,
   onPressUpcomingRange,
   onPressLoadOlder,
+  onPressPendingActions,
   focusHighlight,
 }: Props) {
   const theme = useTheme();
@@ -165,14 +168,32 @@ export const TransactionListItem = memo(function TransactionListItem({
   }
   if (item.kind === "pending") {
     const txnId = item.row.transaction_id;
+    const showPendingActions = Boolean(onPressPendingActions) && pendingRowHasActions(item.row);
     return wrapFocusHighlight(
-      <Pressable onPress={() => onPressRow(item)} disabled={txnId == null}>
-        <TransactionRowCard
-          timelineRow={item.row}
-          runningBalance={item.runningBalance}
-          statusOverride="Pending"
-        />
-      </Pressable>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "stretch",
+          backgroundColor: theme.colors.surfaceMuted,
+        }}
+      >
+        <Pressable style={{ flex: 1 }} onPress={() => onPressRow(item)} disabled={txnId == null}>
+          <TransactionRowCard
+            timelineRow={item.row}
+            runningBalance={item.runningBalance}
+            statusOverride="Pending"
+          />
+        </Pressable>
+        {showPendingActions ? (
+          <View style={{ justifyContent: "center" }}>
+            <IconButton
+              name="ellipsis-h"
+              accessibilityLabel="Pending transaction actions"
+              onPress={() => onPressPendingActions?.(item)}
+            />
+          </View>
+        ) : null}
+      </View>
     );
   }
   return wrapFocusHighlight(

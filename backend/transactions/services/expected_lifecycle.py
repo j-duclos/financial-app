@@ -387,18 +387,16 @@ def _rank_bank_imports_for_expected_resolution(
     return ranked
 
 
-def find_unique_bank_import_for_expected_resolution(planned: Transaction) -> Transaction:
+def find_unique_bank_import_for_expected_resolution(planned: Transaction) -> Transaction | None:
     """
     Return the single bank import that can safely replace this planned row.
 
-    Raises ImportResolutionError when none exist and AmbiguousImportResolution when
-    two or more candidates share the top score.
+    Returns None when no bank import is identifiable. Raises AmbiguousImportResolution
+    when two or more candidates share the top score.
     """
     ranked = _rank_bank_imports_for_expected_resolution(planned)
     if not ranked:
-        raise ImportResolutionError(
-            "No matching imported bank transaction was found for this scheduled item."
-        )
+        return None
     best_score = ranked[0][1]
     ties = [row for row, score in ranked if score == best_score]
     if len(ties) > 1:
@@ -442,11 +440,13 @@ def _migrate_planned_leg_transfer_to_imported(
 
 def resolve_expected_as_imported(planned: Transaction, *, user=None) -> dict:
     """
-    Replace a scheduled/planned duplicate with the already-imported bank record.
+    Treat a scheduled occurrence as already represented by the bank.
 
-    The imported row stays the visible canonical ledger record. The planned
-    occurrence is removed. For two-leg transfers / card payments, only the
-    matching planned leg is removed; the counterpart is preserved and re-linked.
+    When a unique imported record can be identified, it becomes the visible
+    ledger row and the planned duplicate is removed. When none can be
+    identified, the user's confirmation still stands: the planned row is
+    removed (and skipped so it does not rematerialize). Do not require a
+    matcher hit to honor Match imported transaction.
     """
     reject_if_reconciled(planned, action="matched")
     if user is not None:
@@ -460,8 +460,16 @@ def resolve_expected_as_imported(planned: Transaction, *, user=None) -> dict:
         )
 
     imported = find_unique_bank_import_for_expected_resolution(planned)
-
     planned_id = planned.pk
+    if imported is None:
+        skip_scheduled_transaction(planned, user=user)
+        return {
+            "resolved": True,
+            "imported_transaction_id": None,
+            "removed_planned_transaction_id": planned_id,
+            "preserved_counterpart_transaction_id": None,
+        }
+
     household_id = planned.account.household_id
     imported_id = imported.pk
 

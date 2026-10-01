@@ -33,6 +33,7 @@ import { AccountRow } from "./AccountRow";
 import { markAccountsTiming } from "./accountsTiming";
 import { useHomeAccountPin } from "./useHomeAccountPin";
 import { useConnectBank } from "./useConnectBank";
+import { usePlaidBankSync } from "./usePlaidBankSync";
 
 export function AccountsScreen() {
   const theme = useTheme();
@@ -53,17 +54,22 @@ export function AccountsScreen() {
   );
   const { toggleHomePin, isPending: pinPending, pendingAccountId } = useHomeAccountPin();
   const { connectBank, busy: connectBusy } = useConnectBank();
+  const { syncBanks, busy: syncBusy, plaidAllowed } = usePlaidBankSync();
 
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const anyPlaidLinked = accounts.some((account) => account.plaid_item_id != null);
 
   const refreshAccounts = useCallback(async () => {
     setPullRefreshing(true);
     try {
+      if (anyPlaidLinked && plaidAllowed) {
+        await syncBanks({ silent: true });
+      }
       await refetch();
     } finally {
       setPullRefreshing(false);
     }
-  }, [refetch]);
+  }, [anyPlaidLinked, plaidAllowed, refetch, syncBanks]);
 
   useEffect(() => {
     markAccountsTiming("accounts-mounted", "list");
@@ -88,7 +94,6 @@ export function AccountsScreen() {
   }, [accounts, attentionFilterActive]);
 
   const groups = useMemo(() => groupAccountsByType(visibleAccounts), [visibleAccounts]);
-  const anyPlaidLinked = accounts.some((account) => account.plaid_item_id != null);
 
   const onAddAccount = useCallback(() => {
     if (accountsLimited) {
@@ -156,13 +161,21 @@ export function AccountsScreen() {
         </Pressable>
       ) : null}
 
-      <View style={{ marginTop: theme.spacing.md }}>
+      <View style={{ marginTop: theme.spacing.md, gap: theme.spacing.sm }}>
         <Button
           label={anyPlaidLinked ? "Add another bank" : "Connect bank"}
           variant="secondary"
           loading={connectBusy}
           onPress={() => void connectBank()}
         />
+        {anyPlaidLinked && plaidAllowed ? (
+          <Button
+            label="Sync banks"
+            variant="secondary"
+            loading={syncBusy || pullRefreshing}
+            onPress={() => void syncBanks()}
+          />
+        ) : null}
       </View>
 
       {attentionFilterActive ? (

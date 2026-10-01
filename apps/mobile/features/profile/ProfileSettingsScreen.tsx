@@ -140,7 +140,6 @@ export function ProfileSettingsScreen() {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [forecastPickerOpen, setForecastPickerOpen] = useState(false);
-  const [simulatedPlanPickerOpen, setSimulatedPlanPickerOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -246,11 +245,9 @@ export function ProfileSettingsScreen() {
       setTestPlanOverride(choiceToTestPlanOverride(choice)),
     onSuccess: () => {
       invalidateAfterTestPlanChange(queryClient);
-      setSimulatedPlanPickerOpen(false);
     },
     onError: (err) => {
-      setSimulatedPlanPickerOpen(false);
-      Alert.alert("Couldn’t update simulated plan", describeApiError(err));
+      Alert.alert("Couldn’t update premium test override", describeApiError(err));
     },
   });
 
@@ -388,22 +385,52 @@ export function ProfileSettingsScreen() {
             )}
           </SettingsGroup>
 
-          {canShowPlanTestControls(billing, typeof __DEV__ !== "undefined" && __DEV__) ? (
+          {canShowPlanTestControls(billing) ? (
             <>
               <SectionHeader title="Developer Testing" />
               <SettingsGroup>
-                <SettingsRow
-                  title="Simulated plan"
-                  value={simulatedPlanChoiceLabel(simulatedPlanChoice(billing))}
-                  subtitle={`Effective plan: ${
-                    effectivePlanLabel(billing) === "PREMIUM" ? "Premium" : "Free"
-                  }`}
-                  onPress={() => setSimulatedPlanPickerOpen(true)}
-                  accessibilityLabel={`Simulated plan, ${simulatedPlanChoiceLabel(
-                    simulatedPlanChoice(billing)
-                  )}`}
-                  disabled={testPlanMutation.isPending}
-                />
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    minHeight: theme.touchTarget,
+                    borderBottomWidth: simulatedPlanChoice(billing) !== "real" ? 1 / 2 : 0,
+                    borderBottomColor: theme.colors.border,
+                    gap: theme.spacing.md,
+                    paddingVertical: theme.spacing.sm,
+                  }}
+                >
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={{ color: theme.colors.text, ...theme.typography.body }}>
+                      Premium
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.colors.textSecondary,
+                        ...theme.typography.caption,
+                        marginTop: 2,
+                      }}
+                    >
+                      Temporary test override — turn off for Free. Remove later.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={effectivePlanLabel(billing) === "PREMIUM"}
+                    onValueChange={(on) => testPlanMutation.mutate(on ? "PREMIUM" : "FREE")}
+                    disabled={testPlanMutation.isPending}
+                    accessibilityLabel="Premium test override"
+                  />
+                </View>
+                {simulatedPlanChoice(billing) !== "real" ? (
+                  <SettingsRow
+                    title="Use real billing"
+                    subtitle={`Currently simulating ${simulatedPlanChoiceLabel(simulatedPlanChoice(billing))}`}
+                    onPress={() => testPlanMutation.mutate("real")}
+                    accessibilityLabel="Use real billing"
+                    disabled={testPlanMutation.isPending}
+                  />
+                ) : null}
               </SettingsGroup>
             </>
           ) : null}
@@ -645,20 +672,6 @@ export function ProfileSettingsScreen() {
           </View>
         </>
       )}
-
-      <OptionsPickerSheet
-        visible={simulatedPlanPickerOpen}
-        title="Simulated plan"
-        selectedId={simulatedPlanChoice(billing)}
-        options={(["real", "FREE", "PREMIUM"] as const).map((id) => ({
-          id,
-          title: simulatedPlanChoiceLabel(id),
-        }))}
-        onClose={() => setSimulatedPlanPickerOpen(false)}
-        onSelect={(id) => {
-          testPlanMutation.mutate(id as SimulatedPlanChoice);
-        }}
-      />
 
       <OptionsPickerSheet
         visible={forecastPickerOpen}

@@ -3,6 +3,7 @@ import {
   isImportMatchStatusMatched,
   MATCH_BANK_TRANSACTION_LABEL,
   MATCH_IMPORTED_TRANSACTION_LABEL,
+  NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE,
   selectableImportMatchCandidates,
 } from "./importMatchSemantics";
 
@@ -25,5 +26,9 @@ describe("importMatchSemantics", () => {
   it("keeps web match wording while exposing mobile bank wording", () => {
     expect(MATCH_IMPORTED_TRANSACTION_LABEL).toBe("Match imported transaction");
     expect(MATCH_BANK_TRANSACTION_LABEL).toBe("Match bank transaction");
+    expect(NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE).toMatch(
+      /No matching imported transaction was found for the scheduled item/
+    );
+    expect(NO_MATCHING_IMPORTED_TRANSACTION_MESSAGE).toMatch(/skip this transaction instead/);
   });
 });

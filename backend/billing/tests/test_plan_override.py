@@ -103,10 +103,54 @@ def test_allow_flag_false_ignores_override(user):
 
 @pytest.mark.django_db
 @override_settings(DEBUG=True, ALLOW_PLAN_TEST_OVERRIDE=True, ON_RENDER=True)
-def test_on_render_never_honors_override(user):
+def test_on_render_never_honors_override_for_non_staff(user):
     set_own_test_plan_override(user, "PREMIUM")
     assert plan_test_override_enabled() is False
     assert user_has_premium(user) is False
+
+
+@pytest.mark.django_db
+@override_settings(
+    DEBUG=False,
+    ALLOW_PLAN_TEST_OVERRIDE=False,
+    ON_RENDER=True,
+    PLAN_TEST_OVERRIDE_USERNAMES=frozenset({"cazcapone"}),
+)
+def test_allowlisted_username_on_render_can_simulate_without_staff(user, authenticated_client):
+    user.username = "cazcapone"
+    user.is_staff = False
+    user.save(update_fields=["username", "is_staff"])
+    grant_premium(user)
+    assert user_has_premium(user) is True
+
+    r = authenticated_client.post("/api/dev/test-plan/", {"plan": "FREE"}, format="json")
+    assert r.status_code == 200
+    assert r.json()["effective_plan"] == "FREE"
+    assert user_has_premium(user) is False
+    payload = get_billing_status_payload(user)
+    assert payload["test_override_available"] is True
+    assert payload["is_premium"] is False
+
+
+@pytest.mark.django_db
+@override_settings(DEBUG=False, ALLOW_PLAN_TEST_OVERRIDE=False, ON_RENDER=True)
+def test_staff_on_render_can_simulate_free_and_premium(user, authenticated_client):
+    user.is_staff = True
+    user.save(update_fields=["is_staff"])
+    grant_premium(user)
+    assert user_has_premium(user) is True
+
+    set_own_test_plan_override(user, "FREE")
+    assert user_has_premium(user) is False
+    payload = get_billing_status_payload(user)
+    assert payload["test_override_available"] is True
+    assert payload["test_plan_override"] == "FREE"
+    assert payload["is_premium"] is False
+
+    r = authenticated_client.post("/api/dev/test-plan/", {"plan": "PREMIUM"}, format="json")
+    assert r.status_code == 200
+    assert r.json()["effective_plan"] == "PREMIUM"
+    assert user_has_premium(user) is True
 
 
 @pytest.mark.django_db
@@ -174,7 +218,7 @@ def test_endpoint_unavailable_when_disabled(authenticated_client, api_client):
     r = authenticated_client.post("/api/dev/test-plan/", {"plan": "PREMIUM"}, format="json")
     assert r.status_code == 404
     unauth = api_client.post("/api/dev/test-plan/", {"plan": "PREMIUM"}, format="json")
-    assert unauth.status_code == 404
+    assert unauth.status_code in (401, 403, 404)
 
 
 @pytest.mark.django_db
